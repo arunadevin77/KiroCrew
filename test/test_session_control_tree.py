@@ -135,6 +135,12 @@ def _emitted(monkeypatch, *, landed: bool = True) -> list[dict]:
     the durable outcome through ``on_settled`` and a stub that recorded the call and
     stayed silent would leave every success path sitting on the wait until it timed out.
     Pass ``landed=False`` to stand in for a write the writer gave up on.
+
+    ``session/manager_set`` is captured beside the two tree edges because the handoff
+    waits on it the same way -- it is that verb's commit point, so an unstubbed one
+    leaves every handoff here waiting out the commit bound and then refusing
+    ``handoff_not_recorded``. The adopt and release verbs never emit it, so their own
+    recorded lists are unchanged by its presence.
     """
     calls: list[dict] = []
 
@@ -156,6 +162,11 @@ def _emitted(monkeypatch, *, landed: bool = True) -> list[dict]:
         emit,
         "on_session_released",
         lambda sid, **kw: _record("release", sid, kw),
+    )
+    monkeypatch.setattr(
+        emit,
+        "on_manager_set",
+        lambda sid, **kw: _record("manager", sid, kw),
     )
     return calls
 

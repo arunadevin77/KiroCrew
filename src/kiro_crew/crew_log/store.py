@@ -67,7 +67,7 @@ from typing import Any
 
 from kiro_crew.atomic_write import atomic_write, fsync_dir
 from kiro_crew.config.paths import data_home
-from kiro_crew.crew_log.entry_types import validate_data
+from kiro_crew.crew_log.entry_types import declaration_for, validate_data
 from kiro_crew.crew_log.errors import (
     CODE_ALREADY_EXISTS,
     CODE_ALREADY_OWNED,
@@ -206,7 +206,7 @@ def crew_log_root(kind: str) -> Path:
     return data_home() / _ROOT_LEAF / _ROOT_DIR[require_kind(kind)]
 
 
-def _checked_crew_log_root(kind: str) -> Path:
+def checked_crew_log_root(kind: str) -> Path:
     """:func:`crew_log_root` for *kind*, refused when the directory is not the real one.
 
     Containment (:func:`resolved_within`) resolves its BASE first and then checks
@@ -290,7 +290,7 @@ def crew_log_dir(kind: str, unit_id: str) -> Path:
     symlink-safely that the resolved path stays under the root.
     """
     require_unit_id(unit_id)
-    resolved = resolved_within(_checked_crew_log_root(kind), _store_name(unit_id))
+    resolved = resolved_within(checked_crew_log_root(kind), _store_name(unit_id))
     if resolved is None:
         raise CrewLogError(
             f"path traversal blocked for crew log id: {unit_id!r}",
@@ -985,7 +985,7 @@ def remove_unit(
     # which is where this link points, so it would reach into a unit that is very
     # likely another member's live one. The two conditions invite opposite actions,
     # so they cannot share a value.
-    named = _checked_crew_log_root(kind) / _store_name(unit_id)
+    named = checked_crew_log_root(kind) / _store_name(unit_id)
     if is_link(named):
         logger.warning(
             "crew log retention: %s log %r is a link; refusing to remove what it names",
@@ -1189,7 +1189,7 @@ def hold_unit(kind: str, unit_id: str) -> bool:
     """
     require_kind(kind)
     try:
-        named = _checked_crew_log_root(kind) / _store_name(unit_id)
+        named = checked_crew_log_root(kind) / _store_name(unit_id)
         if is_link(named):
             return False
         directory = crew_log_dir(kind, unit_id)
@@ -1243,7 +1243,7 @@ def release_unit_hold(kind: str, unit_id: str) -> None:
     """Let *unit_id* age out again; a unit with no hold is left as it is."""
     require_kind(kind)
     try:
-        named = _checked_crew_log_root(kind) / _store_name(unit_id)
+        named = checked_crew_log_root(kind) / _store_name(unit_id)
         if is_link(named):
             return
         (crew_log_dir(kind, unit_id) / TRASH_HOLD_FILE).unlink()
@@ -1364,7 +1364,7 @@ def stage_unit(kind: str, unit_id: str, destination: Path) -> str:
     and the unit stays, exactly as ``owned`` would have left it.
     """
     require_kind(kind)
-    named = _checked_crew_log_root(kind) / _store_name(unit_id)
+    named = checked_crew_log_root(kind) / _store_name(unit_id)
     if is_link(named):
         return REMOVE_ABSENT
     directory = crew_log_dir(kind, unit_id)
@@ -1418,7 +1418,7 @@ def restore_staged_unit(kind: str, staged: Path) -> "str | None":
     header = None if is_link(staged) else _proved_header(staged)
     if header is None:
         return None
-    root = _checked_crew_log_root(kind)
+    root = checked_crew_log_root(kind)
     target = root / staged.name
     if is_link(target) or target.exists():
         return None
@@ -1452,7 +1452,7 @@ def _unit_header_object(kind: str, unit_id: str) -> "dict[str, Any] | None":
     """
     require_kind(kind)
     try:
-        named = _checked_crew_log_root(kind) / _store_name(unit_id)
+        named = checked_crew_log_root(kind) / _store_name(unit_id)
         if is_link(named):
             return None
         directory = crew_log_dir(kind, unit_id)
@@ -1519,7 +1519,7 @@ def unprovable_session_units() -> int:
     complete asks this first.
     """
     try:
-        root = _checked_crew_log_root(KIND_SESSION)
+        root = checked_crew_log_root(KIND_SESSION)
         names = sorted(child.name for child in root.iterdir())
     except (CrewLogError, OSError):
         return 0
@@ -1586,7 +1586,21 @@ def session_units_for_slot(slot: str, *, strict: bool = False) -> "tuple[str, ..
     """
     if not slot:
         return ()
-    return session_units_by_slot(strict=strict).get(slot, ())
+    if not strict:
+        return session_units_by_slot(strict=False).get(slot, ())
+    # The strict contract is TWO refusals and only one of them is narrowable.
+    #
+    # A SCAN that could not be made at all refuses every caller: a root that will not
+    # list says nothing about any slot, so there is no slot it could be attributed to
+    # and an empty listing taken for it would be a store failure read as success.
+    # ``strict_scan`` keeps that.
+    #
+    # A CHILD that cannot be proved while holding entries IS attributable -- its own
+    # opening entry names a slot -- so that refusal is re-asked about this slot alone.
+    # Store-wide it makes one damaged session a gateway-wide outage.
+    by_slot, unproven = _scan_slots(strict_scan=True)
+    _refuse_unprovable_unit(checked_crew_log_root(KIND_SESSION), unproven, slot=slot)
+    return by_slot.get(slot, ())
 
 
 def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]]":
@@ -1604,24 +1618,37 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
     holding entries, are both refused instead of being answered with a listing that
     is quietly short.
     """
+    by_slot, unproven = _scan_slots(strict_scan=strict)
+    if strict:
+        _refuse_unprovable_unit(checked_crew_log_root(KIND_SESSION), unproven)
+    return by_slot
+
+
+def _scan_slots(*, strict_scan: bool) -> "tuple[dict[str, tuple[str, ...]], tuple[str, ...]]":
+    """The slot map and the children that could not be proved, scanned once.
+
+    Split out so the two halves of the strict contract can be applied separately: a
+    scan that FAILED is not attributable to any slot and refuses every caller, while a
+    child that cannot be proved is attributable and refuses only the slot it belongs
+    to. ``strict_scan`` carries the first; the returned unproven names let the caller
+    decide the second.
+    """
     global _slot_index
     try:
-        root = _checked_crew_log_root(KIND_SESSION)
+        root = checked_crew_log_root(KIND_SESSION)
         names = sorted(child.name for child in root.iterdir())
     except (CrewLogError, OSError):
         # No store, or one that could not be scanned. A read takes the empty listing;
         # a caller that would VALIDATE against the listing passes ``strict`` and gets
         # the failure instead, because an empty listing taken for a scan that failed
         # would let it validate against a record that is not there.
-        if strict:
+        if strict_scan:
             raise
-        return {}
+        return {}, ()
     fingerprint = _slot_root_fingerprint(root, names)
     cached = _slot_index
     if cached is not None and cached[0] == fingerprint and not _any_now_provable(root, cached[2]):
-        if strict:
-            _refuse_unprovable_unit(root, cached[2])
-        return cached[1]
+        return cached[1], cached[2]
     rows: "dict[str, list[tuple[int, str]]]" = {}
     unproven: list[str] = []
     for name in names:
@@ -1653,9 +1680,21 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
         rows.setdefault(unit_slot, []).append((order, unit_id))
     by_slot = {key: tuple(unit for _order, unit in sorted(found)) for key, found in rows.items()}
     _slot_index = (fingerprint, by_slot, tuple(unproven))
-    if strict:
-        _refuse_unprovable_unit(root, tuple(unproven))
-    return by_slot
+    return by_slot, tuple(unproven)
+
+
+def _unproven_holding_names(root: Path, unproven: "tuple[str, ...]") -> "list[str]":
+    """Every child that cannot be proved AND already holds log content.
+
+    :func:`_unproven_holding_content` answers the FIRST one, which is all a store-wide
+    refusal needs. A per-slot refusal has to consider each, because the first may
+    belong to another slot while a later one belongs to the caller's.
+    """
+    out: list[str] = []
+    for name in unproven:
+        if _unproven_holding_content(root, (name,)) is not None:
+            out.append(name)
+    return out
 
 
 def _unproven_holding_content(root: Path, unproven: "tuple[str, ...]") -> "str | None":
@@ -1693,17 +1732,103 @@ def _unproven_holding_content(root: Path, unproven: "tuple[str, ...]") -> "str |
     return None
 
 
-def _refuse_unprovable_unit(root: Path, unproven: "tuple[str, ...]") -> None:
-    """Raise when a strict listing cannot account for a child that holds entries."""
-    blocked = _unproven_holding_content(root, unproven)
-    if blocked is None:
-        return
-    raise CrewLogError(
-        f"session crew log {blocked!r} holds entries its header cannot prove, "
-        "so the listing is incomplete",
-        code=CODE_BAD_HEADER,
-        field="id",
-    )
+def _unproven_slot(root: Path, name: str) -> "str | None":
+    """The slot an unprovable unit's own ``session/opened`` names, or ``None``.
+
+    Attribution for a child whose HEADER will not prove. The header is line 1 and the
+    opening entry is line 2, written immediately after it, so a unit whose header is
+    missing or corrupt can still say which slot it belongs to -- and that is the only
+    question a per-slot caller has about it. O(1) in the log's size, like
+    :func:`unit_opened_previous`, and read from the oldest segment because a rotated
+    log keeps its opening entry there.
+
+    ``None`` is "cannot attribute", never "belongs to no slot": a directory that is a
+    link, segments that will not list, no second line yet, a line that does not parse,
+    a second line that is not a ``session/opened``, and an absent or empty ``slot``
+    all answer None. A caller must treat None as undecided and refuse, because an
+    unattributable unit holding entries may be the very one it needed to read.
+    """
+    directory = root / name
+    try:
+        if is_link(directory):
+            return None
+        segments = [
+            (first, child)
+            for child in directory.iterdir()
+            if (first := _segment_first_seq(child)) is not None
+        ]
+    except OSError:
+        return None
+    if not segments:
+        return None
+    segments.sort(key=lambda pair: pair[0])
+    # Read the first two lines POSITIONALLY rather than through
+    # :func:`read_head`, which withholds the entry whenever line 1 cannot be
+    # delivered intact -- correct there, because handing an entry back AS a header
+    # is the mistake it guards, and useless here, because a damaged line 1 is the
+    # whole reason this unit needs attributing. The format is header then opening
+    # entry, so the ``session/opened`` is line 2 when a header is present and line 1
+    # when it is absent; the first line that parses as one answers.
+    #
+    # Read as BYTES and decoded one line at a time, because the lines are damaged
+    # independently. A text-mode read raises on the first undecodable byte it meets,
+    # which would take line 2 down with line 1 -- and line 1 being unreadable is the
+    # case this function exists for. Each line is decoded inside the loop's own
+    # ``try``, where a line that cannot be decoded is passed over exactly like one
+    # that cannot be parsed: both are "this line does not answer", and the next line
+    # still gets its turn.
+    try:
+        with segments[0][1].open("rb") as handle:
+            head_lines = [handle.readline(), handle.readline()]
+    except OSError:
+        return None
+    for line in head_lines:
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line.decode("utf-8"))
+        except Exception:
+            continue
+        if not isinstance(parsed, dict) or parsed.get("type") != "session/opened":
+            continue
+        data = parsed.get("data")
+        if not isinstance(data, dict):
+            continue
+        unit_slot = data.get("slot")
+        if isinstance(unit_slot, str) and unit_slot:
+            return unit_slot
+    return None
+
+
+def _refuse_unprovable_unit(
+    root: Path, unproven: "tuple[str, ...]", *, slot: "str | None" = None
+) -> None:
+    """Raise when a strict listing cannot account for a child that holds entries.
+
+    *slot* NARROWS the refusal to one slot's own units, and a per-slot caller passes
+    it. Without that narrowing a single corrupt unit anywhere in the store refuses
+    every slot's listing, which makes one damaged session a gateway-wide outage: a
+    slot whose own log is perfectly readable comes up unresolved and its
+    manager-dependent verbs are refused until someone repairs an unrelated directory.
+    The blast radius has nothing to do with the incompleteness the refusal is about.
+
+    An unaccounted unit is skipped only when it can be ATTRIBUTED ELSEWHERE -- its own
+    opening entry names a different slot (:func:`_unproven_slot`). One that cannot be
+    attributed still refuses, because "which slot is this" is exactly what could not
+    be established, and the unit may hold the entry this caller came for. A
+    cross-slot caller passes no slot and keeps the store-wide refusal, which is what
+    validating across slots requires.
+    """
+    for name in _unproven_holding_names(root, unproven):
+        if slot is not None and (named := _unproven_slot(root, name)) is not None:
+            if named != slot:
+                continue
+        raise CrewLogError(
+            f"session crew log {name!r} holds entries its header cannot prove, "
+            "so the listing is incomplete",
+            code=CODE_BAD_HEADER,
+            field="id",
+        )
 
 
 def _any_now_provable(root: Path, unproven: "tuple[str, ...]") -> bool:
@@ -1729,12 +1854,12 @@ def unit_dir_for(kind: str, unit_id: str) -> "Path | None":
     of the store's order (the session tree admits the live sessions' logs first,
     :mod:`kiro_crew.crew_log.session_tree`). None for an absent directory, a linked entry
     (it answers for a directory outside the tree), a root the store refuses
-    (:func:`_checked_crew_log_root`) and an id that cannot be named; a caller
+    (:func:`checked_crew_log_root`) and an id that cannot be named; a caller
     reads None as "nothing to read here", never as an error.
     """
     require_kind(kind)
     try:
-        named = _checked_crew_log_root(kind) / _store_name(unit_id)
+        named = checked_crew_log_root(kind) / _store_name(unit_id)
         if is_link(named) or not named.is_dir():
             return None
         return named
@@ -1778,7 +1903,7 @@ def unit_dirs(
     excluded = frozenset(exclude)
     kept: list[Path] = []
     try:
-        root = _checked_crew_log_root(kind)
+        root = checked_crew_log_root(kind)
         if not root.is_dir():
             return [], False, False
         for child in root.iterdir():
@@ -1937,7 +2062,7 @@ def unit_ids(kind: str) -> list[str]:
     """
     require_kind(kind)
     try:
-        root = _checked_crew_log_root(kind)
+        root = checked_crew_log_root(kind)
         children = sorted(root.iterdir())
     except (CrewLogError, OSError):
         return []
@@ -2000,7 +2125,7 @@ def unit_opened_previous(kind: str, unit_id: str) -> "str | None":
     """
     require_kind(kind)
     try:
-        named = _checked_crew_log_root(kind) / _store_name(unit_id)
+        named = checked_crew_log_root(kind) / _store_name(unit_id)
         if is_link(named):
             return None
         directory = crew_log_dir(kind, unit_id)
@@ -2201,7 +2326,7 @@ def sweep_expired(retention_days: int, *, now: float | None = None) -> "tuple[in
         # time: the removal itself is already refused downstream, but only after
         # this walk had read a header and a tail from every file under whatever the
         # link named. One refusal reads nothing.
-        children = list(_checked_crew_log_root(KIND_SESSION).iterdir())
+        children = list(checked_crew_log_root(KIND_SESSION).iterdir())
     except CrewLogError:
         # A root that EXISTS and is wrong. Not a unit failure -- there is no
         # legitimate unit here to have failed -- so it is reported and the pass
@@ -2408,6 +2533,105 @@ def read_last_tree_edge(segment: Path) -> "Entry | None":
     if tail.empty:
         return None
     return _last_entry_of_types(tail, _TREE_EDGE_TYPES)
+
+
+#: The entry type that moves a session's MANAGER, read from a unit's tail like the
+#: tree edges beside it. Deliberately NOT in :data:`_LIFECYCLE_TYPES`, for the reason
+#: the tree edges are not: that set decides open versus closed and so authorizes
+#: retention's delete, and a handoff sitting at the end of a log must not keep that log
+#: forever.
+_MANAGER_TYPES = frozenset({"session/manager_set"})
+
+
+def read_last_manager_set(segment: Path) -> "Entry | None":
+    """The newest manager entry in *segment*'s tail window, or ``None``.
+
+    The manager counterpart of :func:`read_last_tree_edge`, with the same bound and the
+    same meaning: a handoff lands after the session opened, so a reader of a unit's
+    HEAD cannot see it. Bounded, so it is the cheap first look rather than the whole
+    answer; :func:`find_last_manager_set` is what a rebuild needs.
+
+    Raises whatever the read raises, like :func:`read_head`: "this unit records no
+    handoff" and "its bytes were not seen" are different answers, and only the FIRST
+    means the creator still holds the session. A rebuild leaves the second UNRESOLVED
+    and refuses the manager-dependent verbs, because reverting to the creator there
+    would restore a grant the log recorded going away and never recorded coming back.
+
+    A LINE THAT DOES NOT PARSE IS ONE OF THOSE RAISES, which is what ``strict`` buys and
+    the reason this read does not share the skipping reading beside it. An unreadable
+    line cannot be asked what type it was, so a reader that passed over it would be
+    treating bytes nobody could read as "not a handoff" -- and when such a line sits
+    NEWER than a readable ``manager_set``, the older entry comes back as the newest
+    statement in the file. That is the entry a later handoff superseded, so the answer
+    is not a missing manager but the REVOKED one, handed back with no corruption visible
+    anywhere above. One flipped bit does it; no attacker is required.
+
+    A TORN TAIL IS THE SAME ANSWER one layer earlier. ``strict`` judges the records in
+    the window, and the scanner cuts unterminated trailing bytes that do not parse OUT
+    of that window before any of them is judged (:func:`_scan_tail`) -- so the strictest
+    reading of the window cannot see them. Those bytes are the NEWEST thing in the file,
+    which is exactly where a statement that supersedes every other one would sit: if
+    they were a ``manager_set``, passing over them returns the entry it replaced. The
+    window therefore refuses when anything in it was dropped before it was read, which
+    is this read's whole rule stated once -- a manager read refuses when the span it
+    scanned holds something it cannot account for, and "something was discarded before I
+    looked" is one of those things.
+
+    Checked before the window's own records rather than after, so a readable entry
+    further back can never answer for a file with unaccountable bytes ahead of it. The
+    complete read is not reached either: it answers from the same segment, and no amount
+    of older history accounts for the newest bytes.
+    """
+    tail = _scan_tail(segment)
+    if tail.torn_offset is not None:
+        raise ValueError(
+            f"{segment}: trailing bytes were discarded before the manager window was "
+            "read, so the newest statement in this segment cannot be accounted for"
+        )
+    if tail.empty:
+        return None
+    return _last_entry_of_types(tail, _MANAGER_TYPES, strict=True)
+
+
+def find_last_manager_set(directory: Path) -> "Entry | None":
+    """The newest manager entry in the WHOLE of *directory*'s surviving log.
+
+    What a rebuild needs, for the reason :func:`find_last_tree_edge` is needed: a
+    handoff written before the log grew past the tail window is invisible to the
+    bounded read, and losing it does not produce a missing manager but a WRONG one --
+    the slot reads as never handed over, which hands the giver back a reach the log
+    says it gave away and refuses the session that actually holds the target. Segments
+    are searched newest first and the first answer wins.
+
+    BOTH reads are strict about a line that does not parse, so the complete read cannot
+    answer where the bounded one refused: see :func:`read_last_manager_set` for why an
+    unreadable line newer than a readable entry is a wrong answer rather than a missing
+    one. Raises ``ValueError`` in that case, which this unit's reader turns into
+    UNDECIDED.
+
+    SCOPED TO ONE UNIT, which is the whole of what a damaged log costs. *directory* is a
+    single session's unit, and the caller walks only the units of the slot it is asking
+    about -- so a corrupt line in one session's log leaves every other session's manager
+    resolving normally. A store-wide refusal would fence the whole gateway on one
+    session's bad byte, which is an availability cliff and not a containment gain: the
+    grant at risk is the one recorded in THIS log.
+    """
+    found = [
+        (first, child)
+        for child in directory.iterdir()
+        if (first := _segment_first_seq(child)) is not None
+    ]
+    if not found:
+        return None
+    found.sort(key=lambda pair: pair[0], reverse=True)
+    for _first, segment in found:
+        entry = read_last_manager_set(segment)
+        if entry is not None:
+            return entry
+        entry = _scan_whole_for_types(segment, _MANAGER_TYPES, strict=True)
+        if entry is not None:
+            return entry
+    return None
 
 
 def tree_edge_scan_identity(directory: Path) -> "tuple[int, int, int, int] | None":
@@ -2621,7 +2845,9 @@ def find_spawned_entries(
     return list(kept), cut, hit_cap
 
 
-def _scan_whole_for_types(segment: Path, types: "frozenset[str]") -> "Entry | None":
+def _scan_whole_for_types(
+    segment: Path, types: "frozenset[str]", *, strict: bool = False
+) -> "Entry | None":
     """The newest entry of *types* anywhere in *segment*, or ``None``.
 
     Only reached when the bounded window did not answer and could not prove it saw the
@@ -2636,6 +2862,14 @@ def _scan_whole_for_types(segment: Path, types: "frozenset[str]") -> "Entry | No
     caller turns into a CACHED verdict, which nothing afterwards re-reads or corrects.
     The ``open`` below already propagates, so guarding only the stat made one function
     answer two different ways about the same file.
+
+    *strict* carries the same meaning it has in :func:`_last_entry_of_types` and reaches
+    it through the same predicate (:func:`_entry_if_established`), so the two reads
+    cannot disagree about which records account for themselves. Same precision too: a
+    record that establishes nothing is refused only when it is NEWER than the newest
+    match, because only then could it hold the statement that supersedes it. This stream
+    runs forward, so "newer than the match" is "met after it" -- tracked rather than
+    inferred from position, which is why the flag below is cleared on every match.
     """
     size = segment.stat().st_size
     if size == 0:
@@ -2644,15 +2878,26 @@ def _scan_whole_for_types(segment: Path, types: "frozenset[str]") -> "Entry | No
         # The window already covered this whole file, so there is nothing new to read.
         return None
     newest: Entry | None = None
+    unreadable_since_match = False
     with open(segment, "rb") as handle:
         try:
-            for raw in strict_raw_records(handle, segment, cap=MAX_ENTRY_BYTES):
-                parsed = _parses_to_object(raw.strip())
-                if parsed is None:
+            for position, raw in enumerate(
+                strict_raw_records(handle, segment, cap=MAX_ENTRY_BYTES)
+            ):
+                if position == 0:
+                    # The segment HEADER, which every segment carries and which is not
+                    # an entry. Skipped by position rather than by failing to parse as
+                    # one, for the reason :func:`_last_entry_of_types` gives: under
+                    # ``strict`` a header read as a record that established nothing
+                    # would refuse every unit.
                     continue
-                entry = Entry.from_dict(parsed)
-                if entry is not None and entry.type in types:
+                entry = _entry_if_established(raw.strip())
+                if entry is None:
+                    unreadable_since_match = True
+                    continue
+                if entry.type in types:
                     newest = entry
+                    unreadable_since_match = False
         except UnreadableRecord as exc:
             # Byte damage -- an over-cap record is the reachable case, and the framing
             # reader ABORTS on it, so everything after it in this file is unseen.
@@ -2669,10 +2914,52 @@ def _scan_whole_for_types(segment: Path, types: "frozenset[str]") -> "Entry | No
             # One conversion here, rather than a class added to three separate tuples
             # that would then have to stay in step.
             raise ValueError(f"crew log segment {segment.name} holds an unreadable record") from exc
+    if strict and unreadable_since_match:
+        # A record that establishes nothing, newer than the newest match. Same answer as
+        # the over-cap record above and for the same reason: what it held is where a
+        # later statement would be, so the match this did find cannot be served as the
+        # newest one. Raised at the END rather than at the record, because a match met
+        # afterwards supersedes it and makes it harmless.
+        raise ValueError(
+            f"crew log segment {segment.name} holds a record that does not establish "
+            f"itself as a well-formed entry, newer than any {sorted(types)} entry, so "
+            "the newest one cannot be established"
+        )
     return newest
 
 
-def _last_entry_of_types(tail: _Tail, types: "frozenset[str]") -> "Entry | None":
+def _entry_if_established(raw: bytes) -> "Entry | None":
+    """The entry *raw* establishes itself as, or ``None`` when it establishes nothing.
+
+    ONE definition of "this record accounted for itself", because the readers that must
+    refuse what they cannot account for would otherwise each spell a different and
+    narrower version of it -- which is exactly how the same defect survived a round at
+    the parse layer and came back at the schema layer.
+
+    ``None`` for all three ways a record fails to say what it is: bytes that are not
+    JSON, JSON that :meth:`Entry.from_dict` refuses, and a well-formed entry whose
+    ``type`` is not DECLARED for the session kind and that the writer did not mark
+    ``ignorable``. The last is the forward-compatibility seam working as designed: a
+    reader that does not know a type may skip it only on the writer's own promise that
+    nothing depends on interpreting it.
+
+    A non-strict caller treats ``None`` exactly as it treated each of those cases
+    before -- skip -- so this changes nothing for the readers that skip.
+    """
+    parsed = _parses_to_object(raw)
+    if parsed is None:
+        return None
+    entry = Entry.from_dict(parsed)
+    if entry is None:
+        return None
+    if entry.ignorable or declaration_for(KIND_SESSION, entry.type) is not None:
+        return entry
+    return None
+
+
+def _last_entry_of_types(
+    tail: _Tail, types: "frozenset[str]", *, strict: bool = False
+) -> "Entry | None":
     """The newest entry in *tail*'s window whose type is in *types*.
 
     Searched from the END, so a file with many turns costs one comparison per
@@ -2682,21 +2969,79 @@ def _last_entry_of_types(tail: _Tail, types: "frozenset[str]") -> "Entry | None"
     bytes and must not share a vocabulary, because the first one authorizes a
     delete.
 
+    *strict* refuses every line this reader CANNOT ESTABLISH AS A WELL-FORMED ENTRY OF A
+    DECLARED TYPE, and the width of that phrase is the whole point. Skipping such a line
+    says "seen, and not an entry of these types" about a record nobody could read that
+    far -- so a damaged line sitting NEWER than a readable match makes this return the
+    older match as if it were the newest statement in the file. For the manager read
+    that is not a missing answer but a WRONG one: the newest statement is what revoked a
+    grant, and falling back to the one before it restores the manager that handoff took
+    the session from. With *strict* such a line raises ``ValueError`` instead, which
+    every caller on that path already reads as "the bytes were not seen" and turns into
+    UNDECIDED.
+
+    THREE ways a line fails to establish itself, and a narrower rule leaves the same
+    defect alive one layer down:
+
+    * the bytes do not parse as JSON at all;
+    * they parse and :meth:`Entry.from_dict` refuses them -- a ``seq`` of ``0``, a
+      missing ``src``, a ``data`` that is not an object. The record is syntactically
+      fine and schematically not an entry, and reading only the first case treats this
+      one exactly as the skipping reading treated the first;
+    * they are a well-formed entry whose ``type`` IS NOT DECLARED for the session kind
+      and that the writer did not mark ``ignorable``. ``Entry.from_dict`` checks only
+      that ``type`` is a non-empty string, so a damaged type field produces a valid
+      entry that simply fails to match *types* -- and "it did not match" is then
+      indistinguishable from "it is not a manager entry". ``ignorable`` is the format's
+      own escape for a type a reader does not know, and it is the WRITER's promise that
+      nothing depends on interpreting the entry, so an undeclared type without it is a
+      record this reader cannot account for.
+
+    WHAT THIS DOES NOT CLOSE, stated rather than left to be discovered: a ``type``
+    damaged into a DIFFERENT DECLARED type reads as a well-formed record of that type,
+    and no reader can tell it from a genuine one -- the record is self-consistent and
+    says what it is. Only per-record integrity would answer that, which is a format
+    change and not a reader's to make. The vocabulary strings share long prefixes, so
+    this residual is not the unlikelier half; it is simply out of a reader's reach.
+
+    Only the lines a reader would have had to pass to reach its answer count, which the
+    search order gives for free: a damaged line met before any match could be hiding a
+    newer statement, while one OLDER than the match cannot change which statement is
+    newest and so is not refused. Over-refusing on it would cost availability and buy
+    nothing.
+
+    The other two sets keep the skipping reading, and that is their callers' own
+    decision rather than this parameter's default being the safe one: retention's
+    open-versus-closed answer and the tree edge each fail safe in their own direction,
+    and neither of them restores a revoked authorization by reading one line short.
+
     Reuses the window the tail scan already read, so this costs no second read.
     """
     lines = tail.window.split(b"\n")
-    if not tail.at_start:
-        # The window may begin mid-line; that first fragment is not a record.
-        lines = lines[1:]
+    # THE FIRST ELEMENT IS NEVER A RECORD, whichever end of the file the window reached,
+    # and under ``strict`` that has to be stated rather than left to the parse: a reader
+    # that refuses what does not establish itself as an entry would otherwise refuse
+    # every unit, because neither of these two shapes is an entry and both sit here.
+    #
+    # Reaching the START of the file, it is the segment HEADER -- every segment carries
+    # one, and it is a header object rather than an entry. Not reaching it, the window
+    # began mid-line and the fragment is the tail scan's own cut, which refusing on
+    # would refuse every unit whose log outgrew the window.
+    lines = lines[1:]
     for line in reversed(lines):
         stripped = line.strip()
         if not stripped:
             continue
-        parsed = _parses_to_object(stripped)
-        if parsed is None:
+        entry = _entry_if_established(stripped)
+        if entry is None:
+            if strict:
+                raise ValueError(
+                    "crew log tail holds a record that does not establish itself as a "
+                    f"well-formed entry, newer than any {sorted(types)} entry, so the "
+                    "newest one cannot be established"
+                )
             continue
-        entry = Entry.from_dict(parsed)
-        if entry is not None and entry.type in types:
+        if entry.type in types:
             return entry
     return None
 

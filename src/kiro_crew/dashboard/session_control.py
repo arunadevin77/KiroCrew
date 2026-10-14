@@ -75,6 +75,7 @@ from kiro_crew.config.sections import (
 )
 from kiro_crew.context_assembly.markers import _apply_marker_spans, _marker_spans
 from kiro_crew.crew_log import emit as crew_log_emit
+from kiro_crew.crew_log.identity import IDENTITY_SAME, compare_identity
 from kiro_crew.crew_log.session_tree_projection import projection
 from kiro_crew.dashboard.chat_delivery import sanitize_outbound
 from kiro_crew.dashboard.chat_folders import (
@@ -127,6 +128,7 @@ from kiro_crew.dashboard.state import (
     SlotOrigin,
     _normalize_slot_key,
     _safe_folder_tree,
+    append_and_surface,
     load_window_off_loop,
 )
 from kiro_crew.dashboard.stop_retry import allow_escalation
@@ -299,75 +301,134 @@ def _member_caller(state: "DashboardState", caller_key: str) -> bool:
     return _store_is_member_owned(getattr(slot, "memory_store", "") or "")
 
 
-def _store_is_member_owned(store: str) -> bool:
-    """Whether *store* is a crew member's private V2 memory store, right now.
+#: The three answers "is this a crew member's private store" can have. A BOOL has two,
+#: and the missing one is the dangerous one -- see :func:`member_store_states`.
+MEMBER_STORE = "member"
+NOT_MEMBER_STORE = "not_member"
+MEMBER_STORE_UNKNOWN = "unknown"
 
-    The ONE predicate that recognises a member store, shared by the HTTP gate
-    (``handlers/session_control.py``'s ``_private_caller_refusal``) and the inner
-    switch bypass here (:func:`_member_caller` case (b)), so the two layers cannot
-    disagree on what a member store is. It answers from the CONFIG RECORD, never
-    the on-disk ownership manifest: it runs at :func:`authorize_target`'s
-    synchronous gate, where a manifest ``stat`` / ``read`` would be blocking IO on
-    the event loop. ``KiroCrewConfig.load()`` is the cached read the switch gate
-    beside it already performs (warmed by :func:`prewarm_enabled_check`), and the
-    fields it reads are in-memory attributes of the loaded record.
 
-    ``True`` requires ALL of: a record for *store*; ``memory_version == 2``; a
-    non-empty ``owner_member``; and that owner still an ACTIVE agent bound to
-    exactly this store (the live-binding test ``active_member_memory_stores``
-    applies). A crew can be deleted while a chat slot bound to its store is still
-    live — the store record is retained with ``owner_member`` set but the agent is
-    gone from ``cfg.agents`` — and a retired owner must not keep the switch bypass
-    past a governance switch the operator turned off.
+def _store_of(member: Any) -> str:
+    """The store a configured member is bound to, as a plain string."""
+    return str(getattr(member, "memory_store", "") or "")
 
-    Everything else is ``False``, and every ``False`` is FAIL-CLOSED for what this
-    predicate decides — admission and the switch bypass: ``default``/empty, a
-    missing record, a non-V2 store, an ownerless V2 store, a retired or re-bound
-    owner, an unreadable config, or a degraded ``memory_stores`` section all
-    withhold member status, and a caller then falls back under the global switch
-    like any other. Withdrawing the case-(b) admission can never open the surface
-    wider than it is.
 
-    It is deliberately NOT the ownership FENCE's source of truth. The record is
-    mutable — an operator's own config writer can un-assign the member, drop
-    ``memory_version`` (the loader coerces a missing key to ``1``), or drop the
-    entry outright — and any of those can land between the HTTP gate's admission
-    and the inner authorization. The fence therefore does not re-derive member
-    status from this record: the gate carries its VERIFIED admission into
-    :func:`authorize_target` as ``precomputed_ownership_fenced`` (see
-    ``handlers/session_control.py``), so a member admitted as one stays
-    creator-fenced for the whole request whatever the record says a beat later.
+def member_store_states(store: str) -> str:
+    """Whether *store* is a crew member's private V2 memory store: three answers.
+
+    AN AUTHORIZATION INPUT IS AN AUTHENTICATED, IMMUTABLE IDENTIFIER -- never a mutable
+    or display-facing attribute. ``owner_member_id`` is the identity the store carries
+    ("Immutable member identity stored in this database"); ``owner_member`` is a DISPLAY
+    LABEL a person can edit. Deciding on the label means an edited or cleared label
+    answers "not a member" while the identity still says otherwise, and for one of this
+    predicate's two readers "not a member" is the PERMISSIVE answer: the ownership fence
+    then falls through to ``_created_by``, a member's ordinary chat slot has none, and
+    the slot comes out UNFENCED. The identity is read instead, through the same rule
+    ``execution_context.member_config_for_id`` states for every other reader of it --
+    the unique persisted id, with names and slugs never identity.
+
+    THREE ANSWERS, because this one predicate has two readers whose safe directions are
+    OPPOSITE. The switch bypass (:func:`_member_caller` case (b), and the HTTP gate's
+    ``_private_caller_refusal``) fails closed by withholding member status. The
+    ownership FENCE fails closed by applying it. A bool cannot serve both: whichever
+    way it resolves an unanswerable read, it is the permissive answer for one of them.
+
+    * ``MEMBER_STORE`` -- a V2 record whose ``owner_member_id`` names exactly one
+      configured member, and that member is bound to THIS store.
+    * ``NOT_MEMBER_STORE`` -- decided, and decided to be nobody's private store: the
+      default or empty store, no record at all, a non-V2 record, or a V2 record that
+      claims no owner in either field.
+    * ``MEMBER_STORE_UNKNOWN`` -- a V2 record that CLAIMS an owner and whose claim
+      cannot be resolved to exactly one member bound here: an ``owner_member_id`` that
+      names no member or several, an owner bound somewhere else, a pre-identity record
+      whose label resolves to no single binding, or a config this process could not
+      read. Each of those is a store that may well be a member's, and none of them is
+      evidence that it is not.
+
+    Reads the CONFIG RECORD and no on-disk manifest, because it runs at
+    :func:`authorize_target`'s synchronous gate where a ``stat`` would be blocking IO on
+    the event loop. ``KiroCrewConfig.load()`` is the cached read the switch gate beside
+    it already performs.
     """
     if not store or store == "default":
-        return False
+        # The shared store is nobody's private one, and that is decided rather than
+        # unknown: no record has to be read to know it.
+        return NOT_MEMBER_STORE
     try:
         cfg = KiroCrewConfig.load()
     except Exception:
         logger.warning(
-            "session_control: config read failed — store %r is not treated as a member store",
+            "session_control: config read failed — store %r cannot be established as a "
+            "member store either way",
             store,
             exc_info=True,
         )
-        return False
+        return MEMBER_STORE_UNKNOWN
     if cfg.degraded_sections & {DEGRADED_WHOLE_CONFIG, "memory_stores"}:
         logger.warning(
-            "session_control: memory_stores config section degraded — store %r is not "
-            "treated as a member store",
+            "session_control: memory_stores config section degraded — store %r cannot be "
+            "established as a member store either way",
             store,
         )
-        return False
+        return MEMBER_STORE_UNKNOWN
     record = cfg.memory_stores.get(store)
     if record is None or getattr(record, "memory_version", 1) != 2:
-        return False
-    owner = getattr(record, "owner_member", "")
-    if not owner:
-        return False
-    owners_bound_here = [
-        member
-        for member, agent in cfg.agents.items()
-        if getattr(agent, "memory_store", None) == store
-    ]
-    return owners_bound_here == [owner]
+        return NOT_MEMBER_STORE
+    owner_id = str(getattr(record, "owner_member_id", "") or "")
+    label = str(getattr(record, "owner_member", "") or "")
+    if not owner_id and not label:
+        # A V2 record claiming nobody in either field. Decided, and decided to be
+        # nobody's: there is no owner to resolve.
+        return NOT_MEMBER_STORE
+    if owner_id:
+        # THE IDENTITY DECIDES WHEN THERE IS ONE, and it decides alone -- no falling
+        # back to the label behind it. An id naming nobody beside a label naming
+        # somebody is exactly the state an edit leaves, and letting the label answer
+        # there would hand the decision back to the editable field.
+        named = [
+            member
+            for member in cfg.agents.values()
+            if str(getattr(member, "member_id", "") or "") == owner_id
+        ]
+        if len(named) == 1 and str(getattr(named[0], "memory_store", "") or "") == store:
+            return MEMBER_STORE
+        # Zero (the store outlives a deleted member, whose id stays reserved), several
+        # (ambiguous identity), or an owner bound elsewhere now. None of those says the
+        # store is nobody's.
+        return MEMBER_STORE_UNKNOWN
+    # A LABEL AND NO IDENTITY: a record predating member identities. The label is not an
+    # identifier, but a store whose label names the single active agent bound to THIS
+    # store IS member-owned, and answering otherwise would make this predicate state
+    # something false to every reader. Fail-closed is not reached by answering wrongly;
+    # it is reached where the decision is made -- the fence applies on an unresolved
+    # answer, an admission withholds on it.
+    bound_here = [alias for alias, member in cfg.agents.items() if _store_of(member) == store]
+    if bound_here == [label]:
+        return MEMBER_STORE
+    # The label resolves to nobody, to somebody bound elsewhere, or to more than one
+    # binding. Unresolved, not refuted.
+    return MEMBER_STORE_UNKNOWN
+
+
+def _store_is_member_owned(store: str) -> bool:
+    """Whether *store* is ESTABLISHED as a crew member's private V2 store.
+
+    The boolean the two ADMISSION readers want -- the HTTP gate's
+    ``_private_caller_refusal`` and the switch bypass in :func:`_member_caller` case (b)
+    -- resolved from :func:`member_store_states` in their own fail-closed direction:
+    anything but an established answer withholds member status, so a caller falls back
+    under the global ``agent.session_control`` switch like any other. Withdrawing the
+    case-(b) admission can never open the surface wider than it is.
+
+    The ownership FENCE deliberately does NOT read this. Its fail-closed direction is the
+    opposite one, so it reads the three-valued answer and applies the fence on an
+    unestablished store (see :func:`_caller_is_ownership_fenced`). It is also not the
+    fence's source of truth for an admitted member: the record is mutable, so the HTTP
+    gate carries its VERIFIED admission into :func:`authorize_target` as
+    ``precomputed_ownership_fenced``, and a member admitted as one stays creator-fenced
+    for the whole request whatever the record says a beat later.
+    """
+    return member_store_states(store) == MEMBER_STORE
 
 
 def _cron_caller(caller_key: str) -> bool:
@@ -454,6 +515,16 @@ def _caller_is_ownership_fenced(state: "DashboardState", caller_key: str) -> boo
         return False
     if _channel_link_of(slot):
         return True
+    if member_store_states(str(getattr(slot, "memory_store", "") or "")) != NOT_MEMBER_STORE:
+        # A store that is a member's, or that cannot be ESTABLISHED as nobody's. The
+        # fence's fail-closed direction is to apply, so it is the one reader that acts
+        # on the unknown: an editable label, a legacy record with no identity behind it,
+        # a deleted or re-bound owner, or a config this process could not read would all
+        # otherwise answer "not a member" here -- and this is where that answer means
+        # UNFENCED, with the member's ordinary chat slot carrying no ``_created_by`` to
+        # catch it. The MEMBER answer is already covered by ``_member_caller`` above;
+        # this branch is what the third answer is for.
+        return True
     return bool(getattr(slot, "_created_by", ""))
 
 
@@ -526,6 +597,738 @@ def _created_by_other(slot: Any, caller_key: str) -> bool:
     a blank ``_created_by`` matches no caller, so a fenced caller does not reach it.
     """
     return getattr(slot, "_created_by", "") != caller_key
+
+
+def manager_of(slot: Any) -> str:
+    """The slot key that holds *slot* now: its ``_manager``, else its creator.
+
+    ONE reading of "who manages this session", shared by the fence and by the handoff
+    verb's own caller rule, so the two cannot drift. An empty ``_manager`` is not a
+    missing answer: it means nobody has handed this session over, and the session is
+    held by whoever created it. That is what makes the field free to add -- on a
+    gateway where no handoff has happened every caller of this function gets
+    ``_created_by``, which is the value the fence read before the field existed.
+
+    An attribute read and nothing else, with no I/O and no suspension, because the
+    fence that calls it runs inside ``close_target``'s no-suspension window.
+
+    Fail-closed at the edges for the reason :func:`_created_by_other` is: a slot with
+    neither field answers ``""``, and ``""`` is not a slot key any caller can hold.
+
+    THE RAW READ, and it answers even when the answer is not known yet -- an unresolved
+    slot's empty ``_manager`` reads through to the creator here. Only the REBUILD may
+    use it that way, because the rebuild is what makes the value known. Every reader
+    that AUTHORIZES against it calls :func:`require_manager_of`, which refuses instead
+    of guessing, and ``test_session_handoff.py`` pins that split from source.
+    """
+    return str(getattr(slot, "_manager", "") or "") or str(getattr(slot, "_created_by", "") or "")
+
+
+#: How much of a session's title a refusal will quote. A title is author-written and
+#: unbounded; a refusal is one line a person reads. Long ones are cut with an ellipsis
+#: rather than wrapped, because the part that identifies the session is the front.
+_NAME_FOR_PERSON_MAX = 48
+
+
+def name_for_person(state: "DashboardState", slot_or_key: Any) -> str:
+    """A session named the way a person recognises it: its title, else its key.
+
+    Every refusal this module hands back is read by somebody -- in a tab, in an agent's
+    transcript, in a notice. ``chat-1760244`` identifies a session to the gateway and to
+    nobody else, so a refusal that names only the key makes the reader go and look up
+    which session it meant before they can act on what they were told.
+
+    Takes either a slot or a bare key, because both are what the call sites hold: the
+    handoff verb has the slot it resolved, and it has the receiver and the replaced
+    manager as keys alone. A key that names no live slot answers the key -- there is
+    nothing better to say about a session this gateway is not holding, and inventing a
+    placeholder would read as a title.
+
+    The key is the FALLBACK and never dropped, so a session whose title is empty, blank
+    or still being generated is still identified rather than named "". Quoting is the
+    caller's business: these go into sentences that already quote.
+    """
+    slot = state.get_slot(slot_or_key) if isinstance(slot_or_key, str) else slot_or_key
+    key = str(getattr(slot, "key", "") or "") or (
+        slot_or_key if isinstance(slot_or_key, str) else ""
+    )
+    title = str(getattr(slot, "title", "") or "").strip()
+    if not title:
+        return key
+    if len(title) > _NAME_FOR_PERSON_MAX:
+        title = title[: _NAME_FOR_PERSON_MAX - 1].rstrip() + "\u2026"
+    return title
+
+
+def _tab_identity(state: "DashboardState", slot_key: str) -> str:
+    """The ``_tab_id`` of the session open under *slot_key*, or ``""``.
+
+    One reader for the occupancy a manager record carries, so the publish and the
+    check cannot disagree about where it comes from. Empty when no session is open
+    under the key or it carries no tab, which both read as UNKNOWN occupancy and
+    refuse rather than matching any occupant.
+    """
+    live = state.get_slot(slot_key)
+    return str(getattr(live, "_tab_id", "") or "") if live is not None else ""
+
+
+def manager_revision(slot: Any) -> int:
+    """How many times who manages *slot* has been STATED in this process.
+
+    Read by a caller that is about to suspend before it publishes, and given back to
+    :func:`publish_manager` as ``expect_revision``. Monotone and process-local: the
+    crew log is the authority across restarts, and a counter on a line would claim an
+    order between two processes that never compared their reads.
+    """
+    return int(getattr(slot, "_manager_revision", 0) or 0)
+
+
+#: Slots whose manager is being CHANGED right now, keyed by slot. A reader may not
+#: publish what the log says about a slot in here: the bytes it read may be a statement
+#: that is still being made, and acting on a fact nobody has settled is the one thing
+#: this module refuses everywhere.
+#:
+#: Keyed by slot and not a bool on the slot, so a slot object replaced under its key
+#: cannot inherit a mark, and so nothing on the slot's own line can ever carry it.
+_manager_commits_in_flight: "set[str]" = set()
+
+
+@contextmanager
+def manager_commit_in_flight(slot_key: str) -> Iterator[None]:
+    """Mark *slot_key* as having a manager change in flight for the body's duration.
+
+    What a reader needs that :func:`manager_revision` cannot give it. The revision is a
+    PUBLISH counter -- it moves in :func:`publish_manager` and nowhere else -- so a
+    change that fails before it publishes never moves it, and a reader's compare-and-set
+    passes against a value nothing touched. Advancing the revision at the START of a
+    change does not fix that either: a reader whose snapshot is taken AFTER the change
+    began reads the advanced value and compares equal again. The question "is somebody
+    changing this right now" is not a number, so it is not stored as one.
+
+    Entered SYNCHRONOUSLY before the append and exited in a ``finally``, so the window
+    it covers is exactly the one where bytes may be on disk that no settlement has
+    confirmed. Nested entries are counted by the set's own membership: one verb at a
+    time holds a slot's manager mutation lock, so there is no second writer to nest
+    with.
+    """
+    _manager_commits_in_flight.add(slot_key)
+    try:
+        yield
+    finally:
+        _manager_commits_in_flight.discard(slot_key)
+
+
+def manager_commit_pending(slot_key: str) -> bool:
+    """Whether a manager change for *slot_key* is in flight. Synchronous, no IO.
+
+    Read by :func:`resolve_slot_manager` immediately before it publishes, with nothing
+    suspending in between -- which is what makes the pair atomic on the single event
+    loop, the same property :func:`publish_manager` holds by containing no ``await``. A
+    contract test pins both, because the correctness of this check is exactly that
+    adjacency and a future ``await`` between them would retire it silently.
+    """
+    return slot_key in _manager_commits_in_flight
+
+
+def publish_manager(
+    slot: Any,
+    *,
+    manager: str,
+    manager_tab: str,
+    unresolved: bool = False,
+    expect_revision: int | None = None,
+) -> bool:
+    """THE ONLY WRITER of who manages *slot*. Three attributes, one statement.
+
+    ``_manager``, ``_manager_tab`` and ``_manager_unresolved`` are not three pieces of
+    state. They are one fact -- what this process can say about who drives this session
+    -- held in three attributes because an authorization answer needs the key, the
+    occupancy that qualifies it, and whether the key was ever read at all. Anything that
+    writes some of them leaves the slot describing a state that never existed, and a
+    reader arriving in between gets an answer assembled from halves of two different
+    facts.
+
+    There is no attribute for "read, and not allowed to authorize". Whether a recorded
+    grant may authorize is derived from live state where the record is APPLIED
+    (:func:`_manager_record_refusal`), so storing it here would be a stored answer to a
+    question that can be recomputed -- which is the one thing this module refuses to do
+    with an authorization input, and the shape the deleted handed-over marker had.
+
+    That is not hypothetical and it is not a matter of care at the call site. Spread
+    across the resolve, the verb, the compensation and the hydrate, they were
+    writable from twenty-one places, and the SAME ordering defect was found and fixed
+    at four of them in turn: the flag cleared, a read awaited, the key written after --
+    which publishes "resolved" with an empty key, and an empty key on a marked slot
+    reads as "the creator holds it", handing a revoked giver its reach back. Each fix
+    was correct and each left the other sites, because the invariant cannot be stated
+    at a site. Here it can be, once: every attribute is assigned, from arguments, with
+    NO suspension between them.
+
+    So this function contains no ``await`` and must never gain one, which a contract
+    test pins along with its sole ownership of the three names. A caller that needs an
+    awaited value -- the occupancy read off the log, say -- awaits it BEFORE calling
+    and passes the result, so the suspension happens while the slot still holds its
+    previous whole statement rather than a partial new one.
+
+    ``unresolved`` says the key was never read, and it defaults to False because the
+    ordinary publish is a decided answer. A decided answer is not the same as a usable
+    one: a grant this process read correctly can still be refused where it is applied,
+    and that refusal is recomputed rather than published.
+
+    EVERY CALLER HANDS IN A RECORDED VALUE. No caller may mint one here. ``manager_tab``
+    is the occupancy the ``session/manager_set`` entry carries, and the only code
+    entitled to read the live occupant of a key is the handoff, because that is where
+    the record is MADE; everything else APPLIES a record and has to use the identity
+    that record holds. The two are not interchangeable: a refusal path that stamped the
+    current occupant would write a stranger's identity into the slot, a later
+    compensation would copy it onto the log, and the log would then name a session
+    nobody handed anything -- the mirror image of putting identity on the record in the
+    first place. A path that refuses must never rewrite what it refuses.
+
+    ATOMIC IS NOT ORDERED, which is why there is a REVISION. Writing the four together
+    stops a reader seeing half of two statements; it does nothing about a statement
+    that was already old when it arrived. A resolve reads the crew log off the loop and
+    then publishes, and a handoff can commit inside that window: the entry lands, the
+    marker lands, the new manager is published -- and then the older read publishes the
+    manager it saw, which the handoff revoked. Four atomic writes of a stale fact are
+    still a lost update.
+
+    So a caller that suspends before publishing reads :func:`manager_revision` first
+    and gives it back as ``expect_revision``. A publication whose revision has moved is
+    DISCARDED and answers False: something else stated the fact meanwhile, and the
+    stale answer has nothing to add. An authoritative writer -- the handoff publishing
+    the grant it just made durable, a refusal forcing the slot unresolved -- passes
+    nothing and always wins, which is what makes the discard land on the right side.
+    Note the cost of having waited for the funnel: this is ONE check. Before these
+    writes became one function it was twenty-one.
+    """
+    if expect_revision is not None and manager_revision(slot) != expect_revision:
+        return False
+    slot._manager = manager
+    slot._manager_tab = manager_tab
+    slot._manager_unresolved = unresolved
+    slot._manager_revision = manager_revision(slot) + 1
+    return True
+
+
+def manager_record_names(slot: Any, identity: str) -> bool:
+    """Whether *slot*'s published manager record names the session *identity*.
+
+    THE ONE PLACE a tab identity is compared against the manager record, and the reason
+    it is a function rather than two comparisons is that this exact defect -- a key
+    treated as an identity -- has come back fourteen times on this line. Two askers need
+    the answer and both get it here:
+
+    * the RECORD's own staleness check, which asks whether the session answering to the
+      manager's key is still the one the record names;
+    * a CALLER claiming to be the manager, which asks whether the session asking is that
+      one. A queued delivery's stamped sender is that caller, re-asked at the drain.
+
+    False when either side is empty, because an unknown identity is not a match: a
+    record written without one, and an asker that cannot say which session it is, are
+    both unprovable and neither may be read as "yes".
+    """
+    recorded = str(getattr(slot, "_manager_tab", "") or "")
+    # Delegated, so there is ONE comparison of two identities in this feature rather
+    # than one per reader. This function's own answer is a bool because both of its
+    # callers refuse on anything but a match, and the mapping is written out so the
+    # third answer is visible here rather than hidden inside an ``and``.
+    return compare_identity(recorded, identity) == IDENTITY_SAME
+
+
+def _manager_record_refusal(state: "DashboardState", slot: Any) -> "tuple[str, str] | None":
+    """The refusal owed when *slot*'s published manager MAY NOT drive it, re-asked now.
+
+    ONE place asks whether the record still names a session allowed to hold this one,
+    for the same reason :func:`_manager_unread_refusal` is one place: every condition
+    split out of here becomes a condition each reader has to remember, and the readers
+    are added later than the condition.
+
+    EVERY PROPERTY A GRANT DEPENDS ON IS RE-DERIVED WHERE THE GRANT IS USED. That is the
+    rule, and it is the rule because a check living outside this funnel is a check some
+    path reaches the decision without -- twice over now. Each question below was
+    established when the record was PUBLISHED and can stop being true while the record
+    stands, so each is re-asked on the read rather than trusted from the resolve:
+
+    * IDENTITY -- is the session answering to the manager's key the one the record
+      names? An edge that carries only a key is ambiguous once that key's occupant is
+      a different SESSION. Key re-occupancy is not the test and would be the wrong
+      one: a close followed by a resume puts a new slot object under the same name,
+      and refusing that would break a plain resume of the very session that was handed
+      this one -- lost reach for no ambiguity at all.
+    * STORE EQUALITY -- do the two slots still agree on their memory store? That is
+      the positive principal test: a handed session and the session driving it run
+      under one principal. It is checked when the grant is admitted and when a record
+      is applied, and a store can be rebound by the manager's own routes afterwards,
+      under the manager's slot lock and not this one's. Without it, a grant admitted
+      while the stores agreed keeps answering after they stop agreeing, and the next
+      restart is what notices -- the rebuild re-validates on exactly this comparison
+      and drops the grant, so the reach is one the process holds and the log does not.
+    * THE FENCE RELATION -- does the manager still reach further than, or as far as, the
+      session it holds? ``handoff_target`` refuses a FENCED manager over an UNFENCED
+      target (``deputy_refused``), and the fence is not a property of the grant at all:
+      it is derived from the two slots' live fields, so either side can cross it
+      afterwards without the record changing. A manager becoming fenced is the case
+      that bites, and it needs no rebinding of a store and no new occupant of a key --
+      see the comment on that branch.
+
+    Same session, same store, and a manager that does not reach less than what it holds:
+    anything else, including undeterminable, refuses.
+
+    WHAT IS NOT HERE, and why each one is somewhere else rather than forgotten. The
+    manager's own SURFACE -- unattended, app-scoped, ephemeral, channel-linked, mirrored
+    -- is re-derived on every call by :func:`refuse_caller_identity` and
+    :func:`refuse_caller_surface`, because the manager is the CALLER when it drives the
+    session, and a caller-side gate is where a caller's surface belongs. Whether the log
+    could be read at all is :func:`_manager_unread_refusal`'s, which is the funnel for
+    the answers that are missing rather than wrong. And the manager key not being a crew
+    member's own DM cannot drift: the DM prefix is part of the key, and a key does not
+    change spelling.
+
+    The identity is ``_tab_id`` and it needs no new storage: it is PERSISTED
+    (``metadata_codec`` writes ``tab_id``, and ``_read_tab_id`` keeps the one it finds
+    rather than minting), so a resume carries it across while a genuinely new occupant
+    of the name mints its own. The handoff records it on its own
+    ``session/manager_set`` entry, which is where the durable half lives. It is also
+    the mechanism this module already uses for the same question on the send-origin
+    stamp.
+
+    Compared only when a manager is published: an empty ``_manager`` is the creator
+    reading, which compares ``_created_by`` the same key-to-key way and has the same
+    (pre-existing) question, and this does not reach it.
+
+    UNDETERMINABLE refuses with the different-session case: no live slot under the key,
+    a slot carrying no identity, or a record written without one. None of those is a
+    statement that the occupant is the same session, and the compare cannot be made
+    from a value nobody has.
+    """
+    from kiro_crew.members import DM_SLOT_KEY_PREFIX
+
+    manager_key = str(getattr(slot, "_manager", "") or "")
+    if not manager_key:
+        return None
+    if manager_key.startswith(DM_SLOT_KEY_PREFIX):
+        # FIRST, because it is the one property that needs no session to read: the
+        # prefix is part of the key, so it answers even for a surface this gateway
+        # never opened. It cannot drift -- a key does not change spelling -- but it is
+        # asked HERE rather than at the restore for the reason every other property is:
+        # a rule that lives where the record is applied is a rule no later reader can
+        # reach the decision without.
+        return _grant_inadmissible(
+            slot,
+            manager_key,
+            "member_dm_manager",
+            "a crew member's own session cannot manage another, so the recorded "
+            "manager cannot hold it -- hand it over again to say who does",
+        )
+    live = state.get_slot(manager_key)
+    if live is None:
+        # CLOSED, which is NO occupant rather than a different one -- and that is why it
+        # does not answer with the identity comparison below. "The session changed" is a
+        # statement about two incarnations of one name, and here there is no second
+        # incarnation to have changed into: the recorded session is gone and nothing
+        # answers to its name. What the caller must DO is the same as for every other
+        # grant that cannot be held now, so it is the same code, and the property names
+        # which comparison failed for the operator reading the log.
+        return _grant_inadmissible(
+            slot,
+            manager_key,
+            "manager_closed",
+            "the session recorded as managing the one you named is not open, so it "
+            "cannot hold it -- hand it over again to say who does",
+        )
+    if not manager_record_names(slot, _tab_identity(state, manager_key)):
+        # A session IS open under that name and it is not the one the record names, or
+        # one of the two sides carries no identity to compare. Its own code, because the
+        # caller is being told something different from "the grant cannot be held": the
+        # name it would have reached resolves to somebody else.
+        return (
+            "the session recorded as managing the one you named is not the session "
+            "answering to that name now, so who manages it cannot be identified -- "
+            "hand it over again to say who does",
+            "manager_session_changed",
+        )
+    if str(getattr(live, "memory_store", "") or "") != str(getattr(slot, "memory_store", "") or ""):
+        # The SAME comparison the admission made and the rebuild re-makes, with the
+        # same code: a record whose two sides disagree on a store is a grant that
+        # is not admissible now, and the way out is the same fresh handoff. Reached
+        # only with the identity settled above, so this is the recorded session's own
+        # binding and not some later occupant's.
+        return _grant_inadmissible(
+            slot,
+            manager_key,
+            "store_moved",
+            "the session managing the one you named is bound to a different memory "
+            "store now, so it runs under another principal and cannot hold it -- "
+            "hand it over again to say who manages it",
+        )
+    containment = _live_target_refusal(live) if live is not None else None
+    if containment is not None:
+        # THE MANAGER'S OWN CONTAINMENT, on the same terms the admission applied to the
+        # recipient: unattended, ephemeral, app-scoped, channel-linked. A grant to a
+        # session that cannot be reached at all is a grant nothing can use, and the
+        # three ways in are all reachable after the record stands -- a store rebind
+        # makes a slot ephemeral, an app can claim one, a channel link can be attached.
+        #
+        # Deliberately STRICTER than the caller gate, which waives its channel refusal
+        # for the operator's own DM. That waiver is about a caller acting for the person
+        # on their own surface; this is about a RECORD that keeps authorizing across
+        # restarts, and the module's standing direction for a record is the strict one.
+        # Keeping both means the only thing the waiver admits is the person driving
+        # their own DM, never a stored grant held by it.
+        return _grant_inadmissible(
+            slot,
+            manager_key,
+            f"manager_{containment[1]}",
+            "the session managing the one you named cannot be reached at all now, so "
+            "it cannot hold it -- hand it over again to say who manages it",
+        )
+    if _caller_is_ownership_fenced(state, manager_key) and not _caller_is_ownership_fenced(
+        state, slot.key
+    ):
+        # THE DEPUTY REFUSAL, re-derived. The same relation ``handoff_target`` refuses
+        # at admission, asked again here because the fence is not a property of the
+        # grant -- it is a property of the two SESSIONS, recomputed from live state, and
+        # either side can cross it after the grant was made. The one that matters is a
+        # manager BECOMING fenced: a channel slot surfaced before its stem resolved
+        # carries no link yet, so it is unfenced and may be handed a person's own tab;
+        # the rebind that heals it (``channel_slots._rebind_unbound_channel_slot``) then
+        # attaches the link and the manager is fenced -- without its identity or its
+        # store moving, so neither comparison above notices. What stands after that is
+        # the deputy the fence exists to prevent: a session that reaches only what it
+        # created, driving one that reaches the whole workspace, and reading the results
+        # back out through the channel its link names.
+        #
+        # Recomputed rather than recorded, which is this module's rule for an
+        # authorization input that live state can answer: a fence verdict written down
+        # at admission would be a stored answer going stale exactly as it did here.
+        #
+        # Same code as the store case and for the same reason: the recorded manager
+        # cannot hold the session NOW, nobody inherits it, and the way out is a fresh
+        # handoff. The two shapes the feature is for are untouched -- fenced manager
+        # over a fenced worker, and an owner's tab over an owner's tab -- because only
+        # the mixed direction was ever refused.
+        return _grant_inadmissible(
+            slot,
+            manager_key,
+            "fence_relation",
+            "the session managing the one you named reaches only the sessions it "
+            "created, and the one you named is not one of them, so it cannot hold it "
+            "-- hand it over again to say who manages it",
+        )
+    return None
+
+
+def _grant_inadmissible(
+    slot: Any, manager_key: str, property_name: str, message: str
+) -> "tuple[str, str]":
+    """One inadmissible-grant refusal: the CODE for the caller, the PROPERTY for the log.
+
+    The code is shared by every reason a standing grant stops being admissible, and that
+    is deliberate: a refusal code exists to tell the caller what to DO, these reasons all
+    end on the same move (hand the session over again), and two codes whose remedy is
+    identical are two names for one fact. What the shared code costs is an operator who
+    cannot tell from it WHICH comparison failed -- so the property is named here, in the
+    log, where that question is asked and where naming it discloses nothing to the caller.
+
+    The message carries no slot key and no title, like every other body this funnel
+    raises: these refusals are formed BEFORE the ownership fence has decided the caller
+    may reach the slot, so an interpolated name would answer a question the refusal is
+    supposed to withhold. The log is not a disclosure surface and names both sides.
+    """
+    logger.warning(
+        "manager read: the crew log records %s as the manager of %s and that grant is "
+        "not admissible now (%s), so manager-dependent access is DENIED until a fresh "
+        "handoff records who holds it -- the creator does not get it back, because the "
+        "log never recorded a transfer back",
+        manager_key,
+        getattr(slot, "key", ""),
+        property_name,
+    )
+    return (message, "manager_grant_inadmissible")
+
+
+#: The one refusal code about a manager that a caller may WAIT on.
+#: :func:`_arm_manager_reresolve` fires from this refusal and from no other, so this is
+#: the only one that ends without anybody doing anything. Named rather than spelled at
+#: each comparison because the difference decides whether a queued message is held or
+#: destroyed, and a second copy of that decision is how the two got treated alike.
+MANAGER_READ_PENDING = "manager_unresolved"
+
+
+def _manager_unread_refusal(
+    state: "DashboardState", slot: Any, *, for_write: bool = False
+) -> "tuple[str, str] | None":
+    """``(message, code)`` owed by a read of who manages *slot*, or ``None`` when known.
+
+    ONE place decides "the manager is not usable", for every way it can fail to be,
+    because the alternative is a condition at each reader that lists which operations
+    consult the value -- and a list like that is wrong the moment a reader is added
+    without it, which is how the same hole was closed four times on this branch. The
+    conditions that can go stale while a record STANDS live in
+    :func:`_manager_record_refusal`, which this calls, so there is one function to add
+    a staleness test to and one function every reader passes through.
+
+    EVERY BODY HERE IS GENERIC, AND THAT IS A CONTAINMENT RULE RATHER THAN A STYLE. These
+    refusals are raised from the READ, which runs BEFORE the ownership fence has decided
+    the caller may reach this slot at all -- that is the whole point of putting the guard
+    on the read, and it is also what makes the wording a disclosure surface. A refusal
+    that interpolated the target's title would answer "what is this stranger's session
+    called" to any fenced caller willing to name a key, and one that named the manager's
+    key would answer "who is driving it": a reporting oracle reached by being refused.
+    So no body carries the target's title, the manager's key, or any slot key. The CODE
+    stays specific, because the caller has to know whether to retry, and a code is a
+    fixed vocabulary that says nothing about whose session it is. Same rule as the
+    tracebacks this module drops on its fail-closed paths: a path that refuses must not
+    become the way to read what it is protecting.
+
+    All of them are PER SLOT. A slot the handed-over index names comes up unresolved
+    and is refused here until its own log is read; one whose log could not be read
+    stays refused; one whose recorded manager cannot hold it, or whose key a different
+    session now holds, is refused with its own reason. An unindexed slot never reaches
+    any of these: it was never handed over, so its creator holds it and that is decided
+    from a cached set. An empty ``_manager`` on an INDEXED slot is not evidence of
+    "unmanaged": it is the decided claim "the creator holds it", and a read that has not
+    happened cannot make that claim.
+    """
+    if not for_write and (stale := _manager_record_refusal(state, slot)) is not None:
+        # Readable for a WRITE, like the inadmissible grant and for the same reason: the
+        # refusal tells the caller to hand the session over again, and that verb has to
+        # be able to name what it is replacing. Refusing it here would make the way out
+        # unreachable and the denial permanent.
+        #
+        # AFTER the two above, because both are sharper statements about the same
+        # refusal: "the recorded manager cannot hold this session" and "the log has not
+        # been read" each say more than "whoever answers to that name is not it".
+        return stale
+    if getattr(slot, "_manager_unresolved", False):
+        # The wording tells the caller WHICH kind of wait it is in, because the two
+        # have different answers. A read already in flight will land on its own; one
+        # that has merely been scheduled is about to. Either way the refusal is
+        # self-clearing, which is what makes "retry" a true instruction and not a
+        # promise with nothing behind it.
+        reading = str(getattr(slot, "key", "") or "") in _manager_reresolve_inflight
+        return (
+            "which session manages the one you named has not been read from the crew "
+            "log yet, so this cannot be authorized against it -- "
+            + ("that read is running now" if reading else "it is being read now")
+            + ", retry in a moment",
+            MANAGER_READ_PENDING,
+        )
+    return None
+
+
+#: Slot keys whose re-resolution is already scheduled, so a slot refused once per
+#: verb does not queue one read per refusal. Discarded when the read finishes,
+#: whatever it decided -- a read that failed again leaves the slot unresolved and the
+#: next refusal is free to schedule another, which is what makes a transient store
+#: fault recoverable without a restart.
+_manager_reresolve_inflight: set[str] = set()
+
+
+def _arm_manager_reresolve(state: "DashboardState", slot: Any) -> None:
+    """Schedule the read the refusal tells the caller to retry.
+
+    Without this the refusal is a lie. ``_manager_unresolved`` is set by a read that
+    did not decide, and the only callers of :func:`resolve_slot_manager` are BUILD
+    paths -- the boot pass, a revive, a resume from history. None of them runs again
+    for a slot already open, so a slot that went unresolved stayed that way until the
+    process restarted, while every refusal said "retry in a moment". Retrying could
+    never work.
+
+    One bad unit anywhere in the store is enough to get there: the listing
+    :func:`~kiro_crew.crew_log.session_tree.slot_manager` makes is store-wide, and a
+    ``CrewLogError`` from it is not an ``OSError``, so it escapes the three handlers
+    there and lands on the catch-all -- which marks the slot unresolved. A fault that
+    clears has to be re-read, or it is permanent for the life of the gateway.
+
+    Armed from the REFUSAL, so there is no path that denies for an unread manager
+    without scheduling the read that clears it. Fire-and-forget rather than awaited,
+    because the refusal is raised from :func:`require_manager_of`, which is sync and
+    runs inside ``close_target``'s no-suspension window: scheduling a task is not a
+    suspension, and the caller is being refused either way. Held on the state's
+    background set like every other detached task here, so a shutdown can see it.
+
+    THE READ IS NOT THE WHOLE JOB: landing it also DRAINS the slot. A queue head the
+    sweep held is not retried by anything -- the drain runs on a send or a turn end, and
+    the entry that is waiting is the reason there is no turn -- so the read clearing the
+    hold without starting the queue leaves the head, and every prompt behind it, waiting
+    for an unrelated later message. Arming a read and then not acting on it is the same
+    broken promise as arming nothing.
+    """
+    key = str(getattr(slot, "key", "") or "")
+    if not key or key in _manager_reresolve_inflight:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop: a synchronous caller outside the gateway's runtime. The slot stays
+        # unresolved and the next refusal inside the loop arms the read.
+        return
+
+    async def _reread() -> None:
+        try:
+            await resolve_slot_manager(state, slot)
+            # AND THEN DRAIN WHAT THE READ UNBLOCKED. The read is what the hold was
+            # waiting for, so landing it is the trigger -- nothing else is. The queue
+            # does not start itself: a HELD head is refused by the sweep and the merge
+            # breaks at it, so until something starts a turn the head and everything
+            # behind it wait for an unrelated later send, including the prompts a person
+            # typed into this session. A refusal that arms a read it then does not act
+            # on is the same lie as a refusal that arms nothing.
+            #
+            # Handed to the drain that already owns the conditions: it re-checks the
+            # slot under its own lock (so a send that landed meanwhile is not doubled),
+            # skips a running slot, and leaves the queue alone during shutdown or before
+            # memory is prepared. Imported here because session control is optional and
+            # this module is not on the boot path.
+            from kiro_crew.dashboard.chat_runner import _drain_parked_queues
+
+            await _drain_parked_queues(state, [key])
+        except Exception:
+            logger.debug("manager re-resolve: %s could not be read", key, exc_info=True)
+        finally:
+            _manager_reresolve_inflight.discard(key)
+
+    _manager_reresolve_inflight.add(key)
+    task = loop.create_task(_reread())
+    background = getattr(state, "_background_tasks", None)
+    if isinstance(background, set):
+        background.add(task)
+        task.add_done_callback(background.discard)
+
+
+def require_manager_of(state: "DashboardState", slot: Any, *, for_write: bool = False) -> str:
+    """:func:`manager_of`, REFUSED when the value has not been read yet.
+
+    The chokepoint every authorization read goes through, and the whole reason the
+    refusal is not a condition in :func:`authorize_target` instead: a gate that asks
+    "does this operation consult the manager?" is an entry predicate approximating the
+    read, and it admitted a guessed value at three sites that reach the value without
+    passing it -- the handoff verb's own ``already_manager`` check, its commit's
+    ``previous_manager``, and :func:`broadcast_audience`. Put on the READ, the guard
+    cannot be reached around: a reader added later gets it by calling this, and a
+    reader that wants the raw value has to say so by calling :func:`manager_of`.
+
+    An unfenced caller whose operation never reads the manager is never refused by
+    this, because it never calls it -- which is the availability property the refusal
+    had to keep without widening into verbs that do not depend on the value.
+
+    A refusal for an UNREAD value also ARMS the read that clears it
+    (:func:`_arm_manager_reresolve`), so "retry in a moment" is a true instruction.
+    An inadmissible grant does not arm it, because that refusal is not about a read at
+    all: the value was read, and what fails is a comparison against live state, which a
+    store listing cannot change. Arming there would spend one listing per refusal to
+    learn nothing.
+
+    ``for_write`` is for the one caller that is not authorizing a delivery but WRITING
+    the statement that replaces the one it reads -- the handoff verb's gate and commit,
+    which need the manager they are superseding in order to record it. An inadmissible
+    grant is readable for that purpose and refused for every other, which is what keeps
+    the denial from being a dead end: the refusal tells the caller to hand the session
+    over again, and that verb has to be able to run. An UNREAD value is still refused
+    even for a write, because a statement about what is being replaced cannot be made
+    from a value nobody read. Kept as a parameter here rather than a second accessor so
+    the rule stays in one function.
+    """
+    if (refusal := _manager_unread_refusal(state, slot, for_write=for_write)) is not None:
+        if refusal[1] == MANAGER_READ_PENDING:
+            _arm_manager_reresolve(state, slot)
+        raise SessionControlError(refusal[0], code=refusal[1], status=409)
+    return manager_of(slot)
+
+
+def _managed_by_other(
+    state: "DashboardState", slot: Any, caller_key: str, caller_tab: str, *, for_write: bool = False
+) -> bool:
+    """Whether *slot* is not held by *caller_key*, by creation or by handoff.
+
+    Raises :class:`SessionControlError` when who manages *slot* is not known, because
+    it reads the value through :func:`require_manager_of`: "not held by the caller" is
+    an authorization answer and there is none to give from an unread field.
+
+    *for_write* is that read's own parameter, passed through rather than re-derived: a
+    caller asking in order to REPLACE the value needs to be able to name a record that
+    is readable and stale, or the refusal's way out -- hand the session over again --
+    is itself refused. Passing it through is what lets the handoff's own gate ask this
+    question here instead of comparing keys beside it.
+
+    *caller_tab* is the asker's own IDENTITY and has no default, because the one
+    defect this parameter exists to close is a site that forgot it. Matching the key
+    alone says a session answering to that NAME holds the slot, which a REPLACEMENT
+    under the same name also does -- so a key-only answer hands a replacement the
+    grant its predecessor was given and then lost. Required rather than optional so a
+    new asking site cannot inherit that answer by omission: the signature refuses it
+    before any test does.
+
+    Compared through :func:`manager_record_names`, the one place an identity meets the
+    record, because a second comparison written at the asking site IS this defect --
+    it has come back fourteen times, and every recurrence was a new copy of the
+    compare rather than a new idea about it.
+
+    A live session-control caller passes its own identity too, where the compare is
+    redundant by construction: the asker is the slot asking in its own process, so the
+    identity it offers is the occupant of its own key. Passed anyway because an
+    exemption is a list, a list is what a later caller is added without, and a
+    redundant dictionary read costs nothing against that.
+
+    An EMPTY identity reads key-only. It is reachable from one place -- a queued
+    entry's provenance written before this field existed, restored after an upgrade --
+    and dropping those would delete messages their senders were authorized to send and
+    still are. It grants nothing a forged provenance could not already claim by
+    stamping the recorded identity outright, so the fail-closed reading buys no
+    containment and costs real text.
+    """
+    if require_manager_of(state, slot, for_write=for_write) != caller_key:
+        return True
+    if not str(getattr(slot, "_manager", "") or ""):
+        # The key that matched is ``_created_by``, which no record carries an identity
+        # for -- the same guard :func:`_manager_record_refusal` opens with, for the
+        # same reason. There is no record here, so there is nothing about one that
+        # could have gone stale, and comparing anyway refuses every creator of a
+        # session that was never handed over: an absent record names nobody, so it
+        # names nobody who is asking.
+        return False
+    if not caller_tab:
+        return False
+    return not manager_record_names(slot, caller_tab)
+
+
+#: The operations a handoff widens, and the whole of what it widens. A session handed
+#: to a new manager can be driven and put down by that manager -- which is the point,
+#: since a conductor that cannot send to a worker cannot run it -- and nothing else
+#: moves with it.
+#:
+#: What is NOT here is the part that makes the field safe to add. ``create`` and
+#: ``fork`` mint a session, and the minted session INHERITS the caller's memory
+#: binding, so admitting a manager there would hand it the giver's memory store
+#: through a session it was given rather than one it made. The memory delegation gate
+#: (:func:`_delegation_lineage_fenced`) reads ``_created_by`` alone for the same
+#: reason, and ``_created_by`` is never written again, so a handoff cannot reach it.
+#: ``rename``, ``set_model``, ``retry`` and ``end_wait`` are left out on a narrower
+#: ground: nothing a manager needs in order to RUN its reports requires them, and a
+#: verb is widened here when a report cannot be managed without it.
+HANDOFF_WIDENED_OPERATIONS: frozenset[str] = frozenset(
+    {
+        "send",
+        "read",
+        # Authorized as a transcript read is authorized, so it moves with ``read``: a
+        # manager that may read a report's whole transcript is not withheld the cached
+        # one-line summary of it, and the giver that handed the session away keeps no
+        # window onto it either.
+        "summary",
+        "stop",
+        "close",
+        "adopt",
+        "release",
+        # The transfer itself, because the design puts the transfer in the hands of
+        # the CURRENT manager: a session handed on once has to be handable on again,
+        # or the first handoff would be the last. The receiver is authorized
+        # separately and on its own terms, so this widens WHO may give a session away
+        # and never WHICH sessions can be given.
+        "handoff",
+    }
+)
 
 
 def _app_owned_cron_refusal(state: "DashboardState", caller_key: str) -> tuple[str, str] | None:
@@ -1455,6 +2258,17 @@ QUEUED_CONTAINMENT_META_KEY = "queued_containment"
 # copies the admission dict onto the new entry's meta.
 SEND_ORIGIN_META_KEY = "send_origin_slot"
 
+# Queue-entry meta key recording the AUTHORIZATION facts of a cross-session admission:
+# which session sent it and whether the ownership fence applied. Kept apart from
+# ``SEND_ORIGIN_META_KEY`` on purpose, because the two are stripped for different
+# reasons and must not be stripped together. The routing stamp names a WRITE TARGET --
+# the drop notice is appended there -- so the restore path drops it rather than trust
+# an editable line, and it is omitted when the sender has no tab identity to check.
+# Neither reason applies to provenance, which is only ever compared and never written
+# through. Losing it with the routing stamp turned a restart (or a tab-less sender) into
+# a way past the drain's sender re-check, and the revoked sender's message then ran.
+ADMISSION_PROVENANCE_META_KEY = "admission_provenance"
+
 # Queue-entry meta key naming the CHANNEL CONVERSATION that sent a message into a
 # resumed dashboard session mid-turn (``dashboard.channel_handoff``), so a
 # drain-time drop can be reported back into that conversation: the channel was
@@ -1566,6 +2380,8 @@ def _snapshot_from_probe(
         "app": bool(getattr(slot, "_app", "")),
         "unattended": str(getattr(slot, "key", "")).startswith(UNATTENDED_SLOT_PREFIXES),
         "workspace": str(getattr(slot, "workspace", "default") or "default"),
+        # Who manages this slot is not known -- the two refusals ``require_manager_of``
+        # raises, as the one boolean the drain can compare. Both go here rather than
     }
     if probed is not None:
         # The mirror's identity, compared by its rooms (:func:`mirror_audience`):
@@ -2003,13 +2819,23 @@ def _send_origin_recipient(
     and not another: no stamp, a self-send, a closed sender, and a reused key
     whose current occupant is a different tab. An absent *origin_tab* never
     matches a live slot, so the identity check cannot be skipped by omitting it.
+
+    The identity question goes through :func:`~kiro_crew.crew_log.identity
+    .compare_identity` like every other one in this feature. Both of its unmatched
+    answers end here -- a different occupant and an unestablishable one are each a
+    sender this notice may not be written to -- but they are told apart before they get
+    here, which is the whole of the rule: the comparison computes three answers and the
+    reader decides each one, rather than a two-valued comparison deciding for it.
     """
     if not origin or origin == target_key:
         return None
     sender = state._slots.get(origin)
     if sender is None:
         return None
-    if str(getattr(sender, "_tab_id", "") or "") != str(origin_tab or ""):
+    if (
+        compare_identity(str(getattr(sender, "_tab_id", "") or ""), str(origin_tab or ""))
+        != IDENTITY_SAME
+    ):
         return None
     return sender
 
@@ -2414,7 +3240,17 @@ def _broadcast_resolution_slots(
             continue
         if getattr(slot, "workspace", "default") != getattr(caller_slot, "workspace", "default"):
             continue
-        if ownership_fenced and _created_by_other(slot, caller_key):
+        # The MANAGER reading, not the creator's, because this set decides which names a
+        # broadcast may resolve and a broadcast delivers ``send`` -- one of the verbs a
+        # handoff widens. Read ``_created_by`` here and a conductor handed a worker gets
+        # that worker in its audience and its roster while its title resolves to
+        # nothing, so the one session it was given is the one it cannot address by name.
+        #
+        # Guarded the way the audience scan is (:func:`_holds_for_audience`): an
+        # unreadable manager EXCLUDES the name rather than raising, because this
+        # function lists rather than authorizes, and every retained key is authorized
+        # again at delivery where the real refusal carries the real reason.
+        if ownership_fenced and not _holds_for_audience(state, slot, caller_key):
             continue
         out.append(slot)
     return out
@@ -2530,6 +3366,7 @@ async def create_session(
     # needs no caller lookup and must be refused before anything is allocated.
     clean_title = _clean_new_session_title(title, cap=200, not_done="session not created")
     caller_key = caller_slot_key(state, caller_session_key)
+
     if not caller_key:
         raise SessionControlError(
             "caller session could not be identified", code="caller_unidentified"
@@ -4557,6 +5394,14 @@ def authorize_target(
 
     deny = _deny_factory(caller_session_key=caller_session_key, operation=operation, target=target)
 
+    # NO manager gate here, deliberately. The refusal owed when who manages a slot has
+    # not been read yet lives on the READ (:func:`require_manager_of`), not at this
+    # entry: a condition here has to name which operations consult the value, and that
+    # list was wrong at three sites that reach the value without passing this function
+    # -- the handoff verb's ``already_manager`` check, its commit's ``previous_manager``
+    # and :func:`broadcast_audience`. It also refused callers whose answer could not
+    # change: the fence below short-circuits on ``ownership_fenced``, so an unfenced
+    # caller never reads the manager at all and is never refused for it.
     caller_key = refuse_caller_identity(
         state,
         caller_session_key=caller_session_key,
@@ -4608,7 +5453,44 @@ def authorize_target(
     # waiver an agent-created session could never release itself from a parent,
     # because its own ``_created_by`` names its creator and not itself.
     self_addressed = slot.key == caller_key
-    if ownership_fenced and not self_addressed and _created_by_other(slot, caller_key):
+    # The fence reads the slot's CURRENT holder for the verbs a handoff widens, and
+    # its creator for every other verb. Both readings come from :func:`manager_of`,
+    # which answers ``_created_by`` until something writes ``_manager`` -- so on a
+    # gateway where nothing has been handed over the two readings are the same value
+    # and this line decides exactly what ``_created_by_other`` decided before it.
+    #
+    # Split by OPERATION rather than by caller, because what a handoff moves is the
+    # right to run a session, not the right to mint one against the giver's memory
+    # binding. ``create`` and ``fork`` are not in the widened set and the memory
+    # delegation gate reads ``_created_by`` alone, so a manager that was given a
+    # worker cannot turn it into a deputy with the giver's store.
+    #
+    # The caller's own IDENTITY goes with its key, read from the key the caller is
+    # asking under -- its own. Redundant here by construction, since a live caller is
+    # the occupant of the key it was authorized as, and passed for the reason
+    # :func:`_managed_by_other` gives: the asking site that omits it is the defect,
+    # so no site omits it.
+    caller_tab = _tab_identity(state, caller_key)
+    fence_other = (
+        (lambda s, k: _managed_by_other(state, s, k, caller_tab))
+        if operation in HANDOFF_WIDENED_OPERATIONS
+        else _created_by_other
+    )
+    # The manager refusal surfaces HERE and only here, because this is the line that
+    # reads the value: ``_managed_by_other`` goes through :func:`require_manager_of`,
+    # which raises when the manager has not been read yet. Re-raised through ``deny``
+    # so the refusal carries this gate's audit shape and operation wording like every
+    # other one -- the code and the 409 come from the read, which is what decided.
+    #
+    # Short-circuit order is the availability property: ``ownership_fenced`` and
+    # ``self_addressed`` are evaluated first, so an unfenced caller and a caller
+    # addressing itself never reach the read and are never refused for an unread
+    # manager. On a gateway where nothing was ever handed over, that is every caller.
+    try:
+        fenced_out = ownership_fenced and not self_addressed and fence_other(slot, caller_key)
+    except SessionControlError as exc:
+        raise deny(exc.message, exc.code, status=exc.status) from exc
+    if fenced_out:
         # The fence every exempted caller class is bounded by, plus anything they
         # created. It reaches ONLY the sessions the caller made itself
         # (`created_by` is written at birth and rehydrated on restart). Always
@@ -5261,6 +6143,1430 @@ async def release_target(
     }
 
 
+async def _record_handed_over(state: "DashboardState", slot: "_ChatSlot") -> bool:
+    """Record *slot* in the handed-over index. Answers whether the index says so now.
+
+    WHETHER a session has ever been handed over is a fact about authorization, so it
+    lives where the entries live -- in the fenced crew log
+    (:mod:`~kiro_crew.crew_log.handed_over`) -- and not on the slot's own metadata line.
+    The line is the transcript's, and the transcript's writers include the session whose
+    grant a handoff revoked: a field there is one the losing party can clear, and
+    clearing it is worth more than forging a ``created_by``, because it hands a
+    DELIBERATELY REVOKED authorization back to a party that already exists and is
+    already authenticated rather than inventing a creator out of nothing.
+
+    It is still CHEAP for the slots that were never handed over, which is nearly all of
+    them: the index is one small file listing the distinct slots a handoff committed
+    for, read once per process and cached, so an unindexed slot is decided by a set
+    lookup and reads no history at all. That is the property the metadata marker was
+    there for, kept, with the authority moved somewhere its subject cannot write.
+
+    Off the loop, because the write is file IO under a lock. False on every way it can
+    fail, and the caller then refuses the handoff rather than publishing it: a grant the
+    index does not carry is one the next start will not read, so the recipient would
+    hold a reach that vanishes at the next restart while the giver silently gets it
+    back.
+    """
+    key = str(getattr(slot, "key", "") or "")
+    if not key:
+        return False
+    try:
+        from kiro_crew.crew_log.handed_over import record_handed_over
+
+        return bool(await asyncio.to_thread(record_handed_over, key))
+    except Exception:
+        logger.warning(
+            "session_handoff: %s could not be recorded in the handoff index",
+            key,
+            exc_info=True,
+        )
+        return False
+
+
+def _was_handed_over(slot: Any) -> "tuple[bool, bool]":
+    """``(handed_over, decided)`` for *slot*, from the handed-over index.
+
+    The gate that decides whether this slot's own log has to be read at all. A slot the
+    index does not name was never handed over, so its creator holds it and no history
+    is read; a slot it names has its log read, which is the path the rebuild already
+    walks.
+
+    ``decided`` is False when the index EXISTS and could not be established, and every
+    slot is then treated as unread rather than as unhanded -- see
+    :mod:`~kiro_crew.crew_log.handed_over` for why the empty set is the unsafe default.
+
+    Kept for the ONE caller that asks about a single slot it already holds
+    (:func:`resolve_slot_manager`, from its own thread). A BUILD path never calls this:
+    it takes one :func:`~kiro_crew.crew_log.handed_over.handed_over_slots` read off the
+    loop and passes that value to every slot it builds, because it has many slots and
+    one read answers for all of them.
+    """
+    key = str(getattr(slot, "key", "") or "")
+    if not key:
+        return (False, True)
+    from kiro_crew.crew_log.handed_over import handed_over_slots
+
+    index = handed_over_slots()
+    return (index.names(key), index.decided)
+
+
+async def resolve_slot_manager(
+    state: "DashboardState",
+    slot: "_ChatSlot",
+    *,
+    slot_manager: "Callable[[str, str], tuple[str, bool]] | None" = None,
+    slot_manager_tab: "Callable[[str, str], str] | None" = None,
+) -> bool:
+    """Establish *slot*'s manager from the crew log, re-validated. Answers whether it moved.
+
+        THE ONE WAY the field is ever established on a slot, and every path that builds one
+        must call it before publishing: the boot reconstruction, a revive, a resume from
+        history. A path that constructs a slot and publishes it without this leaves
+        ``_manager`` empty, which reads as "the creator holds it" -- so a handoff SILENTLY
+        REVERTS and the giver gets send, read, stop and close back on a session the log
+        records as driven by someone else. That is a grant handed back to someone recorded as not
+        having it, which is why this is one helper and not a check each path remembers.
+
+        One function rather than a call added per path as each is found: four earlier rounds
+        on this line each closed one hole of this shape, and the fifth would have been found
+        the same way. A path that forgets this one is a path whose slot comes up unmanaged,
+        which the tests below name directly.
+
+    THREE OUTCOMES, and only two of them give the session back to its creator. The
+        invariant is that ``_manager`` carries only a statement the log actually makes, and
+        EMPTY is a statement -- "the creator holds this session".
+
+        1. An authoritative read finds NO handoff recorded: empty, and the creator holds it.
+           The log makes that statement by having nothing to say.
+        2. A decided revert -- the ``to_creator`` entry form -- says it explicitly: empty,
+           and the creator holds it.
+        3. A recorded manager: published AS RECORDED, with no judgement made here about
+           whether it may authorize anything. That question is asked where the record is
+           applied, on live state, by :func:`_manager_record_refusal` -- so a grant whose
+           manager has since closed, moved store, or come to reach less than the session
+           it holds is refused at FIRST USE rather than at this read. Restoring does not
+           re-admit; it states what the log says.
+
+        An UNDECIDED read is none of the three and establishes nothing, so the slot stays
+        unresolved and denied until a read succeeds.
+
+        A grant the chokepoint turns down strands nobody. An unfenced caller's reach never
+        came from this field, so a person can still adopt, release, stop or close the
+        session; the only caller that loses anything is the agent that chose to hand it
+        over. The way back is a fresh handoff, which is the statement the log is missing.
+
+        UNRESOLVED is its own state and never collapses into a decided one. An undecided read
+        -- a unit that would not open, a store that could not be listed, an id this reader
+        cannot account for -- establishes nothing, so the slot keeps
+        ``_manager_unresolved`` and session control refuses the verbs whose authorization
+        reads the manager until an authoritative read succeeds. Treating that read as "no
+        handoff" instead is the one direction that lets a revoked creator back in: empty
+        means the creator holds it, which is a CLAIM, and a read that failed cannot make it.
+        A decided answer clears the flag, including a decided EMPTY one -- an entry-less log
+        is a fact about the slot -- and so does a store that was never written, where no
+        handoff can ever have been recorded.
+
+        WHETHER THE LOG CAN BE READ IS THE READER'S ANSWER TO GIVE, not a flag consulted
+        here. :func:`~kiro_crew.crew_log.session_tree.slot_manager` already separates "the
+        store is not there, so nothing was ever recorded" from "the store is there and
+        could not be read", which are the decided and undecided cases this needs. Emission
+        being switched off says neither: it stops new entries and leaves every entry
+        already on disk exactly where it is. Reading it as "no handoff is recorded" is the
+        one inference that turns an operator's config change into a revoked giver getting
+        its reach back, and the index is what makes that reachable -- an INDEXED slot is
+        one whose handoff committed, so "no records" is contradicted by the index.
+
+        *slot_manager* and *slot_manager_tab* are the boot pass's own resolved readers,
+        passed so a pass over many slots imports once. A caller that omits them gets them
+        resolved here, which is what a single revive wants.
+
+        AN UNINDEXED SLOT IS DECIDED WITHOUT READING THE LOG. The log is authoritative
+        only for a slot the crew log's handed-over index names, which the handoff records
+        after its entry lands and before it publishes. Not named means no handoff was ever
+        committed, so the creator holds the session -- outcome 1 above, established from a
+        cached set rather than from history. That is what keeps a restore from reading
+        anything for the sessions that were never handed over, which is nearly all of
+        them. The index and not the slot's own line, because the line is the transcript's
+        and the party a handoff revokes can write it.
+
+        THE ANSWER IS ONLY EVER PUBLISHED IF IT IS STILL THE NEWEST ONE. Both reads below
+        happen off the loop, and a handoff can commit inside either window -- its entry
+        lands, its marker lands, its manager is published -- which leaves this function
+        holding an answer that was true when it was read and revoked by the time it
+        returns. So the revision is taken before the first read and handed back at the
+        publish, and a publication whose revision has moved is discarded. Not a retry: a
+        read that lost a race has nothing to add, and whatever moved the revision is
+        either the authority itself or a later read of the same log.
+
+        It is also asked PER INCARNATION. A slot key is a name, and a closed session's
+        name can be taken by a new one; the grant names the tab identity it was written
+        for, so a replacement under the same name finds no entry of its own and resolves
+        as creator-held rather than inheriting a reach nobody gave it. A slot carrying no
+        identity cannot be matched against a record and stays unresolved. The INDEX is
+        keyed by slot alone, which is why it only ever says "read this slot's log": the
+        entries inside it are what tell the incarnations apart.
+    """
+    key = str(getattr(slot, "key", "") or "")
+    if not key:
+        return False
+    #: Read BEFORE THE FIRST SUSPENSION, which is the index read below -- not before
+    #: the log read further down. Every publication in this function is derived from a
+    #: read that happened off the loop, so every one of them hands this back and is
+    #: discarded if the fact moved meanwhile. Capturing it after the index read would
+    #: leave the two earliest branches unguarded, and those are the ones that publish a
+    #: CLEARED statement: a handoff committing during that read would have its manager
+    #: and its flags wiped by an older "never handed over" verdict.
+    revision = manager_revision(slot)
+    handed_over, index_decided = await asyncio.to_thread(_was_handed_over, slot)
+    if not index_decided:
+        # The index exists and could not be established, so NOTHING is known about any
+        # slot -- including this one. Refusing is the only answer available: the empty
+        # set reads as "never handed over", which would serve every slot from its
+        # creator and is exactly the answer a revoked party wants.
+        if not publish_manager(
+            slot, manager="", manager_tab="", unresolved=True, expect_revision=revision
+        ):
+            return _discarded(key, revision)
+        logger.warning(
+            "manager resolve: the handoff index could not be read, so whether %s was "
+            "ever handed over is UNKNOWN and session control refuses the verbs that "
+            "depend on its manager until the index can be read",
+            key,
+        )
+        return False
+    if not handed_over:
+        standing = str(getattr(slot, "_manager", "") or "")
+        if not publish_manager(slot, manager="", manager_tab="", expect_revision=revision):
+            return _discarded(key, revision)
+        return bool(standing)
+    #: WHICH INCARNATION of this name is asking. A record written for another one is
+    #: not an answer about this session, and an empty identity cannot be matched
+    #: against any record, which leaves the slot unresolved rather than guessing.
+    tab = str(getattr(slot, "_tab_id", "") or "")
+    if slot_manager is None:
+        try:
+            from kiro_crew.crew_log.session_tree import slot_manager as _reader
+            from kiro_crew.crew_log.session_tree import slot_manager_tab as _tab_reader
+
+            slot_manager = _reader
+            slot_manager_tab = _tab_reader
+        except Exception:
+            logger.debug("manager resolve: the crew log is not available", exc_info=True)
+
+    standing = str(getattr(slot, "_manager", "") or "")
+    manager, decided = "", False
+    if slot_manager is not None:
+        try:
+            manager, decided = await asyncio.to_thread(slot_manager, key, tab)
+        except Exception:
+            logger.debug("manager resolve: %s could not be read", key, exc_info=True)
+            manager, decided = "", False
+    if not decided:
+        # UNRESOLVED, and left that way. The read established nothing, so there is no
+        # answer to publish -- and "empty" is not the absence of an answer, it is the
+        # answer "the creator holds it", which this read cannot support. The slot stays
+        # denied for the verbs that depend on the manager until a read succeeds.
+        if not publish_manager(
+            slot, manager="", manager_tab="", unresolved=True, expect_revision=revision
+        ):
+            return _discarded(key, revision)
+        logger.warning(
+            "manager resolve: %s could not be read authoritatively, so it stays "
+            "unresolved and session control refuses the verbs that depend on it",
+            key,
+        )
+        return False
+    if manager and manager != key:
+        authority = manager
+    else:
+        # A decided revert, no entry at all, or an entry naming the slot itself: the
+        # creator holds it. A self-manager is not a shape the verb can write, so a log
+        # that states one is not trusted to state anything here.
+        authority = ""
+    # THE OCCUPANCY THE ENTRY RECORDED, read before ANY publish and before the
+    # admissibility branch, because both branches publish and both must publish the
+    # recorded value. Without it a restored manager is a bare name, and the key-to-key
+    # compare then admits whoever answers to that name now -- the same hole the live
+    # publish closes, closed with the same field and checked by the same function.
+    #
+    # Awaited here and not between two writes, which is the point of a single publish
+    # per branch: an occupancy read is store IO, so the slot keeps its previous WHOLE
+    # statement across the suspension instead of reading as resolved with no key yet
+    # written. That partial state was found four times on this line, once per write
+    # site, before the sites became one.
+    occupancy = ""
+    if authority and slot_manager_tab is not None:
+        try:
+            occupancy = str(await asyncio.to_thread(slot_manager_tab, key, tab) or "")
+        except Exception:
+            logger.debug("manager resolve: %s occupancy could not be read", key, exc_info=True)
+            occupancy = ""
+    # No manager published, or no occupancy reader on this seam, leaves this empty --
+    # UNKNOWN occupancy, which refuses rather than matching whoever holds the name.
+    # NO JUDGEMENT HERE. This read's job is to say what the LOG records, and whether
+    # that record may authorize anything is asked where the record is APPLIED
+    # (:func:`_manager_record_refusal`), on live state, every time. A verdict formed
+    # here would be a second implementation of four comparisons and a stored answer
+    # besides -- the same shape as the deleted handed-over marker, and it would go
+    # stale in the same way: a manager admissible at boot can be rebound, linked to a
+    # channel or closed a second later, and the stored verdict would still say yes.
+    #
+    # Restoring does not re-admit. The cost is one refusal at FIRST USE for a grant the
+    # chokepoint turns down, which the caller is told to resolve with a fresh handoff,
+    # and what it buys is that there is exactly one place where a grant's
+    # admissibility is decided.
+    if standing and not authority:
+        logger.info(
+            "manager resolve: %s came up holding %s and the crew log records no handoff "
+            "at all, so that record is retired and the creator holds it",
+            key,
+            standing,
+        )
+    # A CHANGE IN FLIGHT MEANS THIS READ MAY NOT PUBLISH, checked here with nothing
+    # suspending between it and the publish below. The bytes this read saw can be a
+    # statement still being made: an entry whose data reached the file and whose
+    # durability did not, whose writer is about to take it back. The revision cannot
+    # catch that -- it moves only when somebody PUBLISHES, so a change that fails
+    # before publishing leaves it untouched and the compare-and-set below passes
+    # against a value nothing moved.
+    #
+    # Declining costs one read. The writer's own publish states the outcome when it
+    # settles, and a reader that lost this race has nothing to add: it read the same
+    # log the writer is still writing.
+    if manager_commit_pending(key):
+        logger.info(
+            "manager resolve: %s has a manager change in flight, so this read does not "
+            "publish -- the writer states the outcome when its own entry settles",
+            key,
+        )
+        return False
+    # RESOLVED: an authoritative read answered, so the slot carries what the log says
+    # and the unresolved flag clears in the same statement as the value it qualifies.
+    # Whether that answer authorizes anything is not decided here.
+    if not publish_manager(
+        slot, manager=authority, manager_tab=occupancy, expect_revision=revision
+    ):
+        return _discarded(key, revision)
+    return standing != authority
+
+
+def _discarded(key: str, revision: int) -> bool:
+    """Log a publication this read lost the race for. Always answers False.
+
+    False is "nothing moved HERE", which is the truth: the fact was stated by someone
+    else while this read was off the loop, and that statement stands. Deliberately not
+    a retry -- a read that lost to a handoff would re-read the same log the handoff
+    already wrote, and one that lost to a later read of that log has nothing to add.
+    """
+    logger.info(
+        "manager resolve: %s was stated by another writer while this read was in "
+        "flight (revision moved past %d), so this answer is discarded rather than "
+        "published over the newer one",
+        key,
+        revision,
+    )
+    return False
+
+
+async def rebuild_managers_from_log(state: "DashboardState") -> int:
+    """RESTORE the manager of every live slot that was handed over. Answers how many moved.
+
+    The read half of the handoff's storage model. The crew log is the only store for WHO
+    manages a session; the crew log's handed-over index says only WHICH slots a handoff
+    was committed for, and that index is what scopes this pass. A slot it does not name was
+    never handed over: it is decided at hydrate as held by its creator and
+    :func:`resolve_slot_manager` returns for it without reading any history. Only an
+    INDEXED slot comes up unresolved, is refused the manager-dependent verbs, and waits
+    on its own log -- so the work here is proportional to the sessions that were actually
+    handed over, not to every restored tab.
+
+    For a marked slot the log decides, in three directions, and only two of them hand the
+    session to its creator: an entry-less log or an explicit ``to_creator`` record does;
+    a recorded manager that fails revalidation leaves manager-dependent access DENIED,
+    because "the recipient is not admissible" is not "no handoff happened". An UNDECIDED
+    read establishes nothing and leaves the slot unresolved; a refusal arms the re-read,
+    so it clears without a restart.
+
+    No process-wide window. Every slot that could be guessed wrong is a marked slot, and
+    every marked slot is refused on its own until its read lands, so there is no state
+    in which an unread value can be answered from ``_created_by``.
+
+    Hopped off the loop one slot at a time -- the restore driver's own shape -- so a user
+    with many tabs does not hold the loop long enough to trip the stall watchdog.
+    """
+    try:
+        from kiro_crew.crew_log.session_tree import slot_manager, slot_manager_tab
+    except Exception:
+        logger.debug("manager rebuild: the crew log is not available", exc_info=True)
+
+        def slot_manager(_slot: str, _tab: str) -> "tuple[str, bool]":  # type: ignore[misc]
+            # UNDECIDED, which leaves every marked slot refused until a read lands. A
+            # reader that cannot even be imported has not established that nothing was
+            # recorded, and the marker says something was.
+            return ("", False)
+
+        def slot_manager_tab(_slot: str, _tab: str) -> str:  # type: ignore[misc]
+            return ""
+
+    return await _restore_managers(state, slot_manager, slot_manager_tab)
+
+
+async def _restore_managers(
+    state: "DashboardState",
+    slot_manager: "Callable[[str, str], tuple[str, bool]]",
+    slot_manager_tab: "Callable[[str, str], str]",
+) -> int:
+    """The per-slot pass itself. Split out so the gate's release is one ``finally``."""
+    moved = 0
+    for slot in list(getattr(state, "_slots", {}).values()):
+        if await resolve_slot_manager(
+            state,
+            slot,
+            slot_manager=slot_manager,
+            slot_manager_tab=slot_manager_tab,
+        ):
+            moved += 1
+    if moved:
+        logger.info("Restored the manager of %d session(s) from the crew log", moved)
+        # Broadcast, because this pass runs OUTSIDE the restore's own push suspension:
+        # it is its own task off the boot path, so the coalesced boot broadcast has
+        # already gone out by the time a manager moves here.
+        try:
+            state.push_slots_update()
+        except Exception:
+            logger.debug("manager rebuild: the sidebar push failed", exc_info=True)
+    return moved
+
+
+#: One manager-mutation lock per EVENT LOOP, for the reason :data:`_tree_mutation_locks`
+#: is keyed that way: a lock constructed at import binds to whichever loop first waits on
+#: it, and the test suite runs many loops in one process.
+_manager_mutation_locks: "dict[int, asyncio.Lock]" = {}
+
+
+def _manager_mutation_lock() -> "asyncio.Lock":
+    """The lock a handoff holds across reading the current manager and publishing a new one.
+
+    Separate from :func:`_tree_mutation_lock` because it serializes a different pair of
+    reads and writes. A handoff does not read or write the tree at all -- it appends a
+    ``session/manager_set`` entry and then publishes what that entry says -- so the
+    region that has to be atomic is "read the manager this grant replaces, append, say so
+    out loud", and nothing about a tree move contends for it.
+
+    Serialized because the append and the publish are not adjacent: the index write
+    between them takes the transcript's cross-process lock off the loop. Two handoffs of
+    the same session can therefore settle their appends in the writer's order and publish
+    in the opposite one -- a slow index write on the first lets the second overtake it --
+    which leaves the log's newest statement naming one recipient and this process's
+    ``_manager`` naming the other. Both halves are individually correct, the divergence
+    is silent, and it resolves itself only at the next start, in favour of a manager the
+    gateway has not been using.
+
+    Held from the manager READ through the publish, which is what makes the pair atomic:
+    the next handoff through this lock reads the manager the previous one published rather
+    than the one it started from, so ``already_manager`` and the fence's own manager read
+    both decide on a settled answer.
+
+    Not held across :func:`authorize_target`, which does not read the manager record for
+    its own sake. The serialized region is the one that decides on manager state.
+    """
+    loop = asyncio.get_running_loop()
+    lock = _manager_mutation_locks.get(id(loop))
+    if lock is None:
+        lock = asyncio.Lock()
+        _manager_mutation_locks[id(loop)] = lock
+    return lock
+
+
+def _queued_work_refusal(
+    state: "DashboardState", slot: "_ChatSlot"
+) -> "SessionControlError | None":
+    """The refusal owed when *slot* still has work admitted for its current manager.
+
+    A HANDOFF MAY NOT MOVE THE MANAGER OUT FROM UNDER A QUEUED ENTRY. An entry waiting
+    on a busy session was authorized when it was ADMITTED, and the thing that admitted
+    it is the sender's reach -- which this verb moves. The drain does not re-check that
+    relation: the containment snapshot it compares describes the TARGET alone, while
+    this is a relation between the target's current manager and one entry's sender, so
+    it is per-entry and not a field on a per-slot snapshot. Re-checking it there means a
+    sender stamp on every entry plus a hold for the reads that have not landed, which is
+    a surface of its own and ships with the queued-send work.
+
+    A PENDING STEER IS THAT SAME WORK ONE STEP EARLIER, so both lists are read. A steer
+    handed to a running turn sits in ``_pending_steers`` until the turn confirms it, and
+    a turn that ends without confirming requeues it at the HEAD of ``_queue``
+    (``steer_queue._requeue_unconsumed_steers``, which runs on every turn exit). So a
+    slot can hold nothing in ``_queue`` and still be holding an instruction that becomes
+    a queue entry moments later, under whichever manager this verb has left behind by
+    then -- and steering a worker and then handing it to the session that should run it
+    is an ordinary sequence, not a contrived one. Reading ``_queue`` alone made the
+    refusal depend on which side of the turn boundary the caller happened to arrive on.
+    """
+    if not slot._queue and not getattr(slot, "_pending_steers", None):
+        return None
+    return SessionControlError(
+        f"{name_for_person(state, slot)!r} still has work waiting to run that was "
+        "accepted for its current manager, and handing it over now would leave those "
+        "messages to run under a different one -- send to it, or let its turn finish, "
+        "so the queue drains, then hand it over",
+        status=409,
+        code="queue_not_drained",
+    )
+
+
+def _named_in_a_row(state: "DashboardState", slot_key: str) -> str:
+    """*slot_key* named for the row: ``name (key)``, or the bare key when the two agree.
+
+    :func:`name_for_person` is this module's one definition of how a person recognises a
+    session, so the name comes from it and nothing here restates it. The key rides
+    beside the name because the row is a record a reader may act on, and two sessions can
+    carry one title: the name is what is recognised, the key is what is exact. A session
+    with no title of its own, or one this gateway does not hold, is answered by its key
+    alone, which is what :func:`name_for_person` gives for it.
+
+    Read when the row is written. The key is in the row either way, so a title that
+    changes later cannot make the row point at a different session.
+    """
+    name = name_for_person(state, slot_key)
+    return slot_key if name == slot_key else f"{name} ({slot_key})"
+
+
+async def record_handoff_in_transcript(
+    state: "DashboardState",
+    *,
+    target: "_ChatSlot",
+    manager_key: str,
+    previous_manager: str,
+) -> bool:
+    """Put the handoff in the handed-over session's own transcript, FOR A READER.
+
+    A handoff is visible in the sidebar, in the crew log, on the slot and in the
+    giver's tool reply -- and in none of those places is it visible to someone reading
+    the handed-over session's conversation. That reader sees it change hands with
+    nothing in the transcript accounting for it, which is the gap this closes.
+
+    Written for the person, and deliberately NOT addressed to the agent: a ``notice``
+    row is in :data:`history_projection.DISPLAY_ONLY_ROLES`, and
+    ``history_consolidation._prompt_rows`` drops those rows from every prompt it
+    builds, so the model in this session never sees this text. Phrasing it as an
+    instruction would be an instruction nobody receives. It states what happened, in
+    the third person, which is what a display-only row can honestly be.
+
+    Nothing the agent must act on rides here, which is what makes a display-only row
+    sufficient. A worker reaches its item through its binding, and a handoff does not
+    move the binding -- the receiving conductor opens its own item for the work it
+    takes on -- so no instruction in this row would change what the worker's next
+    ``work_brief`` or ``work_report`` resolves.
+
+    Appended through :func:`append_and_surface`, the one door that both files the row
+    and renders it in an open chat window without double-delivering it. Not a new
+    mechanism: this is the same door the dropped-delivery notices use, and a
+    ``notice`` row is the role the transcript already carries for "the gateway did
+    something to this session".
+
+    Started as the LAST statement of the handoff's commit, after the publish, so a row
+    exists only for a handoff this process published: every check that can still refuse
+    runs before it. A handoff whose caller is cancelled stops while it waits for the
+    manager entry to settle, which is before the publish, so it writes no row. That entry
+    can still land, and a later start then applies it from the crew log -- a grant
+    published by the boot rebuild rather than by this verb, and one this row does not
+    cover.
+
+    *target* is the slot OBJECT the commit published the new manager on, and this
+    function never looks a slot up by key -- that is the point of taking an object. The
+    commit suspends twice before this, on the handoff index write and on the manager
+    entry, and the only check that the target is still the session it admitted runs
+    before both. So a key that resolved to the handed-over session at the gate can
+    resolve to a DIFFERENT session by the time this runs: close the target and open a
+    new one under the same key inside those awaits, and a by-key lookup here would
+    append a handoff row to a conversation whose manager never changed. Nothing removes
+    that row afterwards, and a person reading that transcript would see a handoff that
+    never happened. The object the commit published on is this process's identity for
+    the session that was actually handed over, which is why it is what gets passed and
+    what gets written to.
+
+    :func:`_target_replaced` is then the same read-back the session verbs run: it answers
+    whether the slot registered under this key is still this object. It is reused rather
+    than restated so the identity rule has one definition -- and it already covers the
+    plain close, because a key with nothing under it holds this object just as little
+    as a key holding a replacement does. It is read TWICE, once before the window load
+    below and once after it, because that load suspends: a check made only before it
+    would be a verdict formed before the window the append writes into was even read.
+
+    ORDERED against this session's other rows by the slot's own
+    ``_handoff_record_lock``, the same shape as ``_fork_lock``. Each row is written by its
+    own detached task, so two handoffs of one session have two tasks in flight and the
+    loop decides which appends first -- and the reversal is the likely one, because a lazy
+    window is loaded by the FIRST row's task while the second finds it already in memory.
+    A reader takes rows in file order, so a reversed pair states that the session is under
+    a manager it has already left, before the move that put it there.
+
+    ASYNC for the window. A tab the user has not opened since the last start carries a
+    lazy transcript window, and the first read of ``messages`` pulls it off disk --
+    synchronously, inside :func:`append_and_surface`. On the gateway loop that is a
+    large file read with no yield, which stalls every other chat and the heartbeat with
+    it, and nothing earlier in the handoff loads that window -- its durable writes all go
+    to the crew log. :func:`load_window_off_loop` is the existing door for
+    exactly this, so the load is awaited through it first and the append then finds the
+    window already in memory. Awaited INSIDE the best-effort handler, because a window
+    that cannot be read is the same kind of failure as an append that raised: it costs
+    the row, and it must not cost the handoff.
+
+    Returns whether a row was appended. ``False`` is not a failure and does not undo
+    anything: the transfer is already committed, the reach has already moved, and this
+    is the record of it. Two cases answer ``False`` -- some other object, or none, is
+    registered under this one's key (it closed between the commit and here, or a new
+    session took the key, and in neither case is there a transcript this row belongs
+    in), and an append that raised, which is logged. Best-effort for the reason the
+    delivery notices are: withholding the row must never be able to withhold the
+    handoff.
+
+    Run through :func:`_start_handoff_record`, which is what keeps the load outside the
+    manager-mutation lock and off the caller's answer.
+    """
+    target_key = str(getattr(target, "key", "") or "")
+    if _target_replaced(state, target_key, target):
+        # Logged at debug, and distinctly from the failure below, because the two
+        # answers this function gives ``False`` for are different facts: there is no
+        # transcript to write to, or the write broke. Neither withholds anything -- the
+        # handoff is already durable -- but a reader of the log must be able to tell
+        # "the session left" from "the row failed".
+        logger.debug(
+            "session_handoff: %s is no longer the session under its key, so its handoff "
+            "to %s is not recorded in a transcript",
+            target_key,
+            manager_key,
+        )
+        return False
+    try:
+        # SERIALISED per session, over the load and the append together, so two rows for
+        # one transcript land in the order their handoffs committed. Taken before the
+        # load because the load is where they would otherwise overtake each other: the
+        # first row's task pulls the lazy window off disk while the second finds it in
+        # memory. Held against nothing but other rows for this same session.
+        async with target._handoff_record_lock:
+            # Off the loop BEFORE the append, so the append's own read of ``messages``
+            # finds the window in memory instead of pulling a lazy one off disk inline.
+            await load_window_off_loop(target)
+            if _target_replaced(state, target_key, target):
+                # Re-read AFTER the load's suspension: a key that still held this object
+                # when this function started can hold a replacement by now, and the row
+                # must not be written on the strength of the earlier read.
+                logger.debug(
+                    "session_handoff: %s left its key while its transcript window was "
+                    "being read, so its handoff to %s is not recorded",
+                    target_key,
+                    manager_key,
+                )
+                return False
+            # The clause naming the previous manager is dropped when there is no previous
+            # manager to name. The commit reads it through :func:`require_manager_of`,
+            # which answers ``""`` for a slot with neither ``_manager`` nor ``_created_by``
+            # -- a tab the owner opened -- and the owner's own tab may hand exactly such a
+            # tab over, so the empty value reaches here and "in place of ." is not a
+            # sentence a reader can use.
+            manager_named = _named_in_a_row(state, manager_key)
+            previous_named = _named_in_a_row(state, previous_manager) if previous_manager else ""
+            handed = f"This session was handed over: {manager_named} manages it now"
+            append_and_surface(
+                state,
+                target,
+                "notice",
+                f"{handed}, in place of {previous_named}." if previous_named else f"{handed}.",
+                "msg msg-info",
+            )
+    except Exception:  # pragma: no cover - the record must not undo a committed handoff
+        logger.exception(
+            "Failed to record %s's handoff to %s in its transcript", target_key, manager_key
+        )
+        return False
+    return True
+
+
+def _start_handoff_record(
+    state: "DashboardState",
+    *,
+    target: "_ChatSlot",
+    manager_key: str,
+    previous_manager: str,
+) -> None:
+    """Start :func:`record_handoff_in_transcript` as its own task.
+
+    The row is display-only and best-effort, and it is written from a commit that runs
+    inside the manager-mutation lock, which every handoff on this gateway takes. Awaiting
+    it there would put its window load -- which can be a large file read for a tab nobody
+    has opened since the last start -- inside that lock: every other handoff would wait
+    out a display-only row, and this one's caller would wait for it too. So the commit
+    starts this and goes on.
+
+    Held in ``state._background_tasks`` and not merely spawned, which is the dashboard's
+    existing door for work that outlives the frame that started it -- the fork title
+    push, the card workers and the chat handlers' own tasks all live there. The starting
+    frame returns at once, so without that reference the loop could collect the task with
+    the row half-written. The done callback discards it; the recorder reports its own
+    failures and answers ``False``, so there is no outcome left for a reader of the task
+    to take.
+
+    The ORDER of two rows for one session is the slot's own
+    ``_handoff_record_lock``, taken by the recorder rather than here, for the reason
+    ``_fork_lock`` serialises concurrent forks on a slot: two detached tasks writing one
+    transcript would otherwise append in whatever order the loop ran them, and the
+    reversal is the likely one -- a lazy window is loaded by the FIRST row's task while
+    the second finds it in memory, so the slow load belongs to the row that has to come
+    first. A reader takes rows in file order, so a reversed pair states that the session
+    is under a manager it has already left.
+    """
+    task = asyncio.ensure_future(
+        record_handoff_in_transcript(
+            state,
+            target=target,
+            manager_key=manager_key,
+            previous_manager=previous_manager,
+        )
+    )
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
+
+
+async def handoff_target(
+    state: "DashboardState",
+    *,
+    caller_session_key: str,
+    target: str,
+    to: str,
+    caller_fenced: bool | None = None,
+) -> "dict[str, Any]":
+    """Hand *target* over to *to*, which manages it from then on.
+
+    The transfer verb, and the only writer of ``_manager``. A session is created by one
+    caller and may have to be run by another -- a lead that opens a conductor and three
+    workers has to be able to put those workers under that conductor -- and today it
+    cannot: the ownership fence admits the CREATOR, so the conductor is refused
+    ``not_creator`` on every worker it was meant to run. This verb moves that answer.
+
+    Who may call it: the target's CURRENT manager, which is its creator until a handoff
+    says otherwise. That is the direction a transfer runs in -- the manager gives a
+    report away, and neither the report nor the receiving manager can take one -- and it
+    is enforced by the ownership fence itself rather than re-checked here, because
+    ``handoff`` is one of the operations the fence reads the current manager for (see
+    :data:`HANDOFF_WIDENED_OPERATIONS`). An owner driving the dashboard is not fenced at
+    all and may hand over any session in the workspace, which is the same reach the
+    owner already has for every other verb.
+
+    What the receiver must be: a session this caller ALSO controls, open, in the same
+    workspace, and not one of the slots that cannot stand in for a manager -- a cron
+    tab, a channel-linked session, an app-scoped or ephemeral session, a mirrored one
+    (all refused by :func:`authorize_target`, which this verb runs against the receiver
+    exactly as it runs against the target), or a crew member's DM. The member DM is
+    refused here rather than there because it is not a containment failure on the
+    target side at all: a member's DM slot is the member's own operating surface, bound
+    to the member's private memory store, and a session handed to it would be driven
+    under a principal the giver is not.
+
+    What moves: the reach :data:`HANDOFF_WIDENED_OPERATIONS` names -- send, read, stop,
+    close, adopt, release and a further handoff. AUTHORIZATION MOVES HERE; ENUMERATION
+    DOES NOT. The handed session stays where it is in the tree, so the sidebar and every
+    roster built on tree position still show it under the session that CREATED it, and
+    the new manager can drive a worker it cannot yet see listed as its own. That is a
+    declared intermediate state rather than an oversight: "what did I create" and "what
+    can I reach" are two different questions, the first is what the tree answers, and the
+    roster that answers the second ships with the verb's own listing work. The gap is a
+    capability only for a caller that already holds the key, which is the shape a
+    backend-first step is supposed to have, and the chain switch is off by default.
+
+    Leaving the tree alone is also what keeps ``_created_by``'s corroboration intact. The
+    projection only reports a session's creator as TRUSTED while the creator is still its
+    tree parent, so a handoff that moved the edge would break the one check that
+    independently backs the recorded creator -- for every reader, not just this verb's.
+
+    What does NOT move is ``_created_by``: the record of who OPENED the session is never
+    rewritten, the memory delegation gate and the per-creator slot cap keep reading it,
+    and a manager that was GIVEN a worker therefore cannot mint sessions against the
+    giver's memory binding.
+
+    Refused as ``already_manager`` when the receiver is already the target's manager,
+    which also covers handing a session to itself: the verb records a change, and an
+    entry that records a change where none happened is a worse answer than a refusal.
+    """
+    caller_key = caller_slot_key(state, caller_session_key)
+    recipient = (to or "").strip()
+    if not recipient:
+        raise SessionControlError("a recipient session is required", code="recipient_required")
+
+    def _receiver(*, skip_enabled_check: bool) -> "_ChatSlot":
+        """The receiver, authorized on the SAME terms as the target, plus a principal test.
+
+        Run twice -- once before the lock and once inside it -- because the receiver can
+        close, gain a channel link or be rebound to another memory store during the lock
+        wait, and a handoff is only as bounded as its later read.
+
+        The principal test is POSITIVE, and that is the whole of why it reads the stores
+        rather than asking whether the recipient is a crew member. A memory store is a
+        separate silo, and the question a handoff has to answer is whether the recipient
+        runs under the same principal as the giver -- so it is answered by the two slots
+        AGREEING on their binding, which is a fact about the slots. Asking
+        ``_member_caller`` instead would answer from the mutable config record, where
+        every unreadable or incomplete answer is False: that direction withholds member
+        status, which is right for an admission and inverted for a refusal, so a V2
+        store whose record lost ``memory_version`` would be admitted as a plain session
+        and the member would gain the handed session's reach once the record came back.
+        A session the giver created inherits the giver's binding, so the sessions this
+        verb exists for pass by construction.
+
+        The member DM prefix is still refused on its own: a DM slot is the member's own
+        operating surface rather than a session anybody runs work in, and the prefix is
+        part of the slot's key, so that refusal needs no record at all.
+        """
+        from kiro_crew.members import DM_SLOT_KEY_PREFIX
+
+        got = authorize_target(
+            state,
+            caller_session_key=caller_session_key,
+            target=recipient,
+            operation="handoff",
+            precomputed_ownership_fenced=caller_fenced,
+            skip_enabled_check=skip_enabled_check,
+        )
+        if got.key.startswith(DM_SLOT_KEY_PREFIX):
+            raise SessionControlError(
+                "a crew member's own session cannot be handed another session to manage",
+                code="member_recipient",
+            )
+        got_store = str(getattr(got, "memory_store", "") or "")
+        giver = state.get_slot(caller_key)
+        giver_store = str(getattr(giver, "memory_store", "") or "") if giver is not None else ""
+        if got_store != giver_store:
+            raise SessionControlError(
+                f"{name_for_person(state, recipient)!r} is bound to a different "
+                "memory store, so it runs under another principal and cannot be handed "
+                "a session to manage",
+                code="recipient_other_store",
+            )
+        # The TARGET's binding too, which is the admission a RESTART re-applies. The two
+        # comparisons are different questions and the second is the one that has to
+        # outlive the process: the rebuild re-validates a recorded grant by comparing the
+        # manager against the session it manages, so a handoff admitted only on the
+        # giver's binding can be accepted now and silently revoked at the next start.
+        # Three sessions make them disagree -- an owner-rooted lead on the default store
+        # dispatches a member-store worker and a default-store conductor, and giver and
+        # recipient agree while recipient and worker do not. Refusing up front is the
+        # honest answer; accepting a grant the next boot will drop is not.
+        #
+        # The comparison against the TARGET is not made here, and neither is the deputy
+        # refusal: both need the target SLOT, and this function has only the string the
+        # caller typed. ``_resolve_slot`` accepts a slot key, a transcript stem and a
+        # title, so a key lookup on that string answers None for two of the three forms
+        # -- and a check that silently does not run is worse than no check. They live in
+        # :func:`_gate` instead, which is handed the RESOLVED slot.
+        return got
+
+    def _target_side_refusals(handed: "_ChatSlot", receiver: "_ChatSlot") -> None:
+        """The refusals that compare the recipient against the SESSION BEING HANDED.
+
+        Separated from the recipient's own admission because they need a different
+        thing: the recipient is named by one string this verb resolves once, while the
+        target is named by any of the forms ``_resolve_slot`` accepts -- a slot key, a
+        transcript stem, or the title on screen. A check written against the caller's
+        string instead of the resolved slot runs on one of those forms and silently
+        skips the rest, which is how a refusal that is correct where it runs reaches the
+        decision without running.
+
+        Called with the resolved slot from :func:`_gate`, which runs after
+        ``authorize_target`` has resolved and authorized the target and before anything
+        is appended -- so one copy covers every naming form.
+        """
+        receiver_store = str(getattr(receiver, "memory_store", "") or "")
+        if receiver_store != str(getattr(handed, "memory_store", "") or ""):
+            raise SessionControlError(
+                f"{name_for_person(state, receiver)!r} and "
+                f"{name_for_person(state, handed)!r} are bound to different memory "
+                "stores, so they run under different principals and the handoff would "
+                "not survive a restart",
+                code="recipient_other_store",
+            )
+        # A FENCED recipient may not be handed an UNFENCED session. The fence decides
+        # what a caller may reach, and for the verbs a handoff widens it reads the
+        # manager -- so a fenced worker given a person's own tab drives a session the
+        # fence does not apply to, and through it reaches every session in the workspace
+        # while reading the results back. That is the deputy the fence exists to prevent,
+        # assembled out of two admissions that are each correct on their own.
+        #
+        # Refused HERE rather than by making a managed slot count as fenced, which would
+        # change the TARGET's fence status as a side effect of being managed: a person's
+        # own tab would silently lose its own reach for having been handed to someone.
+        #
+        # What this costs is nothing the feature is for. A lead handing agent-created
+        # workers to an agent-created conductor is fenced to fenced. An owner handing one
+        # of their own tabs to another of their own is unfenced to unfenced. Only the
+        # mixed direction is refused, and only that one direction builds a deputy.
+        if _caller_is_ownership_fenced(state, receiver.key) and not _caller_is_ownership_fenced(
+            state, handed.key
+        ):
+            raise SessionControlError(
+                f"{name_for_person(state, receiver)!r} reaches only the sessions it "
+                f"created, and {name_for_person(state, handed)!r} is not one of them "
+                "-- handing it over would let it drive a session that reaches further "
+                "than it does",
+                code="deputy_refused",
+            )
+
+    await prewarm_enabled_check()
+    # AUDITED, and keyed to the target rather than the recipient. This resolution carries
+    # the recipient-side refusals nothing else records -- ``member_recipient``,
+    # ``recipient_other_store``, and whatever ``authorize_target`` refuses the recipient
+    # on -- and each of them is an attempt to put a session under a principal that may
+    # not have it, which is the kind of denial the SEL exists for. The target is what the
+    # record is about because it is the session whose control was being moved; the
+    # recipient appears in the refusal's own message.
+    with _audit_denials(
+        caller_session_key=caller_session_key, operation="handoff", slot_key=target
+    ):
+        receiver = _receiver(skip_enabled_check=False)
+    receiver_key = receiver.key
+    # The receiver's OBJECT, for the reason the mover captures the target's: a close
+    # plus a same-key reopen inside the lock wait would otherwise hand the session to a
+    # conversation that never agreed to anything, under a key that still resolves.
+    receiver_at_resolve = _slot_object(state, receiver_key)
+    #: The principal the recipient was admitted on: the memory store both slots shared
+    #: at that moment. Captured, because what the publication below has to re-establish
+    #: is that the recipient is still the session the admission judged -- not whatever
+    #: the giver happens to be bound to later.
+    admitted_store = str(getattr(receiver, "memory_store", "") or "")
+
+    def _recipient_still_admissible(handed: "_ChatSlot") -> bool:
+        """Whether the recipient is still the session the gate admitted, for *handed*.
+
+        Read SYNCHRONOUSLY, with no config and no IO, immediately before the reach
+        moves -- which is the only place it can be read usefully. Every other check in
+        this verb happens before the save, and the save suspends: the recipient's own
+        routes take the recipient's slot lock and not this verb's, so inside that
+        window its agent can be switched, its memory store rebound to another
+        principal's, a channel link attached, or the session closed and reopened under
+        the same key. Each of those changes WHO would hold the handed session, so each
+        of them has to be re-established here rather than assumed from the gate.
+
+        Attribute reads on captured objects, so it is safe in the save's worker: the
+        object identity test is what a key-only test cannot do, the store tests are the
+        principal rule, and :func:`_live_target_refusal` is the same target-side
+        containment ``authorize_target`` applied at admission.
+
+        Both store comparisons are re-read here, and the one against *handed* is the one
+        a RESTART will apply: the rebuild re-validates a recorded grant by comparing the
+        manager against the session it manages, so a publication admitted on the giver's
+        binding alone would be dropped at the next start. Either slot can be rebound
+        inside the append's own suspension, so neither reading survives from the gate.
+        """
+        from kiro_crew.members import DM_SLOT_KEY_PREFIX
+
+        live = state.get_slot(receiver_key)
+        if live is None or live is not receiver_at_resolve:
+            return False
+        if str(getattr(live, "key", "") or "").startswith(DM_SLOT_KEY_PREFIX):
+            return False
+        live_store = str(getattr(live, "memory_store", "") or "")
+        if live_store != admitted_store:
+            return False
+        if live_store != str(getattr(handed, "memory_store", "") or ""):
+            return False
+        return _live_target_refusal(live) is None
+
+    #: The manager the handoff replaced, read under the lock by the commit below and
+    #: reported to the caller. A list because the commit is a closure and this is the
+    #: one value it has to hand back.
+    replaced: list[str] = []
+
+    def _gate(slot: "_ChatSlot") -> None:
+        # "Already manages" is asked through :func:`_managed_by_other`, the same
+        # predicate the fence asks it with, and with the receiver's IDENTITY beside its
+        # key. A key-only answer here closes the one way OUT of a stale record: when the
+        # recorded manager is gone and a different session answers to its name, the
+        # refusal everywhere else says to hand the session over again -- and this gate
+        # would refuse that handoff as redundant, because the name matches. The record
+        # names a session that is not the one being handed it, so there is something to
+        # hand over, and ``for_write`` is what lets the read say so instead of raising.
+        if slot.key == receiver_key or not _managed_by_other(
+            state, slot, receiver_key, _tab_identity(state, receiver_key), for_write=True
+        ):
+            raise SessionControlError(
+                f"{name_for_person(state, receiver_key)!r} already manages "
+                f"{name_for_person(state, slot)!r}, so there is nothing to hand over",
+                code="already_manager",
+            )
+        again = _receiver(skip_enabled_check=True)
+        if again.key != receiver_key or _target_replaced(state, receiver_key, receiver_at_resolve):
+            raise SessionControlError(
+                f"{name_for_person(state, receiver_key)!r} is not the same session it "
+                "was when the handoff started -- retry to hand over to the one open now",
+                status=409,
+                code="recipient_replaced",
+            )
+        # The two refusals that compare the recipient against the session being handed,
+        # applied to the RESOLVED slot and so to every form the caller may have named it
+        # by. This gate is where the verb first holds that slot: ``authorize_target`` has
+        # resolved and authorized it, and nothing has been appended yet.
+        _target_side_refusals(slot, again)
+        # QUEUED WORK, asked here so the refusal is audited and the caller is told before
+        # anything is appended. Asked again at the deciding point below, because the gate
+        # runs before the append and a send can land in that suspension.
+        if (queued := _queued_work_refusal(state, slot)) is not None:
+            raise queued
+
+    async def _commit(slot: "_ChatSlot", target_sid: str) -> None:
+        """Record the new manager, then publish it on the slot.
+
+        The commit point is this verb's own ``session/manager_set`` entry, appended and
+        awaited here. That entry states who manages the target, it is append-only, and a
+        start rebuilds ``_manager`` from the newest one per slot -- so the crew log is
+        the authority, and the only store for WHO manages it. Nothing is published until
+        the entry is on disk, and then one INDEX ENTRY says the log has
+        an answer -- in the crew log's own handed-over index, never on the slot's line
+        and never the manager itself, so there is no cached value to fall out of date
+        with the log and nothing the revoked party can rewrite.
+
+        ``_manager`` is this process's copy of that entry, and nothing else writes it.
+        A writer that reaches the slot while this runs -- a turn's own save, the
+        periodic flush -- encodes a line the manager is not on, so there is no path by
+        which a value here reaches disk ahead of its record, no pending value for
+        another writer to pick up, and no retraction debt to carry.
+
+        The recipient is re-established TWICE, and the second time is the one that
+        decides. The gate's verdict is formed before the append, and the append
+        suspends: the recipient's own routes take its slot lock and not this verb's, so
+        inside that suspension its agent can be switched, its memory store rebound to
+        another principal's, a channel link attached, or the session closed and reopened
+        under the same key. Each of those changes WHO would hold the handed session, so
+        the check that matters is the one immediately before the publish, with nothing
+        suspending after it. The earlier one is kept because it is free and spares the
+        log a correction in the common case.
+
+        A refusal in that window is CORRECTED on the log, not merely left unpublished.
+        The entry is already the authority, so a refused handoff whose entry stands
+        would be granted at the next boot by the very record the refusal was supposed
+        to prevent.
+        """
+        previous_manager = require_manager_of(state, slot, for_write=True)
+        #: The PUBLISHED manager this handoff replaces, which is what a correction has to
+        #: restore. Deliberately not ``previous_manager``: that one reads through to the
+        #: creator for a slot never handed over, and a correction naming the creator
+        #: would state a handoff TO the creator rather than none at all.
+        previously_published = str(getattr(slot, "_manager", "") or "")
+        #: The OCCUPANCY that record carried, captured in the same breath as the key it
+        #: qualifies. A correction has to restore the whole earlier statement, and
+        #: re-reading the occupancy when the correction is written would stamp whoever
+        #: answers to the name THEN -- which is the bare-name hole, reintroduced by the
+        #: compensation. Read here, under the lock, beside the key.
+        previously_published_tab = str(getattr(slot, "_manager_tab", "") or "")
+        #: WHICH SESSION is being handed over, on the entry and on its correction. The
+        #: slot key is a name and a closed session's name can be taken by a new one, so
+        #: an entry qualified by key alone is applied at the next start to whoever holds
+        #: the name. Refused rather than written weakly when the target carries no
+        #: identity: a record nothing can attribute is one a later occupant reads as its
+        #: own, which is the whole defect this field closes.
+        handed_tab = str(getattr(slot, "_tab_id", "") or "")
+        #: The recipient's OCCUPANCY, read ONCE and used for both the entry and the
+        #: publish. This is the one place entitled to read the live occupant of a key,
+        #: because this is where the record is MADE -- everywhere else applies a record
+        #: and must use the identity that record carries. Reading it twice would let the
+        #: two differ, which is the same defect in miniature: the published value has to
+        #: BE the recorded value, not another look at the same key.
+        receiver_tab = _tab_identity(state, receiver_key)
+        if not handed_tab:
+            raise SessionControlError(
+                f"{name_for_person(state, slot)!r} carries no session identity, so a "
+                "handoff of it could not be recorded in a way a restart can attribute "
+                "to this session rather than to a later one under the same name",
+                status=409,
+                code="handoff_not_recorded",
+            )
+        if not _recipient_still_admissible(slot):
+            raise SessionControlError(
+                f"{name_for_person(state, receiver_key)!r} changed while the handoff "
+                f"was being recorded, so {name_for_person(state, slot)!r} was not given "
+                "to it -- retry to hand over to the session open now",
+                status=409,
+                code="recipient_replaced",
+            )
+
+        async def _take_back() -> None:
+            """Put the log's newest manager statement back where it was.
+
+            A correction that could not be made durable leaves this process UNABLE TO
+            SAY who manages the slot, and it must stop claiming it does. The log may
+            now end with the refused grant -- the queued entry can still land, and a
+            rebuild folds the newest statement per slot -- while this process goes on
+            answering the giver from a field the grant was never published to. That is
+            a reach granted here and revoked at the next start, which is the one
+            direction this whole verb exists to avoid.
+
+            So the slot goes UNRESOLVED, which is default-deny: every reader that
+            authorizes against the manager goes through
+            :func:`require_manager_of` and is refused until an authoritative read
+            succeeds. ``resolve_slot_manager`` is what clears it, and it reads the log
+            -- so once the writer drains, this process agrees with whatever the log
+            actually says, grant or correction, instead of waiting for a restart to
+            disagree with it.
+
+            Deliberately NOT a retry. A writer backed up enough to time out the grant's
+            settlement is the same writer at its ceiling that rejected this correction,
+            so the two failures arrive together and a retry spends the caller's time to
+            reach the same place. Refusing to answer costs one read; guessing costs the
+            giver a reach it will lose.
+
+            EITHER WAY THIS PROCESS STATES SOMETHING, which is what keeps a read that is
+            already in flight from landing on top of it. A correction moves the LOG; a
+            resolve that read the log before it holds the refused recipient and a
+            revision snapshot that nothing has advanced, so its publish would pass the
+            check and grant exactly the reach this verb refused. Restating the outcome
+            advances the revision and discards that read. It needs no lock over the
+            window: every ordering ends on a statement made here, because the
+            restatement is unconditional and the resolve's is not. The resolve publishing
+            first changes nothing -- this overwrites it; publishing later is discarded.
+            """
+            if await _revoke_manager_record(
+                target_sid=target_sid,
+                slot_key=slot.key,
+                refused_manager=receiver_key,
+                slot_tab=handed_tab,
+                previously_published=previously_published,
+                previously_published_tab=previously_published_tab,
+            ):
+                # RESTATED, not merely left alone. The correction moved the log without
+                # this process saying anything, and a resolve already in flight read the
+                # log BEFORE the correction: its answer is the refused recipient, its
+                # revision snapshot is still current because nothing published, and its
+                # publish would therefore pass the check and authorize the session this
+                # verb just refused. Saying the restored statement out loud is what
+                # makes that read stale -- the value is the one the slot already holds,
+                # so the only thing this changes is the revision, which is the point.
+                #
+                # ``unresolved`` is False because the log's content is known here --
+                # this process just wrote it -- and an unresolved slot could not have
+                # reached this verb at all, since its gate reads the manager. Whether
+                # the restored grant may authorize is not restated either way: that is
+                # recomputed where it is applied, so there is nothing here to carry.
+                publish_manager(
+                    slot,
+                    manager=previously_published,
+                    manager_tab=previously_published_tab,
+                )
+            else:
+                publish_manager(slot, manager="", manager_tab="", unresolved=True)
+                logger.error(
+                    "session_handoff: %s was NOT given to %s, and the record of that "
+                    "handoff could not be taken back -- the log may name %s as its "
+                    "manager, so who manages %s is now UNRESOLVED and session control "
+                    "refuses it until the log is read again",
+                    slot.key,
+                    receiver_key,
+                    receiver_key,
+                    slot.key,
+                )
+
+        # THE INDEX ENTRY, written FIRST, which is the whole shape of this sequence.
+        # The log entry is the AUTHORITY -- a start rebuilds the manager from it -- and
+        # the index only says the log is worth reading for this slot at all. Writing the
+        # authority first is what made every later refusal owe a CORRECTION, and a
+        # correction is itself a write that can fail; so the cheap discardable statement
+        # goes first and the authority goes last, as the single commit point.
+        #
+        # Its failure direction is the safe one, which is what makes this order sound.
+        # An index naming a slot whose log holds no manager entry costs ONE wasted log
+        # read and resolves to "the creator holds it" -- the truth, when the append
+        # below never happened. The reverse is the dangerous one: a log naming a manager
+        # the index does not point at is a grant the next start never reads, so the
+        # recipient holds a reach that vanishes while the giver silently gets it back.
+        # The old order produced exactly that state on failure and then had to repair it.
+        if not await _record_handed_over(state, slot):
+            raise SessionControlError(
+                f"the handoff of {name_for_person(state, slot)!r} could not be recorded "
+                f"in the handoff index, so "
+                f"{name_for_person(state, previous_manager)!r} still manages it -- retry",
+                status=409,
+                code="handoff_not_recorded",
+            )
+        # Re-established after the index write's suspension, which takes the
+        # transcript's cross-process lock off the loop. Inside it the recipient's own
+        # routes -- which take the recipient's slot lock and not this verb's -- can
+        # switch its agent, rebind its memory store to another principal's, attach a
+        # channel link, or close and reopen the session under the same key. Nothing is
+        # on the log yet, so this refusal has nothing to take back.
+        if not _recipient_still_admissible(slot):
+            raise SessionControlError(
+                f"{name_for_person(state, receiver_key)!r} changed while the handoff "
+                f"was being recorded, so {name_for_person(state, slot)!r} was not given "
+                "to it -- retry to hand over to the session open now",
+                status=409,
+                code="recipient_replaced",
+            )
+        # THE QUEUE, read with nothing able to add to it before the commit. A send
+        # admitted for the CURRENT manager must not be left to run under a different
+        # one, and this is the last read of the queue -- no later one is needed, because
+        # ``send_to_target`` refuses while this commit is marked in flight, so no entry
+        # can arrive between here and the publish. Nothing is on the log yet either, so
+        # this refusal writes nothing.
+        if (queued := _queued_work_refusal(state, slot)) is not None:
+            raise queued
+        # THE COMMIT POINT, and now the LAST step. This entry is what makes the handoff
+        # durable and what a start rebuilds the manager from, so nothing is published
+        # until it is on disk -- and nothing that can REFUSE runs after it except the
+        # one re-check the append's own suspension forces.
+        # The settlement is read in THREE values because the two ways of not being on
+        # disk need opposite handling here: a refused append left nothing behind, and an
+        # append still queued can land after this verb has refused.
+        settlement = await crew_log_emit.awaiting_settlement(
+            lambda settled: _emit_manager_record(
+                target_sid,
+                slot_key=slot.key,
+                slot_tab=handed_tab,
+                manager=receiver_key,
+                manager_tab=receiver_tab,
+                previous=previous_manager,
+                to_creator=False,
+                on_settled=settled,
+            ),
+            what=f"the handoff of {slot.key} to {receiver_key}",
+        )
+        if settlement is not True:
+            if settlement is None:
+                # Still queued, outcome unknown. It may land at any time after this
+                # refusal, so the correction goes on the log behind it.
+                await _take_back()
+            else:
+                # REFUSED, and the log was rolled back by its own writer -- so the disk
+                # is already right and there is nothing to correct there. A correction
+                # here would be worse than nothing: it would record a transfer back from
+                # a handoff the log never carried, which is the same invented statement
+                # a revert naming the creator makes.
+                #
+                # The MEMORY half is still owed, and that is this branch's whole reason:
+                # a rollback that put the disk back and left this process having said
+                # nothing is a rollback that was half done. Stating the restored
+                # manager is what finishes it -- and what that statement does is
+                # advance the revision, which is how a read that is already in flight
+                # is discarded. Such a read took its snapshot before this verb began
+                # and publishes after it returned, so it is outside the mark above and
+                # the mark cannot help it; its answer is the grant this verb refused.
+                # Unconditional and authoritative -- no ``expect_revision`` -- because
+                # this is the outcome, not a guess derived from an older read.
+                publish_manager(
+                    slot,
+                    manager=previously_published,
+                    manager_tab=previously_published_tab,
+                )
+            if getattr(slot, "_manager_unresolved", False):
+                # The correction did not land either, so "the giver still manages it"
+                # is a claim this verb cannot make -- the log may name the recipient.
+                # Said plainly, with its own code, because the caller's next move is
+                # different: there is nothing to retry until the gateway can read the
+                # log again, and until then the session answers no one.
+                raise SessionControlError(
+                    f"the handoff of {name_for_person(state, slot)!r} could not be "
+                    "recorded and could not be taken back, so which session manages it "
+                    "is now unknown until the crew log is read again",
+                    status=409,
+                    code="handoff_unresolved",
+                )
+            raise SessionControlError(
+                f"the handoff of {name_for_person(state, slot)!r} could not be "
+                f"recorded, so {name_for_person(state, previous_manager)!r} still "
+                "manages it -- retry",
+                status=409,
+                code="handoff_not_recorded",
+            )
+        # THE CHECK THAT DECIDES, and the ONLY refusal left past the commit point. The
+        # append suspends, and inside that suspension the recipient's own routes -- which
+        # take the recipient's slot lock and not this verb's -- can switch its agent,
+        # rebind its memory store to another principal's, attach a channel link, or close
+        # and reopen the session under the same key. A verdict formed before the append
+        # is a verdict about a session that may not be the one about to be handed a
+        # worker, so this one has to run here, after it.
+        #
+        # This is therefore the one path that still owes a CORRECTION, together with an
+        # undecided settlement above. Every other refusal moved AHEAD of the commit
+        # point, where it writes nothing and owes nothing. A correction can itself fail
+        # to be written, and closing that needs a durable statement that a take-back is
+        # owed -- a persistent shape this verb does not have, so the slot goes unresolved
+        # and the exposure is stated in the pull request rather than left to be found.
+        if not _recipient_still_admissible(slot):
+            await _take_back()
+            raise SessionControlError(
+                f"{name_for_person(state, receiver_key)!r} changed while the handoff "
+                f"was being recorded, so {name_for_person(state, slot)!r} was not given "
+                "to it -- retry to hand over to the session open now",
+                status=409,
+                code="recipient_replaced",
+            )
+        # One statement, no suspension between the check above and it: the key, the
+        # occupancy that qualifies it, and the two refusal flags cleared -- a handoff is
+        # the statement the log was missing, so a slot denied for an inadmissible grant
+        # is servable again the moment one lands.
+        publish_manager(slot, manager=receiver_key, manager_tab=receiver_tab)
+        replaced.append(previous_manager)
+        # Two writes, in this order and no other: the INDEX (that the log is worth
+        # reading for this slot) and then the ENTRY (who holds it). Both land in the
+        # fenced crew log; nothing about who manages a session is written to the slot's
+        # own line, where the party a handoff revokes could rewrite it.
+        #
+        # The transcript row is STARTED here, as the commit's last statement, and not
+        # awaited. Last, so a row exists only for a handoff that published: every check
+        # that can still refuse runs above this line. Not awaited, because this commit
+        # runs inside the manager-mutation lock, and the row's window load can be a large
+        # file read -- an await here would hold every other handoff on this gateway
+        # behind a display-only row. It takes *slot*, the object the publish happened
+        # on, and it raises nothing.
+        _start_handoff_record(
+            state,
+            target=slot,
+            manager_key=receiver_key,
+            # The TARGET's own previous manager, the same value the reply carries and
+            # for the same reason: naming the caller would put a session that never
+            # managed this one into its transcript.
+            previous_manager=previous_manager,
+        )
+
+    # Warmed off-loop with NOTHING suspending before the gate: ``authorize_target`` is
+    # synchronous and its ``session_control_enabled()`` re-reads and validates the config
+    # file on the first call after an edit, so an unwarmed gate blocks the shared loop for
+    # every other session. The pre-lock gate and the in-lock re-check each get their own
+    # warm, since the lock wait between them is exactly the suspension that invalidates
+    # the first.
+    await prewarm_enabled_check()
+    slot = authorize_target(
+        state,
+        caller_session_key=caller_session_key,
+        target=target,
+        operation="handoff",
+        precomputed_ownership_fenced=caller_fenced,
+    )
+    with _audit_denials(
+        caller_session_key=caller_session_key, operation="handoff", slot_key=slot.key
+    ):
+        # INSIDE the audit block. This verb's own caller rule refuses on its own codes --
+        # ``already_manager``, a recipient that changed under its key, the two refusals
+        # that compare the recipient against the session being handed -- and a refusal
+        # nobody records is a refusal nobody can review: the SEL is where a denied
+        # attempt to take over another session has to show up.
+        _gate(slot)
+        from kiro_crew.crew_log import emit as crew_log_emit
+
+        # The TARGET's object, captured before the first suspension, so the final
+        # authorization can tell the session it admitted apart from a same-key
+        # replacement. Everything about the target below -- the gate's re-resolve, the
+        # ``_live_sid_of`` mapping read -- is keyed by ``slot.key``, and a key is not an
+        # identity: the target can close and a NEW session can open under the same slot
+        # key in the awaits ahead, and every key-only check then answers for the
+        # replacement. The grant would be appended against a conversation that never took
+        # part, in an entry nothing later corrects.
+        target_at_resolve = _slot_object(state, slot.key)
+        target_sid = _live_sid_of(state, slot.key)
+        if not crew_log_emit.enabled() or not target_sid:
+            # Checked FIRST because it is the PERMANENT refusal: with no log for the
+            # target there is nowhere to write the grant and no later retry helps, so a
+            # caller must not be told to come back. Reported rather than answered with a
+            # success nothing carries -- the entry IS the handoff, and a verb whose
+            # record cannot be written has not done anything.
+            raise SessionControlError(
+                "the sessions on this gateway are not being recorded in the crew log, "
+                "so a handoff of one could not be written down and would be gone at the "
+                "next start",
+                status=409,
+                code="handoff_unavailable",
+            )
+        async with _manager_mutation_lock():
+            # RE-AUTHORIZED here, and this is not the same question the pre-lock call
+            # answered. That call decided on a state read before the wait, and the wait is
+            # unbounded: the verb ahead in the queue awaits its own append, and anything
+            # the gate reads can move meanwhile -- the target can be stopped or closed,
+            # the caller's grant can be withdrawn, either side can gain a channel link.
+            # Writing on the earlier answer would record a grant nobody was entitled to
+            # at the moment it landed. The pre-lock call is kept because it is the cheap
+            # refusal: an unauthorized caller never contends for this lock at all.
+            await prewarm_enabled_check()
+            slot = authorize_target(
+                state,
+                caller_session_key=caller_session_key,
+                target=target,
+                operation="handoff",
+                precomputed_ownership_fenced=caller_fenced,
+            )
+            # The verb's OWN caller rule, re-asked here for the reason the fence above
+            # is: a rule decided before the lock wait is a rule decided on stale state,
+            # and this one can go stale in the way that matters most -- the giver can
+            # stop being the target's manager inside the wait, because another handoff
+            # landed.
+            _gate(slot)
+            target_sid = _live_sid_of(state, slot.key)
+            if not crew_log_emit.enabled() or not target_sid:
+                raise SessionControlError(
+                    "the sessions on this gateway are not being recorded in the crew "
+                    "log, so a handoff of one could not be written down and would be "
+                    "gone at the next start",
+                    status=409,
+                    code="handoff_unavailable",
+                )
+            # REFUSED -- not silently re-resolved -- when the slot under the target key
+            # is a different session from the one the pre-lock gate admitted. The gate
+            # re-resolves BY KEY and ``_live_sid_of`` reads the mapping BY KEY, so a
+            # close plus a same-key reopen inside the awaits above leaves both answering
+            # for the replacement: an open session that passes every fence, whose log
+            # ``target_sid`` now names. The grant would then be appended against a
+            # conversation that never took part, and the entry is append-only. The
+            # captured object is this process's identity for the admitted session, so the
+            # ``is`` comparison is what the key-only checks cannot do. A caller may
+            # retry: a fresh attempt resolves the current session honestly.
+            if _target_replaced(state, slot.key, target_at_resolve):
+                raise SessionControlError(
+                    f"{target!r} was replaced by a new session under the same key, so "
+                    "the handoff would name a session that never took part -- retry to "
+                    "act on the current one",
+                    status=409,
+                    code="target_replaced",
+                )
+            # MARKED IN FLIGHT across the whole commit, entered synchronously and left
+            # in the helper's own ``finally``. From here until the outcome is stated,
+            # the log can hold a grant whose durability nobody has confirmed, or one
+            # this verb is in the middle of taking back -- and a startup read that saw
+            # those bytes would publish a statement still being made. The mark tells
+            # that reader to stand down. It needs no lock: the reader's check and its
+            # publish are adjacent on one event loop, and this verb's own publishes
+            # happen inside the mark where no reader can be between them.
+            with manager_commit_in_flight(slot.key):
+                await _commit(slot, target_sid)
+            # AUDITED after the commit, inside the lock, and only once the reach has
+            # actually moved: every refusal above raised through ``_audit_denials``,
+            # which wrote the ``denied`` line, and this is the one path where the grant
+            # landed. The detail names the manager it replaced rather than the caller --
+            # an owner handing over a worker somebody else created is not the manager it
+            # replaced.
+            _audit(
+                caller_session_key=caller_session_key,
+                operation="handoff",
+                slot_key=slot.key,
+                outcome="allowed",
+                detail={"previous_manager": replaced[0] or "none"},
+            )
+            # The sidebar is told because the handed session's ROW changed -- it now
+            # reports a manager -- even though its position under its creator did not.
+            state.push_slots_update()
+    return {
+        "target": slot.key,
+        "manager": receiver_key,
+        # The manager this handoff replaced, read from the TARGET before the grant and
+        # not inferred from the caller: an owner handing over a worker somebody else
+        # created is not the manager it replaced, so naming the caller here would
+        # report the wrong session for exactly the caller class that is not fenced.
+        "previous_manager": replaced[0],
+        # NO ``cached`` key. There is no second copy to report on: the crew log entry is
+        # the whole of the durable state, so a handoff that returns at all is a handoff
+        # the log carries.
+        #
+        # NO ``previous_parent`` either, and no parent at all: a handoff moves the
+        # MANAGER and leaves the tree where it was. The sidebar edge is a separate
+        # question with a separate verb (``session_adopt``), and a reply that reported a
+        # parent would be reporting one this verb did not write.
+    }
+
+
 #: How long a tree verb waits for its own append to be on disk before it refuses. The
 #: wait exists because the append IS the operation; the bound exists because the writer
 #: retries a refusing filesystem before giving up, and a caller must get an answer either
@@ -5439,6 +7745,119 @@ async def _tree_append_landed(
             status=500,
             code="tree_write_failed",
         )
+
+
+def _emit_manager_record(
+    target_sid: str,
+    *,
+    slot_key: str,
+    slot_tab: str,
+    manager: str,
+    manager_tab: str,
+    previous: str,
+    to_creator: bool,
+    on_settled: "Callable[[bool], None]",
+) -> None:
+    """THE ONLY CALLER of ``on_manager_set`` outside the emitter. One entry shape.
+
+    A ``session/manager_set`` entry states a key AND the occupancy that qualifies it,
+    and the second half is the one a second call site forgets. ``manager_tab`` defaults
+    to empty at the emitter -- it has to, for the entry forms that have no manager --
+    so omitting it is silent at the write and expensive at the read: the restore brings
+    back a bare name, and the key-to-key compare then refuses the manager that is still
+    live, or admits whoever answers to that name now. That is what the handoff's
+    correction did: it restored the previous manager with no occupancy, on the ordinary
+    refused-handoff path.
+
+    Funnelling the two writers through one assembly is what makes the occupancy
+    non-optional here even though the emitter keeps it optional. Both of them -- the
+    handoff's own entry and the correction that takes it back -- state every field by
+    name, and a contract test pins that no third site calls the emitter directly.
+
+    ``slot_tab`` is the TARGET's identity and sits on both statements. It is the half
+    the occupancy field cannot cover: ``manager_tab`` says which session was handed the
+    work, and this says which session the work IS. Without it the entry names a slot
+    key, which is a name a closed session's replacement can take, and a restart applies
+    the grant to whoever holds the name. Identity has to be on the record, because a
+    check made where the value is COMPARED cannot tell that the value was written for
+    somebody else.
+    """
+    from kiro_crew.crew_log import emit as crew_log_emit
+
+    crew_log_emit.on_manager_set(
+        target_sid,
+        slot=slot_key,
+        slot_tab=slot_tab,
+        manager=manager,
+        previous=previous,
+        to_creator=to_creator,
+        manager_tab=manager_tab,
+        on_settled=on_settled,
+    )
+
+
+async def _revoke_manager_record(
+    *,
+    target_sid: str,
+    slot_key: str,
+    slot_tab: str,
+    refused_manager: str,
+    previously_published: str,
+    previously_published_tab: str,
+) -> bool:
+    """Durably take back a manager entry whose handoff was refused. Answers whether that
+    landed.
+
+    Needed because the log is the AUTHORITY for who drives a session, so a handoff that
+    is refused after its entry was queued cannot be unsaid by simply not publishing the
+    field. The entry
+    is what a start rebuilds from, so an entry left standing hands the refused session
+    its reach at the next boot -- the gateway's own refusal surviving only in memory.
+
+    An erasure is not available and is not needed: the log is append-only and the fold
+    takes the NEWEST manager entry per slot, so a correction queued after the refused one
+    is what a rebuild reads. The writer is FIFO per unit, so this is ordered behind the
+    entry it corrects even when that entry has not settled yet -- which is the case this
+    matters most in.
+
+    TWO statements, because "back" is two different facts.
+    A slot that had a published manager goes back to that session. A slot that had none
+    reverts to its CREATOR, which is the statement :func:`~kiro_crew.crew_log.emit
+    .on_manager_set`'s ``to_creator`` exists to make -- a correction naming the creator as
+    the manager would instead record a handoff TO the creator, leaving the field set
+    where it was empty and the next release answering for a handoff that never happened.
+
+    Bounded and non-raising: the caller already carries the
+    refusal that brought it here. False means the log may still state the refused manager,
+    which is the one case a person has to be told about.
+    """
+    from kiro_crew.crew_log import emit as crew_log_emit
+
+    if previously_published:
+        what = f"taking {slot_key} back to {previously_published}"
+    else:
+        what = f"taking {slot_key} back to its creator"
+
+    def _emit(settled: "Callable[[bool], None]") -> None:
+        _emit_manager_record(
+            target_sid,
+            slot_key=slot_key,
+            slot_tab=slot_tab,
+            manager=previously_published,
+            # The occupancy the record being restored CARRIED, handed in from the
+            # commit rather than read here: a read now would stamp whoever answers to
+            # that name at this moment rather than the session the record named.
+            manager_tab=previously_published_tab,
+            previous=refused_manager,
+            to_creator=not previously_published,
+            on_settled=settled,
+        )
+
+    try:
+        return await crew_log_emit.awaiting_commit(_emit, what=what)
+    except Exception:
+        logger.warning("manager compensation: %s failed", what, exc_info=True)
+        return False
 
 
 def _audit(
@@ -5772,6 +8191,18 @@ async def _continue_turn_of_target(
                 via="session_control",
                 require_interrupted=require_interrupted,
                 before_dispatch=_reassert_reachable,
+                # FALSE, and not this helper's fence verdict. The stamp records
+                # whether the MANAGER fence applied to this admission, which is
+                # what licenses the drain to re-compare the sender against the
+                # manager -- and NEITHER verb this helper serves is in
+                # :data:`HANDOFF_WIDENED_OPERATIONS`, so both gates authorized on
+                # ``_created_by`` alone and never read the manager at all.
+                # Claiming otherwise lets the drain drop an accepted continuation
+                # as ``sender_no_longer_manages`` against a predicate that was
+                # never applied to it, after the verb has already answered ok --
+                # the caller told the retry ran while nothing ran. The
+                # target-side containment re-check is unaffected: it travels in
+                # its own keys and is re-asserted whatever this says.
                 extra_meta=send_origin_meta(state, caller_key),
             )
         except SlotContinueRefusal as exc:
@@ -8381,6 +10812,31 @@ async def send_to_target(
         precomputed_ownership_fenced=caller_fenced,
     )
 
+    # NOT WHILE THE MANAGER IS BEING CHANGED. This is the only verb that can add an
+    # entry to a target's queue, so it is the only one that needs this -- and refusing
+    # it here is what lets the handoff read the queue ONCE, before its commit, instead
+    # of re-reading it after and owing a correction when the re-read refuses.
+    #
+    # The entry would be admitted against a manager this commit is in the middle of
+    # replacing. Nothing re-checks a queued entry's sender against the manager at the
+    # drain -- that is a per-entry surface, parked -- so an entry accepted here runs
+    # later under whoever the commit leaves behind, which is the reach the handoff was
+    # moving away from the sender.
+    #
+    # Its own code, because the way out is different from ``queue_not_drained``: that
+    # one asks the caller to let a queue empty, and this one is over in the time a
+    # commit takes. Read synchronously with nothing suspending between it and the
+    # admission above, and the mark is the one ``manager_commit_in_flight`` sets, so
+    # this adds a reader rather than a second piece of state.
+    if manager_commit_pending(slot.key):
+        raise SessionControlError(
+            f"{name_for_person(state, slot)!r} is being handed to another session right "
+            "now, so a message accepted for it would run under whichever session ends "
+            "up managing it -- retry in a moment",
+            status=409,
+            code="manager_change_in_flight",
+        )
+
     # A relay archive is read-only: the delivery below would run the crew's old
     # session on THIS machine, the same thing the send / regenerate / rewind /
     # continue paths refuse.
@@ -8413,6 +10869,18 @@ async def send_to_target(
     from kiro_crew.dashboard.chat_runner import _run_chat
 
     caller_key = caller_slot_key(state, caller_session_key)
+
+    # ONE fence verdict for this call, resolved before the gate and used by the gate
+    # AND by every send-origin stamp below. ``None`` means "not resolved yet" -- the
+    # HTTP handler's carried verdict is None for any caller that is not a crew member
+    # -- and coercing it per stamp with ``bool()`` reads an unresolved verdict as
+    # UNFENCED. The stamp is what decides whether the drain may re-compare the manager,
+    # so that coercion exempts every agent-created and cron sender from the re-check,
+    # and the message it queued then runs after it has handed the session away. The
+    # verdict a stamp records has to be the same one authorization used, which means
+    # deriving it once.
+    if caller_fenced is None:
+        caller_fenced = bool(caller_key) and _caller_is_ownership_fenced(state, caller_key)
     # Sanitized on the same grounds as the steer path (``chat_delivery`` sanitizes
     # before ``slot.append``): this body comes from ANOTHER session and is persisted
     # into — and broadcast from — the target's transcript, so raw content must never
@@ -8464,7 +10932,10 @@ async def send_to_target(
         # dropped at the drain reports back to us like any queued delivery. Inert
         # for the two other readers: `newly_held_constraints` reads only the
         # containment key, and so does the audience fence below.
-        admission = {**containment_meta(state, slot), **send_origin_meta(state, caller_key)}
+        admission = {
+            **containment_meta(state, slot),
+            **send_origin_meta(state, caller_key),
+        }
 
         # Which turn this steer is going into. `_turn_generation` increments on every
         # task assignment, so it identifies a turn even if a later task object reuses
@@ -8820,14 +11291,39 @@ def _timeout_delivery_observation(
 
 
 def broadcast_audience(state: "DashboardState", caller_key: str) -> list[str]:
-    """The slot keys *caller_key* created and can still address, sorted.
+    """The slot keys *caller_key* HOLDS and can still address, sorted.
 
-    The DEFAULT audience of a broadcast: a conductor's own workers. Read from the
-    live slots' ``_created_by`` — the same field the ownership fence
-    (:func:`_created_by_other`) reads — so the default audience is by construction
-    a subset of what the fence would admit, and an audience this returns can still
-    be refused per target (a worker that went incognito, gained a channel mirror,
-    or is an app's) by the gate each delivery runs. Nothing here authorizes.
+    The DEFAULT audience of a broadcast: a conductor's own workers. Read through
+    :func:`_managed_by_other`, the same reading the ownership fence uses for the
+    verbs a handoff widens — and ``send`` is one of them, so this has to agree with
+    it. Reading ``_created_by`` here instead would put a handed-away session in its
+    giver's default audience, where every delivery is then refused, and leave it out
+    of the audience of the manager that can actually reach it. On a gateway where
+    nothing has been handed over the two readings are the same value, because
+    :func:`manager_of` answers ``_created_by`` until a handoff writes the field.
+
+    An audience this returns can still be refused per target (a worker that went
+    incognito, gained a channel mirror, or is an app's) by the gate each delivery
+    runs. Nothing here authorizes a delivery.
+
+    A slot whose manager cannot be read is EXCLUDED, not refused, and the direction
+    matters. Enumerating is not authorizing: for the FENCE, an unknown manager must
+    refuse, because answering would GRANT a reach the log cannot show. For an AUDIENCE,
+    an unknown manager must exclude, because excluding NARROWS reach. Both are fail
+    closed; they differ because one grants and the other lists.
+
+    Refusing the whole audience instead is an outage, and a long one: one open slot
+    whose recorded manager was closed before a restart is refused by the chokepoint on
+    every read until a fresh handoff replaces that record, so every default broadcast
+    and every roster read would 409 for every caller -- including unfenced owners, and
+    including other workspaces -- for the life of the process. The cost of
+    excluding is that a caller which genuinely holds that slot does not reach it by
+    broadcast; it can still address it by name, where
+    :func:`authorize_target` gives it the real refusal with the real reason.
+
+    The one exception is a caller that could hold the slot whatever the read says: its
+    creator, or the session the field already names. Excluding those would hide a
+    caller's own session from its own roster on a read fault.
 
     The caller itself is excluded: ``authorize_target`` refuses a self-target, and
     silently collecting a refusal the caller could not have avoided would make
@@ -8840,9 +11336,47 @@ def broadcast_audience(state: "DashboardState", caller_key: str) -> list[str]:
     out = [
         key
         for key, slot in list(state._slots.items())
-        if key != caller_key and not _created_by_other(slot, caller_key)
+        if key != caller_key and _holds_for_audience(state, slot, caller_key)
     ]
     return sorted(out)
+
+
+def _holds_for_audience(state: "DashboardState", slot: Any, caller_key: str) -> bool:
+    """Whether *caller_key* holds *slot* for the purpose of LISTING it.
+
+    The audience counterpart of :func:`_managed_by_other`, and the only place the two
+    differ: an unreadable manager excludes the slot here instead of raising, because
+    excluding narrows reach while the fence's refusal protects a grant. See
+    :func:`broadcast_audience` for why the directions are opposite.
+
+    The caller's own identity goes with its key, same as at the fence. A mismatch
+    EXCLUDES here rather than raising, which is this function's whole direction: a
+    replacement under a retired manager's name does not get its predecessor's workers
+    listed to it, and excluding is the narrowing answer.
+
+    ANY REFUSAL FROM THE READ MEANS NOT VISIBLE, and that is a rule rather than a list
+    of codes. This function is a LISTING path that catches what the chokepoint raises
+    and answers for itself, so every refusal the chokepoint can add has to have an
+    answer here -- and a list of the ones that mean "hide it" is wrong the moment a
+    refusal is added without it. A refusal is the chokepoint saying this slot's manager
+    cannot be used; a listing that then shows the slot has turned that into visibility,
+    which is a title, an activity state and a roster position for a session the caller
+    may not drive.
+
+    The ONE claim that survives a refusal is ``_created_by``, and it survives because of
+    what it is rather than as an exemption: it is written at birth and never written
+    again, so no refusal ABOUT THE MANAGER can be a refusal about it. A creator reading
+    its own roster on a read fault is the case the fallback exists for. The field naming
+    the caller is NOT such a claim -- the read that refused is the read of that field --
+    so a session the record names does not get the slot listed to it while the record is
+    unusable.
+    """
+    try:
+        return not _managed_by_other(state, slot, caller_key, _tab_identity(state, caller_key))
+    except SessionControlError:
+        # Not branched on the code, deliberately: see the docstring. ``_created_by`` is
+        # the only basis a manager refusal cannot be about.
+        return bool(caller_key) and caller_key == str(getattr(slot, "_created_by", "") or "")
 
 
 def _too_many_targets(count: int) -> SessionControlError:
@@ -9259,6 +11793,15 @@ def _created_tree_roster(caller_key: str) -> "tuple[list[str], str]":
     right answer for this verb — it reports the sessions the caller is answerable
     for — and it cannot widen the caller's reach, because an adoption is itself
     gated by :func:`authorize_target`.
+
+    A HANDED-OVER session is a different case, and the name of this function is the
+    answer to it: the tree edge is what a creation wrote, so the roster says what the
+    caller CREATED. :func:`handoff_target` moves who may drive a session and writes no
+    tree edge, so a handed session stays listed under its creator here while the
+    manager is the session that can reach it. The two are not the same question and
+    this one is not a visibility list: nothing is authorized off this roster, and the
+    verbs that are all read the manager through :func:`require_manager_of`. The roster
+    that lists a session by who may reach it belongs to the manager, not to the tree.
     """
     try:
         if not crew_log_emit.enabled():
@@ -9589,9 +12132,14 @@ async def created_session_status(
 
     # Live slot state stays on the event loop and is read only after the history
     # worker returns. Reading it inside the worker would let the result go stale
-    # before these rows are built. This read only names the caller's own creations
-    # (`_created_by`, not workspace), so it is not the workspace-boundary read --
-    # that is `resolvable_keys`, built below AFTER the last suspension in this verb.
+    # before these rows are built. This read names the sessions the caller HOLDS --
+    # ``manager_of``, so a handed-over session is listed under the manager that can
+    # reach it rather than the giver that cannot -- and not workspace, so it is not
+    # the workspace-boundary read; that is `resolvable_keys`, built below AFTER the
+    # last suspension in this verb. It can refuse (409) when a slot's manager has not
+    # been read yet, because the membership test reads that value: a roster built from
+    # an unread field names the wrong children, and a caller cannot tell that roster
+    # from a correct one.
     live_children = broadcast_audience(state, caller_key)
 
     rows: list[dict[str, Any]] = []

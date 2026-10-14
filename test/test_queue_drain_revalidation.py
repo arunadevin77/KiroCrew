@@ -798,6 +798,21 @@ _NON_CONTAINMENT_REFUSALS = {
     "session_control_disabled",
     "target_not_found",
     "self_target",
+    # WHO MANAGES THE TARGET, which a handoff moves and these three report on. They are
+    # here rather than in the containment table because the drain does not re-check them
+    # and deliberately does not: the snapshot describes the TARGET alone, while this is a
+    # relation between the target's current manager and an entry's SENDER, so it is
+    # per-entry and cannot be a field on a per-slot snapshot. Re-checking it needs a
+    # sender stamp on every entry plus a hold for the reads that have not landed, which
+    # is a surface of its own.
+    #
+    # What keeps that absence safe is the verb: ``session_handoff`` REFUSES while the
+    # target still has queued entries (``queue_not_drained``), so no entry can be
+    # waiting when the manager moves. The queue is empty at the only moment the relation
+    # changes, which is why there is nothing for a drain to re-validate.
+    "manager_unresolved",
+    "manager_session_changed",
+    "manager_grant_inadmissible",
 }
 
 # Comparison detail rather than constraints: both are set by the mirror probe to
@@ -842,21 +857,49 @@ def _authorize_target_refusal_codes() -> set[str]:
     ):
         tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
         codes |= _deny_codes(tree)
-    codes |= _returned_refusal_codes(
-        ast.parse(textwrap.dedent(inspect.getsource(sc._live_target_refusal)))
-    )
+    for returning in (
+        sc._live_target_refusal,
+        # The manager refusals do NOT live in the gate: they live on the READ
+        # (``require_manager_of``), because a condition in the gate had to name which
+        # operations consult the manager and that list was wrong at three sites which
+        # reach the value without passing the gate. They still reach the caller through
+        # ``authorize_target``, which re-raises them via ``deny`` with ``exc.code`` -- a
+        # variable the ``deny`` parse cannot see -- so the helpers that spell them are
+        # parsed directly. ``_grant_inadmissible`` is one layer further in: every reason
+        # a standing grant stops being admissible shares one code, assembled there so
+        # the property that failed can be named in the log without naming it to the
+        # caller, and a parse stopping at the funnel would read the code as deleted.
+        sc._manager_unread_refusal,
+        sc._manager_record_refusal,
+        sc._grant_inadmissible,
+    ):
+        codes |= _returned_refusal_codes(ast.parse(textwrap.dedent(inspect.getsource(returning))))
     return codes
 
 
 def _returned_refusal_codes(tree: ast.AST) -> set[str]:
-    """Codes from ``return ("reason", "code")`` statements in a refusal helper."""
+    """Codes from ``return ("reason", "code")`` statements in a refusal helper.
+
+    A code spelled as a module CONSTANT is resolved to its value rather than skipped.
+    One of them is: the single refusal a caller may WAIT on is named
+    (``session_control.MANAGER_READ_PENDING``) precisely because the difference between
+    waiting and dropping may not be spelled twice -- so the one code whose handling is
+    most load-bearing is the one a literal-only parse would read as deleted.
+    """
     codes: set[str] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Return) and isinstance(node.value, ast.Tuple)):
             continue
         elts = node.value.elts
-        if len(elts) == 2 and isinstance(elts[1], ast.Constant) and isinstance(elts[1].value, str):
-            codes.add(elts[1].value)
+        if len(elts) != 2:
+            continue
+        code = elts[1]
+        if isinstance(code, ast.Constant) and isinstance(code.value, str):
+            codes.add(code.value)
+        elif isinstance(code, ast.Name):
+            resolved = getattr(sc, code.id, None)
+            if isinstance(resolved, str):
+                codes.add(resolved)
     return codes
 
 

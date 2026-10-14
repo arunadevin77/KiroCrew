@@ -95,8 +95,14 @@ from pathlib import Path
 from typing import Any, Final
 
 from kiro_crew.crew_log.errors import CrewLogError
+from kiro_crew.crew_log.identity import (
+    IDENTITY_OTHER,
+    IDENTITY_UNKNOWN,
+    compare_identity,
+)
 from kiro_crew.crew_log.schema import KIND_SESSION, Entry
 from kiro_crew.crew_log.store import (
+    find_last_manager_set,
     find_last_tree_edge,
     find_spawned_entries,
     newest_segment,
@@ -1174,6 +1180,242 @@ def slot_chain_head(slot: str) -> SlotHead:
             return UNDECIDED
         records.append(record)
     return fold_slot_head(records, slot)
+
+
+def slot_manager(slot: str, tab: str) -> "tuple[str, bool]":
+    """*slot*'s manager as the LOG states it for the session *tab*, as ``(manager, decided)``.
+
+    The durable answer to "who drives this session", read from the units on disk so a
+    restart reads exactly what the process before it would have. It is what makes a
+    handoff survive a restart: the gateway publishes a new manager only once its
+    ``session/manager_set`` entry is on disk, and this is the read that brings it back.
+
+    TWO answers, because a caller must tell "no handoff" from "the log did not say".
+    ``("", True)`` is decided and empty: this slot's units hold no manager entry, or
+    their newest one reverts the slot to its creator. Either way the manager is whoever
+    CREATED the session and the caller may state that -- including by clearing a
+    manager some cache still names, which is the whole use of the decided half.
+    ``("", False)`` is undecided -- a unit that would not open, a store that cannot be
+    listed, a unit id this reader cannot account for, a unit holding a RECORD THAT DOES
+    NOT PARSE, or an entry whose RECORDED IDENTITY cannot be established -- and a caller
+    must then fall back to the creator WITHOUT recording
+    that as the log's answer, because the next read may see the entry this one missed.
+
+    The unreadable record belongs in that list rather than being passed over, and the
+    direction is what matters: an unreadable line newer than a readable
+    ``session/manager_set`` makes the older entry read as the file's newest statement,
+    and the older entry is the one a later handoff revoked. So the fail-open reading
+    does not lose a manager, it RESTORES a revoked one, silently. It is the same rule
+    the handed-over index is read by -- an index that exists and cannot be read refuses
+    every slot -- and the two cannot differ, because they are two faces of one question
+    asked of the same store.
+
+    Both empties lead a caller to the same conservative place (the creator), which is
+    the fail-closed direction: the reach a gateway had before any handoff. They are
+    still kept apart, because only the decided one may be written down as a fact.
+
+    The search is newest unit first and the first answer wins: a slot that has run
+    under several ids carries its newest statement in its newest unit, and an older
+    unit's handoff is superseded rather than merged. Which unit is NEWEST is read from
+    the succession chain the store wrote and not from the header clock, because that
+    choice decides which manager comes back. Within a unit the read is the
+    complete one (:func:`~kiro_crew.crew_log.store.find_last_manager_set`), because a
+    rebuild has no checkpoint to recover a decision the tail window could not reach.
+
+    *tab* is WHICH INCARNATION of the name is asking, and every entry is matched
+    against it. A slot key is a name and a closed session's name can be taken by a new
+    one, so both sessions' units sit in this slot's store; the newer one holds no
+    manager entry, the walk falls through to the older one, and the replacement
+    inherits a grant nobody gave it. An entry records the identity it was written for,
+    so an entry that names another incarnation is passed over and a slot with no entry
+    of its own answers "no handoff", decided. Reading identity at the COMPARE cannot
+    reach this case: the value was written for a different session, and the record is
+    what has to say which one.
+
+    An entry whose recorded identity cannot be ESTABLISHED is the third answer, not the
+    second: it is passed to :func:`compare_identity`, comes back UNKNOWN, and makes this
+    read undecided. Passing it over instead is fail-open, because the walk takes the
+    newest entry and an entry nobody can attribute makes the newest statement invisible
+    -- so the slot answers "no handoff was recorded", decided, and the creator a handoff
+    revoked has its reach back.
+
+    An empty *tab* is UNDECIDED. It is not "match anything": a session that cannot say
+    which incarnation it is cannot be matched against a record, and answering "no
+    handoff" for it would hand a marked slot back to its creator on the strength of a
+    missing identity.
+
+    Blocking: it lists the store and reads a window per unit of this slot. A coroutine
+    hops a thread for it.
+    """
+    if not slot or not _bounded(slot, MAX_SHORT_STRING):
+        return ("", False)
+    if not tab or not _bounded(tab, MAX_SHORT_STRING):
+        return ("", False)
+    try:
+        units = session_units_for_slot(slot, strict=True)
+    except LookupError:
+        # No store AT THE NAME: no unit of this slot can exist, so "no handoff" is the
+        # whole truth rather than a short read. Same reading as ``slot_chain_head``.
+        return ("", True)
+    except FileNotFoundError:
+        # The store itself is NOT THERE -- a gateway that has never written a crew log.
+        # That is not a read that failed, it is the decided fact that nothing was ever
+        # recorded, so no handoff can exist and the creator holds the slot. Kept apart
+        # from the errors below because a caller that refuses on an undecided read would
+        # otherwise refuse every slot on a first run, where the answer is known.
+        return ("", True)
+    except (CrewLogError, OSError):
+        # The store is there and could not be READ, or the listing refused because a
+        # unit of THIS slot holds entries its header cannot prove. Undecided either
+        # way: the entry being looked for may be sitting in the part this did not see.
+        #
+        # ``CrewLogError`` is caught here and not left to propagate because it is not
+        # an ``OSError`` and would otherwise escape every handler on this path -- which
+        # turned a refused listing into an exception the caller read as a crash rather
+        # than as "undecided", and left the slot unresolved for the same reason but
+        # without the reason being legible.
+        return ("", False)
+    try:
+        # SUCCESSION order, not the header clock. This read takes the first answer from
+        # the newest unit, so which unit is newest decides which manager is restored --
+        # and ``createdAt`` is a wall-clock stamp. A clock that steps backward between
+        # two units of one slot (an NTP correction, a VM resume) sorts the genuinely
+        # newer unit BEFORE its predecessor, and the read then restores a manager a
+        # later handoff already revoked. The store wrote what followed what: each
+        # ``session/opened`` names the unit it replaced, so the chain is asked instead
+        # of the clock. Deferred because ``projection`` imports this module.
+        from kiro_crew.crew_log.projection import units_in_succession
+
+        units = units_in_succession(slot, units=units)
+    except Exception:
+        # The order could not be established, so neither can "which is newest" -- and an
+        # answer read off an order this could not build is the confident wrong one.
+        return ("", False)
+    for unit in reversed(units):
+        if not _bounded(unit, MAX_ACP_SESSION_ID_LEN):
+            # A unit of this slot this reader cannot account for. Not skippable: the
+            # entry it may hold is exactly the one being looked for.
+            return ("", False)
+        directory = unit_dir_for(KIND_SESSION, unit)
+        if directory is None:
+            return ("", False)
+        try:
+            entry = find_last_manager_set(directory)
+        except (OSError, ValueError):
+            # ``ValueError`` is this unit holding a record nobody could read, and it is
+            # UNDECIDED for the same reason an unopenable unit is: the statement being
+            # looked for may be the one that did not parse. Skipping such a line instead
+            # would answer with the newest READABLE entry, which is the entry a later
+            # handoff superseded -- so the fail-open reading does not lose a manager, it
+            # restores the revoked one. One flipped bit is enough; no attacker is needed.
+            #
+            # The same rule the handed-over index reads by, and that is the point: an
+            # unreadable index refuses every slot, so an unreadable manager record in
+            # the same store cannot be allowed to answer. Two positions on one question
+            # cannot both be right, and the blast radius is identical -- the verbs a
+            # handoff widens refuse, with a retryable code, until the log is repaired.
+            return ("", False)
+        if entry is None:
+            continue
+        data = entry.data if isinstance(entry.data, Mapping) else {}
+        manager = str(data.get("manager") or "")
+        if str(data.get("slot") or "") not in ("", slot):
+            # The entry names a different slot than the unit header does. Unprovable,
+            # so it decides nothing.
+            return ("", False)
+        states = compare_identity(str(data.get("slot_tab") or ""), tab)
+        if states == IDENTITY_UNKNOWN:
+            # NOBODY CAN SAY which incarnation this entry is about, so it decides
+            # nothing -- and passing it over would be worse than refusing. The walk
+            # takes the newest entry, so an entry nobody can attribute makes the
+            # newest statement invisible, the walk falls off the end, and "no handoff
+            # was recorded" is handed back as a DECIDED fact. That is the fail-open
+            # direction: the entry a later handoff is recorded in goes missing, and the
+            # creator it revoked gets its reach back. One damaged byte in the field
+            # NAME reaches this, which is why the read cannot tell it apart from an
+            # entry that never carried an identity and must refuse both.
+            return ("", False)
+        if states == IDENTITY_OTHER:
+            # WRITTEN FOR A DIFFERENT INCARNATION of this name, so it is not an answer
+            # about the session asking. A slot key is a name: close a handed-over
+            # session, create one under the same name, and the units of both sit in
+            # this slot's store -- the newer one holding no manager entry, so a walk
+            # that did not match identities would fall through to the older one's grant
+            # and the replacement would inherit a reach nobody gave it. Keep walking
+            # rather than refusing: older units are older incarnations still, and
+            # falling off the end is the right answer here, "no handoff was recorded
+            # for THIS session". This branch is reached only when the entry POSITIVELY
+            # names somebody else, which is a statement and may be acted on.
+            continue
+        if data.get("to_creator") is True and not manager:
+            # A handoff TAKEN BACK. Decided and empty, the same answer a slot with no
+            # entry at all gets -- and decided is the half that matters, because it is
+            # what lets a rebuild clear a manager the metadata cache still names.
+            return ("", True)
+        if not manager or not _bounded(manager, MAX_SHORT_STRING):
+            # An entry that states no usable manager is not an answer about this slot.
+            return ("", False)
+        return (manager, True)
+    return ("", True)
+
+
+def slot_manager_tab(slot: str, tab: str) -> str:
+    """The OCCUPANCY the newest manager entry for the session *tab* recorded, or ``""``.
+
+    A companion read rather than a third value on :func:`slot_manager`, whose
+    ``(manager, decided)`` shape every caller and its tests already hold. The answer
+    is a plain string because it has only one undecided state and it is the empty one:
+    a key with no recorded occupancy cannot be matched against an occupant, which the
+    session-control check treats as unverifiable and refuses.
+
+    Deliberately NOT folded into the decided/undecided answer above. Occupancy does not
+    change what the log SAID -- the entry still names a manager and the fold still
+    applies it -- it changes whether the session that name refers to is still the one
+    that was handed anything. That is an authorization question and it belongs to the
+    reader that asks it.
+    """
+    manager, decided = slot_manager(slot, tab)
+    if not manager or not decided:
+        return ""
+    try:
+        units = session_units_for_slot(slot, strict=True)
+    except (CrewLogError, OSError):
+        return ""
+    try:
+        from kiro_crew.crew_log.projection import units_in_succession
+
+        units = units_in_succession(slot, units=units)
+    except Exception:
+        return ""
+    for unit in reversed(units):
+        directory = unit_dir_for(KIND_SESSION, unit)
+        if directory is None:
+            continue
+        try:
+            entry = find_last_manager_set(directory)
+        except (OSError, ValueError):
+            # Same two failures the manager read treats as undecided, and the empty
+            # answer here IS this function's undecided: an occupancy nobody can
+            # establish is unverifiable, which the session-control check refuses.
+            return ""
+        if entry is None:
+            continue
+        data = entry.data if isinstance(entry.data, Mapping) else {}
+        states = compare_identity(str(data.get("slot_tab") or ""), tab)
+        if states == IDENTITY_UNKNOWN:
+            # Undecided, which for this reader is the empty answer -- written out rather
+            # than folded into the branch below even though the two return the same
+            # thing. The manager read above refuses this case outright, so this is the
+            # second reading of one question and the two must not be able to drift.
+            return ""
+        if states == IDENTITY_OTHER:
+            # Another incarnation's entry, passed over exactly as the manager read
+            # passes it over, so the two reads cannot disagree about which entry
+            # belongs to the session asking.
+            continue
+        occupant = str(data.get("manager_tab") or "")
+        return occupant if _bounded(occupant, MAX_SHORT_STRING) else ""
+    return ""
 
 
 def opened_record(

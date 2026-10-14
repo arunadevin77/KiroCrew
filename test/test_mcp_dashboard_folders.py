@@ -1822,6 +1822,7 @@ class TestAdvertisedSet:
             "session_read_message",
             "session_summary",
             "session_adopt",
+            "session_handoff",
             "session_release",
         }
 

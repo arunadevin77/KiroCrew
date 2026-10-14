@@ -35,9 +35,654 @@ unreachable in production because the caller's `X-Internal-Secret` is ignored.
 | `session_broadcast` | `POST /api/session-control/broadcast` | Deliver ONE message to several sessions — by default every session the caller created — in a required `queue` or `steer` mode, reporting the outcome per target |
 | `session_status` | `GET /api/session-control/status` | List the sessions the caller stood up and what each is doing, with the roster taken from the crew log's session tree so a session that is gone still appears |
 | `session_adopt` | `POST /api/session-control/adopt` | Take another session under the caller in the session tree, keeping the parent it had on record; refused when the target is already above the caller |
+| `session_handoff` | `POST /api/session-control/handoff` | Give a session to another session, which manages it from then on: the target's current manager (its creator until a handoff says otherwise) names a recipient it also manages, the recipient gains the reach to send, read, stop, close, adopt, release and hand on while the giver loses it, and the session stays where it was in the sidebar -- authorization moves, lineage does not. The handed-over session's own transcript gets one display-only notice naming the manager it is under now and the one it was under before, written after the transfer commits and best-effort, so a notice that cannot be written never undoes the handoff |
 | `session_release` | `POST /api/session-control/release` | Let a session the caller holds, or the caller itself, out from under its parent; the released session keeps its own subtree |
 | `session_read_message` | `GET /api/session-control/read` | Read another session's transcript tail + liveness |
 | `session_summary` | `GET /api/session-control/summary` | Read another session's cached intent summary + liveness, authorized as `session_read_message` is; never generates one |
+
+`session_handoff` is the only writer of `_ChatSlot._manager`, the slot's record of
+the session that HOLDS it. `manager_of` answers `_manager or _created_by`, so a
+gateway where nothing has been handed over authorizes exactly what it authorized
+before the field existed, and the fence reads the manager only for the operations
+`HANDOFF_WIDENED_OPERATIONS` names (`send`, `read`, `summary`, `stop`, `close`, `adopt`,
+`release`, `handoff`) and the creator for every other verb. `summary` is in that set with
+`read` because it is authorized as a transcript read is and is generated from the
+transcript. `broadcast_audience` reads the same `_managed_by_other`, because `send` is one
+of those operations and an audience that disagreed with the fence judging each delivery
+would put a handed-away session in its giver's default audience, where every delivery is
+then refused, and leave it out of the audience of the manager that can reach it.
+`_created_by` is never rewritten, so `_delegation_lineage_fenced`, the per-creator slot cap
+and the create and fork gates keep their own answer.
+
+The LOG is the ONLY store for WHO manages a session. The slot's metadata line never
+carries the manager: the codec has no `manager` row, so no save writes one and no restore
+reads one. A copy there would be written on every save and overwritten on every restore,
+and it was itself how a revoked manager came back, because a line outlives the grant it
+names. `created_by` stays on the line because nothing else records it.
+
+WHETHER A SLOT WAS EVER HANDED OVER IS NOT ON ITS LINE. The line is the transcript's,
+and the transcript's writers include the session whose grant a handoff revoked -- so a
+field there is one the losing party can clear, and clearing it IS the whole
+authorization: an unhanded slot is served by its creator without reading anything.
+Clearing it is also worth more than forging `created_by` and cheaper: forging invents a
+creator out of nothing, while clearing hands a deliberately revoked grant back to a
+party that already exists and is already authenticated.
+
+So the fact lives in the fenced crew log, as one append-only index of the DISTINCT
+slots a handoff has committed for (`crew_log/handed_over.py`, at
+`<store>/handoff-index/slots`). It is read once per process and cached, so a slot the
+index does not name is decided by a set lookup and reads no history -- the property the
+line was there for, with the authority somewhere its subject cannot write. It grows
+with the number of slots ever handed over, not with handoffs and not with any log's
+size, so there is no replay and no per-slot listing. The index entry is written after
+the `session/manager_set` entry lands and before the manager is published, so it never
+names a handoff the log does not hold; a grant that lands without it is inert, because
+an unindexed slot's log is never consulted. One that cannot be written refuses the
+handoff 409 `handoff_not_recorded` and takes the grant back on the log.
+
+ITS FAILURES ARE SPLIT, because the natural handling of a missing file is the unsafe
+one: an absent file reads as the empty set, and the empty set says "nothing was ever
+handed over", which serves every slot from its creator -- exactly the answer a revoked
+party wants. So an absent store or absent index is DECIDED and empty, since no handoff
+can have been recorded on a store nothing ever wrote and a first run must not refuse
+every slot; an index that EXISTS and cannot be read, parsed, or is past its bound is
+UNDECIDED, and every slot is then refused until a read succeeds. A write cannot proceed
+on an undecided read either: rewriting the file from one process's partial view would
+drop every slot the unreadable file holds, turning a temporarily unreadable index into a
+permanently wrong one.
+
+ITS FAILURES ARE LOGGED WITHOUT A STACK. Every frame in the index's reader and writer
+holds the index -- the slot key of every session ever handed over on this store -- beside
+a path inside the operator's data home, so a retained traceback would turn a fault, or a
+refusal, into a bulk disclosure of exactly the identifiers the store is fenced to
+protect. The refusal path is the one that matters most: it is reached when a handoff is
+being refused, and a stack there trades fail-closed for a leak. The errno says why and
+the slot key says what did not land, which is what acting on the log needs.
+
+THE COST, stated rather than left to be found. Every manager-dependent answer now
+depends on the index being readable, where an unindexed slot previously needed nothing.
+That is a new availability dependency and it is deliberate, because of its BLAST
+RADIUS: a corrupt index refuses the verbs a handoff widens, with a retryable code, and
+nothing else. The gateway still starts, slots still hydrate and list, and every verb
+that does not read the manager still works; repairing or removing the file clears the
+refusal with no restart. The fear a reader brings to "fail closed on an unreadable file"
+is the other outcome -- a gateway that will not boot -- and that difference is the whole
+reason this trade is the right one, so a test pins both halves rather than only the
+refusal.
+
+AN UNREADABLE MANAGER RECORD IS THE SAME RULE'S OTHER FACE, and it has to be, because
+the two are one question asked of one store. A unit's entries are walked newest first
+and the first `session/manager_set` wins. A line that does not PARSE cannot be asked
+what type it was, so passing over one treats bytes nobody could read as "not a handoff"
+-- and when such a line sits NEWER than a readable entry, the older entry comes back as
+the file's newest statement. That entry is the one a later handoff superseded, so the
+fail-open reading does not lose a manager: it RESTORES THE REVOKED ONE, with nothing
+visibly wrong anywhere above it. A flipped bit is enough; this needs no adversary, and a
+party that could edit the file could forge a well-formed entry instead, so "only an
+external edit reaches it" is not the containment it sounds like.
+
+So a record the reader cannot account for makes the manager UNDECIDED, which is
+`_manager_unresolved` and the identical blast radius: the verbs a handoff widens refuse,
+with a retryable code, until the log is repaired.
+
+WHAT "CANNOT ACCOUNT FOR" HAS TO MEAN is where this rule was first drawn too narrowly,
+twice, and each narrowing left the same defect one layer down. "Does not parse" is not
+the test; "does not establish itself as a well-formed entry of a declared type" is, and
+it has three faces: bytes that are not JSON; JSON the entry schema refuses (a `seq` of
+`0`, a missing `src`, a `data` that is not an object); and a well-formed entry whose
+`type` is not declared for the session kind and that the writer did not mark
+`ignorable`. The third is there because `Entry.from_dict` checks only that `type` is a
+non-empty string, so a damaged type field yields a valid entry that merely fails to
+match -- and "it did not match" then reads as "it is not a handoff". One predicate
+answers all three for both reads, so the bounded read and the complete one cannot
+disagree about which records accounted for themselves.
+
+The RESIDUAL is stated rather than left to be found: a `type` damaged into a DIFFERENT
+DECLARED type reads as a well-formed, self-consistent record of that type, and no reader
+can tell it from a genuine one. Only per-record integrity would answer that, which is a
+format change rather than a reader's to make. The declared strings share long prefixes,
+so this is not the unlikelier half of type damage -- it is simply out of reach from here.
+
+Two boundaries hold the refusal where it belongs. DIRECTION: only a record the reader
+would have had to pass to reach its answer counts, since one older than the newest entry
+cannot change which statement is newest -- the search order gives that for free, and it
+keeps a long log's ordinary damage from refusing anything. SCOPE: the refusal is per
+UNIT, and the read walks only the units of the slot being asked about, so one session's
+bad byte leaves every other session resolving normally. A store-wide refusal would be an
+availability cliff and no containment gain, because the grant a damaged log puts at risk
+is the one recorded in that log.
+
+The strictness belongs to the manager read alone. Retention's open-versus-closed answer
+and the tree edge share the same window walk with their own type sets, and each fails
+safe in its own direction; neither restores an authorization by reading one line short,
+so neither reading is changed here and a test pins that the skipping default stays.
+
+HOW IT IS READ IS THE REST OF THE DESIGN, in one sentence: THE INDEX IS READ ONCE PER
+PASS, OFF THE EVENT LOOP, AND THE ANSWER IS PASSED DOWN AS A VALUE. A hydrate takes one
+`HandoffIndex` in its own worker-thread step before it builds anything and hands that
+same immutable answer to every slot it builds; `metadata_codec.apply` takes it as a
+REQUIRED parameter and touches no filesystem, so nothing loop-affine consults the index
+module at all. A caller whose own read failed passes `UNDECIDED`, which hydrates every
+slot unresolved.
+
+Three findings came out of reading it lazily instead, and each looked local and correct
+at the site that made it. A read inside the loop-affine apply is a blocking read on the
+EVENT LOOP, once per restored tab -- and once per tab forever when the index cannot be
+read, because an undecided answer is deliberately not kept. One lock shared by the
+reader and the writer would have been worse still: the writer holds its lock across an
+`atomic_write` with `fsync=True`, so a reader waiting on it parks the loop, and the
+stall watchdog with it, for the length of a handoff's disk sync. The lock therefore
+serializes WRITERS ONLY.
+
+A READER NEVER PUBLISHES, and that is the sharpest of the three. Only the write path
+stores the in-memory snapshot, inside its own lock, in the same critical section that
+writes the file -- which spares the next writer a re-read of a file it already knows.
+A reader that stored its answer would lose a handoff: its read can begin before a write
+that has since landed and published, so storing it puts the OLDER set back, and the next
+whole-file rewrite then drops that slot from DISK too. The grant the log recorded going
+away is back, by way of a cache. What makes the lock-free read safe is the same property
+from the other side: the snapshot is immutable and rebound as a whole, so a reader takes
+the name once and whatever it gets is a complete answer, old or new, never a half-built
+set.
+
+And AN UNDECIDED ANSWER IS NEVER KEPT, which costs nothing now that the read is once per
+pass. Keeping one would make a transient fault permanent -- one `OSError` and every
+handoff refused for the life of the process, while the refusal keeps telling the caller
+to retry in a moment: a fact that could not be read served as a settled answer, plus a
+promise with nothing behind it.
+
+The commit point is this verb's own
+`session/manager_set` entry, appended inside the manager mutation lock and awaited through
+`awaiting_settlement`, and `_manager` is published only once that entry is on disk. That wait answers three values rather than two, because the two ways of not being
+on disk need opposite handling: an append the writer gave up on left nothing behind and
+refuses 409 `handoff_not_recorded` outright, while an append still QUEUED when the bound
+runs out may land at any time afterwards and would then be the newest statement on the
+log. The second case is CORRECTED rather than abandoned -- `_revoke_manager_record` queues
+a further entry behind it, and the writer is FIFO per unit, so whichever order the two
+land in the newest statement is the correction.
+
+That correction needs the log to be able to say "back to nobody", which is what
+`session/manager_set.to_creator` states: a statement that could only name a successor
+cannot CLEAR a manager, and naming the creator instead would record a handoff TO the
+creator rather than none at all. A slot that had a published manager reverts to that
+manager; one that had none reverts to its creator.
+
+A recorded manager is RE-VALIDATED before the rebuild publishes it, through
+`_manager_still_admissible`, which re-asks the admission the verb checked before it
+published: the manager is not a member's own DM surface (by key, so it answers without a
+session), it is still open, it AGREES with the managed session on its memory store, and
+it is not a session that cannot be reached at all (`_live_target_refusal`). Fail closed --
+a reason that cannot be determined is a reason.
+
+`resolve_slot_manager` is the ONE way the field is ever established on a slot, and every
+path that builds one calls it before publishing: the boot reconstruction, a revive, a
+resume from history (those two share `resume_slot_from_history`, so one call covers both)
+and targeted rehydration (`rehydrate_slot_from_history_async`, reached when a cron
+notification wakes a worker the startup budget skipped). One helper rather than a call
+added per path as each is found, because that is the shape of hole this line has closed
+four times.
+
+FOUR ATTRIBUTES, ONE WRITER. `_manager`, `_manager_tab`, `_manager_unresolved` and
+`_manager_grant_inadmissible` are one fact in four slots -- what this process can say
+about who drives this session -- and `publish_manager` is the only thing that writes
+them. It takes all four as arguments, assigns all four, and contains no `await`; a
+caller that needs an awaited value, such as the occupancy read off the log, awaits it
+BEFORE calling and passes the result in, so the suspension happens while the slot still
+holds its previous whole statement. Spread across the resolve, the verb, the
+compensation and the hydrate, the four were writable from twenty-one places, and the
+same ordering defect was found at four of them in turn: flags cleared, a read awaited,
+the key written after -- which publishes "resolved" with an empty key, and an empty key
+on an indexed slot reads as "the creator holds it". Each point-fix was correct and each
+left the other points, because the invariant is not statable at a site. Two source
+tests pin it: a fifth assignment site fails one, an `await` inside the writer fails the
+other.
+
+The same shape on the entry: `_emit_manager_record` is the only caller of
+`emit.on_manager_set` outside the emitter. `manager_tab` is optional there and has to
+be, since the entry forms that name no manager carry no occupancy -- so omitting it is
+silent at the write and expensive at the read, where the restore brings back a bare
+name and the key-to-key compare then refuses the manager that is still live. One
+assembly that names every field is what makes the occupancy non-optional for the two
+writers, the handoff's own entry and the correction that takes it back. A third call
+site fails a source test.
+
+ATOMIC IS NOT ORDERED, which is why `publish_manager` also carries a REVISION. Writing
+the four together stops a reader seeing half of two statements; it says nothing about a
+statement that was already old when it arrived. A resolve reads the crew log off the
+loop and then publishes, and a handoff can commit inside that window -- entry, index,
+publish -- so the older read then publishes the manager the handoff just revoked. Four
+atomic writes of a stale fact are still a lost update. A caller that suspends takes
+`manager_revision` first and hands it back as `expect_revision`; a publication whose
+revision has moved is DISCARDED and answers False. EVERY publication the resolve derives
+from a read hands it back, and the revision is taken before the FIRST suspension, which
+is the index read rather than the log read. The two earliest branches are the cheapest
+to miss and the worst to: they publish a CLEARED statement, so a stale "never handed
+over" verdict does not merely go stale, it wipes a manager a handoff published during
+that read -- and an empty manager is the revoked creator. A source test enumerates the
+publications rather than listing them. Not a retry: a read that lost to the
+authority would re-read the log the authority just wrote. An authoritative writer -- the
+handoff publishing a grant it already made durable, a refusal forcing the slot
+unresolved -- passes nothing and always wins, which is what puts the discard on the
+right side of the race. The counter is process-local and never persisted: the log is
+the authority across restarts, and a counter on a line would claim an order between two
+processes that never compared their reads.
+
+EVERY STATEMENT ABOUT THE LOG ADVANCES IT, including a correction that changes no value.
+A refused handoff whose entry already landed is corrected on the log, and a correction
+that touched nothing else would leave a resolve already in flight holding the refused
+recipient and a revision snapshot nothing advanced -- so its publish would pass the
+check and grant exactly the reach the refusal withheld. The working correction path
+therefore restates the restored manager and occupancy; the value is the one the slot
+already holds, so advancing the revision is the whole effect. The failing path needs no
+addition, because publishing UNRESOLVED advances it already. That is why no lock spans
+the window: the restatement is unconditional and the resolve's publish is not, so a
+resolve that publishes first is overwritten and one that publishes later is discarded.
+
+IDENTITY BELONGS ON THE RECORD, NOT ONLY ON THE COMPARISON. `_manager_record_refusal`
+asks, when the value is READ, whether the session answering to the manager's key is the
+one the record names. That cannot save a value that was WRITTEN for a different session
+with nothing recording which. A slot key is a name: close a handed-over session, open
+one under the same name, and both sessions' units sit in that slot's store -- the newer
+one holding no manager entry, so a read qualified by name alone falls through it to the
+older one's grant and a fenced manager drives the replacement with no new handoff. So
+the target's tab identity is REQUIRED on every `session/manager_set` entry
+(`slot_tab`), and
+`session_tree.slot_manager` takes the asking session's identity and matches every entry
+against it. An entry that NAMES another incarnation is passed over, a session with no
+entry of its own gets the decided answer "no handoff was recorded", and a session that
+cannot say which incarnation it is gets an UNDECIDED one rather than a creator-held one.
+A handoff of a target with no identity is refused rather than recorded weakly, and the
+emitter will not assemble such an entry at all.
+
+A DECISION ABOUT ONE ENTRY IS NOT A DECISION ABOUT THE NEXT ONE. The hold a queued
+delivery takes while its manager cannot be read is a property of THAT ENTRY, and
+`_drop_stale_admissions` marks it per entry -- but it stops the drain only when the entry
+at the head when IT ran was the held one. Between that sweep and the pop the queue moves:
+the superseded-continuation purge and the revoked-replay drop each remove entries, and an
+explicit card promotes one. Any of them can leave a marked entry at the head the sweep
+passed over, and the pop then delivers a message whose sender's reach the gateway cannot
+verify.
+
+So the flag is read at the moment of the action, on the entry the action takes. What makes
+a site a hazard is HOW it picks: an index or a scan picks whichever entry is there now,
+which is not the entry anything earlier was about, while an id picks the entry its caller
+decided about and cannot have the defect. Three index-or-scan sites touch a slot's chat
+queue -- the single pop, the system-only scan, and the queue-bound eviction a cron
+notification triggers -- and all three read the flag on what they take. The eviction is
+the one that DESTROYS rather than delivers, so it takes the oldest entry it MAY take and,
+when every entry is held, drops the arriving notification instead: a cron notice is minted
+again on the next tick and a held delivery is not. A contract test enumerates the sites
+from source and fails on a new one.
+
+EVERY PROPERTY A GRANT DEPENDS ON IS RE-DERIVED WHERE THE GRANT IS USED. A check that
+lives outside the use-time funnel is a check some path reaches the decision without, and
+that has now been proven twice on this line: the manager's memory store was compared at
+admission and nowhere else until a rebind kept a grant the next restart would drop, and
+the FENCE RELATION was compared at admission and nowhere else until a channel slot healed
+its own link. The second needs no rebinding and no new occupant of a key: a slot surfaced
+before its stem resolves carries no link, so it is unfenced and may be handed a person's
+own tab; `channel_slots._rebind_unbound_channel_slot` then attaches the link and the
+manager is fenced, with its identity and its store both unmoved -- so neither comparison
+the read already made notices, and what stands is the deputy the fence exists to prevent.
+Neither was a missing check. Both checks existed, in the verb, where only the verb runs.
+
+So `_manager_record_refusal` is the ONE place a grant's admissibility is decided, and it
+asks five questions: the manager key is not a crew member's own DM, the record names the
+live occupant of that key, the two slots agree on their memory store, the manager is
+reachable at all (`_live_target_refusal`), and the fence relation holds. Whether the log
+could be read at all stays `_manager_unread_refusal`'s, which is the funnel for answers
+that are MISSING rather than wrong.
+
+RESTORING DOES NOT RE-ADMIT. `resolve_slot_manager` publishes what the log records and
+judges nothing: it does not compare identities, stores, surfaces or fences, and there is
+no attribute for "read, and not allowed to authorize". A verdict formed at restore would
+be a second implementation of all five comparisons AND a stored answer besides -- the
+same shape as the deleted handed-over marker, going stale the same way, because a manager
+admissible at boot can be rebound, linked to a channel or closed a second later. The
+module's standing rule decides it: an authorization input live state can answer is
+recomputed where it is used and never written down.
+
+The cost is one refusal at FIRST USE for a grant the chokepoint turns down, where the
+old shape refused at boot and cached the verdict. The caller is told to resolve it with a
+fresh handoff either way, and the person is never stranded, because an unfenced caller's
+reach never came from this field. What it buys is that the five comparisons exist once.
+
+A contract test carries the rule rather than a reviewer: it reads the admission gate's
+OWN refusals out of the source and fails on any the dependency map does not account for,
+and it fails again if a declared re-derivation is not written in one of the two funnels.
+Adding a property to the verb without re-deriving it reds; exempting one costs a written
+reason. The refusals the verb makes through `authorize_target` need no entry, because
+every use of a grant calls `authorize_target` too.
+
+AN IDENTITY COMPARISON STATES THREE ANSWERS, and `crew_log/identity.compare_identity`
+is the only place in the package that makes one. Equality states two, and the two it
+merges are the ones a reader must separate: an entry that POSITIVELY names a different
+incarnation (a statement, which a walk may pass over and keep looking) and an entry
+nobody can attribute at all (not a statement, so a reader owes it an undecided answer).
+Merging them is fail-OPEN on every walk, and the manager read is a walk for the NEWEST
+entry about the asking session: an entry whose identity cannot be established becomes
+invisible to it, the walk falls off the end, and "no handoff was recorded" comes back
+DECIDED -- restoring the creator a handoff revoked. One damaged byte in the FIELD NAME
+reaches that, with the grant itself perfectly readable and no attacker involved.
+
+This is the same defect at its third depth. A record that does not parse was made
+undecided; then a record that parses and fails the entry schema; then this one, which
+passes the schema and carries an identity the reader cannot find. Each of the first two
+fixes was an instance, and the generator is the two-valued comparison itself -- so the
+rule is enforced structurally rather than remembered: one predicate, three named
+answers, and a contract test that walks every module under `src/kiro_crew` and fails on
+any `==` or `!=` over a session tab identity outside it. A fourth depth is a new
+comparison, and a new comparison is what that test reds on. A second test pins that
+every call's verdict is read by NAME, because all three answers are non-empty strings
+and `if compare_identity(...)` would take the match branch for UNKNOWN.
+
+The hydrate reads only WHETHER the index names this slot, which is the one question it
+owns: does the crew log have to be read for it at all. Which incarnation a grant was
+written for is answered once, by the log, where every entry carries the identity --
+asking it in both places would put the answer in two places and the next hole in
+whichever one was forgotten. The index is keyed by slot alone for exactly that reason.
+
+AND A PATH THAT REFUSES NEVER REWRITES WHAT IT REFUSES, which is the same rule facing
+the other way. "Who holds this key now" and "who the record names" are different values
+that agree in the ordinary case, which is what makes mixing them up quiet. Only the
+handoff may read the live occupant (`_tab_identity`), because that is where the record
+is MADE, and it reads it once and uses the one value for both the entry and the publish.
+Every other path APPLIES a record and publishes the occupancy that record carries. The
+inadmissible restore got this wrong: it stamped the live occupant of a retired manager's
+key, so a fenced replacement sitting on that key had its own identity published, the
+next failed recovery handoff copied it into the correction, and the log then named the
+replacement -- control nobody handed over, one store rebind from taking effect. A source
+test pins the two permitted readers, and `publish_manager` states the rule: every caller
+hands in a recorded value and no caller mints one.
+
+It is backed by DEFAULT-DENY rather than by remembering. A slot's manager lives only in
+the crew log, so a slot hydrated from a metadata line has no established manager --
+`metadata_codec.apply` sets `_manager_unresolved` for every hydrating purpose, and only
+`resolve_slot_manager` clears it, and only on an authoritative read. While it stands,
+every read that authorizes against the manager is refused 409 `manager_unresolved`. So a
+build path added later that publishes a slot without consulting the log does not silently
+revert a handoff and hand a revoked giver its reach back: it produces a slot that refuses
+the manager-dependent verbs, which is visible. A freshly minted slot never carries the
+flag -- nothing was handed over before it existed.
+
+AND EVERY ONE OF THOSE REFUSAL BODIES IS GENERIC, which is a containment rule rather
+than a style. They are raised from the READ, and the read runs BEFORE the ownership
+fence has decided the caller may reach the slot at all -- that is the whole point of
+putting the guard on the read, and it is also what makes the wording a disclosure
+surface. A body that interpolated the target's title answered "what is this stranger's
+session called" to any fenced caller willing to name a key, and one that named the
+manager's key answered "who is driving it": being refused was the way to ask. So no body
+carries the target's title, the manager's key, or any slot key, and a test asserts all
+three are absent from every pre-authorization refusal. The CODE stays specific, because
+the caller still has to know whether to retry and a code says nothing about whose session
+it is. Same rule as the tracebacks this module drops on its fail-closed paths: a path
+that refuses must not become the way to read what it protects.
+
+THE REFUSAL IS ON THE READ, not at a gate. `require_manager_of` is the one way an
+authorization answer reads who manages a slot, and it refuses for both ways the value can
+be unknown before returning it; `manager_of` is the raw read and belongs to the rebuild
+alone. The refusal used to be two conditions at the top of `authorize_target`, keyed on
+`operation in HANDOFF_WIDENED_OPERATIONS` -- a predicate that APPROXIMATES "this
+operation reads the manager", and it was wrong in both directions. Too wide: the fence
+short-circuits on `ownership_fenced`, so an unfenced caller never reads the manager and
+its answer could not change, yet it was refused anyway -- which on a gateway that never
+hands anything off is every caller, after every restart. Too narrow: three sites reach
+the value without passing that gate -- the handoff verb's own `already_manager` check,
+its commit's `previous_manager`, and `broadcast_audience`, which filters every slot by
+who manages it for any caller. Put on the read, the guard cannot be reached around, and
+a test pins it from source: no function outside `require_manager_of` and the rebuild may
+call `manager_of`.
+
+ONE PREDICATE ANSWERS "may this caller drive this slot", and that is `_managed_by_other`.
+Everything that can go stale while a published record STANDS lives in
+`_manager_record_refusal`, which `require_manager_of` reaches and nothing else does: the
+IDENTITY of the session answering to the manager's key (`_tab_id`, which is persisted,
+so a resume carries it across while a new occupant of the name mints its own) and STORE
+EQUALITY between the two slots, the positive principal test. Both were established when
+the grant was admitted and both can stop being true afterwards, under the manager's own
+slot lock rather than the handed session's -- so a grant admitted while the stores
+agreed would keep answering after they stopped agreeing, and the next restart is what
+would notice, since the rebuild re-validates on exactly that comparison and drops the
+grant. Re-asked on the read, the drain re-asserting an admission gets both with no code
+of its own, which is the reader that found the shape. A second site comparing a manager
+read against a key fails a source test; `_managed_by_other` is readable for a WRITE so
+the fresh handoff the refusal names stays reachable.
+
+A KEY NAMES A SLOT AND NOT A SESSION, and that gap is the defect this line has closed
+fourteen times, each time as a new copy of the comparison rather than a new idea about
+it. The sessions answering to one key over a gateway's life are many: a close and a
+resume put a new object under the same name, and the explicitly-named keys
+(`cron-{id}`, `workflow-{run_id}`, a channel's own) are handed on deliberately. So "the
+manager's key equals the asker's key" answers a question about names while the caller
+asked one about sessions, and the difference is a grant a replacement inherits from the
+session that was given it and then lost it. The fix is therefore structural rather than
+a review habit: `manager_record_names` is the ONE place a tab identity meets the record,
+`_managed_by_other` is the one predicate built on it, and a source test asserts that NO
+key comparison anywhere stands without one of the two being asked in the same function.
+The count it asserts is zero standing alone -- not a list of approved sites, because an
+approved-site list is what a fifteenth instance gets added to.
+
+Two consequences follow from stating it that way. Every asking site passes its OWN
+identity, including the live callers where the compare is redundant by construction (a
+live caller is the occupant of the key it was authorized under), because an exemption is
+a list and a list is what the next caller is added without. And `_created_by` stays
+outside the rule, for a reason rather than by omission: it is written at birth and never
+written again, so no grant moves through it and there is no revoked predecessor for a
+replacement to inherit from.
+
+An ABSENT record names nobody, which is the direction that has to be right too. An empty
+`_manager` is the decided claim "the creator holds it", carrying no identity to compare,
+and reading that as "names somebody other than the asker" would fence every creator out
+of its own worker -- on a gateway where nothing was ever handed over, that is every
+delivery there is. And the handoff's own `already_manager` check asks through the same
+predicate rather than beside it: a key-only answer there refused the one handoff that
+clears a stale record, which is exactly what every other refusal about that record names
+as the way out, so the denial became permanent for the life of the slot.
+
+A HANDOFF MAY NOT MOVE THE MANAGER OUT FROM UNDER A QUEUED ENTRY, and that is the one
+rule this PR keeps about queued deliveries. An entry waiting on a busy session was
+authorized when it was ADMITTED, and what admitted it is the sender's reach -- which this
+verb moves. Nothing re-checks that relation at the drain: the containment snapshot the
+drain compares describes the TARGET alone, while this is a relation between the target's
+current manager and one entry's stamped sender, so it is per-entry and cannot be a field
+on a per-slot snapshot. Re-checking it there needs a sender stamp on every entry plus a
+hold for the reads that have not landed, which is a surface of its own.
+
+So `session_handoff` REFUSES while the target still has queued entries
+(`queue_not_drained`, 409). The queue is empty at the only moment the relation changes,
+which is why there is nothing for a drain to re-validate -- the three manager refusals
+are classified as non-containment for exactly that reason, with this rule named as what
+makes the absence safe. Asked at the gate so the refusal is audited and the caller is
+told before anything is appended, and asked AGAIN with nothing suspending before the
+publish, because the append suspends and a send admitted for the current manager can land
+in that window; a refusal past the commit point corrects the log like every other one.
+
+THE REFUSAL NAMES THE WAY THROUGH, because this state does not always clear itself. A
+queue parked on memory preparation drains when preparation finishes, and a running
+session drains its own queue at its turn end -- but a queue restored from disk at boot
+waits for its session's next send (`_arm_parked_queue_drain` says so), so a caller told
+only "retry" could retry forever. Sending to the target is what starts the turn that
+drains it, and the caller receiving this refusal is the one session entitled to send. The
+cost is a refusal plus one send, and what it buys is that no accepted message ever runs
+under a manager it was not accepted for.
+
+WHAT A QUEUED DELIVERY WOULD NEED, and why it is not here: a provenance stamp recording
+whether the manager fence applied to the admission, a per-entry re-compare of the stamped
+sender against the current manager, a HOLD for the entries whose manager read has not
+landed (neither deliverable nor droppable), the restore path's handling of a stamp that
+names a write target, and the eviction and dispatch sites that must read that hold on the
+entry they take. Every one of those depends on the stamp, so none of them can ship
+without it, and the stamp is what carries the admission this verb invalidates. They are
+one piece of work and they ship as one, on `feat/19103-handoff-queued-sends`.
+
+The read's refusal is also NARROWED to the slot it is about. The strict listing exists so
+a caller that validates against it cannot pass against a record that is quietly short,
+and refused store-wide one damaged unit makes every slot's listing incomplete -- so a
+slot whose own log reads perfectly comes up unresolved and its manager-dependent verbs
+are refused until somebody repairs an unrelated session. An unaccounted unit is skipped
+only when its own `session/opened` entry attributes it ELSEWHERE, read positionally from
+line 2 because `read_head` withholds the entry exactly when the header is the thing that
+failed. One that cannot be attributed still refuses, and a cross-slot caller keeps the
+store-wide refusal. `CrewLogError` is also caught on that path: it is not an `OSError`,
+so it escaped every handler and surfaced as a crash rather than as the undecided read it
+is.
+
+A per-slot refusal also ARMS the read that clears it. `resolve_slot_manager`'s callers
+are all build paths and none runs again for a slot already open, so an unresolved slot
+used to stay unresolved until the process restarted while every refusal said "retry in a
+moment". One bad unit anywhere in the store is enough to get there, since the listing
+behind the read is store-wide and a `CrewLogError` from it is not an `OSError`. The
+re-read is scheduled from the refusal, deduplicated per slot, so the window is
+self-clearing and the instruction is true.
+
+UNRESOLVED is its own state and never collapses into a decided one. An undecided read
+establishes nothing, so the slot goes unresolved and carries no key either -- the four
+attributes move together, and every reader is refused on the flag while the re-read the
+refusal arms is what restores the key. An empty `_manager` on a resolved slot is the
+decided answer "the creator holds it", which a read that could not see the bytes cannot
+make. A store that does not EXIST is decided -- nothing was ever recorded there, so no
+handoff can exist -- which is why `slot_manager` answers `FileNotFoundError` on the
+listing as "no handoff" and only a store that is there and unreadable as undecided. Without
+that split a first run, where no crew-log store exists yet, would refuse every slot.
+
+WHETHER THE LOG CAN BE READ IS THE READER'S ANSWER TO GIVE. `slot_manager` already
+separates those two cases, so nothing upstream consults `emit.enabled()`. Emission and
+readability are different facts: switching the crew log off stops new entries and leaves
+every entry already on disk exactly where it is. Reading a disabled emitter as "no
+handoff is recorded" turns an operator's config change into a revoked giver getting its
+reach back, and the index makes that inference visibly wrong rather than merely
+unsupported -- an indexed slot is one whose handoff committed, so "nothing was ever
+recorded" is contradicted by the slot's own line.
+
+A handoff is also refused when the TARGET is not ownership-fenced and the RECIPIENT is
+(`deputy_refused`). The fence decides what a caller may reach and, for the verbs a handoff
+widens, it reads the manager -- so a fenced agent-created worker given one of the person's
+own tabs drives a session the fence does not apply to, and through it reaches every session
+in the workspace while reading the results back. Each half of how it got there is
+admissible on its own, which is why the refusal is on the combination. Refused here rather
+than by making a managed slot count as fenced, which would change the TARGET's fence status
+as a side effect of being managed: a person's own tab would silently lose its own reach for
+having been handed to someone. Fenced to fenced (a lead's workers to a lead's conductor)
+and unfenced to unfenced (a person's own tabs) both pass; only the mixed direction builds
+a deputy.
+
+The verb applies that SAME store comparison, so the answer a caller gets is the answer
+the next boot will give. `_receiver` compares the recipient against the giver AND against
+the target, before the append and again after the LAST suspension before the publish,
+which is the index write rather than the append: that write takes a lock off the loop
+and
+cross-process lock off the loop, and inside it the recipient's own routes -- which take
+the recipient's slot lock and not this verb's -- can switch its agent, rebind its memory
+store, attach a channel link, or close and reopen the session under the same key. A
+verdict formed before it and acted on after it is a verdict about a session that may no
+longer be the one being handed a worker. The earlier check is kept because it is free
+and spares the log a correction in the common case. Three sessions
+make those two comparisons disagree -- an owner-rooted lead on the default store
+dispatches a member-store worker and a default-store conductor, so giver and recipient
+agree while recipient and target do not -- and a handoff admitted on the giver's binding
+alone would be accepted now and silently revoked at the next start, which is worse than
+refusing it up front. The refusal names the mismatch (`recipient_other_store`). The log stays the authority on WHAT was
+recorded and was never the authority on whether that record is still allowed: a recipient
+can be rebound to another principal's store, linked to a channel or closed while the
+gateway is DOWN, and no append-only entry can know it. This is also what closes the gap a
+corrective append leaves, because a correction that never landed and a crash between the
+entry and its correction both leave the log stating a grant that was refused, and this is
+the one point such a grant would otherwise take effect.
+
+`rebuild_managers_from_log` RESTORES `_manager` from the newest entry per slot, through
+`session_tree.slot_manager`, which answers `(manager, decided)` so a caller can tell "no
+handoff was recorded" from "the log did not say". It is the only way the field is ever
+populated at a start.
+
+Its IMPORT is not on the boot path either, which is a separate cost from its run. The
+restore schedules the rebuild as its own task, and the `session_control` import sits in
+that task's coroutine rather than in the restore function around it: session control is
+optional and importing it pulls its whole dependency set in, so an import on the boot
+path is paid by every start, including starts with session control switched off that
+never reach the rebuild. A lazy-import count cannot see this -- the import was already
+inside a function, so moving it changes no name and no total -- so a source test pins
+WHICH function holds it.
+
+It is NOT on the boot path, and it is scoped by the index. An indexed slot's read is
+proportional to its surviving history -- a unit is only PROVED to record no handoff by
+reading all of it -- so `session_restore` runs the pass as its own task rather than in
+front of READY, and only indexed slots have anything to read. There is no process-wide
+window: every slot whose answer could be guessed wrong is an indexed slot, and every indexed
+slot hydrates unresolved and is refused on its own until its read lands, so there is no
+state in which an unread value is answered from `_created_by`. A refusal also arms the
+read for its own slot, so a caller that arrives first does not wait on the pass. The log decides in three directions, and only two of them
+return the session to its creator. An entry-less log and a decided revert (the
+`to_creator` entry form) both leave `_manager` empty, which IS the statement "the creator
+holds this session". A recorded manager that fails revalidation -- closed, or rebound to
+another principal's store -- makes neither statement, so manager-dependent access is
+DENIED rather than reverted: "the recipient is not admissible" and "no handoff happened"
+are different facts, and reverting would invent a transfer back and hand a revoked grant
+to the session that gave it away. An undecided read establishes nothing and leaves the
+slot unresolved, so a briefly unreadable store costs a handoff until a read succeeds
+rather than handing anyone reach the log cannot show they were given. Denying strands
+nobody: an unfenced caller's reach never came from this field, so a person can still
+adopt, release or close such a session, and the way back is a fresh handoff.
+
+The verb writes NO slot line, which is the other half of the same decision. The entry is
+the handoff and `_manager` is this process's copy of it, so there is no second write to
+order, no partial state to report -- the reply carries no `cached` key -- and no cache to
+fall out of date. Publishing on the strength of a `best_effort` save instead, back when the
+line did carry the field, is what let a save that failed plus a restart before the periodic
+flush retried it restore the manager a handoff had just revoked.
+
+AUTHORIZATION MOVES AND LINEAGE DOES NOT, and that is a declared intermediate state
+rather than an omission. This verb writes one record, `session/manager_set`, and no tree
+edge: the handed session keeps the parent it was opened under, so the sidebar and the
+durable half of `session_status` -- `_created_tree_roster`, folded from the tree -- still
+list it beneath its CREATOR while the manager is the session that can reach it. "What did
+I create" and "what can I reach" are two different questions; the tree is the record of
+the first and the manager record is the answer to the second. The roster that lists a
+session by who may reach it arrives with the listing work in the following step. Until
+then a recipient holds a worker it cannot see under its own name, which is a NARROWING and
+not a widening: the gap is a capability only for a caller that already holds the key it
+was handed, nothing is authorized off a roster, and every verb that authorizes reads the
+manager through `require_manager_of`.
+
+Leaving the tree alone also keeps `_created_by`'s only independent corroboration intact.
+`session_tree_projection` reports a session's recorded creator as TRUSTED only while that
+creator is still its tree parent, so a handoff that moved the edge would make every reader
+of that projection -- not just this verb -- stop corroborating the creator of a session the
+moment it was handed over. A session's lineage is the record of how it came to exist, and
+a transfer of control is not a claim about that.
+
+Because nothing is written to the tree, a refused commit has nothing to put back. The
+manager entry is the only durable write, so the compensation is a manager compensation
+alone (`_revoke_manager_record`), and the order the record owes has one step in it: the
+entry, then the index, then the publish.
+
+The audit is written after the commit and inside the lock, on the one path where the
+grant landed; every refusal above it raises through `_audit_denials`, which writes the
+`denied` line. The sidebar broadcast goes out beside it because the handed session's ROW
+changed -- it reports a manager -- even though its position did not. The verb's pre-lock
+refusals are audited too: the shared `gate` and the handoff's own recipient resolution both sit inside
+`_audit_denials`, so `already_manager`, `member_recipient`, `recipient_other_store` and a
+replaced recipient each leave a record, which is what `backend-security-controls`
+requires of a permission decision.
+
+The recipient is authorized by `authorize_target` like a target and then tested for
+its PRINCIPAL: a `member-` DM key is refused by key alone, and a recipient whose
+`memory_store` differs from the giver's is refused `recipient_other_store`. That test
+is positive on purpose -- `_store_is_member_owned` answers False for an unreadable or
+incomplete record, which withholds member status for an admission and ADMITS one for a
+refusal, so the recipient rule reads the two slots' own bindings instead. The recipient is
+re-established against the LIVE slot object TWICE, and the second time is the one that
+decides: immediately before the publish, with nothing suspending after it. The append
+suspends, and the recipient's own routes take its slot lock and not this verb's, so an
+agent switch, a store rebind, a new channel link or a same-key reopen inside that
+suspension would otherwise move the reach on a verdict formed before the change. The
+earlier check is kept only because it is free and spares the log a correction in the
+common case. A declined publish refuses 409 `recipient_replaced` and never writes
+`_manager` -- but the entry is already the authority by then, so declining to publish is
+not enough on its own: the handoff is taken back on the log through
+`_revoke_manager_record`, or a start would grant at boot the very reach the refusal
+withheld. The target is re-authorized inside the lock and refused 409 `target_replaced`
+when the slot under its key is a different session from the one admitted before the first
+suspension, the same object-identity rule the tree verbs apply.
 
 `session_adopt` and `session_release` reshape the session tree, so both go
 through `authorize_target` like every other verb and add tree checks of their
