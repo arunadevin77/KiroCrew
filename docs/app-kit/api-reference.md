@@ -994,6 +994,16 @@ if mc.last_flush_dropped:
     print(f"{mc.last_flush_dropped} context entries were dropped; the turn ran without them")
 ```
 
+`last_flush_dropped` belongs to the client, not to one call, so it describes a
+send only while sends on that client do not overlap; a later overlapping send or
+flush overwrites it. When you send concurrently, flush first and read the count
+that call returns, which is that call's alone:
+
+```python
+dropped = await mc.flush_pending_context("slot-1")
+await mc.send_message("slot-1", "hello")
+```
+
 The standalone package exports `KiroCrewClient`, `KiroCrewError`, `ErrorCode`,
 `WsClient`, `WsEvent` and `GATEWAY_CONFIG_KEYS`. It does not export
 `AppManifest`, `AppLifecycle`, `GatewayManager` or proxy-auth helpers. Validate

@@ -518,7 +518,11 @@ class KiroCrewClient:
         ``context_secret_shaped``) is dropped so it cannot block this send, and
         the send still goes through. Read ``last_flush_dropped`` after the call
         to learn how many entries this send dropped; it is 0 when nothing was
-        dropped or nothing was buffered.
+        dropped or nothing was buffered. That attribute is shared by the whole
+        client, so it describes this send only while sends on one client do not
+        overlap. A caller that sends concurrently awaits
+        ``flush_pending_context(slot_id)`` itself before the send and reads the
+        count it returns, which belongs to that call alone.
         """
         self._last_flush_dropped = 0
         if len(message) > self.message_length_limit:
@@ -991,5 +995,9 @@ class KiroCrewClient:
         ``send_message`` resets this to 0 before it sends, so after a send it
         counts only what that send's flush dropped (0 when nothing was
         buffered). A direct ``flush_pending_context`` call sets it too.
+
+        The value is per client, not per call: when two sends or flushes on one
+        client overlap, the later one overwrites it. Concurrent callers read the
+        count ``flush_pending_context`` returns instead.
         """
         return self._last_flush_dropped
