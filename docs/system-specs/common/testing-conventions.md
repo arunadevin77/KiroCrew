@@ -3860,8 +3860,8 @@ review finding; the version below is what the lane accepted.
   expire on its own.
 - **A tool the script under test requires, supplied by the harness rather than skipped.**
   `.github/scripts/pr-body-snapshot.sh` fails closed without `jq`, and three
-  `TestUxReviewReadsTheScreenshotsBlindFirst` evidence-step cases in
-  `test_ai_review_workflows.py` were red every round on a host whose Git Bash has none.
+  `TestUxReviewReadsTheScreenshotsBlindFirst*` evidence-step cases in
+  `test_ai_review_workflows_ux*.py` were red every round on a host whose Git Bash has none.
   The first cut gated them (`pytest.skip` when the bash resolves no `jq`), and the GPT
   lane blocked it under `a-ratchet-may-only-tighten`: a newly added `skip` in a file the
   diff otherwise only extends is a loosened ratchet, whatever the spec's capability-gate

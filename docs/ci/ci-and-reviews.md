@@ -2350,7 +2350,7 @@ the file; it is not proof of anything the transcript does not record. The
 success path still prints the redacted candidate file as a tuning signal, as
 before; the failing branch prints no transcript or candidate content, and neither
 path uploads the execution file.
-`test_ai_review_workflows.py::TestOpusDiscoveryCaptureExecutes` runs the real
+`test_ai_review_workflows_opus.py::TestOpusDiscoveryCaptureExecutes` runs the real
 step against fixtures that plant sentinel strings in the tool arguments, denied
 tool names, tool results and the model's text, and asserts none reach stdout or
 stderr; one case runs the step with a `wc` shim that pads like BSD `wc` and
@@ -2874,7 +2874,7 @@ because the record also changes what readiness's disposition and supersession re
 answer at this head. A rerun failure after the judgment has recorded is reported as a
 warning annotation plus a PR notice naming the lane to re-run manually — never as a
 failed run, which would make a recorded judgment look rejected.
-`test/test_ai_review_workflows.py` pins the contract from both ends:
+`test/test_ai_review_workflows_human_override.py` pins the contract from both ends:
 `test_handler_requires_write_permission_fresh_sha_and_reason` for the authorization and
 freshness checks, and `test_fable_consumes_only_a_bot_authored_sha_scoped_record` plus
 `test_gpt_has_clear_verdict_banner_and_human_override` for the consumer side, so an

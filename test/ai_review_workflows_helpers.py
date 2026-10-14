@@ -1,16 +1,18 @@
 """Shared helpers for the ``test_ai_review_workflows*`` tests.
 
-Workflow and prompt readers, step extraction, the bash runner and its stubs, and the
-lane tables the parts read.
+Workflow and prompt readers, step extraction, the bash runner and its stubs, the UX
+evidence-gate harness, and the lane tables the parts read.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -671,3 +673,402 @@ def _review_contract_module():
         / "scripts"
         / "_review_contract.py",
     )
+
+
+@functools.lru_cache(maxsize=None)
+def _bash_has_jq(bash: str) -> bool:
+    """Whether *bash* resolves a ``jq`` -- asked of the bash the step runs under.
+
+    ``pr-body-snapshot.sh`` fails closed without ``jq`` ("::error::jq is not
+    available ..."), so a host without one reddens every evidence-step case
+    unless the harness stands one in (``_jq_stub``); this answer is what decides
+    that. The probe goes through the SAME bash the step will run under, not
+    ``shutil.which`` from this process: Git for Windows' ``bin\\bash.exe``
+    prepends its own ``/usr/bin`` to ``PATH``, so the two can disagree on what
+    ``jq`` means. Cached per bash, since the answer is a host fact that does not
+    change within a run.
+    """
+    try:
+        probe = subprocess.run(
+            [bash, "-c", "command -v jq"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0
+
+
+def _concurrency_group(workflow_name: str) -> str:
+    workflow = yaml.safe_load((WORKFLOWS / workflow_name).read_text(encoding="utf-8"))
+    return " ".join(str(workflow["concurrency"]["group"]).split())
+
+
+UX_REVIEW_STEP = "UX review (Opus 5.5)"
+UX_EVIDENCE_STEP = "Collect blind-read evidence"
+FORK_ATTACHMENT_STEP = "Collect review evidence (description attachments and committed media)"
+
+# The step each lane fetches PR-description attachments in. The same-repo UX
+# copy also reads committed images off its checkout; the fork copies have no
+# checkout. The executed tests run every one of them, so the copies cannot
+# drift apart unnoticed -- and both design lanes, which source the shared
+# committed-evidence script and must behave identically with or without a
+# checkout.
+DESIGN_EVIDENCE_STEP = "Collect rendered evidence"
+EVIDENCE_STEP = {
+    "ux-review.yml": UX_EVIDENCE_STEP,
+    "fork-ux-review.yml": FORK_ATTACHMENT_STEP,
+    "design-review.yml": DESIGN_EVIDENCE_STEP,
+    "fork-design-review.yml": DESIGN_EVIDENCE_STEP,
+}
+DESIGN_EVIDENCE_LANES = ("design-review.yml", "fork-design-review.yml")
+
+ATTACHMENT_SOURCE_LINE = '. "$GITHUB_WORKSPACE/.github/scripts/pr-attachment-evidence.sh"'
+
+
+class UxEvidenceGateHarness:
+    """The evidence-gate harness the UX evidence classes inherit.
+
+    Fixture bytes, the gh/jq/curl stubs, the git fixture repository and the step
+    runner. It holds no test, so pytest collects nothing from it.
+    """
+
+    # Byte fixtures libmagic types by CONTENT. The evidence step trusts the
+    # bytes and never the URL, so a fixture needs a real signature: a PNG with
+    # its IHDR chunk, a JFIF header, a GIF header, an EBML header whose DocType
+    # is webm, and plain text for the "not media" case.
+    PNG = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\x0dIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+        b"\x1f\x15\xc4\x89"
+    )
+    JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00"
+    GIF = b"GIF89a"
+    WEBM = (
+        b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\xf7\x81\x01\x42\xf2\x81\x04"
+        b"\x42\xf3\x81\x08\x42\x82\x84webm\x42\x87\x81\x02\x42\x85\x81\x02"
+    )
+    TEXT = b"not an image\n"
+    MIME = {PNG: "image/png", JPEG: "image/jpeg", GIF: "image/gif", WEBM: "video/webm"}
+
+    def _require_file_types_the_fixtures(self, tmp_path: Path) -> None:
+        """The step types each download with file(1); the host's libmagic has
+        to read the fixtures the way ubuntu-latest does, or the test would
+        measure the host's magic database rather than the script."""
+        if shutil.which("file") is None:
+            pytest.skip("the evidence step types downloads with file(1)")
+        probe = tmp_path / "probe"
+        for payload, mime in self.MIME.items():
+            probe.write_bytes(payload)
+            got = subprocess.run(
+                ["file", "--mime-type", "-b", str(probe)],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            ).stdout.strip()
+            if got != mime:
+                pytest.skip(f"this host's file(1) types the {mime} fixture as {got}")
+
+    @staticmethod
+    def _gh_stub() -> str:
+        """A `gh` that answers the one call the step makes -- the whole PR
+        object, which pr-body-snapshot.sh reads once per job for the title and
+        the description together -- from $GH_STUB_BODY, and fails loudly on
+        anything else, so a step that grew a second gh call would be caught
+        here rather than in CI. The first $GH_STUB_FAIL_FIRST calls fail with
+        exit 1, the way a 5xx or a rate limit would, so the retry around the
+        read can be exercised."""
+        return (
+            "gh() {\n"
+            '  n=$(cat "$GH_STUB_CALLS" 2>/dev/null || echo 0); n=$((n + 1)); printf \'%s\' "$n" > "$GH_STUB_CALLS"\n'
+            '  if [ "$n" -le "${GH_STUB_FAIL_FIRST:-0}" ]; then echo "gh stub: transient failure $n" >&2; return 1; fi\n'
+            '  case "$1 $2" in\n'
+            '    "api repos/$REPO/pulls/$PR") printf \'{"title":%s,"body":%s}\' '
+            '"$(printf \'%s\' "${GH_STUB_TITLE:-t}" | jq -Rs .)" '
+            '"$(printf \'%s\' "$GH_STUB_BODY" | jq -Rs .)" ;;\n'
+            '    *) echo "gh stub: unexpected call: $*" >&2; return 1 ;;\n'
+            "  esac\n"
+            "}\n"
+        )
+
+    # The three jq invocations the evidence step and the gh stub above make,
+    # and nothing else: `jq -Rs .` (JSON-encode stdin as one string) in the gh
+    # stub, `jq -r '.title'` and `jq -r '.body // ""'` in pr-body-snapshot.sh.
+    # Bytes in and out, never text mode: the snapshot files are read back with
+    # `$(cat ...)`, so a "\r\n" from a Windows text-mode stdout would land in
+    # the title and change every digest the consumers compute over it.
+    _JQ_STUB_PY = (
+        "import json, sys\n"
+        "args = sys.argv[1:]\n"
+        "raw = sys.stdin.buffer.read().decode('utf-8')\n"
+        "if args == ['-Rs', '.']:\n"
+        "    out = json.dumps(raw, ensure_ascii=False)\n"
+        "elif args == ['-r', '.title']:\n"
+        "    value = json.loads(raw)['title']\n"
+        "    out = 'null' if value is None else str(value)\n"
+        "elif args == ['-r', '.body // \"\"']:\n"
+        "    value = json.loads(raw).get('body')\n"
+        "    out = '' if value in (None, False) else str(value)\n"
+        "else:\n"
+        "    sys.stderr.write('jq stub: unsupported invocation: %r\\n' % (args,))\n"
+        "    sys.exit(2)\n"
+        "sys.stdout.buffer.write((out + '\\n').encode('utf-8'))\n"
+    )
+
+    def _jq_stub(self, tmp_path: Path, env: dict[str, str]) -> str:
+        """A `jq` for a bash that has none, so the evidence step is exercised
+        rather than skipped where the host lacks the binary.
+
+        `pr-body-snapshot.sh` fails closed without `jq` ("::error::jq is not
+        available ..."), which on a Git Bash without one made every evidence-step
+        case red instead of measuring the script; and a `pytest.skip` here is a
+        loosened ratchet (`a-ratchet-may-only-tighten`). The stand-in is the
+        smallest thing that is honest: it implements the three invocations the
+        step and the gh stub make, byte-exact, and exits 2 on any other filter,
+        so a step that grew a fourth jq call is caught here rather than passed.
+        It is only defined when the bash the step runs under resolves no `jq`
+        (`_bash_has_jq`): where the host has the real binary, the real binary
+        runs, as with `_bash()` preferring the host's Git Bash.
+        """
+        script = tmp_path / "jq_stub.py"
+        script.write_text(self._JQ_STUB_PY, encoding="utf-8", newline="\n")
+        env["JQ_STUB_PYTHON"] = Path(sys.executable).as_posix()
+        env["JQ_STUB_SCRIPT"] = script.as_posix()
+        return 'jq() { "$JQ_STUB_PYTHON" -I "$JQ_STUB_SCRIPT" "$@"; }\n'
+
+    def _curl_stub(self, tmp_path: Path, fixtures: dict[str, bytes | str]) -> str:
+        """A `curl` that records its argv and serves the fixture the URL names.
+
+        It is a shell FUNCTION, sourced through `BASH_ENV`, not a script on
+        `PATH`: Git for Windows' `bin\\bash.exe` is a wrapper that prepends
+        `mingw64\\bin` -- which ships `curl.exe` -- to `PATH` before bash
+        starts, so a `PATH` stub is shadowed there and every download hits the
+        real curl (and 404s on the fixture URLs). A function shadows any
+        executable regardless of `PATH` order, on every platform.
+
+        Every invocation appends its arguments, one per line, then a `--`
+        separator, to the log the test reads back. The last argument is the
+        URL; `-o` names the output path. A fixture value of ``FAIL:<code>``
+        returns that code instead of writing, and a URL with no fixture
+        returns 6 (could not resolve host), which is what a download of a host
+        the allowlist should have excluded would look like.
+        """
+        fixture_dir = tmp_path / "fixtures"
+        fixture_dir.mkdir(exist_ok=True)
+        table = []
+        for index, (url, payload) in enumerate(fixtures.items()):
+            if isinstance(payload, bytes):
+                path = fixture_dir / f"fixture-{index}"
+                path.write_bytes(payload)
+                table.append(f"{url}\t{path.as_posix()}")
+            else:
+                table.append(f"{url}\t{payload}")
+        # LF only: awk splits the map by line, and a platform "\r\n" on Windows
+        # would leave "\r" on every fixture path, so cp fails and each download
+        # reads as SKIPPED -- the whole attachment branch then measures nothing.
+        (tmp_path / "curl-map.tsv").write_text(
+            "".join(line + "\n" for line in table), encoding="utf-8", newline="\n"
+        )
+        self._curl_log = tmp_path / "curl-argv.log"
+        self._curl_log.touch()
+        return (
+            "curl() {\n"
+            '  log="$CURL_STUB_LOG"; map="$CURL_STUB_MAP"\n'
+            '  out=""; prev=""\n'
+            '  for a in "$@"; do\n'
+            '    printf \'%s\\n\' "$a" >> "$log"\n'
+            '    [ "$prev" = "-o" ] && out="$a"\n'
+            '    prev="$a"\n'
+            "  done\n"
+            '  url="$prev"\n'
+            "  printf '%s\\n' -- >> \"$log\"\n"
+            '  fixture="$(awk -F \'\\t\' -v u="$url" \'$1 == u { print $2; exit }\' "$map")"\n'
+            '  case "$fixture" in\n'
+            '    "") echo "curl: (6) Could not resolve host" >&2; return 6 ;;\n'
+            '    FAIL:*) echo "curl: (22) The requested URL returned error" >&2; return "${fixture#FAIL:}" ;;\n'
+            '    HTTP:*) printf \'%s\' "${fixture#HTTP:}"; echo "curl: (22) The requested URL returned error" >&2; return 22 ;;\n'
+            '    *) cp "$fixture" "$out" ;;\n'
+            "  esac\n"
+            "}\n"
+        )
+
+    def _curl_calls(self) -> list[list[str]]:
+        """The recorded curl invocations, one argv list each."""
+        calls: list[list[str]] = []
+        current: list[str] = []
+        for line in self._curl_log.read_text(encoding="utf-8").splitlines():
+            if line == "--":
+                calls.append(current)
+                current = []
+            else:
+                current.append(line)
+        return calls
+
+    def _run_evidence_gate(
+        self,
+        repo: Path,
+        base: str,
+        tmp_path: Path,
+        body: str = "",
+        fixtures: dict[str, bytes | str] | None = None,
+        max_shots: str = "40",
+        max_clips: str | None = None,
+        lane: str = "ux-review.yml",
+        gh_fail_first: int = 0,
+        expect_failure: bool = False,
+    ) -> tuple[str, str, str, str, Path]:
+        bash = _bash()
+        if bash is None:
+            pytest.skip("the evidence step runs only under Bash")
+        env = self._git_env(tmp_path)
+        # One CALL of this harness is one job, and several cases below run it
+        # twice to compare two runs of the same lane -- a 404 then a 503 on the
+        # same PR, say. The step reads the description through a snapshot cached
+        # under `$RUNNER_TEMP`, so a temp shared between those two calls would
+        # serve call 2 the body call 1 asked for, and the second case would
+        # silently measure the first one's input.
+        self._job_seq = getattr(self, "_job_seq", 0) + 1
+        job_temp = tmp_path / f"job-temp-{self._job_seq}"
+        job_temp.mkdir(parents=True, exist_ok=True)
+        env["RUNNER_TEMP"] = str(job_temp)
+        # bash -c is a non-interactive shell, so it sources $BASH_ENV before
+        # the script: the functions defined there shadow every gh and curl on
+        # PATH, wherever the platform's bash put them. gh() serves the body
+        # the step asks the API for; curl() serves the fixtures. jq() stands in
+        # for the binary only where this bash resolves none -- the step fails
+        # closed without one, and a host's real jq is the truer instrument.
+        stub = tmp_path / "stubs.sh"
+        stub_text = self._gh_stub()
+        if not _bash_has_jq(bash):
+            stub_text = self._jq_stub(tmp_path, env) + stub_text
+        stub.write_text(stub_text, encoding="utf-8", newline="\n")
+        env["BASH_ENV"] = stub.as_posix()
+        env["GH_STUB_BODY"] = body
+        env["GH_STUB_CALLS"] = (tmp_path / "gh-calls").as_posix()
+        env["GH_STUB_FAIL_FIRST"] = str(gh_fail_first)
+        if fixtures is not None:
+            self._require_file_types_the_fixtures(tmp_path)
+            with stub.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(self._curl_stub(tmp_path, fixtures))
+            env["CURL_STUB_LOG"] = self._curl_log.as_posix()
+            env["CURL_STUB_MAP"] = (tmp_path / "curl-map.tsv").as_posix()
+        script = _step_script(_workflow(lane), EVIDENCE_STEP[lane])
+        blind_dir = tmp_path / "ux-blind"
+        # The same-repo UX step copies into BLIND_DIR next to its committed
+        # images; the fork UX step, which has no checkout, copies into
+        # ATTACH_DIR; both design lanes take DEST_DIR straight from their step
+        # env, with the copy-name stem and the evidence file beside it.
+        dir_var = {"ux-review.yml": "BLIND_DIR", "fork-ux-review.yml": "ATTACH_DIR"}.get(
+            lane, "DEST_DIR"
+        )
+        design_env: dict[str, str] = {}
+        if lane in DESIGN_EVIDENCE_LANES:
+            step_env = _step_env(lane, EVIDENCE_STEP[lane])
+            self._evidence_file = tmp_path / "design-evidence.txt"
+            design_env = {
+                "NAME_STEM": step_env["NAME_STEM"],
+                "EVIDENCE": self._evidence_file.as_posix(),
+            }
+        shots = tmp_path / "shots.txt"
+        shot_map = tmp_path / "shot-map.txt"
+        clips = tmp_path / "clips.txt"
+        github_output = tmp_path / "github_output"
+        github_output.touch()
+        if max_clips is None:
+            # The cap the workflow actually ships, so the test exercises it.
+            max_clips = _step_env(lane, EVIDENCE_STEP[lane])["MAX_CLIPS"]
+        out = subprocess.run(
+            [bash, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=repo,
+            env={
+                **env,
+                "BASE_SHA": base,
+                # Each lane's merge-base step hands the evidence step the
+                # merge-base it fetched; HEAD descends from `base` here, so
+                # `base` is that merge-base.
+                "MERGE_BASE": base,
+                # The fork lanes and both design lanes read the media the PR
+                # commits out of the object store at this revision; the
+                # same-repo UX step, which has the files checked out, ignores it.
+                "HEAD_SHA": "HEAD",
+                "REPO": "example/repo",
+                "PR": "7",
+                dir_var: blind_dir.as_posix(),
+                "FETCH_DIR": (tmp_path / "ux-fetch").as_posix(),
+                "SHOTS": str(shots),
+                "SHOT_MAP": str(shot_map),
+                "CLIPS": str(clips),
+                "MAX_SHOTS": max_shots,
+                "MAX_CLIPS": max_clips,
+                "GITHUB_OUTPUT": str(github_output),
+                "GITHUB_WORKSPACE": str(ROOT),
+                **design_env,
+            },
+        )
+        if expect_failure:
+            assert out.returncode != 0, out.stdout
+        else:
+            assert out.returncode == 0, out.stderr
+        self._evidence_stdout = out.stdout
+        self._gh_calls = int((tmp_path / "gh-calls").read_text(encoding="utf-8") or 0)
+        return (
+            shots.read_text(encoding="utf-8"),
+            shot_map.read_text(encoding="utf-8"),
+            clips.read_text(encoding="utf-8"),
+            github_output.read_text(encoding="utf-8"),
+            blind_dir,
+        )
+
+    @staticmethod
+    def _git_env(tmp_path: Path) -> dict[str, str]:
+        """An environment in which git can only see the scratch repository.
+
+        An inherited `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` (set by a
+        hook, a wrapper, or a parent test runner) would make `git init` and
+        every write below land in THAT repository despite `cwd=repo`, so every
+        `GIT_*` location variable is dropped. Global and system config are
+        pointed away too, so a host-wide `commit.gpgsign` or hook path cannot
+        reach the fixture.
+
+        `RUNNER_TEMP` is given its own per-case directory for the same reason,
+        and it matters as soon as a step under test keeps anything there. The
+        evidence step reads the PR description through pr-body-snapshot.sh,
+        which caches that read under `$RUNNER_TEMP` BECAUSE a job is exactly
+        the scope one read should serve. On a GitHub runner that variable is
+        set job-wide, so inheriting it makes every case in the shard share one
+        cache: the first case to run leaves a snapshot for `example/repo#7`,
+        and every later case reuses it instead of calling its own `gh` stub --
+        its call counter is never written, and a case that asks the stub to
+        fail sees the step succeed. The failure is invisible off-runner, where
+        `RUNNER_TEMP` is unset and each case falls back to a fresh `mktemp -d`.
+        One case is one job, so one case gets one job temp.
+        """
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        gitconfig = tmp_path / "gitconfig"
+        gitconfig.touch()
+        env["GIT_CONFIG_GLOBAL"] = str(gitconfig)
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
+        runner_temp = tmp_path / "runner-temp"
+        runner_temp.mkdir(parents=True, exist_ok=True)
+        env["RUNNER_TEMP"] = str(runner_temp)
+        return env
+
+    def _git(self, repo: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=repo,
+            env=self._git_env(repo.parent),
+        ).stdout.strip()

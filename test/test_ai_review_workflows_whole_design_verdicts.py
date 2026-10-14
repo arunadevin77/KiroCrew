@@ -1,6 +1,6 @@
 """Review-workflow tests for how the design, UX and first-principles lanes reach a
-verdict and present it: take-away checks, calibration, CONCERNS in the Checks UI,
-and what each lane publishes.
+verdict and present it: calibration, current-head markers, take-away checks and
+CONCERNS in the Checks UI.
 """
 
 from __future__ import annotations
@@ -819,3 +819,148 @@ class TestDesignAndUxPunchlinesOpenWithTheProblem:
                 same,
                 fork,
             )
+
+
+CAUSE_LANES = (
+    "design-review.yml",
+    "ux-review.yml",
+    "first-principles-review.yml",
+    "fork-design-review.yml",
+    "fork-ux-review.yml",
+    "fork-first-principles-review.yml",
+)
+
+
+class TestIncompleteReviewNamesTheObservedCause:
+    """A fallback notice must report what was OBSERVED, not a plausible cause.
+
+    Every one of these lanes said "the model call errored or returned no verdict
+    header" whenever no verdict parsed -- including when the model was never
+    called at all, which is what happens when any earlier step in the job fails.
+    A wrong-but-plausible cause is worse than "could not complete, see logs": it
+    sends the contributor to debug their prompt or the model while the real
+    failure is upstream. The step's own `outcome` already distinguishes the
+    cases, so no new plumbing is needed to stop guessing.
+    """
+
+    @pytest.mark.parametrize("lane", CAUSE_LANES)
+    def test_cause_is_derived_from_the_review_step_outcome(self, lane: str) -> None:
+        workflow = _workflow(lane)
+        assert (
+            "the model call errored or returned no verdict header" not in workflow
+        ), f"{lane}: still asserts a cause it did not observe"
+        assert (
+            "REVIEW_OUTCOME: ${{ steps.review.outcome }}" in workflow
+        ), f"{lane}: the observed outcome is not wired into the comment step"
+
+    @pytest.mark.parametrize("lane", CAUSE_LANES)
+    def test_each_outcome_maps_to_a_distinct_honest_reason(self, lane: str) -> None:
+        bash = _bash()
+        if bash is None:
+            pytest.skip("the cause mapping is Bash; skip where Bash is absent")
+        workflow = _workflow(lane)
+        m = re.search(r'(case "\$\{REVIEW_OUTCOME:-\}" in.*?esac)', workflow, re.S)
+        assert m, f"{lane}: no REVIEW_OUTCOME case block"
+        block = "\n".join(line.strip() for line in m.group(1).splitlines())
+        seen = {}
+        for outcome in ("skipped", "failure", "cancelled", "success", ""):
+            out = subprocess.run(
+                [bash, "-e", "-c", block + '\nprintf "%s" "$why"'],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                env={**os.environ, "REVIEW_OUTCOME": outcome},
+            )
+            assert out.returncode == 0, out.stderr
+            seen[outcome] = out.stdout
+        # The load-bearing distinction: a model that was never called must not be
+        # described as a model that errored.
+        assert "never ran" in seen["skipped"], f"{lane}: {seen['skipped']!r}"
+        assert "no model call was made" in seen["skipped"]
+        assert "review step failed" in seen["failure"]
+        assert "review step was cancelled" in seen["cancelled"]
+        assert "review step completed" in seen["success"]
+        assert seen["failure"] != seen["skipped"] != seen["success"]
+        assert len(set(seen.values())) == 5, f"{lane}: reasons collide: {seen}"
+
+
+# The lanes whose missing head marker degrades to a NON-BLOCKING UNKNOWN.
+# The Security Scope Review lanes are deliberately absent: a missing marker REDS
+# them, because "no confirmed regression" over a tightening nobody measured is
+# the exact false green that lane exists to prevent. Adding them here would
+# assert the opposite of their contract.
+ADVISORY_LANES = {
+    "design-review.yml": "DESIGN-REVIEWED",
+    "fork-design-review.yml": "DESIGN-REVIEWED",
+    "ux-review.yml": "UX-REVIEWED",
+    "fork-ux-review.yml": "UX-REVIEWED",
+}
+
+
+class TestAdvisoryVerdictRequiresCurrentHeadMarker:
+    """The advisory lanes must score the verdict against the `[<LANE>-REVIEWED]
+    <sha>` proof marker, not off the header ALONE. If the marker is decorative,
+    a reply carrying a stale or rewritten marker still counts as
+    a verdict for the current revision.
+
+    These lanes are non-blocking, so the failure is not a bad merge gate; it is
+    a badge that asserts "reviewed at this sha" without that being checked.
+    """
+
+    @pytest.mark.parametrize(("lane", "marker"), sorted(ADVISORY_LANES.items()))
+    def test_the_head_marker_is_verified_not_just_emitted(self, lane: str, marker: str) -> None:
+        flat = _flat(_workflow(lane))
+        assert f'grep -qF "[{marker}] $HEAD"' in flat or (
+            f'grep -qF "[{marker}] ${{HEAD:-}}"' in flat
+        ), f"{lane}: verdict is accepted without proving the marker matches HEAD"
+        assert 'verdict="UNKNOWN"' in flat, (
+            f"{lane}: a missing marker must degrade to the existing "
+            "non-blocking UNKNOWN path, not invent a verdict"
+        )
+
+    @pytest.mark.parametrize(("lane", "marker"), sorted(ADVISORY_LANES.items()))
+    def test_the_marker_check_does_not_reintroduce_the_pipe_bug(
+        self, lane: str, marker: str
+    ) -> None:
+        """The check must not be `printf … | grep -q`: under `pipefail` a long
+        summary lets grep exit first, and the SIGPIPE status would silently
+        turn every verdict into UNKNOWN (the same pipe-timing defect)."""
+        flat = _flat(_workflow(lane))
+        i = flat.index(f"[{marker}] $")
+        window = flat[max(0, i - 200) : i]
+        assert (
+            "printf" not in window.split("if ")[-1]
+        ), f"{lane}: marker check pipes a writer into grep"
+
+    @pytest.mark.parametrize("marker", ["DESIGN-REVIEWED", "UX-REVIEWED"])
+    def test_marker_matching_is_literal_and_head_scoped(self, marker: str) -> None:
+        """Behavioural: the guard accepts only the CURRENT head's marker.
+
+        `grep -qF` matters -- the marker is bracketed, and those are regex
+        metacharacters, so a non-fixed match would not mean what it reads as.
+        """
+        bash = _bash()
+        if bash is None:
+            pytest.skip("the guard runs only under Bash")
+        script = (
+            "set -uo pipefail\n"
+            'if ! grep -qF "[%s] $HEAD" <<< "$SUMMARY"; then\n'
+            "  echo UNKNOWN\nelse\n  echo KEPT\nfi"
+        ) % marker
+        cases = {
+            f"Verdict: PASS\n[{marker}] abc123": "KEPT",
+            f"Verdict: PASS\n[{marker}] deadbeef": "UNKNOWN",
+            "Verdict: PASS": "UNKNOWN",
+        }
+        for summary, want in cases.items():
+            out = subprocess.run(
+                [bash, "-c", script],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                env={**os.environ, "HEAD": "abc123", "SUMMARY": summary},
+            )
+            assert out.returncode == 0, out.stderr
+            assert out.stdout.strip() == want, f"{summary!r} -> {out.stdout!r}"

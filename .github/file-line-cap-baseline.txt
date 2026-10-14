@@ -201,7 +201,6 @@
 9493 test/test_agent.py
 2896 test/test_agent_home_isolation.py
 3538 test/test_agent_panel_routes.py
-7367 test/test_ai_review_workflows.py
 2359 test/test_ai_spine_driver_coverage.py
 4737 test/test_app_backend.py
 2200 test/test_app_backend_composition_contract.py
