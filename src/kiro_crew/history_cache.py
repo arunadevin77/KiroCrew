@@ -274,7 +274,14 @@ class _SearchTextCache(Generic[_V]):
     method calls another locked method.
     """
 
-    def __init__(self, max_bytes: int, sizer: Callable[[_V], int], label: str = "") -> None:
+    def __init__(
+        self,
+        max_bytes: int,
+        sizer: Callable[[_V], int],
+        label: str = "",
+        *,
+        warn_on_refusal: bool = True,
+    ) -> None:
         self._max_bytes = max_bytes
         self._sizer = sizer
         self._label = label
@@ -283,7 +290,9 @@ class _SearchTextCache(Generic[_V]):
         self._admitted = 0
         self._refused = 0
         self._refused_since_prune = 0
-        self._warned = False
+        # A memo whose refusals cost only recomputation, never a file read,
+        # turns the warning off: reaching its ceiling is its normal state.
+        self._warned = not warn_on_refusal
         self._lock = threading.Lock()
 
     def get(self, key: str, default: _V | None = None) -> _V | None:
