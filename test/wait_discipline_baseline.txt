@@ -117,7 +117,6 @@
  1 test_config_loader.py
  2 test_config_save_locking.py
  1 test_config_savers_locked_write.py
- 1 test_connections_disconnect.py
  1 test_connections_l1_smoke.py
 12 test_connections_mint.py
  2 test_connections_premint.py

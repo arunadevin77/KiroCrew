@@ -145,6 +145,7 @@ from kiro_crew.connections import ownership  # noqa: E402
 from kiro_crew.connections import warm  # noqa: E402
 from kiro_crew.dashboard.handlers import connections  # noqa: E402
 from kiro_crew.dashboard.handlers import mcp as mcp_handlers  # noqa: E402
+from kiro_crew.testing.wait import await_until  # noqa: E402
 
 _ = pytest_asyncio
 
@@ -948,7 +949,7 @@ async def test_disconnect_does_not_wait_for_the_rearm(
         task = registry[_SLUG]
         assert not task.done(), "the Disconnect awaited the re-arm it only had to schedule"
         release.set()
-        assert await asyncio.wait_for(task, timeout=5) == []
+        assert await await_until(task, what="task completed") == []
 
 
 @pytest.mark.asyncio
