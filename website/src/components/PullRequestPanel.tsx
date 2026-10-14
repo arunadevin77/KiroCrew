@@ -397,7 +397,7 @@ const CI_META: Record<NonNullable<PullRequestStatus['ci']>, { icon: typeof Check
  * plus one health glyph while the pull request is live. Failed CI wins; a merge
  * conflict otherwise replaces pending/passed CI so an unmergeable branch never
  * reads as ready. Merged/closed suppress both CI and conflict because lifecycle
- * is the terminal signal there. `ChatSidebar.tsx::chipStatusGlyph` applies the
+ * is the terminal signal there. `SessionSourceChips.tsx::chipStatusGlyph` applies the
  * same precedence to the sidebar chip. */
 function SourceTabState({ status }: { status: PullRequestStatus | undefined }) {
   const lifecycle = status?.state

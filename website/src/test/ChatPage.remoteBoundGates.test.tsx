@@ -24,7 +24,7 @@ import { dirname, resolve } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const chatPageSrc = readFileSync(resolve(here, '../pages/ChatPage.tsx'), 'utf8')
-const sidebarSrc = readFileSync(resolve(here, '../pages/ChatSidebar.tsx'), 'utf8')
+const sidebarSrc = readFileSync(resolve(here, '../pages/chat-sidebar/SessionRow.tsx'), 'utf8')
 
 describe('ChatPage – crew-bound offer gates', () => {
   it('derives the crew-bound flag from the shared predicate on the active slot', () => {
@@ -72,7 +72,7 @@ describe('ChatSidebar – the interrupted row shares the composer’s predicate'
   // per-call-site re-implementation this PR exists to remove, and it is what the
   // review caught: the row was gated inline while the predicate sat one file away.
   it('builds the interrupted label from slotIsRemoteBound, not an inline field read', () => {
-    expect(sidebarSrc).toMatch(/import \{[^}]*\bslotIsRemoteBound\b[^}]*\} from '\.\.\/store\/dashboardSlice'/)
+    expect(sidebarSrc).toMatch(/import \{[^}]*\bslotIsRemoteBound\b[^}]*\} from '(?:\.\.\/)+store\/dashboardSlice'/)
     expect(sidebarSrc).toMatch(/const label = slotIsRemoteBound\(s\)/)
   })
 

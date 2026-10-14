@@ -14,17 +14,36 @@
  * page fails the negative pin; dropping a constant's use fails the positive one.
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join, relative } from 'node:path'
 
 import * as shell from '../components/listShell'
 
 const read = (...p: string[]) => readFileSync(join(__dirname, '..', ...p), 'utf8')
 
-const PAGES: ReadonlyArray<readonly [label: string, file: readonly string[]]> = [
-  ['ChatSidebar', ['pages', 'ChatSidebar.tsx']],
-  ['MembersPage', ['pages', 'members', 'MembersPage.tsx']],
+/** The sidebar's own files: the facade and the owners under pages/chat-sidebar/ it
+ *  composes, where the session row and its recipes live. */
+function sidebarFiles(): string[][] {
+  const root = join(__dirname, '..')
+  const out: string[][] = [['pages', 'ChatSidebar.tsx']]
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name)
+      if (statSync(p).isDirectory()) walk(p)
+      else if (/\.(ts|tsx)$/.test(name) && !/\.test\./.test(name)) out.push(relative(root, p).split(/[\\/]/))
+    }
+  }
+  walk(join(root, 'pages', 'chat-sidebar'))
+  return out
+}
+
+const PAGES: ReadonlyArray<readonly [label: string, files: readonly string[][]]> = [
+  ['ChatSidebar', sidebarFiles()],
+  ['MembersPage', [['pages', 'members', 'MembersPage.tsx']]],
 ]
+
+/** One page's source text: every file it is built from, joined. */
+const source = (files: readonly string[][]) => files.map(f => read(...f)).join('\n')
 
 /** Every recipe both pages must consume. */
 const SHARED = ['LIST_SHELL_CLS', 'LIST_HEADER_CLS', 'LIST_TITLE_CLS', 'LIST_BODY_CLS', 'ROW_BOX_CLS', 'ROW_IDLE_CLS', 'ROW_ACTIVE_CLS', 'ROW_TITLE_CLS', 'ROW_STATUS_CLS'] as const
@@ -45,16 +64,18 @@ const FORBIDDEN_LITERALS = [
 ]
 
 describe('list shell parity — sessions sidebar and members roster share one recipe set', () => {
-  it.each(PAGES)('%s imports every shared recipe from components/listShell', (_label, file) => {
-    const src = read(...file)
-    const m = src.match(/import \{([^}]*)\} from '(?:\.\.\/)+components\/listShell'/)
-    expect(m, `${file.join('/')} must import from components/listShell`).not.toBeNull()
-    const names = m![1].split(',').map(s => s.trim()).filter(Boolean)
+  it.each(PAGES)('%s imports every shared recipe from components/listShell', (_label, files) => {
+    const src = source(files)
+    const file = files[0]
+    const ms = [...src.matchAll(/import \{([^}]*)\} from '(?:\.\.\/)+components\/listShell'/g)]
+    expect(ms.length, `${file.join('/')} must import from components/listShell`).toBeGreaterThan(0)
+    const names = ms.flatMap(m => m[1].split(',').map(s => s.trim()).filter(Boolean))
     for (const name of SHARED) expect(names, `${file.join('/')} must import ${name}`).toContain(name)
   })
 
-  it.each(PAGES)('%s uses each imported recipe at least once', (_label, file) => {
-    const src = read(...file)
+  it.each(PAGES)('%s uses each imported recipe at least once', (_label, files) => {
+    const src = source(files)
+    const file = files[0]
     for (const name of SHARED) {
       // A use is the identifier outside the import line — inside a template,
       // a cn() call, or as a bare className value.
@@ -63,8 +84,9 @@ describe('list shell parity — sessions sidebar and members roster share one re
     }
   })
 
-  it.each(PAGES)('%s spells none of the recipes out by hand', (_label, file) => {
-    const src = read(...file)
+  it.each(PAGES)('%s spells none of the recipes out by hand', (_label, files) => {
+    const src = source(files)
+    const file = files[0]
     for (const lit of FORBIDDEN_LITERALS) {
       expect(src.includes(lit), `${file.join('/')} re-inlines "${lit}" — use the components/listShell recipe`).toBe(false)
     }

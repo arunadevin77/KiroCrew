@@ -306,6 +306,9 @@ order, and pins that no owner imports the facade:
 | Owner (`website/src/pages/chat-sidebar/`) | Owns |
 |---|---|
 | `sessionSources.ts` | the rendered row set (local tabs plus live peer rows, deduplicated by row identity, local wins), the crew groups, the peer-list error, and the federated Older Sessions search |
+| `SessionRow.tsx` | one session row: its type scale, its ordered state resolver (the status line and the one marker leading it), the live per-slot state it subscribes to under `view.localKey`, its menus, and its click, keyboard and drag gestures |
+| `SessionSourceChips.tsx` | a row's pull-request and issue chips: the provider mark, the one status glyph a change chip shows (`chipStatusGlyph`), and the `+N` overflow that fetches the links the slots payload leaves out |
+| `chrome.tsx` | the sidebar's shared drawing atoms, used by both the row and the shell: the open-in-tab click predicate, `DisclosureChevron` (the sidebar's one disclosure grammar), and the folder and divider chrome (the pinned-section divider, the folder body geometry and the text-control classes) |
 | `CrewGroups.tsx` | the per-machine group chrome: the `Local` header, each crew group's header, badge, offline note and tunnel-error notice, and the collapsed-crew set |
 | `rows.ts` | the row model: the one declaration of every filter dimension and what each consumer derives from it (`filteredSlots`, `listNarrowed`, the reveal registry), the status-chip predicates and badge counts, the one lane order, the drag freeze, the split of the filtered rows between the `Local` lanes and the crew groups (each crew group's rows, the folder hide applied), the flat lane, the tree's ungrouped rows and per-folder rows, the board's pool (local rows the folder filter does not conceal), the dormant split's gates, and each rendered row's `SessionRowView` and window |
 | `search.ts` | the debounced backend session search, and the folder-name matches the search box adds |
@@ -362,14 +365,15 @@ re-renders only when something it draws changed. Rows still subscribe to their o
 live state (status line, goal loop, queued sub-agents, workflow runs) slot-scoped,
 under `view.localKey`.
 
-Some code stays in `ChatSidebar.tsx`: `SessionRow` and its source-link chips, the
-row and folder render closures, the conductor lane's tree walk, the crew-window
-open, the idle-session cleanup, the bulk model switch and the JSX. Source pins
-read them in that file:
+Some code stays in `ChatSidebar.tsx`: the row and folder render closures, the
+conductor lane's tree walk, the crew-window open, the idle-session cleanup, the
+bulk model switch and the JSX. Source pins read them in that file:
 
-- `switchSlotCallsiteClassification.test.ts` counts the row's three `switchSlot`
-  dispatches there.
-- `listShellParity.test.ts` reads the list-shell recipes the row and the card use.
+- `switchSlotCallsiteClassification.test.ts` counts the folder menu's and folder
+  row's two `switchSlot` dispatches there (the row's three are counted in
+  `SessionRow.tsx`).
+- `listShellParity.test.ts` reads the list-shell recipes the card and the row use,
+  across this file and its owners.
 - `useInteractiveModels.test.ts` reads the bulk model switch.
 - `hoverVariantPolicy.test.ts` reads the row shell's touch flag.
 - The restyle ratchet counts this file's flagged sites in the header, the filter

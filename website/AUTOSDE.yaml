@@ -184,6 +184,8 @@ custom-rules:
     blocking: true
     file-patterns:
       - "src/pages/ChatSidebar.tsx"
+      - "src/pages/chat-sidebar/SessionRow.tsx"
+      - "src/pages/chat-sidebar/SessionSourceChips.tsx"
       - "src/pages/chat/SessionFlyout.tsx"
       - "src/components/SessionGridView.tsx"
     rule: |

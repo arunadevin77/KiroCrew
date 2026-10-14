@@ -14,7 +14,19 @@ interface Loc { id: string; kind: string; label_key: string; alias_keys?: string
 const INDEX_FILE = path.resolve(__dirname, '../../../src/kiro_crew/docs/ui-index.generated.json')
 const index = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf-8')) as { locations: Loc[] }
 const byId = new Map(index.locations.map(l => [l.id, l]))
-const SIDEBAR_SRC = fs.readFileSync(path.resolve(__dirname, '../pages/ChatSidebar.tsx'), 'utf-8')
+/** The sidebar's own files joined: the facade and the owners under pages/chat-sidebar/
+ *  it composes (the session row draws its own menu triggers). */
+function sidebarSources(dir: string): string[] {
+  return fs.readdirSync(dir).flatMap(name => {
+    const p = path.join(dir, name)
+    if (fs.statSync(p).isDirectory()) return sidebarSources(p)
+    return /\.(ts|tsx)$/.test(name) && !/\.test\./.test(name) ? [fs.readFileSync(p, 'utf-8')] : []
+  })
+}
+const SIDEBAR_SRC = [
+  fs.readFileSync(path.resolve(__dirname, '../pages/ChatSidebar.tsx'), 'utf-8'),
+  ...sidebarSources(path.resolve(__dirname, '../pages/chat-sidebar')),
+].join('\n')
 /** The row menu's items are drawn by the shared SessionActionsMenu. */
 const ROW_MENU_SRC = fs.readFileSync(path.resolve(__dirname, '../components/SessionActionsMenu.tsx'), 'utf-8')
 
