@@ -54,9 +54,10 @@ const RELOAD_DEBOUNCE_MS = 400
  *
  * Two known limits, both inherited from the endpoint rather than introduced here:
  *
- *  * `api_file_watch` only emits when the redacted **first 512,000 bytes**
- *    change, so a rewrite touching only bytes past that cap produces no signal
- *    and no reload.
+ *  * `api_file_watch` reads only the redacted **first 512,000 characters**. For
+ *    a file within that cap it emits only when they change; for a file that
+ *    fills it, every write emits a body-less frame, so a rewrite past the cap
+ *    still reloads (debounced as above).
  *  * One EventSource per visible surface, and each artifact popout is its own
  *    window with its own JS context. The gateway is HTTP/1.1, so popouts plus
  *    `MarkdownPanel` share the browser's ~6-connections-per

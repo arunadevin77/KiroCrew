@@ -116,7 +116,7 @@ export function DiffViewBlock({ diffMode, fileName, originalContent, content, gi
   if (!diffMode) return null
   return (
     <div className={`w-full h-full overflow-auto pierre-surface ${flush ? '' : 'border border-border rounded-md'}`}>
-      {gitPatch
+      {gitPatch != null
         ? <PierrePatch patch={gitPatch} options={options} />
         : <PierreFilePair oldFile={oldFile} newFile={newFile} options={options} />}
     </div>

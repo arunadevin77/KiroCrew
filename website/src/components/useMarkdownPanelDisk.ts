@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import { useQuery, type QueryClient } from '@tanstack/react-query'
 import { useVisibleTabCatchUp, settleCatchUp, type CatchUpLatch } from '../hooks/useVisibleTabCatchUp'
+import type { FileWatchFrame } from '../hooks/useFileWatch'
 import { api } from '../api/client'
 import { downloadFileName } from '../utils/fileReadUrl'
 import { downloadBlob } from '../utils/download'
@@ -80,8 +81,18 @@ export function useMarkdownPanelDisk({ filePath, content, binary, partial, liveW
   /** Reads of this panel not yet settled. The watch consults it: an equal frame
    *  is quiet only when no read is in flight (see the callback). */
   const diskReadsInFlightRef = useRef(0)
+  /** Orders this panel's disk reads against its diff fetches. Each read takes
+   *  the next tick; each diff fetch records the tick it STARTED at (see
+   *  useMarkdownPanelDiff), so a fetch that started at or after a read's tick
+   *  saw the disk no older than it. */
+  const diskTickRef = useRef(0)
+  const diffStartTickRef = useRef(-1)
+  /** The newest partial read the patch must be at least as new as. State, not
+   *  a ref: a read that lands equal to the buffer renders nothing else, and the
+   *  diff hook must still see it to schedule the refetch. */
+  const [patchOwedTick, setPatchOwedTick] = useState(-1)
 
-  const readFromDisk = useCallback(async (opts?: { news?: boolean }): Promise<DiskRead> => {
+  const readFromDisk = useCallback(async (): Promise<DiskRead> => {
     diskReadAbortRef.current?.abort()
     const ac = new AbortController()
     diskReadAbortRef.current = ac
@@ -89,6 +100,7 @@ export function useMarkdownPanelDisk({ filePath, content, binary, partial, liveW
     // start and finish makes this read's bytes stale under the pass now in
     // force: superseded, never applied. The tab rehydrates through a fresh read.
     const epoch = documentBodyEpochNow()
+    const tick = ++diskTickRef.current
     diskReadsInFlightRef.current++
     try {
       const r = await fetchFileRead(filePath, ac.signal)
@@ -96,10 +108,10 @@ export function useMarkdownPanelDisk({ filePath, content, binary, partial, liveW
       if (r.ok) {
         const partial = isPartialRead(r)
         // A partial buffer's diff is git's patch of the file, and the file can
-        // change past the cut while the cut body stays equal. So a read that
-        // can carry news (watch frame, Refresh, Cancel) refetches that patch;
-        // the mount and activation reads do not, the diff query just ran.
-        if (partial && opts?.news) qc.invalidateQueries({ queryKey: ['file-diff', filePath] })
+        // change past the cut while the cut body stays equal. So the patch
+        // is owed from this read on; useMarkdownPanelDiff fetches it (see
+        // there), unless a diff fetch already started after the read began.
+        if (partial && diffStartTickRef.current < tick) setPatchOwedTick(tick)
         return { kind: 'ok', text: r.text, binary: r.binary, partial }
       }
       return r.status === 404 ? { kind: 'missing' } : { kind: 'failed' }
@@ -108,7 +120,7 @@ export function useMarkdownPanelDisk({ filePath, content, binary, partial, liveW
     } finally {
       diskReadsInFlightRef.current--
     }
-  }, [filePath, qc])
+  }, [filePath])
 
   // A path change or unmount withdraws the read in flight, so it cannot apply
   // or report its result to a tab that has moved on.
@@ -253,8 +265,8 @@ export function useMarkdownPanelDisk({ filePath, content, binary, partial, liveW
    * (bufferIsLastCopy): a tab seeded with the host's placeholder sentence, or
    * a binary tab, has nothing the banner could truthfully call a last copy. A
    * read that finds the file again clears the banner. */
-  const adoptDisk = useCallback(async (opts?: { quietFailure?: boolean; news?: boolean }): Promise<DiskRead['kind']> => {
-    const disk = await readFromDisk({ news: opts?.news })
+  const adoptDisk = useCallback(async (opts?: { quietFailure?: boolean }): Promise<DiskRead['kind']> => {
+    const disk = await readFromDisk()
     if (disk.kind === 'superseded') return disk.kind
     // Whatever this read answered, the shared cache entry for the path does
     // not outlive it: a body older than the disk (open, then save within the
@@ -325,9 +337,17 @@ export function useMarkdownPanelDisk({ filePath, content, binary, partial, liveW
     // text is nothing to adopt. One GET per activation of the one file on
     // screen, on a subscription only armed while the panel is visible, clean
     // and not editing.
-    (frameText: string) => {
-      if (diskReadsInFlightRef.current === 0 && !binaryRef.current && frameText === contentRef.current) return
-      void adoptDisk({ news: true })
+    //
+    // A PARTIAL buffer is the exception after the first frame. The stream
+    // reads under the same cap, so a write past the cut sends a frame whose
+    // text equals the buffer (or is empty, a signal-only frame); it still
+    // follows a write, and the re-read is what refetches git's patch (see
+    // readFromDisk). Only the connect-time frame, which the activation read
+    // already covers, is compared.
+    (frameText: string, { initial }: FileWatchFrame) => {
+      const comparable = initial || !partialCopyRef.current
+      if (comparable && diskReadsInFlightRef.current === 0 && !binaryRef.current && frameText === contentRef.current) return
+      void adoptDisk()
     },
     [adoptDisk],
   )
@@ -406,33 +426,53 @@ export function useMarkdownPanelDisk({ filePath, content, binary, partial, liveW
   return {
     diskReadAbortRef, readFromDisk, missingOnDisk, setMissingOnDisk, partialCopy, partialCopyRef, bufferIsLastCopy,
     lastCopy, downloadLastCopy, lastCopyCopied, copyLastCopy, evictFileRead, applyDiskRead, catchUpRef, adoptDisk,
+    diskTickRef, diffStartTickRef, patchOwedTick,
   }
 }
 
-export function useMarkdownPanelDiff({ filePath, isRichType, canTextDiff, partial, editing, dirty, diffMode, content, initialDiffMode, onDiffModeChange, setDiffMode }: {
+export function useMarkdownPanelDiff({ filePath, isRichType, canTextDiff, partial, editing, dirty, diffMode, content, initialDiffMode, onDiffModeChange, setDiffMode, diskTickRef, diffStartTickRef, patchOwedTick, qc }: {
   filePath: string; isRichType: boolean; canTextDiff: boolean; partial?: boolean; editing: boolean; dirty: boolean; diffMode: boolean; content: string
   initialDiffMode?: boolean; onDiffModeChange?: (diffMode: boolean) => void; setDiffMode: Dispatch<SetStateAction<boolean>>
+  /** The disk hook's read/fetch ordering (see readFromDisk): each diff fetch
+   *  records the read tick it started at. */
+  diskTickRef: MutableRefObject<number>; diffStartTickRef: MutableRefObject<number>
+  /** The newest partial read git's patch must be at least as new as. */
+  patchOwedTick: number; qc: QueryClient
 }) {
   const diffInitFileRef = useRef<string | null>(null)
   // Detect if file has uncommitted changes and pre-fetch HEAD content
   const { data: diffData, isFetching: diffChecking, error: diffQueryError } = useQuery({
     queryKey: ['file-diff', filePath],
-    queryFn: () => api.fileDiff(filePath),
+    queryFn: () => { diffStartTickRef.current = diskTickRef.current; return api.fileDiff(filePath) },
     // A rich type opens on its viewer; only a tab opened in diff mode (the
     // working-tree diff) needs its baseline, and only if it can text-diff.
     enabled: !!filePath && (!isRichType || (diffMode && canTextDiff)),
     staleTime: 10_000,
   })
+  // An owed patch is fetched only while diff mode shows it, and only once no
+  // fetch is out: one fetch at a time, the next started when it settles, so a
+  // file written every second costs at most one /api/file-diff in flight and
+  // a fetch is never cancelled before it can land. Turning diff mode on
+  // fetches whatever came due while it was off.
+  useEffect(() => {
+    if (!diffMode || diffChecking || diffStartTickRef.current >= patchOwedTick) return
+    void qc.invalidateQueries({ queryKey: ['file-diff', filePath] })
+  }, [diffMode, diffChecking, patchOwedTick, filePath, qc, diffStartTickRef])
   const originalContent = diffData?.original ?? ''
   // A partial buffer (capped, redacted or lossily decoded read) is not the file
   // on disk, so comparing it with the WHOLE HEAD body invents changes: past a
   // capped read's end every HEAD line reads as deleted, and the real edits
   // there vanish. Git's own diff of the file is the truth then -- draw it and
   // count it instead. A whole buffer keeps the body-pair diff, which follows
-  // the buffer live. Edit mode and unsaved edits keep the body-pair diff too:
-  // git's patch cannot show edits that are not on disk yet.
-  const gitDiffView = !!partial && !editing && !dirty
-  const gitPatch = gitDiffView && diffData?.diff ? diffData.diff : null
+  // the buffer live. Unsaved edits keep it too: git's patch cannot show edits
+  // that are not on disk yet. Git's patch serves the viewer and the editor
+  // alike -- a code file opens in the editor, so diff mode there draws this
+  // patch in place of the editor's live diff. ONE value carries the choice:
+  // non-null means "git's patch", '' a clean file, and every consumer (notice,
+  // count, view) reads it. It stays null until diff data has arrived: a fetch
+  // still out or failed must not swap the editor for an empty patch (the diff
+  // error notice reports a failure).
+  const gitPatch = partial && !dirty && diffData ? (diffData.diff ?? '') : null
   // The backend reports WHY there is nothing to diff against. `not_git` means
   // the file is outside any git work tree, so there is no baseline at all —
   // rendering the diff would present the whole file as added against a
@@ -445,11 +485,15 @@ export function useMarkdownPanelDiff({ filePath, isRichType, canTextDiff, partia
   // exact all-added rendering this branch exists to suppress.
   const diffUnavailable = diffMode && (diffData?.status === 'not_git' || diffData?.status === 'error')
     ? diffData.status as 'not_git' | 'error' : null
+  // Diff mode draws the diff view, not the editor: always in the viewer, and
+  // in the editor when the diff is git's patch, once it has arrived (and git
+  // could produce one).
+  const diffViewShown = diffMode && (!editing || (gitPatch != null && !diffUnavailable))
   // Diff mode on a file identical to its baseline renders an empty canvas in
   // BOTH view and edit modes — show a notice instead. Editing past the
   // baseline (content diverges) flips this off automatically.
   const zeroDiff = diffMode && !diffChecking && diffData != null && !diffUnavailable
-    && (gitDiffView ? !diffData.diff : originalContent === content)
+    && (gitPatch != null ? !gitPatch : originalContent === content)
   // Resolved in render position so a language switch re-renders it; the notice
   // reuses ZeroDiffNotice so the "Show full file" escape hatch is identical
   // across all three empty-diff states.
@@ -488,5 +532,5 @@ export function useMarkdownPanelDiff({ filePath, isRichType, canTextDiff, partia
     }
   }, [canTextDiff, isRichType, diffData, filePath, initialDiffMode, onDiffModeChange, setDiffMode])
 
-  return { diffData, diffChecking, diffQueryError, originalContent, gitPatch, diffUnavailable, zeroDiff, diffErrorText, diffNoBaselineText }
+  return { diffData, diffChecking, diffQueryError, originalContent, gitPatch, diffUnavailable, diffViewShown, zeroDiff, diffErrorText, diffNoBaselineText }
 }

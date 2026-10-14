@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
-import { useFileWatch } from './useFileWatch'
+import { useFileWatch, type FileWatchFrame } from './useFileWatch'
 
 /**
  * Where a side-panel tab stands against its backing file since it last became
@@ -42,7 +42,7 @@ interface VisibleTabCatchUpOptions {
   /** Start the catch-up read. It settles the latch on its outcome. */
   catchUp: () => unknown
   /** One `/api/file-watch` frame; the surface decides whether it says anything new. */
-  onFrame: (content: string) => void
+  onFrame: (content: string, frame: FileWatchFrame) => void
 }
 
 /**

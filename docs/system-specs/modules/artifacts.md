@@ -1769,9 +1769,10 @@ surface kept rendering pre-edit content. The frontend closes that gap with
   `useVisibleTabCatchUp` hook that side-panel file tabs use too; the detail
   page is always on screen and leaves `active` at `true`.
 
-Known limits, both inherited from the endpoint: `api_file_watch` only emits when
-the redacted **first 512,000 bytes** change, so a rewrite touching only bytes
-past that cap produces no signal and no reload; and each visible surface (every
+`api_file_watch` reads only the redacted **first 512,000 characters**: a file
+within that cap emits only when they change, while a file that fills it emits a
+body-less frame on every write, so a rewrite past the cap still reloads (once per
+debounce window). Known limit, inherited from the endpoint: each visible surface (every
 popout is its own window) opens its own EventSource against an HTTP/1.1 gateway,
 so nothing is watched unless the artifact is actually file-backed and on screen.
 

@@ -182,6 +182,13 @@ describe('useArtifactLiveReload in a side-panel tab', () => {
     })
   }
 
+  it('refetches on a body-less frame, the signal a write past the watch cap sends', async () => {
+    renderTab(true)
+    frame('', 2)
+    await runDebounce()
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['artifact', SLUG] })
+  })
+
   it('holds no stream while hidden, and re-arms it when the tab is shown', () => {
     const tab = renderTab(true)
     expect(openStreams()).toHaveLength(1)

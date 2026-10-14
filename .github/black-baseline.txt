@@ -520,7 +520,6 @@ test/test_file_send_channel.py
 test/test_file_send_units.py
 test/test_file_sheet.py
 test/test_file_stream.py
-test/test_file_watch.py
 test/test_fire_tool_hooks.py
 test/test_fixtures_helper.py
 test/test_folder_watch_handlers.py

@@ -141,6 +141,10 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
                     break
                 try:
                     content = await asyncio.to_thread(_read_file, current_resolved, read_cap)
+                    # A read that filled the cap saw only the head of the file,
+                    # so an equal head says nothing about the rest: a write past
+                    # the cut changes the mtime and nothing this read can see.
+                    capped = len(content) >= read_cap
                     # NOT an owner-view seam, on purpose: this stream also
                     # serves file-backed artifact live reload, and neither
                     # consumer renders the frame -- both re-read through
@@ -152,13 +156,17 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
                     await asyncio.sleep(poll_interval)
                     continue
 
-                if content != last_content:
+                if content != last_content or capped:
+                    # A capped write that left the head unchanged is a signal
+                    # only: both consumers re-read on it, so the frame carries
+                    # no body rather than the same 512,000 characters again.
+                    body = content if content != last_content else ""
                     last_content = content
                     # ensure_ascii=False keeps multi-byte content (e.g. CJK)
                     # inspectable as-is in DevTools instead of \uXXXX escapes,
                     # and produces smaller payloads. Body bytes are still
                     # valid UTF-8 because we explicitly .encode() below.
-                    payload = json.dumps({"content": content, "mtime": mtime}, ensure_ascii=False)
+                    payload = json.dumps({"content": body, "mtime": mtime}, ensure_ascii=False)
                     await resp.write(f"data: {payload}\n\n".encode("utf-8"))
 
             await asyncio.sleep(poll_interval)

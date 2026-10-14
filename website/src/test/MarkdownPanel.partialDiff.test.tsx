@@ -1,12 +1,13 @@
 /**
  * Diff mode on a file larger than the file-read cap.
  *
- * `/api/file-read` stops at a byte cap and says so (`partial`), while
- * `/api/file-diff` returns the WHOLE HEAD body. Comparing the two drew every
- * HEAD line past the cap as deleted and hid the real edits there. With a
- * partial buffer the panel must draw git's own diff and count its +/- lines.
+ * `/api/file-read` stops at a cap and says so (`partial`), while
+ * `/api/file-diff` returns the WHOLE HEAD body plus git's own patch. A clean
+ * partial buffer is drawn and counted from git's patch, in the viewer and in
+ * the editor alike, and that patch is refetched whenever a read of the file
+ * may have seen a change the cut body cannot show.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, within, waitFor, fireEvent, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -38,6 +39,7 @@ const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 // HEAD: 300 lines. The read cap stops the buffer after line 100. The one real
 // edit is at line 250, past the cut.
 const head = Array.from({ length: 300 }, (_, i) => `line ${i + 1}`)
+const headBody = head.join('\n') + '\n'
 const capped = head.slice(0, 100).join('\n') + '\n'
 const gitDiff = [
   'diff --git a/big.py b/big.py',
@@ -50,15 +52,49 @@ const gitDiff = [
   '+line 250 edited',
   ' line 251',
 ].join('\n')
+const modified = { diff: gitDiff, original: headBody, status: 'modified' as const }
+const clean = { diff: '', original: headBody, status: 'clean' as const }
 
-function Panel({ partial, content, readOnly = true, liveWatch = false }: { partial: boolean; content: string; readOnly?: boolean; liveWatch?: boolean }) {
+// Every /api/file-read answers with `readBody` under `readHeader`; reads that
+// have LANDED are counted so a test waits on a read, not on a delay.
+let readBody = capped
+let readHeader: 'X-Truncated' | 'X-Redacted' = 'X-Truncated'
+let readsLanded = 0
+function installFetch() {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const isRead = String(url).startsWith('/api/file-read')
+    return {
+      ok: true, status: 200,
+      headers: { get: (h: string) => (isRead && h === readHeader ? 'true' : null) },
+      json: async () => ({ enabled: false, supported_formats: [] }),
+      text: async () => { if (isRead) readsLanded++; return isRead ? readBody : '' },
+    }
+  }))
+}
+
+// One recorded EventSource per stream; a test pushes frames by hand.
+class StubEventSource {
+  static instances: StubEventSource[] = []
+  closed = false
+  onopen: (() => void) | null = null
+  onmessage: ((ev: { data: string }) => void) | null = null
+  onerror: (() => void) | null = null
+  constructor(readonly url: string) { StubEventSource.instances.push(this) }
+  close() { this.closed = true }
+}
+const liveStream = () => StubEventSource.instances.filter(s => !s.closed).at(-1)!
+const frame = (content: string) => act(async () => { liveStream().onmessage!({ data: JSON.stringify({ content, mtime: 1 }) }) })
+
+function Panel({ partial = true, content = capped, readOnly = true, liveWatch = false, active = true }: {
+  partial?: boolean; content?: string; readOnly?: boolean; liveWatch?: boolean; active?: boolean
+}) {
   return (
     <MemoryRouter>
       <QueryClientProvider client={qc}>
         <div data-testid="tab">
           <MarkdownPanel
             embedded
-            active
+            active={active}
             readOnly={readOnly}
             liveWatch={liveWatch}
             initialDiffMode
@@ -75,95 +111,197 @@ function Panel({ partial, content, readOnly = true, liveWatch = false }: { parti
   )
 }
 
+/** The header's -N count, if any is drawn. */
+const removedCount = () => within(screen.getByTestId('tab')).queryByText(/^-\d+$/)?.textContent ?? null
+
 beforeEach(() => {
   vi.clearAllMocks()
   qc.clear()
   localStorage.clear()
-  vi.stubGlobal('fetch', vi.fn(async () => ({
-    ok: true, status: 200, headers: { get: () => null },
-    json: async () => ({ enabled: false, supported_formats: [] }),
-    text: async () => '',
-  })))
+  readBody = capped
+  readHeader = 'X-Truncated'
+  readsLanded = 0
+  StubEventSource.instances = []
+  vi.stubGlobal('EventSource', StubEventSource)
+  installFetch()
   vi.mocked(api.artifacts).mockResolvedValue({ artifacts: [] } as never)
-  vi.mocked(api.fileDiff).mockResolvedValue({ diff: gitDiff, original: head.join('\n') + '\n', status: 'modified' })
+  vi.mocked(api.fileDiff).mockResolvedValue(modified)
 })
+afterEach(() => { vi.restoreAllMocks() })
 
 describe('MarkdownPanel diff of a partial (capped) read', () => {
-  it("draws git's diff and git's counts, not a diff of the cut buffer", async () => {
-    render(<Panel partial content={capped} />)
+  it.each([
+    ['viewer', true],
+    ['editor', false],
+  ])("draws git's patch and git's counts in the %s", async (_view, readOnly) => {
+    render(<Panel readOnly={readOnly} />)
     const patch = await screen.findByTestId('pierre-patch')
     expect(patch.getAttribute('data-value')).toBe(gitDiff)
     expect(screen.queryByTestId('pierre-diff')).toBeNull()
+    expect(screen.queryByTestId('pierre-editor')).toBeNull()
     const tab = within(screen.getByTestId('tab'))
-    // Before the fix the header read +0 -200: every line past the cut.
     await waitFor(() => expect(tab.getByText('+1')).toBeTruthy())
-    expect(tab.getByText('-1')).toBeTruthy()
-    expect(tab.queryByText('-200')).toBeNull()
+    expect(removedCount()).toBe('-1')
   })
 
-  it('shows the no-changes notice when git reports a clean partial file', async () => {
-    vi.mocked(api.fileDiff).mockResolvedValue({ diff: '', original: head.join('\n') + '\n', status: 'clean' })
-    render(<Panel partial content={capped} />)
-    // Before the fix the cut buffer never equalled HEAD, so a clean file drew
-    // a body-pair diff of phantom deletions instead of this notice.
+  it("leaves the editor's patch view through the diff toggle, back to the editor", async () => {
+    render(<Panel readOnly={false} />)
+    await screen.findByTestId('pierre-patch')
+    const tab = within(screen.getByTestId('tab'))
+    fireEvent.click(tab.getAllByRole('button', { name: /toggle diff view/i })[0])
+    await screen.findByTestId('pierre-editor')
+    expect(screen.queryByTestId('pierre-patch')).toBeNull()
+  })
+
+  it.each([
+    ['viewer', true],
+    ['editor', false],
+  ])('shows no changes and no count for a clean partial file in the %s', async (_view, readOnly) => {
+    vi.mocked(api.fileDiff).mockResolvedValue(clean)
+    render(<Panel readOnly={readOnly} />)
     await screen.findByText('No changes in this file')
+    expect(removedCount()).toBeNull()
     expect(screen.queryByTestId('pierre-diff')).toBeNull()
     expect(screen.queryByTestId('pierre-patch')).toBeNull()
+    expect(screen.queryByTestId('pierre-editor')).toBeNull()
   })
 
-  it('keeps the editor, not the no-changes notice, when editing a clean partial file', async () => {
-    vi.mocked(api.fileDiff).mockResolvedValue({ diff: '', original: head.join('\n') + '\n', status: 'clean' })
-    // Not read-only: a code file opens straight in the editor.
-    render(<Panel partial readOnly={false} content={capped} />)
-    await waitFor(() => expect(api.fileDiff).toHaveBeenCalled())
+  it('opens the editor on a clean partial file when diff mode is off', async () => {
+    vi.mocked(api.fileDiff).mockResolvedValue(clean)
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <MarkdownPanel embedded active readOnly={false} initialDiffMode={false} onContentChange={() => {}} onSave={async () => {}} onClose={() => {}} filePath="/repo/big.py" content={capped} partial />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
     await screen.findByTestId('pierre-editor')
-    expect(screen.queryByText('No changes in this file')).toBeNull()
     expect(screen.queryByTestId('pierre-patch')).toBeNull()
   })
 
-  it("refetches git's diff when a new partial body is read from disk", async () => {
-    // The disk read answers with a different capped body, flagged truncated.
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
-      ok: true, status: 200,
-      headers: { get: (h: string) => (String(url).startsWith('/api/file-read') && h === 'X-Truncated' ? 'true' : null) },
-      json: async () => ({ enabled: false, supported_formats: [] }),
-      text: async () => 'changed on disk\n' + capped,
-    })))
-    render(<Panel partial content={capped} />)
-    await screen.findByTestId('pierre-patch')
+  it.each(['X-Truncated', 'X-Redacted'] as const)(
+    "fetches git's diff once on open, and once more on a Refresh that matches the buffer (%s)",
+    async header => {
+      readHeader = header
+      render(<Panel liveWatch />)
+      await screen.findByTestId('pierre-patch')
+      // The mount catch-up read lands and must not refetch the diff it raced.
+      await waitFor(() => expect(readsLanded).toBe(1))
+      await act(async () => {})
+      expect(api.fileDiff).toHaveBeenCalledTimes(1)
+      fireEvent.click(screen.getByTestId('markdown-panel-more-options'))
+      fireEvent.click(await screen.findByRole('menuitem', { name: /refresh/i }))
+      await waitFor(() => expect(readsLanded).toBe(2))
+      await waitFor(() => expect(api.fileDiff).toHaveBeenCalledTimes(2))
+      await act(async () => {})
+      expect(api.fileDiff).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it('follows a watch frame for an edit past the cut, whose capped text is unchanged', async () => {
+    vi.mocked(api.fileDiff).mockResolvedValue(clean)
+    render(<Panel liveWatch />)
+    await screen.findByText('No changes in this file')
+    await waitFor(() => expect(readsLanded).toBe(1))
+    // The connect-time frame repeats what the tab shows: no read, no fetch.
+    await frame(capped)
+    await act(async () => {})
+    expect(readsLanded).toBe(1)
     expect(api.fileDiff).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByTestId('markdown-panel-more-options'))
-    fireEvent.click(await screen.findByRole('menuitem', { name: /refresh/i }))
-    await waitFor(() => expect(api.fileDiff).toHaveBeenCalledTimes(2))
+    // The file then changes past the cut: the next frame carries the same
+    // capped text, and the patch must follow without a Refresh.
+    vi.mocked(api.fileDiff).mockResolvedValue(modified)
+    await frame(capped)
+    await waitFor(() => expect(screen.getByTestId('pierre-patch').getAttribute('data-value')).toBe(gitDiff))
+    expect(removedCount()).toBe('-1')
   })
 
-  it("fetches git's diff once on open, and once more on a Refresh that matches the buffer", async () => {
-    // An edit past the cut leaves the capped body unchanged, so the Refresh
-    // read equals the buffer; the diff must still be refetched, exactly once.
-    // Counts file-read bodies handed back, so the test waits on a read that
-    // has LANDED rather than on a guessed delay.
-    let readsLanded = 0
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      const isRead = String(url).startsWith('/api/file-read')
-      return {
-        ok: true, status: 200,
-        headers: { get: (h: string) => (isRead && h === 'X-Truncated' ? 'true' : null) },
-        json: async () => ({ enabled: false, supported_formats: [] }),
-        text: async () => { if (isRead) readsLanded++; return capped },
-      }
-    }))
-    render(<Panel partial liveWatch content={capped} />)
-    await screen.findByTestId('pierre-patch')
-    // The mount catch-up read lands, and must not refetch the diff.
+  it('fetches the patch again once a fetch that a second write past the cut overtook settles', async () => {
+    vi.mocked(api.fileDiff).mockResolvedValue(clean)
+    render(<Panel liveWatch />)
+    await screen.findByText('No changes in this file')
     await waitFor(() => expect(readsLanded).toBe(1))
-    await act(async () => {})
-    expect(api.fileDiff).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByTestId('markdown-panel-more-options'))
-    fireEvent.click(await screen.findByRole('menuitem', { name: /refresh/i }))
-    await waitFor(() => expect(readsLanded).toBe(2))
+    await frame(capped) // connect-time frame: quiet
+    // Write 1: its diff fetch is held in flight and answers with the OLD patch.
+    let releaseStale!: () => void
+    vi.mocked(api.fileDiff).mockImplementationOnce(() => new Promise(r => { releaseStale = () => r(clean) }))
+    await frame(capped)
     await waitFor(() => expect(api.fileDiff).toHaveBeenCalledTimes(2))
+    // Write 2 lands while that fetch is still out. One fetch at a time: none
+    // starts beside it, and once it settles the patch is fetched again, so the
+    // stale answer never stays on screen.
+    vi.mocked(api.fileDiff).mockResolvedValue(modified)
+    await frame(capped)
+    await waitFor(() => expect(readsLanded).toBe(3))
     await act(async () => {})
     expect(api.fileDiff).toHaveBeenCalledTimes(2)
+    await act(async () => { releaseStale() })
+    await waitFor(() => expect(api.fileDiff).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(screen.getByTestId('pierre-patch').getAttribute('data-value')).toBe(gitDiff))
+  })
+
+  it('fetches no patch for writes while diff mode is off, and catches up when it is turned on', async () => {
+    vi.mocked(api.fileDiff).mockResolvedValue(clean)
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <div data-testid="tab">
+            <MarkdownPanel embedded active liveWatch initialDiffMode={false} onContentChange={() => {}} onSave={async () => {}} onClose={() => {}} filePath="/repo/big.md" content={capped} partial />
+          </div>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(readsLanded).toBe(1))
+    await waitFor(() => expect(api.fileDiff).toHaveBeenCalledTimes(1))
+    await frame(capped) // connect-time frame: quiet
+    await frame(capped) // a write past the cut
+    await waitFor(() => expect(readsLanded).toBe(2))
+    await act(async () => {})
+    expect(api.fileDiff).toHaveBeenCalledTimes(1)
+    vi.mocked(api.fileDiff).mockResolvedValue(modified)
+    fireEvent.click(within(screen.getByTestId('tab')).getAllByRole('button', { name: /toggle diff view/i })[0])
+    await waitFor(() => expect(api.fileDiff).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByTestId('pierre-patch').getAttribute('data-value')).toBe(gitDiff))
+  })
+
+  it('refetches the patch when a hidden partial tab becomes the visible one', async () => {
+    vi.mocked(api.fileDiff).mockResolvedValue(clean)
+    const { rerender } = render(<Panel liveWatch />)
+    await screen.findByText('No changes in this file')
+    await waitFor(() => expect(readsLanded).toBe(1))
+    rerender(<Panel liveWatch active={false} />)
+    // While the tab is hidden, the file changes past the cut.
+    vi.mocked(api.fileDiff).mockResolvedValue(modified)
+    rerender(<Panel liveWatch active />)
+    await waitFor(() => expect(readsLanded).toBe(2))
+    await waitFor(() => expect(screen.getByTestId('pierre-patch').getAttribute('data-value')).toBe(gitDiff))
+  })
+
+  it('keeps the editor when the diff fetch fails', async () => {
+    vi.mocked(api.fileDiff).mockRejectedValue(new Error('boom'))
+    render(<Panel readOnly={false} />)
+    await screen.findByTestId('markdown-panel-diff-error')
+    expect(screen.getByTestId('pierre-editor')).toBeTruthy()
+    expect(screen.queryByTestId('pierre-patch')).toBeNull()
+  })
+
+  it("keeps the editor's patch on screen while a Refresh refetches it", async () => {
+    render(<Panel readOnly={false} liveWatch />)
+    await screen.findByTestId('pierre-patch')
+    await waitFor(() => expect(readsLanded).toBe(1))
+    let release!: () => void
+    vi.mocked(api.fileDiff).mockImplementationOnce(() => new Promise(r => { release = () => r(modified) }))
+    fireEvent.click(screen.getByTestId('markdown-panel-more-options'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /refresh/i }))
+    await waitFor(() => expect(api.fileDiff).toHaveBeenCalledTimes(2))
+    // Let the in-flight state reach the render before reading it.
+    await waitFor(() => expect(qc.isFetching({ queryKey: ['file-diff', '/repo/big.py'] })).toBe(1))
+    await act(async () => {})
+    // The refetch is still in flight: the cached patch stays drawn.
+    expect(screen.getByTestId('pierre-patch').getAttribute('data-value')).toBe(gitDiff)
+    expect(screen.queryByTestId('pierre-editor')).toBeNull()
+    await act(async () => { release() })
+    await waitFor(() => expect(screen.getByTestId('pierre-patch').getAttribute('data-value')).toBe(gitDiff))
   })
 
   it('keeps the body-pair diff for a whole buffer', async () => {
