@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from kiro_crew.dashboard.chat_utils import (
+    STEER_INTENT_META,
     STEER_POSSIBLY_DELIVERED_META,
     _redact_for_display,
     _redact_meta,
@@ -468,6 +469,7 @@ async def steer_into_running_turn(
             slot._steer_channel_origin,
             slot._steer_admissions,
             slot._steer_attachment_meta,
+            slot._steer_act_now,
             slot._steer_decision_strips,
         )
     )
@@ -538,6 +540,14 @@ async def steer_into_running_turn(
         # rebuilt from this map -- without the quote here it would render its
         # blockquote as text instead of the card.
         slot._steer_attachment_meta[message] = {**attachments, **quote}
+    if user_origin and not channel_origin:
+        # The composer's own human asked this to act now. Held for the requeue
+        # with the attachment lists rather than in the lockstep origin maps,
+        # which the persisting tail drops while the steer is still unconsumed: a
+        # steer the turn ends before taking keeps its intent past the sub-agent
+        # hold (``STEER_INTENT_META``) instead of parking behind a wave its
+        # sender chose not to wait for.
+        slot._steer_act_now.add(message)
     if decision_strip:
         # Recorded for the REQUEUE, like the maps above: the three `STEER_REQUEUED`
         # returns below all come back before the stamp on the persisted row, and the
@@ -622,6 +632,7 @@ async def steer_into_running_turn(
         slot._steer_channel_origin.pop(message, None)
         slot._steer_admissions.pop(message, None)
         slot._steer_attachment_meta.pop(message, None)
+        slot._steer_act_now.discard(message)
         slot._steer_decision_strips.pop(message, None)
         logger.info(
             "steer for slot %s was requeued and drained during the RPC; row already " "persisted",
@@ -660,6 +671,7 @@ async def steer_into_running_turn(
             slot._steer_channel_origin.pop(message, None)
             slot._steer_admissions.pop(message, None)
             slot._steer_attachment_meta.pop(message, None)
+            slot._steer_act_now.discard(message)
             slot._steer_decision_strips.pop(message, None)
             return STEER_UNAVAILABLE
         if stopped:
@@ -769,6 +781,7 @@ async def steer_into_running_turn(
     # turn that ends without the echo still requeues the text.
     if not still_registered:
         slot._steer_attachment_meta.pop(message, None)
+        slot._steer_act_now.discard(message)
 
     ts = datetime.now(timezone.utc).isoformat()
     # Cut the in-flight text segment at the steer boundary BEFORE persisting the
@@ -942,11 +955,17 @@ def queue_for_next_turn(
     channel_recipient: dict[str, Any] | None = None,
     quote: dict[str, Any] | None = None,
     commands_off: bool = False,
+    steer_intent: bool = False,
 ) -> str:
     """Append *message* to the slot's queue and announce it; return the queue id.
 
     The running turn's teardown drains the queue, so this is how a message
     reaches a busy slot when steering is unavailable or not asked for.
+
+    *steer_intent* stamps :data:`STEER_INTENT_META`: the session's own human asked
+    this send to act now and the running turn could not take it, so the sub-agent
+    hold releases it at the turn's end rather than parking it behind the wave.
+    Only the composer's steer fallback passes it.
 
     *commands_off* stamps :data:`COMMANDS_OFF_META_KEY` on the entry: the drained
     turn hands the text to the model as content and never runs its first word as a
@@ -1028,6 +1047,8 @@ def queue_for_next_turn(
         meta["decisions_strip"] = decision_strip
     if commands_off:
         meta[COMMANDS_OFF_META_KEY] = True
+    if steer_intent:
+        meta[STEER_INTENT_META] = True
     qid = slot.queue_append(
         message,
         meta=meta,

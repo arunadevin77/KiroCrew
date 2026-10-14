@@ -9,6 +9,7 @@ from kiro_crew.dashboard.chat_utils import (
     AUTOMATION_NOTICE_KIND,
     CRON_NOTIFICATION_KIND,
     MCP_APP_MESSAGE_KIND,
+    STEER_INTENT_META,
     SUBAGENT_COMPLETION_KIND,
 )
 
@@ -201,6 +202,7 @@ def _settle_consumed_steers(
     slot._pending_steers[:] = remaining
     for settled_msg in set(previous) - set(remaining):
         slot._steer_attachment_meta.pop(settled_msg, None)
+        slot._steer_act_now.discard(settled_msg)
         slot._steer_decision_strips.pop(settled_msg, None)
         slot._steer_possibly_delivered.discard(settled_msg)
 
@@ -284,6 +286,13 @@ def _requeue_unconsumed_steers(state: "DashboardState", slot: "_ChatSlot") -> No
         if _sid:
             _meta["sendId"] = _sid
         _meta.update(getattr(slot, "_steer_attachment_meta", {}).pop(steer_msg, {}))
+        # The composer's human asked this to act now; the turn ended before taking
+        # it. The mark lets the sub-agent hold release it rather than park it
+        # behind a wave its sender chose not to wait for.
+        _act_now: set[str] = getattr(slot, "_steer_act_now", set())
+        if steer_msg in _act_now:
+            _act_now.discard(steer_msg)
+            _meta[STEER_INTENT_META] = True
         # The decision receipt rides the entry for the same reason the two ids do:
         # the drain unions a consumed entry's meta onto the row it writes, so this is
         # the only writer a requeued steer has. Both outcomes a `message.steer`

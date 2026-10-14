@@ -4215,6 +4215,28 @@ STEER_POSSIBLY_DELIVERED_NOTE = (
 )
 
 
+#: Queue-entry meta key: the session's own human sent this message asking it to
+#: act NOW (the composer's Steer), and it reached the queue only because the
+#: running turn could not take it -- the steer was unavailable, or the turn ended
+#: before consuming it. The sub-agent hold releases such an entry like a system
+#: injection: the sender already chose not to wait for the wave, and parking it
+#: behind the children would turn that choice into a Queue they never picked.
+STEER_INTENT_META = "steer_intent"
+
+
+def releases_past_subagent_hold(item: dict) -> bool:
+    """Whether the sub-agent hold lets *item* drain while children still run.
+
+    System injections keep flowing (see :func:`is_system_injection_item`), and so
+    does a human's steer that degraded into a queue entry
+    (:data:`STEER_INTENT_META`). Every other user message waits for the wave.
+    """
+    if is_system_injection_item(item):
+        return True
+    meta = item.get("meta")
+    return isinstance(meta, dict) and meta.get(STEER_INTENT_META) is True
+
+
 def carries_attachments(item: dict) -> bool:
     """Whether a queue entry's meta names attachment lists (``files``/``dirs``).
 
@@ -4278,18 +4300,19 @@ def _dequeue_next_message(slot, merge_enabled: bool) -> tuple:
 
 
 def _dequeue_next_system_message(slot) -> tuple:
-    """Pop the first queued system injection, leaving plain user messages
-    queued.
+    """Pop the first queued entry the sub-agent hold releases, leaving plain
+    user messages queued.
 
     Implements the (always-on) queue-during-subagents behavior: while background
     sub-agents run for a slot, a tangential user message is held (not drained)
     so it does not start a main turn mid-run, while system injections that must
-    keep flowing (sub-agent completions, cron notifications) are still drained.
-    Returns ``(content, [item])`` for the drained item, or ``(None, [])`` when
-    only held (user) messages remain queued.
+    keep flowing (sub-agent completions, cron notifications) are still drained,
+    and so is a steer that fell back to the queue
+    (:func:`releases_past_subagent_hold`). Returns ``(content, [item])`` for the
+    drained item, or ``(None, [])`` when only held (user) messages remain queued.
     """
     for i, item in enumerate(slot._queue):
-        if is_system_injection_item(item):
+        if releases_past_subagent_hold(item):
             popped = slot.queue_pop(i)
             return popped["content"], [popped]
     return None, []
