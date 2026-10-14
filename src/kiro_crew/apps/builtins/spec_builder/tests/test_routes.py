@@ -30,6 +30,7 @@ import textwrap
 import threading
 import time
 import types
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, cast
 
@@ -47,6 +48,7 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_facade import (
     routes,
     routes_source,
 )
+from kiro_crew.testing.wait import async_wait_until
 
 _BASE = "/api/apps/spec-builder"
 _REAL_DECISIONS_PATH: Path | None = None
@@ -9471,7 +9473,7 @@ async def test_cancelled_duplicate_finishes_its_published_transaction(tmp_path, 
 
     handler = asyncio.create_task(routes._handle_duplicate(request))
     try:
-        assert await asyncio.to_thread(published.wait, 5)
+        await async_wait_until(published.is_set, describe=lambda: "the duplicate never published")
         handler.cancel()
         release_write.set()
         with pytest.raises(asyncio.CancelledError):
@@ -9627,7 +9629,7 @@ async def test_duplicate_reserves_its_name_before_populating_the_destination(tmp
                 json={**_spec_identity(), "new_name": "shared-name"},
             )
         )
-        assert await asyncio.to_thread(save_started.wait, 5)
+        await async_wait_until(save_started.is_set, describe=lambda: "the save never started")
         create = await client.post(
             f"{_BASE}/specs",
             json={
@@ -10029,7 +10031,22 @@ def test_normalize_spec_state_ignores_an_agent_authored_lock():
     assert out["decisions"][0]["locked"] is False
 
 
+@pytest.fixture
+def one_pool_thread(event_loop):
+    """Give the test loop a default executor of ONE thread.
+
+    The AutoNudge store write runs on the default executor. A test that waits for
+    it by parking its own wait on that executor (``asyncio.to_thread(event.wait,
+    N)``) takes the only thread the write needs, so the write can only run once
+    the wait gives up. Here that is certain rather than load-dependent: the test
+    passes only if its wait holds no pool thread. The rootdir conftest shuts the
+    executor down at teardown.
+    """
+    event_loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("one_pool_thread")
 async def test_nudge_maintenance_pause_is_durable_and_waits_for_a_firing_timer(
     tmp_path,
 ):
@@ -10060,7 +10077,9 @@ async def test_nudge_maintenance_pause_is_durable_and_waits_for_a_firing_timer(
     svc._timers[loop.id] = firing_timer
     svc._firing.add(loop.id)
     pause = asyncio.create_task(svc.deactivate_and_wait(loop.id))
-    assert await asyncio.to_thread(write_done.wait, 2.0)
+    await async_wait_until(
+        write_done.is_set, describe=lambda: "the paused loop's store write never finished"
+    )
 
     assert loop.active is False
     assert not pause.done()
@@ -10074,6 +10093,7 @@ async def test_nudge_maintenance_pause_is_durable_and_waits_for_a_firing_timer(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("one_pool_thread")
 async def test_nudge_maintenance_pause_waits_for_a_replacement_timer(
     tmp_path,
 ):
@@ -10108,7 +10128,9 @@ async def test_nudge_maintenance_pause_waits_for_a_replacement_timer(
     svc._timers[loop.id] = replacement_timer
     svc._firing.add(loop.id)
     svc._lock.release()
-    assert await asyncio.to_thread(write_done.wait, 2.0)
+    await async_wait_until(
+        write_done.is_set, describe=lambda: "the paused loop's store write never finished"
+    )
 
     assert loop.active is False
     assert not pause.done()
@@ -10279,7 +10301,9 @@ async def test_nudge_maintenance_excludes_a_failing_live_remove(tmp_path, monkey
     removal = asyncio.create_task(live.remove(loop.id))
     scan = None
     try:
-        assert await asyncio.to_thread(write_started.wait, 2)
+        await async_wait_until(
+            write_started.is_set, describe=lambda: "the removal's store write never started"
+        )
         scan = asyncio.create_task(_scan())
         await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -10399,7 +10423,9 @@ async def test_index_and_legacy_runtime_identity_are_captured_under_one_lock(tmp
 
     monkeypatch.setattr(routes, "_load_index", _load_and_pause_once)
     capture = asyncio.create_task(routes._aload_index_with_slot_identity("legacy"))
-    assert await asyncio.to_thread(snapshot_read.wait, 5)
+    await async_wait_until(
+        snapshot_read.is_set, describe=lambda: "the index snapshot was never read"
+    )
     replacement_key = routes._new_slot_key("legacy")
 
     def _replace(index):

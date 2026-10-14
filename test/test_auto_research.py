@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,6 +42,7 @@ from kiro_crew.apps.builtins.auto_research.handlers import (
     write_guidance,
     write_status,
 )
+from kiro_crew.testing.wait import async_wait_until
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +59,20 @@ def _isolate(tmp_path: Path):
         ),
     ):
         yield tmp_path
+
+
+@pytest.fixture
+def one_pool_thread(event_loop):
+    """Give the test loop a default executor of ONE thread.
+
+    The settlement under test runs its writes on the default executor. A test
+    that waits for one of them by parking its own wait on that executor
+    (``asyncio.to_thread(event.wait, N)``) takes the only thread the write needs,
+    so the write can only run once the wait gives up. Here that is certain rather
+    than load-dependent: the test passes only if its wait holds no pool thread.
+    The rootdir conftest shuts the executor down at teardown.
+    """
+    event_loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
 
 
 class TestPathValidation:
@@ -1252,6 +1268,7 @@ class TestHTTPHandlers:
         ]
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("one_pool_thread")
     async def test_resume_cannot_be_overwritten_by_slow_terminal_sidecar(
         self, app, tmp_path: Path, monkeypatch
     ):
@@ -1317,7 +1334,10 @@ class TestHTTPHandlers:
                     stopped_reason=AUTONUDGE_STOP_REASON,
                 )
             )
-            assert await asyncio.to_thread(terminal_sidecar_started.wait, 5)
+            await async_wait_until(
+                terminal_sidecar_started.is_set,
+                describe=lambda: "the terminal status sidecar write never started",
+            )
 
             async with TestClient(TestServer(app)) as client:
                 resume = asyncio.create_task(
@@ -2336,6 +2356,7 @@ class TestWatchdogStopTombstone:
         assert last_ts == {}
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("one_pool_thread")
     async def test_cancellation_waits_for_persisted_loop_removal(self, tmp_path, monkeypatch):
         """Shutdown cannot split terminal status from durable loop cleanup."""
         from kiro_crew.apps.builtins.auto_research import handlers as h
@@ -2366,7 +2387,10 @@ class TestWatchdogStopTombstone:
                 cid, [], {}, {}, observed_started_at=1.0
             )
         )
-        assert await asyncio.to_thread(status_write_started.wait, 5)
+        await async_wait_until(
+            status_write_started.is_set,
+            describe=lambda: "the terminal status write never started",
+        )
 
         task.cancel()
         await asyncio.sleep(0)
@@ -2425,7 +2449,10 @@ class TestWatchdogStopTombstone:
                 cid, [], {}, {}, observed_started_at=1.0
             )
         )
-        assert await asyncio.to_thread(status_write_started.wait, 5)
+        await async_wait_until(
+            status_write_started.is_set,
+            describe=lambda: "the terminal status write never started",
+        )
 
         replacement = await svc.add(
             slot_key=slot_key,
@@ -2471,7 +2498,10 @@ class TestWatchdogStopTombstone:
                 cid, [], {}, {}, observed_started_at=1.0
             )
         )
-        assert await asyncio.to_thread(status_write_started.wait, 5)
+        await async_wait_until(
+            status_write_started.is_set,
+            describe=lambda: "the terminal status write never started",
+        )
 
         task.cancel()
         release_status_write.set()
@@ -2523,7 +2553,10 @@ class TestWatchdogStopTombstone:
                 cid, [], {}, {}, observed_started_at=1.0
             )
         )
-        assert await asyncio.to_thread(status_write_started.wait, 5)
+        await async_wait_until(
+            status_write_started.is_set,
+            describe=lambda: "the terminal status write never started",
+        )
 
         try:
             task.cancel()
