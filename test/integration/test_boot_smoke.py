@@ -533,12 +533,21 @@ def _module_globals() -> dict[tuple[str, str], tuple[int, str]]:
 
 
 @pytest.mark.asyncio
-async def test_a_second_boot_touches_only_known_module_globals(gateway_boot) -> None:
+async def test_a_second_boot_touches_only_known_module_globals(gateway_boot, monkeypatch) -> None:
     """The generic witness behind the reset list: diff every loaded
     ``kiro_crew`` module's globals across a SECOND boot (the first warms the
     imports) and require each changed name to be either restored by the
     harness or listed in ``_KNOWN_SECOND_BOOT_CHANGES`` with its reason. A
     home-derived global that startup grows fails here by name."""
+    from kiro_crew.config import paths as config_paths
+
+    # The scratch-root override is validated once and pinned for the process by the first
+    # ``scratch_root()`` call, which a session spawn makes on an executor thread. Whether
+    # that call lands before the baseline or between the two snapshots depends on timing,
+    # not on what a boot does to the home. Settle the pin first so both snapshots hold the
+    # same value; the monkeypatch puts the old one back.
+    monkeypatch.setattr(config_paths, "_scratch_root_override_pin", config_paths._UNSET)
+    config_paths.valid_scratch_root_override()
     async with gateway_boot() as gw:
         await gw.get_json("/api/health", auth=False)
     before = _module_globals()
