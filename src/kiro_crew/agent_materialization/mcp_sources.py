@@ -254,10 +254,65 @@ def _app_owned_mcp_keys() -> dict[str, bool]:
 # the user's (``autoApprove``, ``disabledTools``, fields we do not model) and
 # survives by being ABSENT here, so one invented later defaults to surviving.
 # ``command``/``url`` are absent (a transport needs a scope that declares one;
-# ``test_mcp_rebuild_reconsumption`` owns that), so their dependants are too --
-# reconciling ``headers`` without its ``url`` would pair this source's credential
-# with the entry's old endpoint. mcp.md calls this adopting as a unit.
+# ``test_mcp_rebuild_reconsumption`` owns that). ``headers`` is absent too --
+# reconciling it without its ``url`` would pair this source's credential with the
+# entry's old endpoint. mcp.md calls this adopting as a unit. ``args`` and ``env``
+# are the command's dependants and are reconciled by :func:`_merge_command_unit`
+# under that rule, not here: they land only onto an entry whose command is the
+# one the source declares.
 _SOURCE_OWNED_MCP_KEYS = ("timeout", "disabled")
+
+# The keys that belong WITH a stdio ``command``: a server's arguments and its
+# environment are written for one program. The agent entry carries that program as
+# the RESOLVED absolute path the previous pass wrote (``npx`` ->
+# ``/opt/node/bin/npx``), so the pairing test is the discovery module's "same
+# program" comparison, not string equality.
+_COMMAND_UNIT_KEYS = ("args", "env")
+
+
+def _merge_command_unit(existing: dict, spec: dict) -> None:
+    """Project *spec*'s ``args``/``env`` onto *existing* when they belong with its command.
+
+    The entry's ``command`` is not reconciled (see ``_SOURCE_OWNED_MCP_KEYS``), so a
+    source whose command is UNCHANGED kept the entry's first-pass ``env`` and ``args``
+    forever: a variable the user added to ``~/.kiro/settings/mcp.json`` after the
+    first rebuild would never reach the spawned server. The as-a-unit rule the
+    merge documents forbids pairing one source's args/env with another source's
+    command, and that is exactly the case where the two commands name DIFFERENT
+    programs -- so the unit is adopted only when the source's command names the
+    same program the entry already runs. A source that switched programs keeps the
+    entry's old pairing intact, as it did before; the command rewrite is the
+    separate change ``test_a_changed_command_is_rewritten`` tracks.
+
+    Adopting the unit means projecting it: a key the source dropped goes too,
+    because an ``env`` the first pass froze is the defect, not a user field.
+    """
+    source_cmd = spec.get("command")
+    entry_cmd = existing.get("command")
+    if not (isinstance(source_cmd, str) and source_cmd):
+        return
+    if not (isinstance(entry_cmd, str) and entry_cmd):
+        return
+    # Lazy: mcp_discovery is the dashboard's module and imports back into agent
+    # at call time; a module-level import here would close that cycle. The
+    # comparison is the one the dashboard's sync trigger uses, so the merge
+    # reconciles exactly the env divergence the dashboard offers to sync.
+    from kiro_crew.mcp_discovery import _commands_diverged
+
+    if _commands_diverged(source_cmd, entry_cmd):
+        return
+    for key in _COMMAND_UNIT_KEYS:
+        if key in spec:
+            value = spec[key]
+            # Copies, for the reason merge_mcp_sources gives: the entry is
+            # mutated by later passes and must never alias the source's objects.
+            if isinstance(value, dict):
+                value = dict(value)
+            elif isinstance(value, list):
+                value = list(value)
+            existing[key] = value
+        else:
+            existing.pop(key, None)
 
 
 def _merge_source_owned(mcps: dict, name: str, spec: dict, *, stale: set[str]) -> None:
@@ -281,6 +336,7 @@ def _merge_source_owned(mcps: dict, name: str, spec: dict, *, stale: set[str]) -
             existing[key] = spec[key]
         else:
             existing.pop(key, None)
+    _merge_command_unit(existing, spec)
 
 
 class McpSources(NamedTuple):

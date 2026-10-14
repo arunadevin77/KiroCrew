@@ -89,8 +89,16 @@ kirocrew`). Onto that base:
    instead of losing to the value the first rebuild froze. Every other key on the
    entry is the user's and survives by omission, `autoApprove` included.
    Reconciling retires the name, so a lower-priority scope cannot reconcile it
-   again. `command`/`url` and the fields dependent on them (`args`, `env`,
-   `headers`) are NOT reconciled — see the fallback's as-a-unit rule below.
+   again. `command`/`url` and `headers` are NOT reconciled — see the fallback's
+   as-a-unit rule below. `args` and `env` ARE, but only onto an entry whose
+   command names the same program the source declares (the discovery module's
+   `_commands_diverged`, which reads the entry's resolved `/…/bin/npx` as the
+   source's bare `npx`): the two are written for one program, so a source that
+   kept its command and added an `env` variable or an argument later must reach
+   the server it already runs, while a source that switched programs keeps the
+   entry's old command/args/env pairing whole rather than lending its new env to
+   the old command. The unit is projected, not merged: a key the source dropped
+   is removed.
 3. **Seam-contributed provider globals**, so they can only fill gaps the Kiro
    global did not: a name step 1 or step 2 already claimed in this pass has been
    retired, so it is left alone. Empty in this build.
