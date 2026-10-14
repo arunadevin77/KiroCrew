@@ -4405,9 +4405,12 @@
     "useSessionActions": {
       "close_this_session": "Close this session?",
       "reload_failed": "Session reload failed. The agent may be mid-turn or the gateway unreachable; try again when the session is idle.",
-      "duplicate_unreachable": "Couldn't duplicate this session — couldn't reach {{productName}}. Check your connection and try again.",
+      "duplicate_unreachable": "Couldn't duplicate this session. {{productName}} couldn't be reached. Check your connection and try again.",
       "reload_failed_subagents": "Sub-agents are still working on this session. Try again when they finish.",
-      "duplicate_failed_reason": "Couldn't duplicate this session: {{reason}}"
+      "duplicate_failed_reason": "Couldn't duplicate this session. Reason: {{reason}}. Try again in a moment.",
+      "duplicate_guided_reason": "Couldn't duplicate this session. {{reason}}",
+      "duplicate_not_found": "Couldn't duplicate this session. It's no longer open. Reload the page, or reopen it from History and try again.",
+      "duplicate_sign_in_required": "Couldn't duplicate this session. Your sign-in is no longer valid. Run kirocrew token in a terminal, then paste the sign-in URL into the banner at the top of this page to sign back in."
     },
     "useStreamingStt": {
       "audio_module_load_failed": "Dictation could not finish loading. Check your connection, then try dictating again.",

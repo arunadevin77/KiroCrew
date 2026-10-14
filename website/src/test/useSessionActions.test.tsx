@@ -22,26 +22,21 @@ import type { ReactNode } from 'react'
 import type { ChatSlot } from '../types'
 
 const mocks = vi.hoisted(() => ({ setSlotPin: vi.fn(), forkChatSlot: vi.fn(), chatSlots: vi.fn() }))
-const { MockApiError } = vi.hoisted(() => ({
-  // Mirrors the real ApiError: apiFailure (api/client.ts) sets .message to the
-  // friendly text, so the hook reads err.message directly.
-  MockApiError: class extends Error {
-    status: number
-    body: string
-    constructor(status: number, body: string, message?: string) {
-      super(message ?? body)
-      this.status = status
-      this.body = body
-    }
-  },
-}))
-vi.mock('../api/client', () => ({
-  SEARCH_MIN_CHARS: 2,
-  ApiError: MockApiError,
-  api: new Proxy(mocks as Record<string, unknown>, {
-    get: (t, p: string) => (p in t ? t[p] : vi.fn().mockResolvedValue([])),
-  }),
-}))
+// The client mock re-exports the real ApiError, so the hook's instanceof check
+// and apiErrorCode's both see the refusals these tests build. isAuthExpiredError
+// mirrors the real predicate: a sign-in denial the gateway itself answered, not
+// an access-proxy challenge.
+vi.mock('../api/client', async () => {
+  const { ApiError } = await import('../api/apiError')
+  return {
+    SEARCH_MIN_CHARS: 2,
+    ApiError,
+    isAuthExpiredError: (e: unknown) => e instanceof ApiError && e.authRequired && !e.edgeChallenge,
+    api: new Proxy(mocks as Record<string, unknown>, {
+      get: (t, p: string) => (p in t ? t[p] : vi.fn().mockResolvedValue([])),
+    }),
+  }
+})
 
 // close() gates on loadChatConfig().confirmCloseSession — mock it so each test
 // controls the branch deterministically (no localStorage dependency).
@@ -49,8 +44,12 @@ const cfgMock = vi.hoisted(() => ({ loadChatConfig: vi.fn(() => ({ confirmCloseS
 vi.mock('../pages/chat/ChatSettings', () => cfgMock)
 
 import { store } from '../store'
+import { ApiError } from '../api/apiError'
 import { sseSlots, sseSlotPatch, markSlotUnread, updateSlotPin } from '../store/dashboardSlice'
 import { useSessionActions } from '../hooks/useSessionActions'
+
+/** A refusal as apiFailure (api/client.ts) builds it: `.message` is the friendly text, `.body` the raw body. */
+const refusal = (status: number, body: string, message: string) => new ApiError(status, message, body)
 
 const SLOT = 'chat-actions-1'
 
@@ -181,49 +180,119 @@ describe('useSessionActions', () => {
     expect(mocks.chatSlots).not.toHaveBeenCalled()
   })
 
-  it('duplicate alerts the slot-cap guidance on its own on a 429 refusal instead of failing silently', async () => {
-    // The bug: forkMutation had no onError, so Duplicate's refusal vanished and
-    // the button did nothing. The slot-cap guidance arrives on err.message
-    // (apiFailure sets it to friendlyErrText(status, body)) and is already a
-    // whole message, so it is shown alone, not after the "Couldn't duplicate" prefix.
-    const guidance = 'Too many sessions are open. Close a few old sessions, then try again.'
-    mocks.forkChatSlot.mockRejectedValueOnce(new MockApiError(429, JSON.stringify({ error: 'slot cap reached (500)', code: 'slot_cap_reached' }), guidance))
+  it('duplicate alerts the keyed slot-cap copy on a 429 refusal instead of failing silently', async () => {
+    // The slot-cap 429 is matched on its body code; the shared slot-cap guidance
+    // that friendlyErrText puts on err.message follows the Duplicate subject, so
+    // the raw "slot cap reached" reason never shows.
+    const guidance = 'Too many sessions are open. Close a few old sessions (they stay in History and reopen anytime), then try again.'
+    mocks.forkChatSlot.mockRejectedValueOnce(refusal(429, JSON.stringify({ error: 'slot cap reached (500)', code: 'slot_cap_reached' }), guidance))
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
     seed()
     const a = renderActions()
     act(() => a.current.duplicate(SLOT))
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
-    expect(alertSpy.mock.calls[0][0]).toBe(guidance)
+    expect(alertSpy.mock.calls[0][0]).toBe(
+      "Couldn't duplicate this session. Too many sessions are open. Close a few old sessions (they stay in History and reopen anytime), then try again.",
+    )
+  })
+
+  it('duplicate names a sign-in denial as the sign-in, not the session, with no retry sentence', async () => {
+    // apiFailure sets authRequired and puts the shared "Session expired. ..."
+    // text on err.message; after "Couldn't duplicate this session." that reads
+    // as the chat having expired, so the alert uses its own sign-in copy, and no
+    // retry succeeds until the user signs in, so there is no "Try again in a moment".
+    const signIn = 'Session expired. Run kirocrew token in a terminal, then paste the sign-in URL into the banner at the top of this page to sign back in.'
+    mocks.forkChatSlot.mockRejectedValueOnce(new ApiError(403, signIn, 'invalid signature', true))
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    seed()
+    const a = renderActions()
+    act(() => a.current.duplicate(SLOT))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
+    expect(alertSpy.mock.calls[0][0]).toBe(
+      "Couldn't duplicate this session. Your sign-in is no longer valid. Run kirocrew token in a terminal, then paste the sign-in URL into the banner at the top of this page to sign back in.",
+    )
+    expect(alertSpy.mock.calls[0][0]).not.toContain('Session expired')
+    expect(alertSpy.mock.calls[0][0]).not.toContain('Try again in a moment')
+  })
+
+  it('duplicate follows an access-proxy challenge with the proxy remedy and no retry sentence', async () => {
+    // A proxy in front of the gateway answered with its own sign-in page: the
+    // gateway's sign-in does not clear it, and err.message already names the
+    // proxy and what to do.
+    const proxy = 'Reload this browser tab — if a sign-in page appears, your access proxy’s session expired. If not, a proxy or firewall in front of this dashboard refused the request; check the proxy’s logs, or retry later.'
+    mocks.forkChatSlot.mockRejectedValueOnce(new ApiError(401, proxy, '<html></html>', true, true))
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    seed()
+    const a = renderActions()
+    act(() => a.current.duplicate(SLOT))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
+    expect(alertSpy.mock.calls[0][0]).toBe(`Couldn't duplicate this session. ${proxy}`)
+    expect(alertSpy.mock.calls[0][0]).not.toContain('Try again in a moment')
+  })
+
+  it('duplicate alerts the keyed not-found copy on a slot_not_found 404, not the raw "not found"', async () => {
+    // The fork endpoint answers 404 {error:"not found", code:"slot_not_found"}
+    // when the session is not open on the gateway; the raw reason says neither
+    // what is missing nor what to do.
+    mocks.forkChatSlot.mockRejectedValueOnce(refusal(404, JSON.stringify({ error: 'not found', code: 'slot_not_found' }), 'not found'))
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    seed()
+    const a = renderActions()
+    act(() => a.current.duplicate(SLOT))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
+    expect(alertSpy.mock.calls[0][0]).toBe(
+      "Couldn't duplicate this session. It's no longer open. Reload the page, or reopen it from History and try again.",
+    )
+    expect(alertSpy.mock.calls[0][0]).not.toContain(': not found')
   })
 
   it('duplicate wraps an ordinary 429 reason in the subject template', async () => {
-    // Only the slot-cap codes skip the prefix; a tunnel-edge 429 still names the subject.
-    mocks.forkChatSlot.mockRejectedValueOnce(new MockApiError(429, JSON.stringify({ error: 'x', code: 'throttled' }), 'Rate limited'))
+    // Only the slot-cap codes get the keyed copy; a tunnel-edge 429 still names its reason.
+    mocks.forkChatSlot.mockRejectedValueOnce(refusal(429, JSON.stringify({ error: 'x', code: 'throttled' }), 'Rate limited'))
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
     seed()
     const a = renderActions()
     act(() => a.current.duplicate(SLOT))
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
-    expect(alertSpy.mock.calls[0][0]).toBe("Couldn't duplicate this session: Rate limited")
+    expect(alertSpy.mock.calls[0][0]).toBe("Couldn't duplicate this session. Reason: Rate limited. Try again in a moment.")
   })
 
   it('duplicate wraps the server reason in the subject template on a non-429 ApiError', async () => {
-    // A bare "not found" must name the subject and read as a whole sentence.
-    mocks.forkChatSlot.mockRejectedValueOnce(new MockApiError(404, 'not found body', 'not found'))
+    // A 404 without the slot_not_found code still names the subject; a reason's
+    // own end punctuation is dropped so the sentence does not end in "..".
+    mocks.forkChatSlot.mockRejectedValueOnce(refusal(404, 'not found body', 'the source session was permanently deleted.'))
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
     seed()
     const a = renderActions()
     act(() => a.current.duplicate(SLOT))
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
-    expect(alertSpy.mock.calls[0][0]).toBe("Couldn't duplicate this session: not found")
+    expect(alertSpy.mock.calls[0][0]).toBe(
+      "Couldn't duplicate this session. Reason: the source session was permanently deleted. Try again in a moment.",
+    )
+  })
+
+  it('duplicate drops a Devanagari full stop from the reason so the sentence does not end twice', async () => {
+    // A Hindi or Bengali reason ends in the danda, which the template's own
+    // end mark follows; leaving it in would read "।।" in those locales.
+    mocks.forkChatSlot.mockRejectedValueOnce(refusal(500, 'body', 'सर्वर त्रुटि।'))
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    seed()
+    const a = renderActions()
+    act(() => a.current.duplicate(SLOT))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
+    expect(alertSpy.mock.calls[0][0]).toBe("Couldn't duplicate this session. Reason: सर्वर त्रुटि. Try again in a moment.")
   })
 
   it('duplicate alerts the connection copy when fetch itself rejects (non-ApiError)', async () => {
     // A gateway that can't be reached rejects with a TypeError, not an ApiError,
-    // so there is no server reason to wrap — the handler shows the standalone
+    // so there is no server reason to wrap — the handler shows the keyed
     // connection message instead.
     mocks.forkChatSlot.mockRejectedValueOnce(new TypeError('Failed to fetch'))
     const alertSpy = vi.fn()
@@ -232,10 +301,11 @@ describe('useSessionActions', () => {
     const a = renderActions()
     act(() => a.current.duplicate(SLOT))
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
-    // Real i18n string (not mocked): names Kiro Crew, and is NOT the subject template.
-    expect(alertSpy.mock.calls[0][0]).toContain('Kiro Crew')
-    expect(alertSpy.mock.calls[0][0]).not.toContain('Couldn\'t duplicate this session:')
-    expect(alertSpy.mock.calls[0][0]).not.toBe('Failed to fetch')
+    // Real i18n string (not mocked): names Kiro Crew, and is NOT the reason template.
+    expect(alertSpy.mock.calls[0][0]).toBe(
+      "Couldn't duplicate this session. Kiro Crew couldn't be reached. Check your connection and try again.",
+    )
+    expect(alertSpy.mock.calls[0][0]).not.toContain('Failed to fetch')
   })
 
   it('close honours confirmCloseSession', () => {

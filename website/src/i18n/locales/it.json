@@ -10270,9 +10270,12 @@
     "useSessionActions": {
       "close_this_session": "Chiudere questa sessione?",
       "reload_failed": "Ricarica della sessione non riuscita. L'agente potrebbe essere impegnato in un turno o il gateway non raggiungibile; riprova quando la sessione è inattiva.",
-      "duplicate_unreachable": "Impossibile duplicare questa sessione: {{productName}} non è raggiungibile. Controlla la connessione e riprova.",
+      "duplicate_unreachable": "Impossibile duplicare questa sessione. {{productName}} non è raggiungibile. Controlla la connessione e riprova.",
       "reload_failed_subagents": "I sub-agenti stanno ancora lavorando su questa sessione. Riprova quando avranno finito.",
-      "duplicate_failed_reason": "Impossibile duplicare questa sessione: {{reason}}"
+      "duplicate_failed_reason": "Impossibile duplicare questa sessione. Motivo: {{reason}}. Riprova tra un momento.",
+      "duplicate_guided_reason": "Impossibile duplicare questa sessione. {{reason}}",
+      "duplicate_not_found": "Impossibile duplicare questa sessione. Non è più aperta. Ricarica la pagina, oppure riaprila dalla cronologia e riprova.",
+      "duplicate_sign_in_required": "Impossibile duplicare questa sessione. Il tuo accesso non è più valido. Esegui kirocrew token in un terminale, quindi incolla l’URL di accesso nel banner in cima a questa pagina per accedere di nuovo."
     },
     "useStreamingStt": {
       "audio_module_load_failed": "La dettatura non ha finito di caricarsi. Controlla la connessione, poi riprova a dettare.",

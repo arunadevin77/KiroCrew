@@ -9986,9 +9986,12 @@
     "useSessionActions": {
       "close_this_session": "关闭此会话？",
       "reload_failed": "会话重新加载失败。代理可能正在处理消息或网关不可达；请等会话空闲后重试。",
-      "duplicate_unreachable": "无法复制此会话 — 无法连接到 {{productName}}。请检查网络连接后重试。",
+      "duplicate_unreachable": "无法复制此会话。无法连接到 {{productName}}。请检查网络连接后重试。",
       "reload_failed_subagents": "该会话的子代理仍在工作中。等它们完成后再试。",
-      "duplicate_failed_reason": "无法复制此会话：{{reason}}"
+      "duplicate_failed_reason": "无法复制此会话。原因：{{reason}}。请稍后重试。",
+      "duplicate_guided_reason": "无法复制此会话。{{reason}}",
+      "duplicate_not_found": "无法复制此会话。该会话已不再打开。请重新加载页面，或从历史记录中重新打开后重试。",
+      "duplicate_sign_in_required": "无法复制此会话。你的登录已不再有效。请在终端运行 kirocrew token，然后将登录 URL 粘贴到本页顶部的横幅中重新登录。"
     },
     "useStreamingStt": {
       "audio_module_load_failed": "口述未能完成加载。检查网络连接后再口述一次。",

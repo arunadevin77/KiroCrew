@@ -10270,9 +10270,12 @@
     "useSessionActions": {
       "close_this_session": "Fermer cette session ?",
       "reload_failed": "Échec du rechargement de la session. L'agent est peut-être en train de répondre ou la passerelle est injoignable ; réessayez quand la session est inactive.",
-      "duplicate_unreachable": "Impossible de dupliquer cette session — {{productName}} est injoignable. Vérifie ta connexion et réessaie.",
+      "duplicate_unreachable": "Impossible de dupliquer cette session. {{productName}} est injoignable. Vérifie ta connexion et réessaie.",
       "reload_failed_subagents": "Des sous-agents travaillent encore sur cette session. Réessayez quand ils auront terminé.",
-      "duplicate_failed_reason": "Impossible de dupliquer cette session : {{reason}}"
+      "duplicate_failed_reason": "Impossible de dupliquer cette session. Raison : {{reason}}. Réessaie dans un instant.",
+      "duplicate_guided_reason": "Impossible de dupliquer cette session. {{reason}}",
+      "duplicate_not_found": "Impossible de dupliquer cette session. Elle n’est plus ouverte. Recharge la page, ou rouvre-la depuis l’historique et réessaie.",
+      "duplicate_sign_in_required": "Impossible de dupliquer cette session. Ta connexion n’est plus valide. Exécute kirocrew token dans un terminal, puis colle l’URL de connexion dans la bannière en haut de cette page pour te reconnecter."
     },
     "useStreamingStt": {
       "audio_module_load_failed": "La dictée n’a pas pu finir de se charger. Vérifie ta connexion, puis relance la dictée.",

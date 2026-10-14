@@ -9986,9 +9986,12 @@
     "useSessionActions": {
       "close_this_session": "このセッションを閉じますか？",
       "reload_failed": "セッションの再読み込みに失敗しました。エージェントが応答中かゲートウェイに接続できない可能性があります。セッションがアイドルのときに再試行してください。",
-      "duplicate_unreachable": "このセッションを複製できませんでした — {{productName}} に接続できませんでした。接続を確認してもう一度お試しください。",
+      "duplicate_unreachable": "このセッションを複製できませんでした。{{productName}} に接続できませんでした。接続を確認してもう一度お試しください。",
       "reload_failed_subagents": "このセッションのサブエージェントがまだ動作中です。完了してから再試行してください。",
-      "duplicate_failed_reason": "このセッションを複製できませんでした: {{reason}}"
+      "duplicate_failed_reason": "このセッションを複製できませんでした。理由: {{reason}}。しばらくしてからもう一度お試しください。",
+      "duplicate_guided_reason": "このセッションを複製できませんでした。{{reason}}",
+      "duplicate_not_found": "このセッションを複製できませんでした。このセッションはもう開いていません。ページを再読み込みするか、履歴から開き直してもう一度お試しください。",
+      "duplicate_sign_in_required": "このセッションを複製できませんでした。サインインが無効になりました。ターミナルで kirocrew token を実行し、このページ上部のバナーにサインイン URL を貼り付けて再度サインインしてください。"
     },
     "useStreamingStt": {
       "audio_module_load_failed": "口述の読み込みを完了できませんでした。接続を確認してから、もう一度口述してください。",

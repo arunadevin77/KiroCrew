@@ -10270,9 +10270,12 @@
     "useSessionActions": {
       "close_this_session": "¿Cerrar esta sesión?",
       "reload_failed": "No se pudo recargar la sesión. Puede que el agente esté respondiendo o que el gateway no esté accesible; inténtalo de nuevo cuando la sesión esté inactiva.",
-      "duplicate_unreachable": "No se pudo duplicar esta sesión: no se pudo contactar con {{productName}}. Comprueba tu conexión e inténtalo de nuevo.",
+      "duplicate_unreachable": "No se pudo duplicar esta sesión. No se pudo contactar con {{productName}}. Comprueba tu conexión e inténtalo de nuevo.",
       "reload_failed_subagents": "Los subagentes siguen trabajando en esta sesión. Inténtalo de nuevo cuando terminen.",
-      "duplicate_failed_reason": "No se pudo duplicar esta sesión: {{reason}}"
+      "duplicate_failed_reason": "No se pudo duplicar esta sesión. Motivo: {{reason}}. Inténtalo de nuevo en un momento.",
+      "duplicate_guided_reason": "No se pudo duplicar esta sesión. {{reason}}",
+      "duplicate_not_found": "No se pudo duplicar esta sesión. Ya no está abierta. Recarga la página o vuelve a abrirla desde el Historial e inténtalo de nuevo.",
+      "duplicate_sign_in_required": "No se pudo duplicar esta sesión. Tu inicio de sesión ya no es válido. Ejecuta kirocrew token en una terminal y pega la URL de inicio de sesión en el banner de la parte superior de esta página para volver a iniciar sesión."
     },
     "useStreamingStt": {
       "audio_module_load_failed": "El dictado no terminó de cargarse. Revisa tu conexión y vuelve a dictar.",

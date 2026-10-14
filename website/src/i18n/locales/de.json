@@ -10128,9 +10128,12 @@
     "useSessionActions": {
       "close_this_session": "Diese Sitzung schließen?",
       "reload_failed": "Sitzung konnte nicht neu geladen werden. Der Agent ist möglicherweise mitten in einem Zug oder das Gateway ist nicht erreichbar; versuchen Sie es erneut, wenn die Sitzung inaktiv ist.",
-      "duplicate_unreachable": "Diese Sitzung konnte nicht dupliziert werden — {{productName}} ist nicht erreichbar. Prüfe deine Verbindung und versuche es erneut.",
+      "duplicate_unreachable": "Diese Sitzung konnte nicht dupliziert werden. {{productName}} ist nicht erreichbar. Prüfe deine Verbindung und versuche es erneut.",
       "reload_failed_subagents": "Unteragenten arbeiten noch an dieser Sitzung. Versuchen Sie es erneut, wenn sie fertig sind.",
-      "duplicate_failed_reason": "Diese Sitzung konnte nicht dupliziert werden: {{reason}}"
+      "duplicate_failed_reason": "Diese Sitzung konnte nicht dupliziert werden. Grund: {{reason}}. Versuche es gleich noch einmal.",
+      "duplicate_guided_reason": "Diese Sitzung konnte nicht dupliziert werden. {{reason}}",
+      "duplicate_not_found": "Diese Sitzung konnte nicht dupliziert werden. Sie ist nicht mehr geöffnet. Lade die Seite neu oder öffne sie im Verlauf erneut und versuche es noch einmal.",
+      "duplicate_sign_in_required": "Diese Sitzung konnte nicht dupliziert werden. Deine Anmeldung ist nicht mehr gültig. Führe kirocrew token in einem Terminal aus und füge die Anmelde-URL in das Banner oben auf dieser Seite ein, um dich erneut anzumelden."
     },
     "useStreamingStt": {
       "audio_module_load_failed": "Das Diktat konnte nicht fertig geladen werden. Prüf deine Verbindung und diktier dann noch einmal.",
