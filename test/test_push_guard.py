@@ -131,6 +131,7 @@ def _git(cwd: str, *args: str) -> str:
         cwd=cwd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
         env=_fixture_git_env(),
         timeout=_SUBPROCESS_TIMEOUT_S,
