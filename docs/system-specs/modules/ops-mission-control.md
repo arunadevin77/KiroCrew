@@ -2413,8 +2413,13 @@ The board's expanded row mounts `ChatEmbed` against the incident's slot
 (`ops-mission-control-<incident_id>` — the SOP and cron prompt both state the key,
 since a mismatch shows an empty conversation beside a live investigation). It needs
 its own `AppApiProvider`: builtin pages have none, and the provider is
-permission-scoped, so `/api/chat*` **and** `/api/approvals*` must both be in
-`allowedApiPaths` or the approval buttons 403 with no visible error.
+permission-scoped, so `allowedApiPaths` must include `/api/chat`. That prefix
+covers transcript reads, sending, and approvals through
+`POST /api/chat/slots/{slot}/approve`; `ChatEmbed` does not use `/api/approvals*`.
+Without the path grant, the scoped client throws before sending the request.
+For app-token callers, the Gateway also requires `permissions.sessionApproval`;
+without it approvals return 403 `session_approval_not_granted`. Session ownership
+rules still apply.
 
 Approvals from an embed depend on three core behaviours, all upstream of this app:
 

@@ -112,37 +112,48 @@ import { ChatEmbed } from '@kirocrew/app-sdk'
 | Prop | Type | Default | What it does |
 |---|---|---|---|
 | `slotKey` | `string` | required | The chat slot (session) the embed reads and sends to. |
-| `agent` | `string` | `''` | Agent name sent with each `POST /api/chat`, and shown in the title strip. Ignored by `onSend`. |
-| `placeholder` | `string` | localized "Message..." | Composer placeholder while the session is idle. While a turn runs the composer shows its own "agent is working" text instead. |
+| `agent` | `string` | unset (sent as `''`) | Agent name sent with each `POST /api/chat`, and shown in the title strip when set. Ignored by `onSend`. |
+| `placeholder` | `string` | localized "Message..." (`appSdk.chatEmbed.message`) | Composer placeholder while the session is idle. While a turn runs the composer shows its own "agent is working" text instead. |
 | `frameless` | `boolean` | `false` | Drops the outer border, rounding, background and title strip, and makes the input row transparent, so a host card can hold the chat flush. |
 | `startAtBottom` | `boolean` | `false` | Opens scrolled to the newest row and stays pinned there as rows arrive, until the user scrolls up; shows a jump-to-bottom button while unpinned. Without it the embed opens at the top and smooth-scrolls to each new message. |
-| `onSend` | `(message: string) => Promise<unknown> \| void` | none | Replaces `POST /api/chat` as the send path. Use it when the app owns its slots: the generic endpoint creates a missing slot with no app ownership and no project. |
+| `onSend` | `(message: string, meta?: ChatEmbedSendMeta) => Promise<unknown> \| void` | none | Replaces `POST /api/chat` as the send path. Use it when the app owns its slots: the generic endpoint creates a missing slot with no app ownership and no project. A send with non-image attachments passes `meta` (`{ files?: string[] }`); forward it as `meta` on your own chat POST (see [Attachments](#attachments)). |
 | `aboveComposer` | `ReactNode` | none | Content placed in normal flow directly above the composer, such as a docked quote bar. |
 | `composerMaxHeight` | `number` (px) | `240` | Cap for the composer's auto-grow (see below). |
+| `onFileOpen` | `(path: string, opts?: { line?: number; endLine?: number }) => void` | none | Opens a file the transcript names; without it the tool-row file chip is hidden and path links stay plain (see below). |
+| `onArtifactOpen` | `(slug: string) => void` | none | Opens a saved artifact from a link in a reply; without it artifact links follow their href. |
 
 ### Required permissions and limitations
 
 The embed calls the Gateway through the host's scoped `useAppApi()` client, so
 the app must grant `/api/chat` in its `permissions.api` (a builtin host passes it
-in `AppApiProvider`'s `allowedApiPaths`). That one entry covers every call the
-embed makes:
+in `AppApiProvider`'s `allowedApiPaths`). This entry satisfies the scoped client's
+API-path check for each of these calls:
 
 - `GET /api/chat/slots/{slot}?limit=N` — the transcript poll.
 - `POST /api/chat` — sending, unless `onSend` is supplied.
 - `POST /api/chat/slots/{slot}/approve` — Approve, Reject and Trust on a tool approval.
 
-Without the grant the scoped client throws before any request is sent: the
-transcript shows its load error, and sending and approving fail. Supplying
+File attachments upload to `POST /api/upload/file`, which `/api/chat` does not
+cover: it is a separate, optional grant (see [Attachments](#attachments)).
+
+Without the API-path grant the scoped client throws before any request is sent:
+the transcript shows its load error, and sending and approving fail. Supplying
 `onSend` removes only the send call; the poll and approvals still need the grant.
+
+For app-token callers, approvals also require `permissions.sessionApproval`.
+Without that permission, the Gateway returns 403 `session_approval_not_granted`,
+even for the app's own slots. The API-path grant alone does not authorize an
+approval; the session ownership rules still apply. See **Ownership for app
+callers** under [Approvals](#approvals).
 
 What the embed does not do today, one line each:
 
 - No live stream. It polls the slot every 1 s while a turn runs and every 5 s
   when idle, reading the newest 200 rows; "load earlier" widens that by 200 rows
-  a press, up to 500. A reply appears in poll-sized steps, and the `POST /api/chat`
-  response stream is discarded.
+  a press, up to 500. Replies are displayed from the transcript poll, not from
+  the send response. After 10 s of failed polls it backs off, up to 30 s
+  between attempts.
 - No Stop control. A running turn cannot be cancelled from the embed.
-- No attachments. The composer takes text only.
 - No reasoning display. Model thinking is sent only as the `chat_thinking`
   WebSocket event, which the poll never sees.
 - Trust is a lasting grant, not a one-shot approval. Choosing Trust on an
