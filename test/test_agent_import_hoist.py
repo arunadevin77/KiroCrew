@@ -55,6 +55,7 @@ def _fresh_import(statements: str) -> None:
         [sys.executable, "-c", statements],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
     assert res.returncode == 0, (
