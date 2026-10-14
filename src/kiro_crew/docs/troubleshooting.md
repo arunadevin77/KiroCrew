@@ -407,6 +407,18 @@ screenshots). A directory is reclaimed automatically once every process
 recorded in its `.owner` file has exited and nothing in it has been touched for
 an hour, so short-lived sessions clean up on their own.
 
+A directory that holds a git repository (a clone, a workspace of checkouts, a
+bare repository) is never deleted this way, because nothing outside the agent
+can prove the work in it is saved. It is moved into the `.quarantine`
+directory beside the others instead, named `<UTC time of the move>-<its own
+name>`, and deleted from there 14 days after the move (later, if something was
+written into it in the last hour). The gateway log names every move in one
+INFO line: `agent-scratch: moved <name> to <path in .quarantine> instead of
+deleting it`, with the date it will be deleted. To keep the work, move the
+directory out of `.quarantine` before that date, or commit and push it from
+there; to restore it for its session, move it back beside the others under its
+original name.
+
 One directory does not: the background runtime's tree is shared by every
 dashboard session and is handed on from one runtime to its replacement, so it
 lives as long as the gateway does and is never pruned while a session might

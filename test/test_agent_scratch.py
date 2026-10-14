@@ -6,8 +6,10 @@ real ``<data home>/scratch`` is never touched.
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -923,6 +925,397 @@ class TestLivenessSweep:
 
         assert sc.sweep_dead_scratch(now=now) == 0
         assert path.exists()
+
+
+_GIT = platform_compat.trusted_git_bin()
+
+
+def _git(cwd: Path, *args: str) -> str:
+    """Run git for a fixture, with no host config and a fixed identity."""
+    assert _GIT is not None
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_NOSYSTEM="1",
+        GIT_AUTHOR_NAME="Scratch Test",
+        GIT_AUTHOR_EMAIL="scratch-test@example.invalid",
+        GIT_COMMITTER_NAME="Scratch Test",
+        GIT_COMMITTER_EMAIL="scratch-test@example.invalid",
+    )
+    result = subprocess.run(
+        [_GIT, "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        check=True,
+        encoding="utf-8",
+    )
+    return result.stdout
+
+
+def _snapshot(tree: Path) -> dict[str, tuple[str, object]]:
+    """Every entry under *tree* by relative path: its kind, and its bytes and mode or target."""
+    seen: dict[str, tuple[str, object]] = {}
+    for dirpath, dirnames, filenames in os.walk(tree):
+        for name in dirnames + filenames:
+            path = Path(dirpath) / name
+            info = os.lstat(path)
+            relative = path.relative_to(tree).as_posix()
+            if stat.S_ISLNK(info.st_mode):
+                seen[relative] = ("link", os.readlink(path))
+            elif stat.S_ISDIR(info.st_mode):
+                seen[relative] = ("dir", stat.S_IMODE(info.st_mode))
+            else:
+                seen[relative] = ("file", (path.read_bytes(), stat.S_IMODE(info.st_mode)))
+    return seen
+
+
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+
+
+@pytest.mark.skipif(_GIT is None, reason="needs a git binary")
+class TestGitTreesAreQuarantined:
+    """A dead, idle tree holding a git repository is moved whole, never deleted."""
+
+    LATER = 2 * sc._UNOWNED_GRACE_SECONDS
+
+    @pytest.fixture
+    def upstream(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "upstream"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        (repo / "a.txt").write_text("one\n")
+        (repo / ".gitignore").write_text("build/\n")
+        _git(repo, "add", "a.txt", ".gitignore")
+        _git(repo, "commit", "-q", "-m", "first")
+        return repo
+
+    @staticmethod
+    def _dead_scratch() -> Path:
+        path = sc.allocate_scratch("gitwork")
+        sc.record_owner(path, 2**22 - 1)  # almost surely dead
+        return path
+
+    def _clone_into(self, upstream: Path, inside: str = "clone") -> tuple[Path, Path]:
+        path = self._dead_scratch()
+        clone = path / inside
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        _git(clone.parent, "clone", "-q", str(upstream), clone.name)
+        return path, clone
+
+    def _sweep_later(self, extra: float = 0.0) -> int:
+        return sc.sweep_dead_scratch(now=time.time() + self.LATER + extra)
+
+    @staticmethod
+    def _moved(path: Path) -> Path:
+        """Where the sweep moved *path* to; asserts it left the managed root."""
+        assert not os.path.lexists(path)
+        moved = [p for p in sc.quarantine_dir().iterdir() if p.name.endswith(f"-{path.name}")]
+        assert len(moved) == 1, moved
+        assert sc._quarantined_at(moved[0].name) is not None
+        return moved[0]
+
+    def _swept(self, path: Path) -> Path:
+        """Sweep the dead, idle *path*, assert it was moved whole, and return where to."""
+        before = _snapshot(path)
+        assert self._sweep_later() == 0
+        moved = self._moved(path)
+        assert _snapshot(moved) == before
+        return moved
+
+    def _local_feature(self, upstream: Path) -> tuple[Path, Path]:
+        """A dead tree holding a clone with one unpushed commit on ``feature``."""
+        path, clone = self._clone_into(upstream)
+        _git(clone, "checkout", "-q", "-b", "feature")
+        (clone / "feature.py").write_text("committed, never pushed\n")
+        _git(clone, "add", "feature.py")
+        _git(clone, "commit", "-q", "-m", "feature")
+        return path, clone
+
+    # -- what is moved -----------------------------------------------------
+
+    def test_unsaved_work_comes_through_the_move_whole(
+        self, scratch_root: Path, upstream: Path
+    ) -> None:
+        # An unpushed commit, a stash and an uncommitted file: the moved tree
+        # holds each of them and still works as a repository.
+        path, clone = self._local_feature(upstream)
+        (clone / "a.txt").write_text("stashed\n")
+        _git(clone, "stash", "-q")
+        (clone / "draft.txt").write_text("uncommitted\n")
+
+        moved = self._swept(path) / "clone"
+        assert _git(moved, "log", "-1", "--format=%s") == "feature\n"
+        assert _git(moved, "stash", "list") != ""
+        assert "draft.txt" in _git(moved, "status", "--porcelain")
+
+    def test_clean_clone_is_moved_too(self, scratch_root: Path, upstream: Path) -> None:
+        # Ignored build output is not work, and the clone matches its remote,
+        # but nothing outside the agent can prove that, so it is moved as well.
+        path, clone = self._clone_into(upstream)
+        (clone / "build").mkdir()
+        (clone / "build" / "out.o").write_text("object")
+
+        self._swept(path)
+
+    def test_repository_nested_in_a_workspace_is_moved(
+        self, scratch_root: Path, upstream: Path
+    ) -> None:
+        path, _clone = self._clone_into(upstream, inside="workspace/src/Package")
+
+        self._swept(path)
+
+    def test_linked_worktree_is_moved(self, scratch_root: Path, upstream: Path) -> None:
+        # Its ``.git`` is a file naming a repository outside the tree.
+        path = self._dead_scratch()
+        _git(upstream, "worktree", "add", "-q", "-b", "side", str(path / "wt"))
+
+        self._swept(path)
+
+    @pytest.mark.parametrize("where", ["backup.git", "."])
+    def test_a_bare_repository_is_moved(self, scratch_root: Path, where: str) -> None:
+        # A bare repository has no work tree, but it can hold the only copy of
+        # commits pushed into it.
+        path = self._dead_scratch()
+        _git(path, "init", "-q", "--bare", where)
+
+        assert sc.holds_git_repository(path)
+        self._swept(path)
+
+    @pytest.mark.parametrize("linked", ["objects", "refs"])
+    def test_a_bare_repository_with_linked_storage_is_moved(
+        self, scratch_root: Path, linked: str
+    ) -> None:
+        # The link points at a directory in the same tree, so deleting the
+        # tree would delete what it stores.
+        path = self._dead_scratch()
+        _git(path, "init", "-q", "--bare", "backup.git")
+        store = path / f"{linked}-store"
+        os.rename(path / "backup.git" / linked, store)
+        _symlink_or_skip(path / "backup.git" / linked, Path("..") / store.name)
+
+        assert sc.holds_git_repository(path)
+        self._swept(path)
+
+    def test_a_git_dir_whose_head_is_gone_is_moved(
+        self, scratch_root: Path, upstream: Path
+    ) -> None:
+        # Git does not open it without a HEAD, but its refs and objects still
+        # hold the commits.
+        path, clone = self._local_feature(upstream)
+        (clone / ".git" / "HEAD").unlink()
+
+        assert sc.holds_git_repository(path)
+        self._swept(path)
+
+    def test_a_git_file_counts_whatever_it_names(self, scratch_root: Path) -> None:
+        path = self._dead_scratch()
+        (path / "wt").mkdir()
+        (path / "wt" / ".git").write_text("gitdir: a\0b\n")
+
+        assert sc.holds_git_repository(path)
+        self._swept(path)
+
+    def test_a_linked_git_entry_counts_as_a_repository(self, scratch_root: Path) -> None:
+        path = self._dead_scratch()
+        (path / "work").mkdir()
+        _symlink_or_skip(path / "work" / ".git", path / "elsewhere")
+
+        assert sc.holds_git_repository(path)
+
+    def test_an_unlistable_tree_counts_as_holding_a_repository(
+        self, scratch_root: Path, monkeypatch
+    ) -> None:
+        path = self._dead_scratch()
+
+        def _refuse(_path):
+            raise PermissionError("unreadable")
+
+        monkeypatch.setattr(sc.os, "scandir", _refuse)
+        assert sc.holds_git_repository(path)
+
+    # -- what is deleted at once -------------------------------------------
+
+    def test_tree_without_a_repository_is_deleted(self, scratch_root: Path) -> None:
+        path = self._dead_scratch()
+        (path / "notes.txt").write_text("residue")
+        (path / "HEAD").write_text("a file named like a git one, on its own\n")
+
+        assert not sc.holds_git_repository(path)
+        assert self._sweep_later() == 1
+        assert not path.exists()
+        assert not sc.quarantine_dir().exists()
+
+    def test_a_git_dir_holding_only_objects_is_residue(self, scratch_root: Path) -> None:
+        # Object files with nothing else beside them are what a partial delete
+        # strands on Windows; git does not open such a directory.
+        path = self._dead_scratch()
+        (path / ".git" / "objects" / "ab").mkdir(parents=True)
+        (path / ".git" / "objects" / "ab" / "cdef").write_bytes(b"blob")
+
+        assert not sc.holds_git_repository(path)
+        assert self._sweep_later() == 1
+        assert not path.exists()
+
+    # -- the move ----------------------------------------------------------
+
+    def test_every_move_logs_one_info_line_naming_where_it_went(
+        self, scratch_root: Path, upstream: Path, caplog
+    ) -> None:
+        caplog.set_level("INFO", logger=sc.__name__)
+        clean, _clone = self._clone_into(upstream)
+        unsaved, _feature = self._local_feature(upstream)
+        now = time.time() + self.LATER
+
+        assert sc.sweep_dead_scratch(now=now) == 0
+
+        expires = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(now + sc.QUARANTINE_TTL_SECONDS))
+        for path in (clean, unsaved):
+            moved = self._moved(path)
+            [line] = [r for r in caplog.records if str(moved) in r.getMessage()]
+            assert line.levelname == "INFO"
+            assert f"moved {path.name} to {moved} instead of deleting it" in line.getMessage()
+            assert expires in line.getMessage()
+
+    def test_a_tree_stays_in_place_when_the_quarantine_cannot_receive_it(
+        self, scratch_root: Path, upstream: Path, caplog
+    ) -> None:
+        caplog.set_level("WARNING", logger=sc.__name__)
+        path, _clone = self._local_feature(upstream)
+        sc.quarantine_dir().write_text("not a directory")
+
+        assert self._sweep_later() == 0
+        assert path.exists()
+        assert f"keeping {path} in place" in caplog.text
+
+        sc.quarantine_dir().unlink()
+        self._swept(path)
+
+    @pytest.mark.parametrize("error", [errno.EXDEV, errno.EACCES])
+    def test_a_failed_move_keeps_the_tree_in_place_and_copies_nothing(
+        self, scratch_root: Path, upstream: Path, monkeypatch, caplog, error: int
+    ) -> None:
+        # A quarantine on another filesystem refuses the rename with EXDEV; the
+        # sweep never falls back to copying the tree and deleting it.
+        caplog.set_level("WARNING", logger=sc.__name__)
+        path, _clone = self._local_feature(upstream)
+        before = _snapshot(path)
+
+        def _refuse(_source, _target):
+            raise OSError(error, os.strerror(error))
+
+        monkeypatch.setattr(sc.os, "rename", _refuse)
+
+        assert self._sweep_later() == 0
+        assert _snapshot(path) == before
+        assert list(sc.quarantine_dir().iterdir()) == []
+        assert "could not be moved" in caplog.text
+
+    def test_a_tree_marked_active_before_the_final_look_is_not_moved(
+        self, scratch_root: Path, upstream: Path, monkeypatch
+    ) -> None:
+        # A spawn that mounts the tree while the sweep lists it refreshes its
+        # mtime, and the sweep's final look under the lock sees that.
+        path, _clone = self._local_feature(upstream)
+        idle_since = time.time() - self.LATER
+        for dirpath, dirnames, filenames in os.walk(path):
+            for name in dirnames + filenames:
+                os.utime(Path(dirpath) / name, (idle_since, idle_since))
+        os.utime(path, (idle_since, idle_since))
+        real_check = sc.holds_git_repository
+
+        def _spawn_meanwhile(tree: Path) -> bool:
+            assert sc.shared_scratch_window(tree) == tree
+            return real_check(tree)
+
+        monkeypatch.setattr(sc, "holds_git_repository", _spawn_meanwhile)
+
+        assert sc.sweep_dead_scratch() == 0
+        assert path.exists()
+        assert not sc.quarantine_dir().exists()
+
+    # -- the expiry --------------------------------------------------------
+
+    def test_a_quarantined_tree_is_deleted_only_after_its_ttl(
+        self, scratch_root: Path, upstream: Path
+    ) -> None:
+        path, _clone = self._local_feature(upstream)
+        moved_at = time.time() + self.LATER
+        assert sc.sweep_dead_scratch(now=moved_at) == 0
+        moved = self._moved(path)
+
+        assert sc.sweep_dead_scratch(now=moved_at + sc.QUARANTINE_TTL_SECONDS - 60) == 0
+        assert moved.exists()
+        assert sc.sweep_dead_scratch(now=moved_at + sc.QUARANTINE_TTL_SECONDS + 1) == 1
+        assert not moved.exists()
+
+    def test_each_quarantined_tree_expires_by_its_own_move_time(
+        self, scratch_root: Path, upstream: Path
+    ) -> None:
+        week = 7 * 24 * 3600.0
+        early, _clone = self._clone_into(upstream)
+        first_sweep = time.time() + self.LATER
+        assert sc.sweep_dead_scratch(now=first_sweep) == 0
+        late, _clone = self._clone_into(upstream)
+        assert sc.sweep_dead_scratch(now=first_sweep + week) == 0
+        early_moved, late_moved = self._moved(early), self._moved(late)
+
+        assert sc.sweep_dead_scratch(now=first_sweep + sc.QUARANTINE_TTL_SECONDS + 1) == 1
+        assert not early_moved.exists()
+        assert late_moved.exists()
+        assert sc.sweep_dead_scratch(now=first_sweep + week + sc.QUARANTINE_TTL_SECONDS + 1) == 1
+        assert not late_moved.exists()
+
+    def test_a_write_in_the_quarantine_defers_its_expiry(
+        self, scratch_root: Path, upstream: Path
+    ) -> None:
+        # Someone copying the work out is not cut off at the deadline.
+        path, _clone = self._local_feature(upstream)
+        moved_at = time.time() + self.LATER
+        assert sc.sweep_dead_scratch(now=moved_at) == 0
+        moved = self._moved(path)
+        expired = moved_at + sc.QUARANTINE_TTL_SECONDS + 1
+        recovering = moved / "clone" / "notes.txt"
+        recovering.write_text("copying this out\n")
+        os.utime(recovering, (expired - 60, expired - 60))
+
+        assert sc.sweep_dead_scratch(now=expired) == 0
+        assert recovering.exists()
+        assert sc.sweep_dead_scratch(now=expired + sc._UNOWNED_GRACE_SECONDS) == 1
+        assert not moved.exists()
+
+    def test_entries_the_sweep_did_not_write_are_left_in_the_quarantine(
+        self, scratch_root: Path, tmp_path: Path
+    ) -> None:
+        holding = sc.quarantine_dir()
+        holding.mkdir(parents=True)
+        (holding / "kept-by-hand").mkdir()
+        (holding / "20200101T000000Z-a-file").write_text("not a directory")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("not the sweep's\n")
+        _symlink_or_skip(holding / "20200101T000000Z-a-link", outside)
+
+        assert sc.sweep_dead_scratch(now=time.time() + 10 * sc.QUARANTINE_TTL_SECONDS) == 0
+        assert (holding / "kept-by-hand").is_dir()
+        assert (holding / "20200101T000000Z-a-file").is_file()
+        assert os.path.lexists(holding / "20200101T000000Z-a-link")
+        assert (outside / "keep.txt").is_file()
+
+    def test_a_stamped_name_outside_the_quarantine_is_not_expired(self, scratch_root: Path) -> None:
+        # The move time is read only from entries in the quarantine; a
+        # directory in the root with the same kind of name is judged like any
+        # other scratch directory, and one with no owner record is kept.
+        stray = scratch_root / "20200101T000000Z-gitwork-deadbeef"
+        stray.mkdir(parents=True)
+        (stray / "work.txt").write_text("no owner record\n")
+
+        assert sc.sweep_dead_scratch(now=time.time() + 10 * sc.QUARANTINE_TTL_SECONDS) == 0
+        assert (stray / "work.txt").is_file()
 
 
 posix_only = pytest.mark.skipif(
