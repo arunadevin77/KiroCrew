@@ -210,20 +210,38 @@ describe("a crewmate's chat", () => {
     expect(view.queryByTestId('crewmate-quiet-hint')).toBeNull()
   })
 
-  it('the line carries words only — the ghost under it is the motion', async () => {
+  it('the motion is the typing bubble — three dots in the crewmate\'s own bubble; the chat page\'s ghost carousel is not mounted beside it', async () => {
     const view = renderLive(liveStore({ kind: 'thinking' }))
     const line = await view.findByTestId('crewmate-live-activity')
+    const bubble = view.getByTestId('crewmate-typing-bubble')
+    expect(bubble.querySelector('.message-bubble.crewmate-bubble .typing-dots')?.children).toHaveLength(3)
+    expect(bubble.dataset.shown).toBe('true')
     expect(line.querySelector('svg')).toBeNull()
+    expect(view.queryByTestId('chat-footer')).toBeNull()
+    expect(view.queryByTestId('loader-carousel')).toBeNull()
   })
 
-  it('while compacting, the line goes text-free (the footer under it already says "Compacting…") but keeps its height', async () => {
+  it('while compacting, the caption says so itself (no footer is mounted to say it) and keeps its height', async () => {
     const store = liveStore({ kind: 'thinking' })
     store.dispatch(sseChatMessage({ slot: SLOT, role: 'compacting', content: '' } as Parameters<typeof sseChatMessage>[0]))
     const view = renderLive(store)
     const line = await view.findByTestId('crewmate-live-activity')
     expect(line.dataset.activity).toBe('compacting')
-    expect(line).toHaveTextContent('')
+    expect(line).toHaveTextContent('Compacting…')
     expect(view.getAllByText(/Compacting/)).toHaveLength(1)
+  })
+
+  it('a Stop the slots frame reports (another tab, a background slot) reads "Stopping…" here too', async () => {
+    // The footer this caption replaced read the frame's `stopping` flag as
+    // well as the stream state; the caption must not lose that signal.
+    const store = liveStore({ kind: 'thinking' })
+    store.dispatch(sseSlots([
+      { key: SLOT, messages: MACHINERY.length, running: true, stopping: true, mode: '', pending_approval: false, waiting_for_input: false },
+    ] as Parameters<typeof sseSlots>[0]))
+    const view = renderLive(store)
+    const line = await view.findByTestId('crewmate-live-activity')
+    expect(line.dataset.activity).toBe('stopping')
+    expect(line).toHaveTextContent('Stopping…')
   })
 
   it('a long step shows its FULL label (the pill clamps; this column has the room) and carries it as title', async () => {

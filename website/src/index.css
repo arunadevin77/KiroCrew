@@ -1786,6 +1786,19 @@ button:hover .app-icon{--ico-a:var(--accent);--ico-b:var(--text)}
 @keyframes csb-a{0%,30%{opacity:1;transform:translateY(0) scale(1)}38%{opacity:0;transform:translateY(-3px) scale(.6)}45%,82%{opacity:0;transform:translateY(3px) scale(.6)}90%,100%{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes csb-b{0%,30%{opacity:0;transform:translateY(3px) scale(.6)}38%{opacity:0;transform:translateY(3px) scale(.6)}45%{opacity:1;transform:translateY(-2px) scale(1)}55%{opacity:1;transform:translateY(0) scale(1)}82%{opacity:1;transform:translateY(0) scale(1)}90%{opacity:0;transform:translateY(-3px) scale(.6)}100%{opacity:0;transform:translateY(3px) scale(.6)}}
 
+/* ── Typing dots (components/chat/TypingDots) ──
+   The crewmate typing bubble's "a reply is being typed" glyph: three bouncing
+   dots in `currentColor`, so the host paints them with its text colour (the
+   bubble sets `text-muted`), sized to sit on one text line inside the bubble.
+   The resting style IS the reduced-motion style: the global reduced-motion rule
+   above ends every animation on its first frame, which leaves a dot at its base
+   opacity. */
+.typing-dots{display:inline-flex;align-items:center;gap:5px;padding:0 3px;line-height:0}
+.typing-dots>span{display:block;width:8px;height:8px;border-radius:9999px;background:currentColor;opacity:.6;animation:typing-dot 1.3s ease-in-out infinite both}
+.typing-dots>span:nth-child(2){animation-delay:.18s}
+.typing-dots>span:nth-child(3){animation-delay:.36s}
+@keyframes typing-dot{0%,60%,100%{transform:translateY(0);opacity:.6}30%{transform:translateY(-3px);opacity:1}}
+
 /* ── The ghost-pose loader icons ──
    These are the DEFAULT loader artwork for every theme (see ChatFooter's
    DEFAULT_ICONS); a theme replaces them through the themeBranding `loaderIcons`

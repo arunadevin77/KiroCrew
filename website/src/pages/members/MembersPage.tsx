@@ -3158,6 +3158,7 @@ export default function MembersPage() {
   const pillAct = useSlotActivity(pillSlotKey, {
     running: !!active && !!isRunning(active),
     delegatedOnly: !!pillLiveSlot?.subagents_running && !pillLiveSlot?.running,
+    stopping: !!pillLiveSlot?.stopping,
   })
   // The resting line's age ("Idle · 6m ago") is on screen for as long as the
   // thread rests, so it must move on its own: re-read the clock on the

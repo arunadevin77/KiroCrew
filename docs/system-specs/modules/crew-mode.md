@@ -2201,9 +2201,28 @@ message the crewmate speaks while a roster read is in flight is never
 overwritten by the older answer.
 
 While a turn runs (the slot's stream or its `running` flag), the chat does not
-draw the turn's progress rows either; what the crewmate is doing right now is
-ONE status line directly above the working indicator (the ghost-pose carousel
-in `ChatFooter`), rendered by `CrewmateLiveActivity`. Its text is the DM
+draw the turn's progress rows either; the working indicator is a TYPING
+BUBBLE — three bouncing dots in the crewmate's own gray bubble (the same
+`.message-bubble.crewmate-bubble` fill, corners and measure as its messages,
+so a theme restyling those restyles this), the iMessage sign that a reply is
+being typed (#19997) — with ONE status line under it naming what the crewmate
+is doing right now, both rendered by `CrewmateLiveActivity` in the footer
+column. The chat page's ghost-pose carousel (`ChatFooter`) is NOT mounted in a
+crewmate chat: `ChatPane` draws one or the other, never both, so a DM reads as
+a conversation and not as a loader, and only one thing moves. The dots are
+decorative (`aria-hidden`); the caption is the live region. The dots are the
+`TypingDots` glyph; the thread panel's "is replying" row keeps its own smaller
+pulsing dots, a status row outside this surface (maintainer ruling on #20032). The
+bubble folds by height (it stays mounted) while the reply's text is actively
+arriving — that streaming bubble already carries the caret, and dots under it
+read as a second reply coming — and while the caption reads `stopping` or
+`compacting`, when nothing is being typed (the caption then pulses, with the
+footer's hourglass for compacting, so the chat still visibly works); the same quiet rule `ChatFooter`
+uses (`useStreamIdle`, `STREAM_IDLE_MS`) brings it back when the model pauses
+mid-stream. The slots frame's `stopping` flag is a `useSlotActivity` input
+(`resolvePillActivity` folds it with `streamState === 'stopping'`), passed by
+both the pill and the pane, so a Stop from another tab reads "Stopping…" on
+both surfaces from the one seam — as the footer the caption replaces did. The caption's text is the DM
 header identity pill's OWN reading, through the one shared hook
 `useSlotActivity` (`pages/members/useSlotActivity.ts` → `resolvePillActivity`
 over the slot's live status record `slotStatusDetail`, the stream state and
@@ -2215,9 +2234,8 @@ hold below. It answers
 label while the call runs (`data-activity=tool`), the indicator's own
 "Thinking…" once the call has returned or the model is reasoning
 (`thinking`), the pill's other phase words otherwise (`writing`, `working`,
-`delegated`), and text-free (same height) for `compacting` and `stopping`,
-which the `ChatFooter` directly under it already spells out; and the line goes
-with the turn. The chat line, and only the chat line, HOLDS each reading
+`delegated`, and — since no footer is mounted to say them — `compacting` and
+`stopping`); and the line goes with the turn. The chat line, and only the chat line, HOLDS each reading
 (`components/chat/useHeldActivity.ts`; #18527): a tool call often returns in
 tens of milliseconds, so painting the raw reading made titles flash past a
 line that mostly said "Thinking…". Every step stays at least 600ms
@@ -2233,13 +2251,13 @@ header pill (which reads `useSlotActivity` directly) are not delayed, so for
 up to 1.5s the pill can say "Thinking…" while the chat line still names the
 tool that just returned. The held step belongs to one crewmate: the Members
 page rebinds ONE `ChatPane` to the newly picked crewmate without remounting
-it, so `ChatPane` keys the line by slot and a rebind starts from that
-crewmate's own reading, never from the previous one's held step. Words only —
-the ghost under it carries the motion; a second
-spinner read as a second "working" sign. The line is a status, not a
-transcript row, for a reason that is part of the contract: it is one
+it, so `ChatPane` keys the indicator by slot and a rebind starts from that
+crewmate's own reading, never from the previous one's held step. The caption
+is words only — the dots above it carry the motion; a second
+spinner read as a second "working" sign. The indicator is a status, not a
+transcript row, for a reason that is part of the contract: the caption is one
 fixed-height row (`h-5`, truncating), mounted for the WHOLE live turn and
-never blank, whose text changes — so the indicator under it never moves while
+never blank, whose text changes — so nothing moves while
 the crewmate works. Transcript rows mounting and unmounting above the
 indicator hopped it by a row on every step, and the "hasn't said anything yet"
 hint stays hidden while the crewmate is live for the same reason. The one step

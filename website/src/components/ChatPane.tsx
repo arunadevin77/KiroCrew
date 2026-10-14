@@ -569,9 +569,14 @@ export default function ChatPane({
   // working indicator: read through the SAME seam the DM header's identity
   // pill reads (`useSlotActivity` over the slot's live status record), so the
   // two can never name one moment differently (same `delegatedOnly` input).
+  // The slots frame's `stopping` flag goes in as a seam input (the footer this
+  // caption replaces read it beside the stream state; a Stop from another tab
+  // reaches this pane only as the flag), so the header pill and this caption
+  // keep resolving one moment from one seam.
   const liveActivity = useSlotActivity(crewmate ? slotKey : '', {
     running: crewmateLive,
     delegatedOnly: !!paneSlot?.subagents_running && !paneSlot?.running,
+    stopping: !!paneSlot?.stopping,
   })
   // The unfiltered rows, handed to the row set for the one read that must see
   // what the filter dropped (the steer-chip decision reads the policy-block
@@ -1999,34 +2004,53 @@ export default function ChatPane({
               </>
             ),
             belowRows: (
-              /* The same working indicator the full chat page shows (the ghost-pose
-                 carousel, theme-swappable via themeBranding): a running turn in a
-                 pane — a member DM, a split pane — was otherwise invisible between
-                 tool steps. Inside the scroll container, after the last message,
-                 so it reads as "the reply is coming" exactly where the reply will
-                 land. Stop/regenerate chrome stays page-level: the pane derives
-                 the footer's inputs from its own per-slot stream state. A
-                 crewmate's current step is the one-line status directly above
-                 it, mounted for the whole live turn so the indicator never
-                 moves while steps come and go (#18238). Keyed by the slot: the
-                 line holds each step briefly (useHeldActivity), and the Members
-                 page rebinds this one pane to another crewmate without
-                 remounting it, so without the key B's chat would open on A's
-                 held step. A new key is a fresh mount: B's reading at once. */
+              /* The working indicator. Inside the scroll container, after the
+                 last message, so it reads as "the reply is coming" exactly where
+                 the reply will land. Stop/regenerate chrome stays page-level: the
+                 pane derives the indicator's inputs from its own per-slot stream
+                 state.
+                 A crewmate's chat draws a typing bubble (three dots in the
+                 crewmate's own bubble) with its current step as the one-line
+                 caption under it, mounted for the whole live turn so nothing
+                 moves while steps come and go (#18238, #19997); the chat page's
+                 ghost-pose carousel is NOT mounted beside it, or two things
+                 would move at once. Keyed by the slot: the caption holds each
+                 step briefly (useHeldActivity), and the Members page rebinds
+                 this one pane to another crewmate without remounting it, so
+                 without the key B's chat would open on A's held step. A new key
+                 is a fresh mount: B's reading at once.
+                 Every other pane — a split pane of an ordinary chat — shows the
+                 same indicator the full chat page shows (the ghost-pose
+                 carousel, theme-swappable via themeBranding): a running turn
+                 was otherwise invisible between tool steps. */
               <>
               {greetingShown && crewmateGreeting}
-              {crewmate && crewmateLive && <CrewmateLiveActivity key={slotKey} activity={liveActivity} />}
-              <ChatFooter
-                running={running || !!paneSlot?.running}
-                stopping={streamState === 'stopping' || !!paneSlot?.stopping}
-                state={streamState}
-                lastRole={messages[messages.length - 1]?.role ?? ''}
-                streamTick={
-                  messages[messages.length - 1]?.role === 'streaming'
-                    ? (messages[messages.length - 1]?.content.length ?? 0)
-                    : 0
-                }
-              />
+              {crewmate
+                ? crewmateLive && (
+                  <CrewmateLiveActivity
+                    key={slotKey}
+                    activity={liveActivity}
+                    streamingText={messages[messages.length - 1]?.role === 'streaming' && streamState === 'streaming'}
+                    streamTick={
+                      messages[messages.length - 1]?.role === 'streaming'
+                        ? (messages[messages.length - 1]?.content.length ?? 0)
+                        : 0
+                    }
+                  />
+                )
+                : (
+                  <ChatFooter
+                    running={running || !!paneSlot?.running}
+                    stopping={streamState === 'stopping' || !!paneSlot?.stopping}
+                    state={streamState}
+                    lastRole={messages[messages.length - 1]?.role ?? ''}
+                    streamTick={
+                      messages[messages.length - 1]?.role === 'streaming'
+                        ? (messages[messages.length - 1]?.content.length ?? 0)
+                        : 0
+                    }
+                  />
+                )}
               </>
             ),
           }}

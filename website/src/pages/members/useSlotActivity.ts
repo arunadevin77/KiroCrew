@@ -27,10 +27,13 @@ export interface SlotActivityOptions {
   running: boolean
   /** Only workers run; the crewmate's own turn is idle. */
   delegatedOnly?: boolean
+  /** The slots frame's `stopping` flag for the slot (a Stop from another tab
+   *  or on a background slot reaches a host only this way). */
+  stopping?: boolean
 }
 
 export function useSlotActivity(slotKey: string, opts: SlotActivityOptions): PillActivity {
-  const { running, delegatedOnly = false } = opts
+  const { running, delegatedOnly = false, stopping = false } = opts
   const streamState = useAppSelector((s) => (slotKey ? selectSlotStreamState(s, slotKey) : 'idle'))
   const detail = useAppSelector((s) => (slotKey ? s.chat.slotStatusDetail[slotKey] : undefined))
   // Matched by the call's own id, so parallel calls cannot be confused, and
@@ -61,7 +64,7 @@ export function useSlotActivity(slotKey: string, opts: SlotActivityOptions): Pil
     [simplified, uiLang],
   )
   return useMemo(
-    () => resolvePillActivity({ streamState, detail, toolReturned: toolReturned || quietEnd, running, delegatedOnly, labelOf }),
-    [streamState, detail, toolReturned, quietEnd, running, delegatedOnly, labelOf],
+    () => resolvePillActivity({ streamState, detail, toolReturned: toolReturned || quietEnd, running, delegatedOnly, stopping, labelOf }),
+    [streamState, detail, toolReturned, quietEnd, running, delegatedOnly, stopping, labelOf],
   )
 }
