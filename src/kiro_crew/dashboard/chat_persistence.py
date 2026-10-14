@@ -180,9 +180,6 @@ _SKIP_MEMBER_RESTORE: tuple[str, str] = ("", "__skip__")
 _IDENTITY_UNRESOLVED: tuple[str, str] = ("", "__unresolved__")
 
 
-_MAX_HISTORY_CHARS = 8000
-
-
 # Fallback effort levels — used when no ACP session has reported its config
 # yet (cold start). Sourced from the shared ``effort.py`` vocabulary so every
 # provider agrees on the levels (incl. "xhigh") and there is a single source of
