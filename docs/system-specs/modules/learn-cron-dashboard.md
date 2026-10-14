@@ -879,7 +879,11 @@ fire time:
   tool `cron_secret_request` (job ownership enforced) lets the agent record a
   PENDING request — mapping + a pin of the code at request time, written to the
   separate `secret_env_pending*` fields, never the active pair — after which
-  the operator approves or denies. `PUT /api/crons/{id}/secrets` accepts
+  the operator approves or denies. The agent withdraws its own pending request
+  with `withdraw: true` and no `secrets`. An empty `secrets` map does the same,
+  but a client that drops empty objects never delivers it. `secrets` is
+  required unless `withdraw` is true, and `withdraw` beside a non-empty map is
+  refused. `PUT /api/crons/{id}/secrets` accepts
   `{"approve_pending": true}` (routes through `_promote_pending_grant`, which
   re-verifies the pending pin against the job's CURRENT code and refuses 409
   `code_changed` on drift, so an approval never blesses code that changed

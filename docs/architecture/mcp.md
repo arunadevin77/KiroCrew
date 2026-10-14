@@ -4765,6 +4765,16 @@ frame as unattributable.
   a `mcp_shared.DeferredTool` from its handler and does the waiting in short
   `step()`s. A synchronous handler bounds every call it makes well under
   `PROGRESS_WEDGE_CEILING_SECS`, or the pooled backend is recycled under it.
+- A clear never depends on an empty list or object arriving. Kiro CLI rebuilds
+  a call's arguments and drops every container that holds no scalar, plus a
+  top-level `null`, so `tags: []` reaches the server as an omitted `tags`. Give
+  each clear a spelling that arrives unchanged, a boolean or a list of at least
+  one name, keep the empty spelling working beside it, and say which to use in
+  the description: `cron_update` `clear_skip_dates: true`, `cron_secret_request`
+  `withdraw: true`, `monitor_update` `judge: {"wake_when": "", "quiet_when": ""}`,
+  `propose_change` `clear: true` (`folder.steering`) and `clear: [<field>]`
+  (`template.update`), `artifact_update` `clear_tags: true`,
+  `issue_radar_crew_record` `clear: ["labels_applied"]`.
 
 ## Troubleshooting
 

@@ -398,6 +398,10 @@ none" is the single on-disk representation and a PATCH with `[]` clears it.
   field), which the route compares under the store lock
   (`409 steering_dirs_changed` when another save landed first).
   `chat_folder_tree` renders each folder's declared list (`steering=[…]`).
+  To empty the list the agent passes `{folder, clear: true}`: a client that
+  drops empty containers delivers `steering_dirs: []` as a missing key. The
+  catalog normalizes `clear` to `steering_dirs: []`, so everything after it
+  reads one shape, and refuses it beside a non-empty list.
 - **Resolution** (`_resolve_folder_steering_dirs`) is ACCUMULATIVE up the
   `parent_id` chain (root ancestor first, then descendants), unlike the
   nearest-wins `project_dir` resolver: an org-standards folder above a per-repo

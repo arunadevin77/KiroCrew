@@ -1976,3 +1976,121 @@ async def test_user_stop_of_row_replaced_before_write_is_refused(
         assert _directive_outcomes(audit, kind) == ["denied"]
     finally:
         service.stop()
+
+
+# ── monitor_update: the judge clear that survives a client dropping ``{}`` ──
+
+
+_OWN_BRIEF = {"wake_when": "a worker line says RULING", "quiet_when": "workers say WORKING"}
+
+
+async def _monitor_update_through_the_tool(monkeypatch, service, judge_arg):
+    """``monitor_update`` from the tool's own entry, then the consumer's apply.
+
+    The tool validates and encodes the patch; the consumer applies whatever the tool
+    produced, which is the path a live turn takes whether the directive travels in
+    the tool result or out of band. Returns ``(tool reply, decoded payload, result)``.
+    """
+    from kiro_crew import mcp_core, session_directive
+
+    monkeypatch.setattr(mcp_core, "_resolve_session_key_strict", lambda: "dashboard:chat-1")
+    # The tool's retained-stop preflight reads the gateway; none runs in this test,
+    # and the preflight is fail-open by design.
+    monkeypatch.setattr(mcp_core, "_get", lambda *a, **k: {"error": "no gateway here"})
+    reply = await asyncio.wait_for(
+        asyncio.to_thread(mcp_core._call_tool, "monitor_update", {"judge": judge_arg}),
+        timeout=30,
+    )
+    payload = session_directive.decode(reply, "monitor_update")
+    if payload is None:
+        return reply, None, ""
+    with patch("kiro_crew.autonudge.get_instance", return_value=service):
+        result = await apply_session_directive(
+            SimpleNamespace(),
+            SimpleNamespace(key="chat-1", _app=""),
+            "dashboard:chat-1",
+            "monitor_update",
+            payload,
+        )
+    return reply, payload, result
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [{}, {"wake_when": "", "quiet_when": ""}],
+    ids=["empty_object", "blank_criteria"],
+)
+@pytest.mark.asyncio
+async def test_blank_criteria_drop_the_owners_brief_as_an_empty_object_does(
+    tmp_path, monkeypatch, spelling
+):
+    """``{"wake_when": "", "quiet_when": ""}`` is the documented way to drop a brief.
+
+    A client that drops empty objects never delivers ``judge: {}``, so the tool
+    description names the blank-criteria spelling instead. The two must leave the
+    loop in the same state: no criterion of the owner's own (the reading the wake
+    tick keys the default brief on), the judge's read state reset, and ``{}`` once
+    the store is reloaded.
+    """
+    from kiro_crew import autonudge_judge
+
+    service = AutoNudgeService(base_dir=tmp_path)
+    try:
+        armed = await service.add("chat-1", "watch chat-2", idle_secs=60, judge=_OWN_BRIEF)
+        armed.judge_quiet_streak = 3
+        armed.judge_cursors = {"chat-2": 5}
+
+        _reply, payload, result = await _monitor_update_through_the_tool(
+            monkeypatch, service, spelling
+        )
+
+        assert payload == {"patch": {"judge": spelling}}
+        assert "updated on this session (judge)" in result, result
+        loop = service.get_by_slot("chat-1")
+        assert loop is not None
+        assert autonudge_judge.criteria_of(autonudge_judge.spec_of(loop)) == ("", "")
+        assert loop.judge_quiet_streak == 0 and loop.judge_cursors == {}
+    finally:
+        service.stop()
+    # The durable record, read back the way startup reads it (without arming timers).
+    reloaded = await AutoNudgeService.load_for_maintenance(base_dir=tmp_path)
+    stored = reloaded.get_by_slot("chat-1")
+    assert stored is not None and stored.judge == {}
+
+
+@pytest.mark.asyncio
+async def test_a_judge_with_criteria_still_replaces_the_brief(tmp_path, monkeypatch):
+    service = AutoNudgeService(base_dir=tmp_path)
+    try:
+        await service.add("chat-1", "watch chat-2", idle_secs=60, judge=_OWN_BRIEF)
+
+        _reply, _payload, result = await _monitor_update_through_the_tool(
+            monkeypatch, service, {"wake_when": "a worker says BLOCKED", "quiet_when": ""}
+        )
+
+        assert "updated on this session (judge)" in result, result
+        loop = service.get_by_slot("chat-1")
+        assert loop is not None
+        assert loop.judge.get("wake_when") == "a worker says BLOCKED"
+    finally:
+        service.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_blank_brief_with_an_unknown_key_is_refused_and_changes_nothing(
+    tmp_path, monkeypatch
+):
+    service = AutoNudgeService(base_dir=tmp_path)
+    try:
+        await service.add("chat-1", "watch chat-2", idle_secs=60, judge=_OWN_BRIEF)
+
+        reply, payload, _result = await _monitor_update_through_the_tool(
+            monkeypatch, service, {"wake_when": "", "quiet_when": "", "wake": ""}
+        )
+
+        assert payload is None, "a refused brief emitted a directive"
+        assert reply.startswith("monitor_update:") and "wake" in reply, reply
+        loop = service.get_by_slot("chat-1")
+        assert loop is not None and loop.judge == _OWN_BRIEF
+    finally:
+        service.stop()

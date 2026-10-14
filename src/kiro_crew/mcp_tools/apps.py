@@ -485,7 +485,12 @@ def schemas() -> list[dict[str, Any]]:
                     "labels_applied": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Labels you applied, so a hand-back removes exactly those",
+                        "description": (
+                            "Labels you applied, so a hand-back removes exactly those. "
+                            'Once you hold none, pass clear: ["labels_applied"] rather '
+                            "than an empty list, which some clients drop before it "
+                            "reaches the server"
+                        ),
                     },
                     "clear": {
                         "type": "array",
@@ -497,7 +502,8 @@ def schemas() -> list[dict[str, Any]]:
                             "Fields to EMPTY, by name — the only way to erase one, since "
                             "an omitted field is left as stored. `pr_number` once the "
                             "pull request is closed, `claim_comment_id` once the claim "
-                            "comment is gone, `next` when there is no next step. A field "
+                            "comment is gone, `next` when there is no next step, "
+                            "`labels_applied` once you hold no labels. A field "
                             "both cleared and set in the same call keeps the set value"
                         ),
                     },

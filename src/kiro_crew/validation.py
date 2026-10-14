@@ -2678,6 +2678,7 @@ ARTIFACT_UPDATE_SCHEMA = ToolSchema(
             item_max_len=ARTIFACT_TAG_MAX,
             max_items=16,
         ),
+        FieldSpec("clear_tags", bool),
         FieldSpec("webapp_metadata", dict),
     ],
 )
@@ -4324,6 +4325,24 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "issue_radar_crew_record": ISSUE_RADAR_CREW_RECORD_SCHEMA,
 }
 
+
+def _validate_cron_secret_request(cleaned: dict[str, Any]) -> None:
+    """``secrets`` is required unless the call withdraws the pending request.
+
+    ``withdraw: true`` spells the empty mapping for a client that drops ``{}`` before
+    it reaches the server, so it stands in for ``secrets`` and is refused beside a
+    mapping that names a grant. A call with neither gets the refusal any missing
+    required field gets.
+    """
+    withdraw = cleaned.get("withdraw") is True
+    if withdraw and cleaned.get("secrets"):
+        raise ValidationError(
+            "withdraw", "withdraws the pending request, so pass it without secrets"
+        )
+    if cleaned.get("secrets") is None and not withdraw:
+        raise ValidationError("secrets", "required")
+
+
 MCP_CRON_SCHEMAS: dict[str, ToolSchema] = {
     "cron_list": CRON_LIST_SCHEMA,
     "cron_add": CRON_ADD_SCHEMA,
@@ -4350,6 +4369,7 @@ MCP_CRON_SCHEMAS: dict[str, ToolSchema] = {
                 max_items=366,
                 item_pattern=re.compile(r"^\d{4}-\d{2}-\d{2}$"),
             ),
+            FieldSpec("clear_skip_dates", bool),
             FieldSpec("timezone", str, max_len=50, pattern=re.compile(r"^[A-Za-z0-9_/+-]+$")),
             FieldSpec("folder", str, max_len=MAX_SHORT_STRING),
             FieldSpec("persistent_session", bool),
@@ -4374,9 +4394,11 @@ MCP_CRON_SCHEMAS: dict[str, ToolSchema] = {
     # (cron_script.validate_secret_env_grant) — this schema bounds shape/size.
     "cron_secret_request": ToolSchema(
         tool_name="cron_secret_request",
+        custom_validator=_validate_cron_secret_request,
         fields=[
             FieldSpec("job_id", str, required=True, max_len=16, pattern=_JOB_ID_RE),
-            FieldSpec("secrets", dict, required=True),
+            FieldSpec("secrets", dict),
+            FieldSpec("withdraw", bool),
         ],
     ),
 }

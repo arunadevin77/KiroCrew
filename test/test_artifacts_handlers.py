@@ -6,16 +6,21 @@ plus a real :class:`ArtifactStore` rooted at a tmp dir for end-to-end coverage.
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import threading
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 
 from conftest import cap_project_root_walk
 from kiro_crew import artifacts as art_mod
+from kiro_crew import mcp_core
 from kiro_crew.artifacts import ArtifactStore
 from kiro_crew.dashboard.handlers.artifacts import (
     _MAX_BODY_BYTES,
@@ -2617,6 +2622,110 @@ class TestSettleBlankEndpoint:
         )
         assert resp.status == 200
         assert _json_body(resp)["outcome"] == "kept"
+
+
+class TestClearTagsFromTheToolReachesTheStore:
+    """``artifact_update clear_tags: true`` empties the stored tags.
+
+    A client that drops empty lists never delivers ``tags: []``, so the tool takes
+    ``clear_tags: true`` and sends the route the empty list itself. The tool runs from
+    its own entry (schema validation and handler) with its ``_patch`` bridged onto a
+    loopback test server that holds the real update route and the real store.
+    """
+
+    @staticmethod
+    def _tool_calls(monkeypatch, *calls: dict[str, Any]) -> tuple[list[str], list[Any]]:
+        sent: list[Any] = []
+        replies: list[str] = []
+
+        @web.middleware
+        async def internal(request: web.Request, handler):
+            # What the gateway's auth layer leaves on the tool's internal-secret call.
+            request["internal_auth"] = True
+            return await handler(request)
+
+        async def main() -> None:
+            app = web.Application(middlewares=[internal])
+            state = MagicMock()
+            state.get_slot.return_value = None
+            app["state"] = state
+            app.router.add_patch("/api/artifacts/{slug}", api_artifact_update)
+            async with TestClient(TestServer(app)) as client:
+                addrs = [a[0] for a in client.server.runner.addresses]
+                assert addrs and all(a == "127.0.0.1" for a in addrs), addrs
+                loop = asyncio.get_running_loop()
+
+                def patch(path: str, body: Any = None, *, session_key: Any = None) -> Any:
+                    async def send() -> Any:
+                        sent.append(body)
+                        headers = {"X-Internal-Secret": "test", "X-Session-Key": "dashboard:t"}
+                        response = await client.patch(path, json=body, headers=headers)
+                        return await response.json()
+
+                    return asyncio.run_coroutine_threadsafe(send(), loop).result(timeout=30)
+
+                monkeypatch.setattr(mcp_core, "_patch", patch)
+                for args in calls:
+                    replies.append(
+                        await asyncio.wait_for(
+                            asyncio.to_thread(mcp_core._call_tool, "artifact_update", args),
+                            timeout=30,
+                        )
+                    )
+
+        asyncio.run(main())
+        return replies, sent
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            # What a client that drops empty lists delivers for ``tags: []`` beside
+            # the flag: the flag alone.
+            {"clear_tags": True},
+            {"clear_tags": True, "tags": []},
+            # Beside another field, the case where a dropped ``[]`` was silently lost.
+            {"clear_tags": True, "name": "Final"},
+        ],
+    )
+    def test_clear_tags_empties_the_tags(
+        self, isolated_store, patch_restricted, monkeypatch, args
+    ) -> None:
+        isolated_store.create(name="Report", content="# notes", slug="report", tags=["q3", "draft"])
+
+        (reply,), sent = self._tool_calls(monkeypatch, {"slug": "report", **args})
+
+        assert reply.startswith("Updated artifact"), reply
+        assert sent == [{"tags": [], **({"name": "Final"} if "name" in args else {})}]
+        stored = isolated_store.get("report")
+        assert stored.tags == []
+        assert stored.name == ("Final" if "name" in args else "Report")
+
+    @pytest.mark.parametrize("flag", [{}, {"clear_tags": False}])
+    def test_a_tag_list_still_replaces_the_tags(
+        self, isolated_store, patch_restricted, monkeypatch, flag
+    ) -> None:
+        isolated_store.create(name="Report", content="# notes", slug="report", tags=["q3", "draft"])
+
+        (reply,), sent = self._tool_calls(
+            monkeypatch, {"slug": "report", "tags": ["final"], **flag}
+        )
+
+        assert reply.startswith("Updated artifact"), reply
+        assert sent == [{"tags": ["final"]}]
+        assert isolated_store.get("report").tags == ["final"]
+
+    def test_clear_tags_beside_tags_is_refused_before_anything_is_sent(
+        self, isolated_store, patch_restricted, monkeypatch
+    ) -> None:
+        isolated_store.create(name="Report", content="# notes", slug="report", tags=["q3", "draft"])
+
+        (reply,), sent = self._tool_calls(
+            monkeypatch, {"slug": "report", "tags": ["final"], "clear_tags": True}
+        )
+
+        assert reply.startswith("Error: clear_tags"), reply
+        assert sent == []
+        assert isolated_store.get("report").tags == ["q3", "draft"]
 
 
 class TestUpdateDocumentType:

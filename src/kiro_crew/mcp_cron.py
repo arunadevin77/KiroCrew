@@ -2169,7 +2169,15 @@ def _list_tools() -> list[dict[str, Any]]:
                     "skip_dates": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "ISO dates to skip. Replaces existing list.",
+                        "description": "ISO dates to skip. Replaces existing list. To empty "
+                        "it, pass clear_skip_dates: true instead of an empty list.",
+                    },
+                    "clear_skip_dates": {
+                        "type": "boolean",
+                        "description": "true removes every skip date, so the job fires on "
+                        "all its scheduled days again. Use it rather than skip_dates: [], "
+                        "which some clients drop before it reaches the server. Refused "
+                        "beside a non-empty skip_dates.",
                     },
                     "timezone": {
                         "type": "string",
@@ -2259,8 +2267,8 @@ def _list_tools() -> list[dict[str, Any]]:
                 "(Schedule > job > Secrets) before the values are injected "
                 "into the job's subprocess env at fire time. Tell the user to "
                 "approve it. Secrets must already exist in the vault "
-                "(Settings > Secrets). An empty 'secrets' object withdraws a "
-                "pending request."
+                "(Settings > Secrets). To withdraw a pending request, pass "
+                "withdraw: true with no 'secrets'."
             ),
             "inputSchema": {
                 "type": "object",
@@ -2272,12 +2280,22 @@ def _list_tools() -> list[dict[str, Any]]:
                         "description": (
                             "Mapping of env-var name (e.g. 'MY_SANDBOX_TOKEN', "
                             "[A-Z][A-Z0-9_]*) to the vault secret name to "
-                            "inject under it. Empty object withdraws the "
-                            "pending request."
+                            "inject under it. Required unless withdraw is true. "
+                            "An empty object also withdraws the pending request, "
+                            "but some clients drop it before it reaches the "
+                            "server, so use withdraw for that."
+                        ),
+                    },
+                    "withdraw": {
+                        "type": "boolean",
+                        "description": (
+                            "true withdraws this job's pending secret request. "
+                            "Pass it without 'secrets'; it is refused beside a "
+                            "non-empty mapping."
                         ),
                     },
                 },
-                "required": ["job_id", "secrets"],
+                "required": ["job_id"],
             },
         },
     ]
@@ -3276,6 +3294,15 @@ def _ephemeral_authority_caveat(
     )
 
 
+def _withdraw_pending_request(svc: "CronService", job_id: str) -> str:
+    """Drop *job_id*'s pending ``cron_secret_request``; an approved grant is untouched."""
+    try:
+        svc.update_job(job_id, secret_env_pending={})
+    except CronStoreBusy:
+        return "Error: cron store busy, please retry"
+    return "Withdrew the pending secret request."
+
+
 def _owned_by(jobs: list[CronJob], session_key: str) -> list[CronJob]:
     """The jobs *session_key* may reach -- for reading and for writing alike.
 
@@ -3592,7 +3619,14 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             kwargs["approval_mode"] = args["approval_mode"]
         if "silent" in args:
             kwargs["silent"] = args["silent"]
-        if "skip_dates" in args:
+        # A boolean spelling of the clear: some clients drop an empty list before it
+        # reaches this server, so ``skip_dates: []`` alone cannot be relied on to empty
+        # the list. It never merges with a list that names dates.
+        if args.get("clear_skip_dates") is True:
+            if args.get("skip_dates"):
+                return "Error: clear_skip_dates removes every skip date; pass it without skip_dates"
+            kwargs["skip_dates"] = []
+        elif "skip_dates" in args:
             sd = args["skip_dates"]
             if sd:
                 for d in sd:
@@ -3799,6 +3833,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         own_err = _check_cron_job_ownership(svc, jid)
         if own_err:
             return own_err
+        if args.get("withdraw") is True:
+            # The spelling of ``secrets: {}`` that survives a client which drops an
+            # empty object before it reaches this server; the schema has already
+            # refused it beside a non-empty mapping, and the ownership gate above
+            # has already found the job.
+            return _withdraw_pending_request(svc, jid)
         secrets = args.get("secrets")
         if not isinstance(secrets, dict) or not all(
             isinstance(k, str) and isinstance(v, str) for k, v in secrets.items()
@@ -3808,11 +3848,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if sjob is None:
             return f"Error: job not found: {jid}"
         if not secrets:
-            try:
-                svc.update_job(jid, secret_env_pending={})
-            except CronStoreBusy:
-                return "Error: cron store busy, please retry"
-            return "Withdrew the pending secret request."
+            return _withdraw_pending_request(svc, jid)
         if not sjob.script:
             return (
                 "Error: secret grants apply only to SCRIPT jobs. An agent "

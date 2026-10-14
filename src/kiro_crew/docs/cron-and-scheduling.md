@@ -224,6 +224,14 @@ Add skip dates to an existing job:
 cron_update(job_id="abc123", skip_dates=["2026-12-25", "2026-12-26"])
 ```
 
+Remove every skip date, so the job fires on all its scheduled days again:
+
+```
+cron_update(job_id="abc123", clear_skip_dates=true)
+```
+
+`skip_dates=[]` means the same, but some clients drop an empty list before it reaches the server, and then the skip dates stay. `clear_skip_dates` is refused beside a non-empty `skip_dates`.
+
 ## Execution Jitter
 
 To avoid traffic spikes from thousands of users' jobs all firing at the same instant, Kiro Crew adds a small random delay before executing scheduled jobs:

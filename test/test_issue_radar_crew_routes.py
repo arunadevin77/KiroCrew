@@ -35,6 +35,7 @@ where crew records land, so pointing it at a ``TemporaryDirectory`` keeps every
 store write inside the test. Nothing here touches the network or a real data home.
 """
 
+import asyncio
 import json
 import os
 import tempfile
@@ -42,6 +43,7 @@ import time
 import unittest
 import warnings
 from pathlib import Path
+from typing import Any
 from unittest import mock
 from unittest.mock import AsyncMock
 
@@ -1377,6 +1379,101 @@ class TestWorkItems(_CrewRouteCase):
         )
         self.assertEqual(res.status, 409)
         self.assertEqual(_payload(res)["code"], "crew_retired")
+
+
+class TestTheRecordToolEmptiesLabelsWithClear(_CrewRouteCase):
+    """``issue_radar_crew_record`` with ``clear: ["labels_applied"]``, end to end.
+
+    A client that drops empty lists never delivers ``labels_applied: []``, so the
+    tool description points a crew that removed its last label at the ``clear``
+    spelling. The tool runs from its own entry (schema validation and handler) with
+    its two loopback legs bridged onto the registered read and write handlers, which
+    write the real store.
+    """
+
+    def agent(self, crew: dict) -> str:
+        return f"dashboard:{crew['slot_key']}"
+
+    async def record(self, crew: dict, args: dict[str, Any]) -> str:
+        loop = asyncio.get_running_loop()
+
+        def leg(method: str, path: str, body: Any, session_key: Any) -> dict:
+            self.assertTrue(path.startswith(BASE), path)
+            res = asyncio.run_coroutine_threadsafe(
+                self.call(
+                    method, path[len(BASE):], body=body, internal_auth=True, session=session_key
+                ),
+                loop,
+            ).result(timeout=30)
+            payload = _payload(res)
+            # The shape ``mcp_core._send`` hands back for a refusal.
+            return payload if res.status < 400 else {"error": payload.get("error", ""), **payload}
+
+        def get(path: str, session_key: Any = None, **_kw: Any) -> dict:
+            return leg("GET", path, "", session_key)
+
+        def put(path: str, body: Any = None, session_key: Any = None) -> dict:
+            return leg("PUT", path, body, session_key)
+
+        sk = self.agent(crew)
+        with (
+            mock.patch.object(mcp_core, "_resolve_session_key_strict", return_value=sk),
+            mock.patch.object(mcp_core, "_get", side_effect=get),
+            mock.patch.object(mcp_core, "_put", side_effect=put),
+        ):
+            return await asyncio.wait_for(
+                asyncio.to_thread(mcp_core._call_tool, "issue_radar_crew_record", args), timeout=30
+            )
+
+    def stored_labels(self, crew: dict) -> object:
+        item = off_loop(crew_store.read_work_item, OWNER, REPO, crew["id"], 7, self.root)
+        return item["labels_applied"]
+
+    async def test_clear_empties_the_labels_the_crew_applied(self):
+        crew = self.crew("Andromeda")
+        self.work(crew["id"], 7, "implementing", labels_applied=["crew: in progress"])
+
+        out = await self.record(
+            crew,
+            {
+                "number": 7,
+                "clear": ["labels_applied"],
+                "event": "handed back",
+                "event_kind": "implement",
+            },
+        )
+
+        self.assertFalse(out.startswith("Error:"), out)
+        self.assertEqual(self.stored_labels(crew), [])
+
+    async def test_a_label_list_is_still_recorded_as_given(self):
+        crew = self.crew("Andromeda")
+        self.work(crew["id"], 7, "implementing", labels_applied=["crew: in progress"])
+
+        out = await self.record(
+            crew,
+            {
+                "number": 7,
+                "labels_applied": ["crew: in progress", "crew: needs human"],
+                "event": "asked for a human",
+                "event_kind": "implement",
+            },
+        )
+
+        self.assertFalse(out.startswith("Error:"), out)
+        self.assertEqual(self.stored_labels(crew), ["crew: in progress", "crew: needs human"])
+
+    async def test_a_misspelled_clear_is_refused_and_keeps_the_labels(self):
+        crew = self.crew("Andromeda")
+        self.work(crew["id"], 7, "implementing", labels_applied=["crew: in progress"])
+
+        out = await self.record(
+            crew,
+            {"number": 7, "clear": ["labels"], "event": "handed back", "event_kind": "implement"},
+        )
+
+        self.assertTrue(out.startswith("Error:"), out)
+        self.assertEqual(self.stored_labels(crew), ["crew: in progress"])
 
 
 # ── the shared skip index ───────────────────────────────────────────────────

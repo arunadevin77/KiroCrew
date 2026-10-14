@@ -60,8 +60,12 @@ judge calls quiet costs no turn; the session gets one short notice row instead.
 
 The agent sets it with `judge` on `monitor_start` or `monitor_update`
 (`wake_when`, `quiet_when`, and optional `targets`). `judge: false` turns the
-judge off for that loop. A loop armed with `gate=false` is never screened,
-because its job is to act while its subject is quiet.
+judge off for that loop. `monitor_update` with
+`judge: {"wake_when": "", "quiet_when": ""}` drops the loop's own criteria, so
+it goes back to the built-in brief described below; an empty `judge: {}` means
+the same, but some clients drop an empty object before it reaches the server.
+A loop armed with `gate=false` is never screened, because its job is to act
+while its subject is quiet.
 
 The judge never ends a loop and never silences one for good: after a run of
 quiet cycles one fires anyway, so a wrong answer costs a late turn, not a missed

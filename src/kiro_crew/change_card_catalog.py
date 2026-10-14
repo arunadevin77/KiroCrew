@@ -100,6 +100,9 @@ _PARAMS_MAX_BYTES = 32 * 1024
 #: The folder route's per-entry bound (``chat_folders.MAX_FOLDER_STEERING_DIR_LEN``),
 #: so a canonical path the route accepts is one a stored card keeps.
 FOLDER_STEERING_DIR_MAX = 4096
+#: The ``template.update`` fields that hold a list, replaced whole, and so the ones
+#: its ``clear`` may name.
+_TEMPLATE_LIST_FIELDS = ("tools", "allowedTools", "skills")
 
 #: The grammars the real routes enforce, so a card is never stricter than the
 #: Settings page: a template name (``validation.TEMPLATE_NAME_RE``) and an app
@@ -373,7 +376,9 @@ KINDS: dict[str, KindDef] = {
         KindDef(
             KIND_TEMPLATE_UPDATE,
             "Change an agent template's tools, allowedTools, skills or model. Affects "
-            "every member built from it.",
+            "every member built from it. A list field is replaced whole; to empty one, "
+            "name it in `clear` (e.g. clear: ['allowedTools']) rather than passing [], "
+            "which some clients drop before it reaches the server.",
             _obj(
                 {
                     "template": _STR,
@@ -386,8 +391,12 @@ KINDS: dict[str, KindDef] = {
                         },
                         [],
                     ),
+                    "clear": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": list(_TEMPLATE_LIST_FIELDS)},
+                    },
                 },
-                ["template", "fields"],
+                ["template"],
             ),
             ("fields",),
         ),
@@ -448,11 +457,16 @@ KINDS: dict[str, KindDef] = {
             KIND_FOLDER_STEERING,
             "Replace a sidebar folder's additional steering directories (Folder settings "
             "-> Additional steering). `folder` is a folder id from chat_folder_tree; "
-            "`steering_dirs` is the COMPLETE new list of absolute directory paths, [] "
-            "clears it.",
+            "`steering_dirs` is the COMPLETE new list of absolute directory paths. To "
+            "empty it, pass `clear: true` with no steering_dirs ([] means the same, but "
+            "some clients drop it before it reaches the server).",
             _obj(
-                {"folder": _STR, "steering_dirs": {"type": "array", "items": _STR}},
-                ["folder", "steering_dirs"],
+                {
+                    "folder": _STR,
+                    "steering_dirs": {"type": "array", "items": _STR},
+                    "clear": _BOOL,
+                },
+                ["folder"],
             ),
             ("steering_dirs",),
         ),
@@ -569,6 +583,25 @@ def _str_list(value: Any, key: str, *, max_len: int = 512) -> list[str]:
         if item not in out:
             out.append(item)
     return out
+
+
+def _template_clear(params: dict[str, Any]) -> tuple[str, ...]:
+    """The ``template.update`` list fields a card empties, named in ``clear``.
+
+    A list of names rather than ``fields: {"allowedTools": []}``, because a client
+    that drops empty containers delivers that request with the key missing.
+    """
+    if "clear" not in params:
+        return ()
+    names = params["clear"]
+    if not isinstance(names, list) or not all(
+        isinstance(n, str) and n in _TEMPLATE_LIST_FIELDS for n in names
+    ):
+        raise _fail(
+            "invalid_param",
+            "'clear' must list template fields to empty: " + ", ".join(_TEMPLATE_LIST_FIELDS),
+        )
+    return tuple(dict.fromkeys(names))
 
 
 def _check_mcp_spec_shapes(name: str, spec: dict[str, Any]) -> None:
@@ -729,18 +762,34 @@ def validate_params(kind: str, params: Any) -> dict[str, Any]:
             clean_draft["enroll"] = _clean_bool(draft, "enroll")
         return {"member": member, "draft": clean_draft}
     if kind == KIND_TEMPLATE_UPDATE:
-        _only(p, {"template", "fields"})
+        _only(p, {"template", "fields", "clear"})
         template = _clean_str(p, "template", pattern=_TEMPLATE_NAME_RE)
+        clear = _template_clear(p)
         fields = p.get("fields")
-        if not isinstance(fields, dict) or not fields:
-            raise _fail("invalid_param", "'fields' must be a non-empty object")
-        _only(fields, {"tools", "allowedTools", "skills", "model"}, "fields")
+        if fields is None and clear:
+            # ``clear`` is a whole request on its own: a client that drops empty
+            # containers delivers no ``fields`` when it held only ``[]`` values.
+            fields = {}
+        if not isinstance(fields, dict) or not (fields or clear):
+            raise _fail(
+                "invalid_param",
+                "'fields' must be a non-empty object; to empty a list field, name it in 'clear'",
+            )
+        _only(fields, {*_TEMPLATE_LIST_FIELDS, "model"}, "fields")
         f = {}
-        for key in ("tools", "allowedTools", "skills"):
+        for key in _TEMPLATE_LIST_FIELDS:
             if key in fields:
                 f[key] = _str_list(fields[key], key)
+            if key in clear:
+                if f.get(key):
+                    raise _fail(
+                        "invalid_param", f"'{key}' is named in 'clear' and given items in 'fields'"
+                    )
+                f[key] = []
         if "model" in fields:
             f["model"] = _clean_str(fields, "model", max_len=64, allow_empty=True)
+        # Normalized to the plain replacement, so the preview, the apply step, the
+        # person's edit and Undo read one shape whichever spelling the agent used.
         return {"template": template, "fields": f}
     if kind == KIND_MCP_INSTALL:
         _only(p, {"provider", "id"})
@@ -795,9 +844,23 @@ def validate_params(kind: str, params: Any) -> dict[str, Any]:
             out["repository"] = repo
         return out
     if kind == KIND_FOLDER_STEERING:
-        _only(p, {"folder", "steering_dirs"})
+        _only(p, {"folder", "steering_dirs", "clear"})
+        folder = _clean_str(p, "folder", pattern=_ID_RE)
+        if _clean_bool(p, "clear", required=False):
+            # The spelling of ``steering_dirs: []`` that survives a client which drops
+            # an empty list, normalized to that list so every later step reads one shape.
+            if p.get("steering_dirs"):
+                raise _fail(
+                    "invalid_param", "'clear' empties the list, so give it without 'steering_dirs'"
+                )
+            return {"folder": folder, "steering_dirs": []}
+        if "steering_dirs" not in p:
+            raise _fail(
+                "invalid_param",
+                "'steering_dirs' is required; to empty the list, pass 'clear': true",
+            )
         return {
-            "folder": _clean_str(p, "folder", pattern=_ID_RE),
+            "folder": folder,
             "steering_dirs": _str_list(
                 p.get("steering_dirs"), "steering_dirs", max_len=FOLDER_STEERING_DIR_MAX
             ),

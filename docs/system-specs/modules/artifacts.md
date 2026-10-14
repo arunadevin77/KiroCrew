@@ -410,7 +410,7 @@ doc stored as `widget` renders as raw inner HTML).
 |---|---|
 | `artifact_save` | Create a new artifact, returns slug; optional `folder` (id or `/`-separated human path, mkdir -p) files it in one call |
 | `artifact_get` | Read content + metadata (optionally a specific version) |
-| `artifact_update` | Modify content/name/description/tags; bumps version on content change |
+| `artifact_update` | Modify content/name/description/tags; bumps version on content change. `clear_tags: true` removes every tag (the tool sends `tags: []`), because a client that drops empty lists never delivers `tags: []` itself; it is refused beside a non-empty `tags` |
 | `artifact_list` | List artifacts (filter by `tag`, `kind`, name `q`) |
 | `artifact_versions` | List version numbers for a slug |
 | `artifact_revert` | Revert the live state to a prior version; writes that version's content as a fresh snapshot tagged `reverted`, so the activity timeline shows the rollback |

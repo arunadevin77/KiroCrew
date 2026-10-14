@@ -126,6 +126,10 @@ pass for a clear. The route turns each name into an explicit null in the patch; 
 typed entry field cannot hold a null, so the writer carries the cleared names in the
 entry's own `clear` list and the fold empties each one before applying the fields
 the same update sets -- a call that clears and sets one field keeps the set value.
+`clear` is also how a crew records that it holds no labels after removing its
+last one: the tool forwards `labels_applied: []` when it arrives, but a client that
+drops empty lists delivers it as an omitted field, so the record tool's description
+points at `clear: ["labels_applied"]`.
 
 **A refusal is not a commit.** The write drains the writer and reads its entry back
 from the log. A writer that drained WITHOUT the entry showing in the log did not

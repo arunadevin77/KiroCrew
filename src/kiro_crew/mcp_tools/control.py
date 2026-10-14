@@ -853,8 +853,11 @@ def schemas(*, names_only: bool = False) -> list[dict[str, Any]]:
                         "description": (
                             "Revise the WAKE JUDGE on this loop, or arm one on a loop "
                             "that has none. Pass the two sentences again to replace "
-                            "them; pass an empty object to drop your own criteria, "
-                            "after which a gated loop runs under the default brief; "
+                            "them; pass "
+                            '`{"wake_when": "", "quiet_when": ""}` to drop your own '
+                            "criteria, after which a gated loop runs under the "
+                            "default brief (an empty object means the same, but "
+                            "some clients drop it before it reaches the server); "
                             "pass `false` to bypass the judge entirely, after which "
                             "every cycle fires as a plain timer again. Omit it "
                             "to leave the current brief untouched. Revising resets "
