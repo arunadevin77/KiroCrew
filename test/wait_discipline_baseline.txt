@@ -250,7 +250,6 @@
  1 test_llm_helpers_tool_input_offload.py
  3 test_llm_pool.py
  2 test_local_turn_restart_marker.py
- 1 test_mcp_apply.py
  3 test_mcp_apps_call_endpoint.py
  1 test_mcp_apps_e2e.py
  3 test_mcp_apps_render.py
