@@ -2336,7 +2336,8 @@ about the code. Each is a hermeticity gap, and each has one fix:
 - **A fixed system path is the host's, not the test's.** `service.linux` reads
   `/etc/kirocrew/kirocrew.env` to decide whether uninstall deletes it, so on a host where
   a real install left the untouched seed there, a test that pinned only `UNIT_PATH` saw
-  `rm` and `rmdir` it never caused. `test/test_service.py` points `ENV_DIR` and
+  `rm` and `rmdir` it never caused. `test/service_helpers.py`'s autouse `_no_host_env_file`
+  (imported by `test_service.py` and its sibling suites) points `ENV_DIR` and
   `ENV_FILE_PATH` at an absent `tmp_path` directory for every test; pin every module-level
   `/etc` (or other absolute) path the code under test reads, not just the one the test is
   about.

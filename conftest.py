@@ -668,7 +668,7 @@ _ALWAYS_REFUSED = frozenset({"apparmor_parser"})
 #: Test modules permitted to really mutate host service state.
 #:
 #: EMPTY, and it should stay that way. Every suite that exercises these paths
-#: today already stubs them — ``test_service.py`` patches
+#: today already stubs them — ``test_service.py`` and its sibling suites patch
 #: ``service.linux.subprocess.run`` / ``service.macos.subprocess.run``,
 #: ``test_pod.py`` and ``test_pod_launchd.py`` stub at the module boundary, and
 #: the ``dev_fleet`` make-live tests stub ``_run_cmd``. So this guard breaks no
