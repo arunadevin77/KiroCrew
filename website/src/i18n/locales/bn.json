@@ -10053,6 +10053,17 @@
       "config_unavailable": "ড্যাশবোর্ডের সেটিংস পড়া যায়নি",
       "config_unavailable_detail": "আবার চেষ্টা করতে পৃষ্ঠাটি রিলোড করো, অথবা এজেন্টকে বিষয়টি দেখতে বলো।",
       "load_failed": "ড্যাশবোর্ডের একটি অংশ লোড হয়নি। আবার চেষ্টা করতে পৃষ্ঠাটি রিলোড করো।"
+    },
+    "sendFolderToInstanceSubmenu": {
+      "nothing_to_send": "পাঠানোর মতো কোনো সেশন নেই",
+      "progress": "{{total}}-এর মধ্যে {{done}}",
+      "resend_all": "সবগুলো {{total}}টির আরেকটি কপি পাঠাতে ক্লিক করো",
+      "retry_failed": "ব্যর্থ {{count}}টি আবার পাঠাতে ক্লিক করো",
+      "sent_all": "পাঠানো হয়েছে: {{count}}",
+      "sent_some": "{{total}}-এর মধ্যে {{sent}}টি পাঠানো হয়েছে",
+      "sent_transcript_only": "পাঠানো হয়েছে: {{sent}} ({{count}}টি শুধু ট্রান্সক্রিপ্ট)",
+      "skipped_private_one": "{{count}}টি ইনকগনিটো বা অস্থায়ী সেশন পাঠানো হয় না",
+      "skipped_private_other": "{{count}}টি ইনকগনিটো বা অস্থায়ী সেশন পাঠানো হয় না"
     }
   },
   "hooks": {

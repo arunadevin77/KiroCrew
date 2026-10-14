@@ -10195,6 +10195,18 @@
       "config_unavailable": "Impossible de lire les paramètres du tableau de bord",
       "config_unavailable_detail": "Recharge la page pour réessayer, ou demande à l’agent d’examiner le problème.",
       "load_failed": "Une partie du tableau de bord n’a pas pu se charger. Recharge la page pour réessayer."
+    },
+    "sendFolderToInstanceSubmenu": {
+      "nothing_to_send": "Aucune session à envoyer",
+      "progress": "{{done}} sur {{total}}",
+      "resend_all": "Clique pour envoyer une autre copie des {{total}}",
+      "retry_failed": "Clique pour renvoyer les {{count}} en échec",
+      "sent_all": "Envoyé : {{count}}",
+      "sent_some": "{{sent}} sur {{total}} envoyées",
+      "sent_transcript_only": "Envoyé : {{sent}} ({{count}} en transcription seule)",
+      "skipped_private_many": "{{count}} sessions incognito ou temporaires ne sont pas envoyées",
+      "skipped_private_one": "{{count}} session incognito ou temporaire n’est pas envoyée",
+      "skipped_private_other": "{{count}} sessions incognito ou temporaires ne sont pas envoyées"
     }
   },
   "hooks": {
