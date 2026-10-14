@@ -1142,8 +1142,8 @@ def chat_message_frame(note: dict, *, include_metadata: bool) -> dict[str, Any]:
 
 
 #: The tool row a turn ends on when the agent called ``nothing_to_do``. Read from
-#: the row's persisted TRUSTED identity (``_tool_identity_fields``: the backend's
-#: ``_meta.kiro`` name and server), never from the row's title text, so a shell
+#: the runner's ``ends_turn`` stamp plus whatever TRUSTED identity the backend
+#: sent (``_tool_identity_fields``), never from the row's title text, so a shell
 #: command printing the tool's name cannot close a turn.
 QUIET_END_TOOL = "nothing_to_do"
 QUIET_END_SERVER = "kirocrew-core"
@@ -1159,23 +1159,29 @@ def is_quiet_end_row(m: dict) -> bool:
     would offer Resume and the sidebar would flag the session as interrupted
     on every quiet patrol cycle.
 
-    Two structured facts, both required: the row's trusted identity, and the
-    ``meta.ends_turn`` flag the runner stamps only when the applier's
-    ``DirectiveOutcome.ends_turn`` was True. A REFUSED call (a person opened
-    the turn) carries the identity and no flag, so it stays an unanswered turn.
+    The deciding fact is ``meta.ends_turn``: the runner stamps it only on the
+    row of a terminal directive the applier APPLIED
+    (``DirectiveOutcome.ends_turn``), never from model text or the title. A
+    REFUSED call (a person opened the turn) carries no flag, so it stays an
+    unanswered turn.
+
+    The backend's identity halves are checked when present and may be absent:
+    KAS names only the server on its ``tool_call`` frame and no tool, and
+    opencode sends no ``_meta.kiro`` at all -- the runner resolved the directive
+    from the wire title and its parked record instead, so a required tool name
+    would read every applied quiet end there as interrupted. A half that IS
+    present and names something else still refuses the row.
 
     Mirrors ``isQuietEndRow`` in ``website/src/store/chat/selectors.ts``.
     """
     if m.get("role") != "tool":
         return False
     meta = m.get("meta")
-    if not isinstance(meta, dict):
+    if not isinstance(meta, dict) or meta.get("ends_turn") is not True:
         return False
-    return (
-        meta.get("tool_name") == QUIET_END_TOOL
-        and meta.get("mcp_server") == QUIET_END_SERVER
-        and meta.get("ends_turn") is True
-    )
+    tool = meta.get("tool_name")
+    server = meta.get("mcp_server")
+    return tool in (None, "", QUIET_END_TOOL) and server in (None, "", QUIET_END_SERVER)
 
 
 def chat_message_note(slot_key: str, msg: dict, *, workspace: str | None) -> dict[str, Any]:

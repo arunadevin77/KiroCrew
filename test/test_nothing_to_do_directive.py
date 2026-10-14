@@ -112,6 +112,9 @@ class TestFrontendMirrorStaysInSync:
         assert tool.group(1) == st.QUIET_END_TOOL
         assert server.group(1) == st.QUIET_END_SERVER
         assert "meta?.ends_turn === true" in src, "the mirror no longer requires ends_turn"
+        assert (
+            "absentOr(meta.tool_name, QUIET_END_TOOL)" in src
+        ), "the mirror no longer tolerates a backend that names no tool (KAS)"
         assert st.QUIET_END_SERVER == session_directive.CORE_MCP_SERVER
 
 
@@ -917,3 +920,201 @@ class TestDashboardRunnerHonoursTheSignal:
         assistant = [m["content"] for m in slot.messages if m.get("role") == "assistant"]
         assert all(c.startswith("✅ Conversation compacted") for c in assistant), assistant
         assert not any("No assistant response" in c for c in assistant)
+
+
+# ── a quiet end on a backend that names no tool (KAS) ───────────────────────
+
+
+def _kas_tool_call_frame(tcid: str, tool: str) -> dict:
+    """The ``tool_call`` frame KAS (kiro-agent) sends for a Crew MCP tool.
+
+    KAS names the SERVER on the frame (``_meta.kiro.serverName``) and NO tool
+    name; the tool is named only by its wrapper's ``@<server>/<tool>`` wire
+    title. Same shape as ``test/fixtures/acp_frames/kas/session.jsonl`` and as
+    the field transcript rows that showed Resume after every patrol quiet end
+    (``meta`` carried ``mcp_server`` and ``ends_turn``, never ``tool_name``).
+    """
+    return {
+        "sessionUpdate": "tool_call",
+        "toolCallId": tcid,
+        "title": f"@{session_directive.CORE_MCP_SERVER}/{tool}",
+        "kind": "other",
+        "status": "pending",
+        "rawInput": {"note": "patrol: nothing new"},
+        "_meta": {
+            "kiro": {"serverName": session_directive.CORE_MCP_SERVER, "toolOrigin": "client"}
+        },
+    }
+
+
+def _parked_kas_stream(slot, tool: str, events: list[AcpEvent]):
+    """Yield *events* after parking the record the KAS-side tool parks.
+
+    KAS states no tool name, so the runner reaches the directive through the
+    out-of-band record the MCP tool posts to ``/api/session-directive``, keyed
+    by the call's input digest. Parked mid-turn, as the tool does, so the
+    claim's turn bound admits it.
+    """
+    from kiro_crew.dashboard import directive_queue
+    from kiro_crew.dashboard.chat_utils import effective_session_key
+
+    args = _kas_tool_call_frame("", tool)["rawInput"]
+    directive_queue.publish(
+        effective_session_key(slot), tool, args, session_directive.call_input_digest(tool, args)
+    )
+    yield from events
+
+
+def _kas_call(tool: str, tcid: str) -> AcpEvent:
+    """Parse the KAS frame through the REAL ``parse_session_update``."""
+    from kiro_crew.acp._dispatch import parse_session_update
+
+    [event] = parse_session_update(_kas_tool_call_frame(tcid, tool))
+    assert event.kind == EVENT_TOOL_CALL
+    # The precondition this class exists for: KAS states no tool name.
+    assert event.tool_name == ""
+    assert event.mcp_server_name == session_directive.CORE_MCP_SERVER
+    return event
+
+
+class TestQuietEndWithoutABackendToolName:
+    """The applied quiet end is a FINISHED turn on every surface that classifies
+    it, even when the backend never stated the tool's name -- and a genuinely
+    unfinished turn on the same backend still reads as interrupted."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_queue(self):
+        from kiro_crew.dashboard import directive_queue
+
+        directive_queue.reset()
+        yield
+        directive_queue.reset()
+
+    @pytest.mark.asyncio
+    async def test_a_kas_quiet_end_is_a_finished_turn(self, tmp_path, monkeypatch):
+        from kiro_crew.dashboard.chat_handlers import _is_interrupted
+        from kiro_crew.dashboard.state import is_turn_interrupted
+
+        state = _stub_state(tmp_path)
+        slot = state.get_or_create_slot("kas-quiet-end")
+        slot._titled = True
+        events = [
+            _kas_call("nothing_to_do", "tc-quiet"),
+            _result("Quiet end requested for this turn.", "tc-quiet"),
+            AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
+        ]
+        queue_calls = await _drive_turn(
+            state, slot, _parked_kas_stream(slot, "nothing_to_do", events), monkeypatch
+        )
+        assert queue_calls == [], "the applied quiet end re-armed recovery"
+        rows = [
+            m
+            for m in slot.messages
+            if m.get("role") == "tool" and (m.get("meta") or {}).get("tool_call_id") == "tc-quiet"
+        ]
+        assert rows and all(m["meta"].get("ends_turn") is True for m in rows)
+        # Every backend consumer reads the one scan: the Continue endpoint's
+        # wording, the composer's Resume gate and the sidebar's flag.
+        assert is_turn_interrupted(slot.messages) is False
+        assert _is_interrupted(slot) is False
+        assert slot.to_dict().get("interrupted") is not True
+
+    @pytest.mark.asyncio
+    async def test_a_kas_turn_that_died_after_a_tool_is_still_interrupted(
+        self, tmp_path, monkeypatch
+    ):
+        """Counterfactual: the same backend, an ordinary Crew tool, no reply and
+        no quiet end. That is the shape a dropped connection leaves."""
+        from kiro_crew.dashboard.state import is_turn_interrupted
+
+        state = _stub_state(tmp_path)
+        slot = state.get_or_create_slot("kas-died")
+        slot._titled = True
+        events = [
+            _kas_call("resource_status", "tc-tool"),
+            _result("ok", "tc-tool"),
+            AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
+        ]
+        await _drive_turn(state, slot, events, monkeypatch)
+        assert is_turn_interrupted(slot.messages) is True
+
+    @pytest.mark.asyncio
+    async def test_a_refused_kas_quiet_end_is_still_interrupted(self, tmp_path, monkeypatch):
+        """A person opened the turn, so the applier refuses: no ``ends_turn``
+        stamp, and the row must not close the turn."""
+        from kiro_crew.dashboard.state import is_turn_interrupted
+
+        state = _stub_state(tmp_path)
+        slot = state.get_or_create_slot("kas-refused")
+        slot._titled = True
+        events = [
+            _kas_call("nothing_to_do", "tc-quiet"),
+            _result("Quiet end requested for this turn.", "tc-quiet"),
+            AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
+        ]
+        await _drive_turn(
+            state,
+            slot,
+            _parked_kas_stream(slot, "nothing_to_do", events),
+            monkeypatch,
+            self_wake=False,
+        )
+        rows = [m for m in slot.messages if m.get("role") == "tool"]
+        assert rows and not any((m.get("meta") or {}).get("ends_turn") for m in rows)
+        assert is_turn_interrupted(slot.messages) is True
+
+
+class TestQuietEndRowPredicate:
+    """``is_quiet_end_row`` keys on the runner's own ``ends_turn`` stamp; the
+    backend's identity halves may be absent but never contradict it."""
+
+    @staticmethod
+    def _row(**meta) -> dict:
+        return {"role": "tool", "content": "🔧 @kirocrew-core/nothing_to_do", "meta": meta}
+
+    def test_a_stamped_row_without_a_backend_tool_name_closes_the_turn(self):
+        from kiro_crew.dashboard.state import is_quiet_end_row
+
+        assert is_quiet_end_row(self._row(mcp_server="kirocrew-core", ends_turn=True))
+        assert is_quiet_end_row(self._row(ends_turn=True))
+
+    def test_an_unstamped_row_never_closes_the_turn(self):
+        from kiro_crew.dashboard.state import is_quiet_end_row
+
+        assert not is_quiet_end_row(
+            self._row(tool_name="nothing_to_do", mcp_server="kirocrew-core")
+        )
+        assert not is_quiet_end_row(self._row(mcp_server="kirocrew-core", ends_turn="true"))
+
+    def test_a_contradicting_identity_never_closes_the_turn(self):
+        from kiro_crew.dashboard.state import is_quiet_end_row
+
+        assert not is_quiet_end_row(
+            self._row(tool_name="execute_bash", mcp_server="kirocrew-core", ends_turn=True)
+        )
+        assert not is_quiet_end_row(
+            self._row(tool_name="nothing_to_do", mcp_server="other-server", ends_turn=True)
+        )
+
+    def test_the_field_transcript_tail_reads_as_finished(self):
+        """The persisted rows of the reported session, reduced to the keys the
+        scan reads: a nudge, two tool calls, then the stamped quiet end."""
+        from kiro_crew.dashboard.state import is_turn_interrupted
+
+        rows = [
+            {"role": "nudge", "content": "[auto-nudge cycle 25] patrol"},
+            {
+                "role": "tool",
+                "content": "🔧 @kirocrew-work/work_ledger_read",
+                "meta": {"mcp_server": "kirocrew-work", "done": True},
+            },
+            {
+                "role": "tool",
+                "content": "🔧 @kirocrew-core/nothing_to_do",
+                "meta": {"mcp_server": "kirocrew-core", "done": True, "ends_turn": True},
+            },
+        ]
+        assert is_turn_interrupted(rows) is False
+        # A later tool after it means the model kept working: not closed.
+        rows.append({"role": "tool", "content": "🔧 Run Command", "meta": {"done": True}})
+        assert is_turn_interrupted(rows) is True

@@ -219,20 +219,23 @@ const firstPythonToken = (content: string): string | undefined =>
  */
 /**
  * The tool row a turn ends on when the agent called `nothing_to_do`: a quiet
- * end is a FINISHED turn, not an interruption. Read from the row's persisted
- * trusted identity (`meta.tool_name` / `meta.mcp_server`, the backend's
- * `_meta.kiro` fields), never from the row's title, so a shell command that
- * prints the tool's name cannot close a turn. Mirrors `is_quiet_end_row` in
- * `src/kiro_crew/dashboard/state.py`.
+ * end is a FINISHED turn, not an interruption. Decided by `meta.ends_turn`,
+ * which the runner stamps only on the row of a directive the applier APPLIED,
+ * never from the row's title, so a shell command that prints the tool's name
+ * cannot close a turn. The backend's identity halves (`meta.tool_name` /
+ * `meta.mcp_server`) are checked when present and may be absent: KAS names no
+ * tool on its frame and opencode sends no identity at all. Mirrors
+ * `is_quiet_end_row` in `src/kiro_crew/dashboard/state.py`.
  */
 export const QUIET_END_TOOL = 'nothing_to_do'
 export const QUIET_END_SERVER = 'kirocrew-core'
+const absentOr = (v: unknown, want: string): boolean => v === undefined || v === null || v === '' || v === want
 export const isQuietEndRow = (m: ChatMessage): boolean => {
   if (m.role !== 'tool') return false
   const meta = m.meta as { tool_name?: unknown; mcp_server?: unknown; ends_turn?: unknown } | undefined
-  // `ends_turn` is stamped by the runner only when the applier ended the turn;
-  // a refused call carries the same identity and no flag.
-  return meta?.tool_name === QUIET_END_TOOL && meta?.mcp_server === QUIET_END_SERVER && meta?.ends_turn === true
+  // A refused call carries no flag; a present identity half that names
+  // something else refuses the row too.
+  return meta?.ends_turn === true && absentOr(meta.tool_name, QUIET_END_TOOL) && absentOr(meta.mcp_server, QUIET_END_SERVER)
 }
 
 export const selectTurnInterrupted = (state: RootState): boolean => {

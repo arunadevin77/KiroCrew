@@ -208,6 +208,37 @@ describe('selectContinuable', () => {
     expect(selectTurnInterrupted(foreign)).toBe(true)
   })
 
+  it('a quiet end on a backend that names no tool (KAS) is still a finished turn', () => {
+    // KAS states the server and no tool name, so the applied row carries
+    // `mcp_server` + `ends_turn` and nothing else. This is the persisted shape
+    // that offered Resume after every patrol quiet end.
+    const kasMeta = { tool_call_id: 'b', mcp_server: 'kirocrew-core', done: true, ends_turn: true }
+    const kas = state({ messages: [
+      msg('nudge', '[auto-nudge cycle 25] patrol'),
+      msg('tool', '🔧 @kirocrew-work/work_ledger_read', { tool_call_id: 'a', mcp_server: 'kirocrew-work' }),
+      msg('tool', '🔧 @kirocrew-core/nothing_to_do', kasMeta),
+    ] })
+    expect(selectTurnInterrupted(kas)).toBe(false)
+    // A real interruption on the same backend still offers Resume: the turn
+    // died after an ordinary tool, or the quiet end was refused (no stamp).
+    const died = state({ messages: [
+      msg('nudge', '[auto-nudge cycle 25] patrol'),
+      msg('tool', '🔧 @kirocrew-work/work_ledger_read', { tool_call_id: 'a', mcp_server: 'kirocrew-work' }),
+    ] })
+    expect(selectTurnInterrupted(died)).toBe(true)
+    const refused = state({ messages: [
+      msg('user', 'patrol'),
+      msg('tool', '🔧 @kirocrew-core/nothing_to_do', { tool_call_id: 'b', mcp_server: 'kirocrew-core', done: true }),
+    ] })
+    expect(selectTurnInterrupted(refused)).toBe(true)
+    // A present identity half that names another tool never closes the turn.
+    const wrongTool = state({ messages: [
+      msg('user', 'patrol'),
+      msg('tool', '🔧 Run Command', { tool_call_id: 'b', tool_name: 'execute_bash', mcp_server: 'kirocrew-core', ends_turn: true }),
+    ] })
+    expect(selectTurnInterrupted(wrongTool)).toBe(true)
+  })
+
   it('still offers Continue on a local slot while another slot is crew-bound', () => {
     expect(selectContinuable(state({ messages: [msg('user')] }, [
       { key: 'other', executor: 'remote' },
