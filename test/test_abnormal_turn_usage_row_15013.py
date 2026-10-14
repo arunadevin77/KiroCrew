@@ -37,6 +37,7 @@ from kiro_crew.acp.types import STOP_REASON_END_TURN, TurnUsage
 from kiro_crew.dashboard import chat_runner
 from kiro_crew.dashboard.chat_runner import _run_chat
 from kiro_crew.dashboard.handlers import usage as usage_mod
+from kiro_crew.testing.wait import await_until
 
 
 class _FakeSlot:
@@ -373,7 +374,7 @@ class TestCancelDuringCompletePersist:
 
         task = asyncio.ensure_future(_run_chat(state, slot, "test message"))
         # Wait until the turn has reached the shielded persist await.
-        await asyncio.wait_for(write_scheduled.wait(), timeout=5)
+        await await_until(write_scheduled, what="the turn reaching the shielded persist")
         # Cancel the turn in the window before the executor thread runs the
         # append: the shield must keep the offloaded write alive.
         task.cancel()
