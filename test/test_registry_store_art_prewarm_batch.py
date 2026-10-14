@@ -687,7 +687,7 @@ class TestBoundedPostBudgetCleanup:
     is detached to finish in the background so the request returns."""
 
     @pytest.mark.asyncio
-    async def test_a_hanging_cleanup_returns_within_the_two_budgets_and_finishes_detached(
+    async def test_a_hanging_cleanup_is_detached_and_the_request_returns_before_it_finishes(
         self, monkeypatch, caplog
     ):
         import asyncio
@@ -695,20 +695,21 @@ class TestBoundedPostBudgetCleanup:
         reg = _pin_registry(monkeypatch, _TRUST_OWNER)
 
         release = threading.Event()
+        cleanup_began = threading.Event()
         cleanup_finished = threading.Event()
         loop = asyncio.get_running_loop()
-        started: list[float] = []
 
         async def _fetch(entry, registry_name):
             # The row's fetch, parked on its first step: a worker reaches it in the
             # same loop turn the batch starts, so the budget always lands here, never
             # in the thread hops a real fetch makes first. Cancelled at the budget,
-            # its cleanup hangs past the cleanup budget, then finishes once released
-            # -- standing in for a slow filesystem / process kill.
-            started.append(loop.time())
+            # its cleanup blocks until the test releases it -- standing in for a slow
+            # filesystem / process kill. It can only finish AFTER the prewarm has
+            # returned, because the test releases it only then.
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
+                cleanup_began.set()
                 await loop.run_in_executor(None, release.wait)
                 cleanup_finished.set()
                 raise
@@ -724,22 +725,34 @@ class TestBoundedPostBudgetCleanup:
         # ``release.set()`` would strand that (non-daemon) thread and hang the test
         # session at interpreter exit. The finally releases it and drains the detached
         # cleanup regardless of how the body ended.
+        prewarm: asyncio.Future[int] | None = None
         try:
-            # The outer wait is the lost-run guard: a missing bound fails by name
-            # rather than hanging. The bound under test is ``elapsed`` below.
+            # The bound is proved by ORDER, not by wall clock: the cleanup cannot finish
+            # until ``release`` is set, and ``release`` is set only after the prewarm
+            # returns, so a prewarm that waits on the cleanup never returns at all. The
+            # ceiling is only the hang guard that turns that into a named failure; how
+            # long a loaded runner takes to schedule the two budgets is not under test.
+            # ``asyncio.wait`` rather than ``wait_for``: on a hang, ``wait_for`` would
+            # cancel the prewarm and then wait for it to unwind, which a prewarm stuck
+            # on the unreleased cleanup never does.
             with caplog.at_level("WARNING", logger="kiro_crew.apps.registry"):
-                fetched = await _settled(
-                    _prewarm_owner_tier_store_assets(reg, [entry]), "the budgeted prewarm"
+                prewarm = asyncio.ensure_future(_prewarm_owner_tier_store_assets(reg, [entry]))
+                done, _ = await asyncio.wait({prewarm}, timeout=_BARRIER_CEILING_SECS)
+            if prewarm not in done:
+                pytest.fail(
+                    "the budgeted prewarm did not return within the "
+                    f"{_BARRIER_CEILING_SECS:.0f}s hang guard; it waited on the cleanup"
                 )
-            # From the batch's start (the row's first step), so the bound covers the
-            # two budgets the test is about and not the thread hops before them.
-            elapsed = loop.time() - started[0]
+            fetched = prewarm.result()
 
             assert fetched == 0
+            assert cleanup_began.is_set(), "the batch budget never cancelled the row"
             assert (
-                elapsed < 2
-            ), f"the request returned late ({elapsed:.2f}s); cleanup was not bounded"
-            assert any("cleanup exceeded its" in r.getMessage() for r in caplog.records)
+                not cleanup_finished.is_set()
+            ), "the request waited for the cleanup instead of detaching it"
+            messages = [r.getMessage() for r in caplog.records]
+            assert any("cleanup exceeded its" in m for m in messages)
+            assert any("exceeded its" in m and "batch budget" in m for m in messages)
             # The detached cleanup is still pending; releasing it lets it finish, and
             # the pending set drains.
             assert reg_mod._PENDING_PREWARM_CLEANUPS
@@ -747,7 +760,9 @@ class TestBoundedPostBudgetCleanup:
             # Always unblock the executor worker, then settle the detached cleanup so
             # no task or thread outlives the test.
             release.set()
-            pending = set(reg_mod._PENDING_PREWARM_CLEANUPS)
+            pending: set[asyncio.Future[Any]] = set(reg_mod._PENDING_PREWARM_CLEANUPS)
+            if prewarm is not None and not prewarm.done():
+                pending.add(prewarm)
             if pending:
                 await asyncio.wait(pending, timeout=_BARRIER_CEILING_SECS)
         assert cleanup_finished.is_set(), "the detached cleanup must still complete"
@@ -783,10 +798,12 @@ class TestBoundedPostBudgetCleanup:
         loop = asyncio.get_running_loop()
         started = loop.time()
         task = asyncio.ensure_future(_prefix_wait())
-        # flake-ok: a fixed hold past the 0.2 s deadline shows the unbounded control shape still blocked
-        # nosemgrep: kirocrew.test-sleep-as-barrier -- fixed hold so the unbounded control shape is seen still blocked past its deadline
-        await asyncio.sleep(0.6)
-        blocked_past_deadline = not task.done()
+        # Give the pre-fix shape three times its 0.2 s deadline to return. Waiting on
+        # the task itself (not a bare sleep) ends the wait the moment it returns, and
+        # returning early is exactly what this control must rule out; a slow runner
+        # only lengthens the wait, it cannot make the control pass falsely.
+        done, _ = await asyncio.wait({task}, timeout=0.6)  # flake-ok: expiry is expected
+        blocked_past_deadline = task not in done
         assert blocked_past_deadline, "the pre-fix shape should still be blocked on cleanup"
         release.set()
         await asyncio.wait_for(task, timeout=2)
