@@ -341,7 +341,6 @@
  4 test_run_tests_reap.py
  5 test_runloop_integration.py
 13 test_runtime_cleanup_regression.py
-25 test_runtime_cleanup_windows.py
 15 test_runtime_ownership_founding.py
  1 test_runtime_start_gate_headroom.py
  3 test_safe_read_file_bytes_descriptor.py
@@ -494,7 +493,6 @@
  1 test_wecom_client_cov80.py
  5 test_wheel_apply.py
  1 test_wheel_engine_lifecycle.py
-18 test_windows_cleanup_capacity.py
  3 test_windows_fail_closed_optin.py
  1 test_windows_job_limits.py
  2 test_windows_tree_reap.py
