@@ -32,13 +32,27 @@
    * the graph: an indented tree with real connectors                   *
    * ------------------------------------------------------------------ */
   .oc-node { position: relative; padding: 3px 0 3px 0; }
-  .oc-kids { margin-left: 13px; padding-left: 11px; position: relative;
+  /* oc-kids is a grid container so grid-template-rows can animate smoothly.
+     The inner oc-kids-body carries the visual border/indent and its children
+     the connector pseudo-elements: this lets the outer grid row collapse without
+     destroying the absolutely-positioned elbow lines. */
+  .oc-kids { display: grid; grid-template-rows: 1fr; overflow: hidden;
+    transition: grid-template-rows 0.2s ease; }
+  .oc-kids.oc-kids-closed { grid-template-rows: 0fr; }
+  /* Cut to the end state for users who prefer no motion. */
+  @media (prefers-reduced-motion: reduce) { .oc-kids { transition: none; } }
+  /* Inner body: carries the indent, border-left and elbow lines. It does not clip:
+     the last child's mask sits on this border column, outside the padding box, so a
+     clip here would cut the mask off and leave the rail running past the last elbow.
+     min-height: 0 lets the closing grid row shrink it; the outer .oc-kids clips. */
+  .oc-kids-body { min-height: 0;
+    margin-left: 13px; padding-left: 11px; position: relative;
     border-left: 1px solid color-mix(in oklab, var(--oc-line) 70%, transparent); }
   /* The elbow into each child, so the line is a connector and not a margin. */
-  .oc-kids > .oc-node:before { content: ''; position: absolute; left: -11px; top: 13px;
+  .oc-kids-body > .oc-node:before { content: ''; position: absolute; left: -11px; top: 13px;
     width: 9px; height: 1px; background: color-mix(in oklab, var(--oc-line) 70%, transparent); }
   /* The last child's rail stops at its own elbow instead of running past it. */
-  .oc-kids > .oc-node:last-child:after { content: ''; position: absolute; left: -12px;
+  .oc-kids-body > .oc-node:last-child:after { content: ''; position: absolute; left: -12px;
     top: 14px; bottom: 0; width: 1px; background: var(--oc-card); }
 
   .oc-chip { display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
@@ -48,20 +62,25 @@
   .oc-chip.oc-is-lead { border-color: color-mix(in oklab, var(--oc-done) 46%, var(--oc-line));
     background: color-mix(in oklab, var(--oc-card) 88%, var(--oc-done) 12%); }
   .oc-chip.oc-is-sub { border-color: color-mix(in oklab, var(--oc-done) 32%, var(--oc-line)); }
-  /* Toggle button on the lead chip. Inherits nothing from <button> defaults; sits flush
-     inside the chip's flex row on the trailing edge. The chevron (▾) rotates 90 deg
-     when the group is collapsed so no separate icon set is needed. */
+  /* Toggle button on lead and sub-lead chips: chevron + visible text label so the
+     control reads as "show/hide" rather than a bare play-button glyph. The icon
+     rotates when collapsed; the button itself does not. Both states rest on the same
+     faint pill in full colour, so Hide and Show read as one control: :hover only
+     strengthens the pill, and :focus-visible adds a keyboard ring. */
   .oc-fold { all: unset; cursor: pointer; flex: 0 0 auto; display: inline-flex;
-    align-items: center; justify-content: center; width: 16px; height: 16px;
+    align-items: center; gap: 4px; padding: 2px 6px 2px 4px;
     border-radius: 4px; font-size: 11px; line-height: 1;
-    color: color-mix(in oklab, var(--oc-done) 70%, transparent);
-    transition: transform 0.15s, color 0.1s; }
-  .oc-fold:hover, .oc-fold:focus-visible {
     color: var(--oc-done);
-    background: color-mix(in oklab, var(--oc-done) 14%, transparent);
+    background: color-mix(in oklab, var(--oc-done) 10%, transparent);
+    transition: color 0.1s, background 0.1s; }
+  .oc-fold:hover { background: color-mix(in oklab, var(--oc-done) 22%, transparent); }
+  /* Keyboard focus ring; :focus-visible does not fire on mouse clicks (pointer heuristic). */
+  .oc-fold:focus-visible {
     outline: 2px solid color-mix(in oklab, var(--oc-done) 55%, transparent);
     outline-offset: 1px; }
-  .oc-fold[aria-expanded="false"] { transform: rotate(-90deg); }
+  .oc-fold-icon { flex: 0 0 auto; transition: transform 0.15s; }
+  .oc-fold[aria-expanded="false"] .oc-fold-icon { transform: rotate(-90deg); }
+  .oc-fold-text { font-weight: 600; letter-spacing: .02em; }
   .oc-role { font-size: 8.5px; letter-spacing: .08em; text-transform: uppercase;
     font-weight: 700; padding: 1px 5px; border-radius: 3px; flex: 0 0 auto;
     background: color-mix(in oklab, var(--oc-line) 55%, transparent);
@@ -124,8 +143,10 @@
   @media (max-width: 520px) {
     .oc { padding: 10px 10px 13px; }
     .oc-cards { grid-template-columns: 1fr; }
-    .oc-kids { margin-left: 7px; padding-left: 9px; }
-    .oc-kids > .oc-node:before { left: -9px; width: 7px; }
+    .oc-kids-body { margin-left: 7px; padding-left: 9px; }
+    .oc-kids-body > .oc-node:before { left: -9px; width: 7px; }
+    /* The mask follows the narrower padding, so it still lands on the rail. */
+    .oc-kids-body > .oc-node:last-child:after { left: -10px; }
   }
   </style>
 
@@ -186,7 +207,10 @@
         foot_cut: ' task(s) were cut by the fold\u2019s per-board cap, so they are in neither the graph nor the cards.',
         foot_mute: ' session(s) have never reported. Their cards say so rather than showing a silence, which is a different fact.',
         foot_alias: 'A card carries the board and item a host opens the session from. The fold aliases the session key itself, so no page here can name a worker\u2019s session.',
-        fold_toggle: 'Toggle group'
+        fold_hide: 'Hide',
+        fold_show: 'Show {n} items',
+        fold_show_one: 'Show 1 item',
+        fold_hint: 'Collapses this group in the graph only. The cards below stay.'
       },
       'zh-CN': {
         oc_title: '\u8c01\u6d3e\u53d1\u4e86\u8c01', oc_last_write: '\u8bb0\u5f55\u6700\u540e\u5199\u5165',
@@ -217,7 +241,10 @@
         foot_cut: ' \u4e2a\u4efb\u52a1\u88ab\u8bb0\u5f55\u7684\u5355\u770b\u677f\u4e0a\u9650\u622a\u65ad\uff0c\u56e0\u6b64\u5b83\u4eec\u65e2\u4e0d\u5728\u5173\u7cfb\u56fe\u4e2d\uff0c\u4e5f\u4e0d\u5728\u5361\u7247\u4e2d\u3002',
         foot_mute: ' \u4e2a\u4f1a\u8bdd\u4ece\u672a\u6c47\u62a5\u3002\u5b83\u4eec\u7684\u5361\u7247\u5982\u5b9e\u8bf4\u660e\uff0c\u800c\u975e\u663e\u793a\u4e00\u6bb5\u9759\u9ed8\uff0c\u8fd9\u662f\u4e0d\u540c\u7684\u4e8b\u5b9e\u3002',
         foot_alias: '\u5361\u7247\u643a\u5e26\u4e3b\u673a\u636e\u4ee5\u6253\u5f00\u4f1a\u8bdd\u7684\u770b\u677f\u4e0e\u6761\u76ee\u3002\u8bb0\u5f55\u672c\u8eab\u4e3a\u4f1a\u8bdd\u5bc6\u94a5\u8bbe\u7f6e\u4e86\u522b\u540d\uff0c\u6240\u4ee5\u8fd9\u91cc\u6ca1\u6709\u9875\u9762\u80fd\u6307\u51fa\u6267\u884c\u8005\u7684\u4f1a\u8bdd\u3002',
-        fold_toggle: '\u5207\u6362\u5c55\u5f00\u72b6\u6001'
+        fold_hide: '\u6536\u8d77',
+        fold_show: '\u663e\u793a {n} \u9879',
+        fold_show_one: '\u663e\u793a 1 \u9879',
+        fold_hint: '\u53ea\u6536\u8d77\u5173\u7cfb\u56fe\u4e2d\u7684\u8fd9\u4e00\u7ec4\uff0c\u4e0b\u65b9\u7684\u5361\u7247\u4e0d\u53d8\u3002'
       }
     };
     function locale() {
@@ -426,7 +453,89 @@
        others is one agent, and splitting it into a board node plus a task node puts
        the same agent on the page twice in two places. The node's name is what it was
        asked to do, and the line under it is the board it is running to do it. */
-    function drawKid(kid, into, now) {
+    /* Shared helper: wire a fold toggle button onto a chip and a .oc-kids pair.
+       chipEl     -- the chip the button is appended to
+       kidsEl     -- the .oc-kids grid container (its id is set here)
+       kidsBodyEl -- the .oc-kids-body inner wrapper (hidden after collapse)
+       stateKey   -- foldState map key for this group
+       countFn    -- function returning the current row count for "Show {n} items"
+       onToggle   -- optional callback to notify the parent group of a state change
+       Returns a refreshLabel function the parent passes as the onSubToggle
+       callback so sub-group toggles keep the parent label accurate. */
+    function foldControl(chipEl, kidsEl, kidsBodyEl, stateKey, countFn, onToggle) {
+      if (!Object.prototype.hasOwnProperty.call(foldState, stateKey)) {
+        foldState[stateKey] = true; /* default: expanded */
+      }
+      var expanded = foldState[stateKey];
+      var kidsId = 'oc-kids-' + stateKey.replace(/\W/g, '-');
+      kidsEl.id = kidsId;
+      if (!expanded) kidsEl.classList.add('oc-kids-closed');
+      if (!expanded) kidsBodyEl.hidden = true;
+
+      var labelExpanded = i18n('fold_hide');
+      var labelCollapsed = countFn() === 1 ? i18n('fold_show_one') : i18n('fold_show', {n: countFn()});
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'oc-fold';
+      btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      btn.setAttribute('aria-controls', kidsId);
+      var icon = document.createElement('span');
+      icon.className = 'oc-fold-icon';
+      icon.textContent = '\u25be';
+      btn.appendChild(icon);
+      var textSpan = document.createElement('span');
+      textSpan.className = 'oc-fold-text';
+      textSpan.textContent = expanded ? labelExpanded : labelCollapsed;
+      btn.setAttribute('aria-label', expanded ? labelExpanded : labelCollapsed);
+      /* The cards section is drawn from every task whatever the graph shows, so the
+         button says that folding leaves the cards in place. */
+      btn.title = i18n('fold_hint');
+      btn.appendChild(textSpan);
+      chipEl.appendChild(btn);
+      foldButtons[stateKey] = btn;
+
+      /* Re-sync hidden with the AT after the CSS transition closes the group.
+         grid-template-rows: 0fr clips visually but does not remove from the AT. */
+      kidsEl.addEventListener('transitionend', function (e) {
+        if (e.propertyName !== 'grid-template-rows') return;
+        if (kidsEl.classList.contains('oc-kids-closed')) kidsBodyEl.hidden = true;
+      });
+
+      var prm = window.matchMedia
+        ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
+
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var next = btn.getAttribute('aria-expanded') !== 'true';
+        btn.setAttribute('aria-expanded', next ? 'true' : 'false');
+        foldState[stateKey] = next;
+        if (next) {
+          kidsBodyEl.hidden = false;
+          if (prm) kidsEl.classList.remove('oc-kids-closed');
+          else requestAnimationFrame(function () { kidsEl.classList.remove('oc-kids-closed'); });
+        } else {
+          kidsEl.classList.add('oc-kids-closed');
+          if (prm) kidsBodyEl.hidden = true;
+        }
+        labelCollapsed = countFn() === 1 ? i18n('fold_show_one') : i18n('fold_show', {n: countFn()});
+        var newLabel = next ? labelExpanded : labelCollapsed;
+        textSpan.textContent = newLabel;
+        btn.setAttribute('aria-label', newLabel);
+        if (typeof onToggle === 'function') onToggle();
+      });
+
+      /* Return a function the child levels call when THEIR state changes so
+         this level's row count label stays accurate. */
+      return function refreshLabel() {
+        labelCollapsed = countFn() === 1 ? i18n('fold_show_one') : i18n('fold_show', {n: countFn()});
+        if (btn.getAttribute('aria-expanded') === 'false') {
+          textSpan.textContent = labelCollapsed;
+          btn.setAttribute('aria-label', labelCollapsed);
+        }
+      };
+    }
+
+    function drawKid(kid, into, now, onSubToggle, parentGroupKey) {
       var task = kid.task;
       var who = text(task.spender);
       var situ = situation(task, now);
@@ -438,16 +547,28 @@
 
       if (kid.sub) {
         var sub = kid.sub.board;
-        node.appendChild(chip(
+        /* Stable foldState key for this sub-lead: parent group's key + task id. */
+        var subKey = (parentGroupKey || text(kid.board.id) || '') + '\x00' + (text(task.item_id) || '');
+
+        var subChip = chip(
           i18n('role_sublead'),
           text(task.title) || text(task.item_id) || DASH,
           label + ' ' + MID + ' ' + line,
           'oc-is-sub',
           SITU[situ][1]
-        ));
-        var kids = el('div', 'oc-kids');
-        /* The board it runs, named once, above the workers it dispatched -- so a
-           reader can see WHICH board the names below belong to. */
+        );
+        var subKids = el('div', 'oc-kids');
+        var subKidsBody = el('div', 'oc-kids-body');
+
+        /* Wire the fold button; +1 for the "its board" chip that is visible
+           inside the sub-lead's group when expanded, hidden when collapsed. */
+        var subRefresh = foldControl(
+          subChip, subKids, subKidsBody, subKey,
+          function () { return 1 + countVisibleRows(kid.sub, subKey); },
+          onSubToggle
+        );
+
+        /* The board it runs, named once, above the workers it dispatched. */
         var own = el('div', 'oc-node');
         own.appendChild(chip(
           i18n('role_its_board'),
@@ -456,9 +577,17 @@
           null,
           null
         ));
-        kids.appendChild(own);
-        drawKids(kid.sub, kids, now);
-        node.appendChild(kids);
+        subKidsBody.appendChild(own);
+        /* When a deeper level toggles, update this sub-label AND tell the parent. */
+        var subRefreshAndNotify = function () {
+          subRefresh();
+          if (typeof onSubToggle === 'function') onSubToggle();
+        };
+        drawKids(kid.sub, subKidsBody, now, subRefreshAndNotify, subKey);
+        subKids.appendChild(subKidsBody);
+
+        node.appendChild(subChip);
+        node.appendChild(subKids);
         into.appendChild(node);
         return;
       }
@@ -472,31 +601,40 @@
       into.appendChild(node);
     }
 
-    function drawKids(n, into, now) {
+    /* Count how many rows become visible when a group is expanded, given the CURRENT
+       foldState. A sub-lead whose group is collapsed contributes only its chip (1
+       row); expanded, it contributes its chip + "its board" chip + sub-kids. A board
+       with no task is one row, the "nothing dispatched" line drawKids draws for it.
+       groupKey is the foldState key for the group whose children we are counting. */
+    function countVisibleRows(n, groupKey) {
+      if (!n.kids.length) return 1;
+      var count = 0;
+      for (var i = 0; i < n.kids.length; i++) {
+        var k = n.kids[i];
+        count++;
+        if (k.sub) {
+          var subKey = groupKey + '\x00' + (text(k.task.item_id) || '');
+          if (!Object.prototype.hasOwnProperty.call(foldState, subKey) || foldState[subKey]) {
+            count++; /* "its board" chip */
+            count += countVisibleRows(k.sub, subKey);
+          }
+        }
+      }
+      return count;
+    }
+
+    function drawKids(n, into, now, onSubToggle, parentGroupKey) {
       if (!n.kids.length) {
         into.appendChild(el('div', 'oc-node oc-none-line',
           i18n('nothing_dispatched')));
         return;
       }
-      for (var i = 0; i < n.kids.length; i++) drawKid(n.kids[i], into, now);
+      for (var i = 0; i < n.kids.length; i++) drawKid(n.kids[i], into, now, onSubToggle, parentGroupKey);
     }
 
     function drawNode(n, into, now) {
       var board = n.board;
       var boardId = text(board.id) || '';
-      /* Fold state key: board.id is a per-render alias (e.g. board-1, board-2) that
-         stays stable across consecutive message events for the same set of boards.
-         Using it means state can briefly shift if the board list grows or reorders
-         between renders, but since this is in-memory only (resets on page reload),
-         that is an acceptable tradeoff over a key that could expose internal ids. */
-      if (!Object.prototype.hasOwnProperty.call(foldState, boardId)) {
-        foldState[boardId] = true; /* true = expanded (the default) */
-      }
-      var expanded = foldState[boardId];
-      /* Stable id for the kids container so aria-controls can point to it. The board
-         alias already has no whitespace; replace any non-word chars just in case. */
-      var kidsId = 'oc-kids-' + boardId.replace(/\W/g, '-');
-
       var wrap = el('div', 'oc-node');
       var leadChip = chip(
         i18n('role_lead'),
@@ -505,31 +643,18 @@
         'oc-is-lead',
         null
       );
-      /* The toggle button sits at the trailing end of the lead chip. It carries
-         aria-expanded and aria-controls so keyboard and screen-reader users have a
-         first-class way to operate the group. The chevron (▾) rotates via CSS when
-         aria-expanded is false. */
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'oc-fold';
-      btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      btn.setAttribute('aria-controls', kidsId);
-      btn.setAttribute('aria-label', i18n('fold_toggle'));
-      btn.textContent = '\u25be'; /* ▾ */
-      leadChip.appendChild(btn);
-
       var kids = el('div', 'oc-kids');
-      kids.id = kidsId;
-      if (!expanded) kids.hidden = true;
-      drawKids(n, kids, now);
+      var kidsBody = el('div', 'oc-kids-body');
 
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var next = btn.getAttribute('aria-expanded') !== 'true';
-        btn.setAttribute('aria-expanded', next ? 'true' : 'false');
-        kids.hidden = !next;
-        foldState[boardId] = next;
-      });
+      /* Wire the fold toggle button. The returned callback is passed to drawKids
+         so that sub-lead toggles refresh the lead count label automatically. */
+      var refreshParentLabel = foldControl(
+        leadChip, kids, kidsBody, boardId,
+        function () { return countVisibleRows(n, boardId); },
+        null /* top-level lead; no parent to notify */
+      );
+      drawKids(n, kidsBody, now, refreshParentLabel, boardId);
+      kids.appendChild(kidsBody);
 
       wrap.appendChild(leadChip);
       wrap.appendChild(kids);
@@ -710,6 +835,15 @@
       var foot = document.getElementById('oc-foot');
       var scope = document.getElementById('oc-scope');
       if (!graph || !holder || !cardsTitle || !foot || !scope) return;
+      /* The rebuild below replaces every fold button, so a reader who toggled one
+         from the keyboard would land on the page body at each host push. Note which
+         group's button had focus, and give focus to its replacement. */
+      var focusKey = null;
+      for (var fk in foldButtons) {
+        if (Object.prototype.hasOwnProperty.call(foldButtons, fk)
+            && foldButtons[fk] === document.activeElement) focusKey = fk;
+      }
+      foldButtons = {};
       graph.textContent = '';
       holder.textContent = '';
       foot.textContent = '';
@@ -729,6 +863,9 @@
 
       var g = buildGraph(list);
       for (var i = 0; i < g.roots.length; i++) drawNode(g.roots[i], graph, now);
+      if (focusKey !== null && Object.prototype.hasOwnProperty.call(foldButtons, focusKey)) {
+        foldButtons[focusKey].focus({ preventScroll: true });
+      }
 
       var rows = cards(list, now);
       for (var j = 0; j < rows.length; j++) holder.appendChild(drawCard(rows[j], now));
@@ -755,6 +892,8 @@
     /* In-memory map from board.id (alias) to expanded bool. Initialised on first
        drawNode call; survives message-event re-renders; resets on full page reload. */
     var foldState = {};
+    /* The fold buttons the latest render drew, by the same key as foldState. */
+    var foldButtons = {};
 
     render();
     window.addEventListener('load', render);

@@ -442,7 +442,7 @@ def test_a_sub_lead_is_its_own_role_and_appears_once(pages: dict[str, tuple[Any,
     """
     _, page = pages["org-chart"]
     assert "'sub-lead'" in page and "'lead'" in page
-    kid = re.search(r"function drawKid\(kid, into, now\) \{(.*?)\n    \}", page, re.S)
+    kid = re.search(r"function drawKid\(kid, into, now[^)]*\) \{(.*?)\n    \}", page, re.S)
     assert kid, "drawKid is gone"
     assert kid.group(1).count("chip(") == 3, (
         "a sub-lead no longer draws exactly one chip for itself, one for its board and "
@@ -541,14 +541,15 @@ def test_lead_chip_carries_a_fold_toggle_button(
     disclosure widget for keyboard and screen-reader users.
     """
     _, page = pages["org-chart"]
-    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
-    assert draw, "drawNode is gone"
-    source = draw.group(1)
+    # Button logic now lives in makeFoldToggle, not drawNode directly.
+    make_fn = re.search(r"function foldControl\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert make_fn, "makeFoldToggle helper is gone"
+    source = make_fn.group(1)
     assert "btn.type = 'button'" in source, "the fold button is missing type=button"
     assert "aria-expanded" in source, "the fold button has no aria-expanded"
     assert "aria-controls" in source, "the fold button has no aria-controls"
     assert "aria-label" in source, "the fold button has no accessible label"
-    assert ".oc-fold" in source or "oc-fold" in source, "the fold button has no class name"
+    assert "oc-fold" in source, "the fold button has no class name"
 
 
 def test_lead_groups_are_expanded_by_default(
@@ -561,43 +562,56 @@ def test_lead_groups_are_expanded_by_default(
     that with aria-expanded='true'.
     """
     _, page = pages["org-chart"]
-    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
-    assert draw, "drawNode is gone"
-    source = draw.group(1)
+    make_fn = re.search(r"function foldControl\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert make_fn, "foldControl is gone"
+    source = make_fn.group(1)
     assert (
-        "foldState[boardId] = true" in source
+        "foldState[stateKey] = true" in source
     ), "a new board is not initialised to expanded in foldState"
     assert "expanded ? 'true' : 'false'" in source, "aria-expanded does not read the expanded state"
-    # The group is only hidden when NOT expanded; the default (true) must show it.
+    # The group is collapsed by adding oc-kids-closed; default (expanded) has no class.
     assert (
-        "if (!expanded) kids.hidden" in source or "if (! expanded) kids.hidden" in source
-    ), "the kids container is not conditional on the expanded state"
+        "oc-kids-closed" in source
+    ), "the kids container does not use the oc-kids-closed class for collapse"
+    assert (
+        "kids.hidden" not in source
+    ), "drawNode still uses kids.hidden -- switch to oc-kids-closed for the CSS transition"
+    # The inner body is also hidden from the AT when initially collapsed.
+    assert (
+        "kidsBodyEl.hidden = true" in source
+    ), "kidsBodyEl.hidden is not set to sync aria-expanded=false with the AT"
 
 
 def test_click_handler_toggles_hidden_and_aria_expanded(
     pages: dict[str, tuple[Any, str]],
 ) -> None:
-    """MUTATION-SENSITIVE: the click handler flips aria-expanded and kids.hidden together.
+    """MUTATION-SENSITIVE: the click handler flips aria-expanded and the oc-kids-closed class.
 
     A handler that updates one but not the other leaves the DOM and the ARIA state
     out of sync: a screen reader would announce the wrong state, or the group would
-    vanish without the button registering the change.
+    vanish without the button registering the change. The class toggle drives the
+    CSS grid-template-rows transition instead of display:none.
     """
     _, page = pages["org-chart"]
-    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
-    assert draw, "drawNode is gone"
-    source = draw.group(1)
+    make_fn = re.search(r"function foldControl\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert make_fn, "foldControl is gone"
+    source = make_fn.group(1)
     # The handler reads the current state and inverts it.
     assert (
         "btn.getAttribute('aria-expanded') !== 'true'" in source
     ), "the click handler does not read aria-expanded to decide the next state"
-    # Both the ARIA attribute and the DOM visibility are updated.
-    assert "kids.hidden = !next" in source, "the click handler does not set kids.hidden"
+    # Visibility is toggled via the class, not display:none.
+    assert (
+        "classList.remove('oc-kids-closed')" in source
+    ), "the click handler does not remove oc-kids-closed when expanding"
+    assert (
+        "classList.add('oc-kids-closed')" in source
+    ), "the click handler does not add oc-kids-closed when collapsing"
     assert (
         "btn.setAttribute('aria-expanded', next ? 'true' : 'false')" in source
     ), "the click handler does not update aria-expanded"
     # And the in-memory map is kept in sync.
-    assert "foldState[boardId] = next" in source, "the click handler does not update foldState"
+    assert "foldState[stateKey] = next" in source, "the click handler does not update foldState"
 
 
 def test_fold_state_is_declared_outside_render_so_it_survives_re_renders(
@@ -634,9 +648,9 @@ def test_fold_toggle_button_supports_keyboard_operation(
     natively. The button's focus-visible style confirms focus is visible to the user.
     """
     _, page = pages["org-chart"]
-    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
-    assert draw, "drawNode is gone"
-    source = draw.group(1)
+    make_fn = re.search(r"function foldControl\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert make_fn, "foldControl is gone"
+    source = make_fn.group(1)
     assert (
         "btn.type = 'button'" in source
     ), "the fold button is not type=button -- Enter and Space may not activate it"
@@ -649,12 +663,294 @@ def test_fold_toggle_button_supports_keyboard_operation(
 def test_fold_toggle_uses_i18n_and_does_not_hardcode_english(
     pages: dict[str, tuple[Any, str]],
 ) -> None:
-    """The accessible label must go through i18n() so non-English locales work."""
+    """State-specific labels must go through i18n() so non-English locales work.
+
+    The button carries two labels: fold_hide (clicking will hide the group)
+    and fold_show (clicking will show it, with a count). Both must be declared
+    in the I18N table and fetched via i18n() in drawNode, never hardcoded.
+    """
     _, page = pages["org-chart"]
-    # The key must exist in the English table.
-    assert "'fold_toggle'" in page, "fold_toggle is not declared in I18N"
+    assert "'fold_hide'" in page, "fold_hide is not declared in I18N"
+    assert (
+        "'fold_show'" in page and "'fold_show_one'" in page
+    ), "fold_show / fold_show_one i18n keys are missing"
+    make_fn = re.search(r"function foldControl\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert make_fn, "foldControl is gone"
+    source = make_fn.group(1)
+    assert "i18n('fold_hide')" in source, "fold_hide label is not fetched through i18n()"
+    assert "i18n('fold_show" in source, "fold_show/fold_show_one label not fetched through i18n()"
+    assert "fold_toggle" not in source, "old fold_toggle key is still used in drawNode"
+
+
+def test_fold_button_text_changes_with_state(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: the visible text and aria-label change when the group toggles.
+
+    When expanded the button reads 'Hide'; when collapsed it reads
+    'Show N items'. A label that stays constant leaves the reader unable to
+    tell whether clicking will show or hide the group.
+    """
+    _, page = pages["org-chart"]
+    make_fn = re.search(r"function foldControl\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert make_fn, "foldControl is gone"
+    source = make_fn.group(1)
+    # Both labels must be pre-computed so the click handler can swap them.
+    assert "labelExpanded" in source, "expanded label variable is missing"
+    assert "labelCollapsed" in source, "collapsed label variable is missing"
+    # The click handler must update the visible text span AND the aria-label.
+    assert (
+        "textSpan.textContent = newLabel" in source
+    ), "the click handler does not update the visible text"
+    assert (
+        "btn.setAttribute('aria-label', newLabel)" in source
+    ), "the click handler does not update aria-label"
+
+
+def test_fold_button_collapsed_count_matches_all_hidden_rows(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: the 'Show N' label counts every row that collapse hides.
+
+    n.kids.length counts only direct children. A sub-lead child also has an "its
+    board" chip and its own workers -- all hidden when the parent collapses.
+    countVisibleRows must recurse using foldState so collapsed sub-leads count as 1 row.
+    """
+    _, page = pages["org-chart"]
+    assert "function countVisibleRows" in page, "countVisibleRows function is missing"
+    draw = re.search(r"function countVisibleRows\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert draw, "countVisibleRows body is gone"
+    fn_source = draw.group(1)
+    # It recurses into sub-lead children.
+    assert ".sub" in fn_source, "countVisibleRows does not handle sub-lead children"
+    assert "foldState" in fn_source, "countVisibleRows does not check foldState for sub-lead state"
+    # drawNode must use countVisibleRows, not n.kids.length directly.
+    node = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
+    assert node, "drawNode is gone"
+    node_source = node.group(1)
+    assert (
+        "countVisibleRows(n, boardId)" in node_source
+    ), "drawNode uses n.kids.length instead of countVisibleRows"
+    # countFn in makeFoldToggle handles the row count; drawNode passes countVisibleRows as lambda.
+
+
+def test_fold_collapse_syncs_hidden_with_accessibility_tree(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: collapsed workers are removed from the AT after the transition.
+
+    grid-template-rows: 0fr clips content visually but does not remove it from the
+    accessibility tree. A screen reader would still announce the workers even when
+    aria-expanded='false' unless hidden or inert is set after the grid row closes.
+    Two mechanisms cover this: transitionend (animated) and a synchronous path for
+    prefers-reduced-motion.
+    """
+    _, page = pages["org-chart"]
+    make_fn = re.search(r"function foldControl\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert make_fn, "foldControl is gone"
+    source = make_fn.group(1)
+    # transitionend listener sets hidden after the CSS animation ends.
+    assert (
+        "transitionend" in source
+    ), "no transitionend listener: collapsed content stays in the AT indefinitely"
+    assert (
+        "kidsBodyEl.hidden = true" in source
+    ), "the transitionend handler does not set kidsBodyEl.hidden"
+    # Expanding must clear hidden before the transition so AT gets access during expand.
+    assert (
+        "kidsBodyEl.hidden = false" in source
+    ), "expand does not restore kidsBodyEl.hidden = false before the grid opens"
+    # prefers-reduced-motion path hides synchronously (no transition = no transitionend).
+    assert "prm" in source, (
+        "no synchronous path for prefers-reduced-motion (prm) -- AT sync relies on transitionend"
+        " which may not fire when transition is none"
+    )
+
+
+def test_sub_lead_chip_also_carries_a_fold_toggle_button(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: drawKid adds a fold button to sub-lead chips too.
+
+    The original issue asked to fold squad groups; in this codebase a squad is
+    the sub-lead group (ITS BOARD chip + workers). drawKid must add the same
+    .oc-fold button to the sub-lead chip as drawNode adds to the lead chip.
+    """
+    _, page = pages["org-chart"]
+    kid = re.search(r"function drawKid\(kid, into, now[^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert kid, "drawKid is gone"
+    source = kid.group(1)
+    # Sub-lead fold button must use the same classes as the top-level one.
+    # Sub-lead button is created inside makeFoldToggle; drawKid passes the chip to it.
+    assert "foldControl" in source, "drawKid does not call makeFoldToggle for the sub-lead toggle"
+    # Button attributes are set in makeFoldToggle; check that drawKid calls it.
+    assert "oc-fold-icon" in page, "oc-fold-icon class is missing from the page"
+    assert "oc-fold-text" in page, "oc-fold-text class is missing from the page"
+    # Sub-lead uses a compound foldState key so its state is independent.
+    assert "subKey" in source, "sub-lead has no independent foldState key"
+
+
+def test_parent_label_updates_when_sub_lead_group_toggles(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: toggling a sub-lead group refreshes the parent label.
+
+    countVisibleRows counts sub-lead rows according to their current foldState.
+    When a sub-lead is collapsed, the parent 'Show N' label must decrease; when
+    expanded, it must increase. This is achieved by passing a refreshParentLabel
+    callback into drawKids that each sub-lead click handler calls.
+    """
+    _, page = pages["org-chart"]
+    # drawNode must declare a callback for child updates.
     draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
     assert draw, "drawNode is gone"
-    source = draw.group(1)
-    # The label is set via i18n(), not a hard-coded string.
-    assert "i18n('fold_toggle')" in source, "the fold button's label is not fetched through i18n()"
+    node_source = draw.group(1)
+    assert (
+        "refreshParentLabel" in node_source
+    ), "drawNode has no refreshParentLabel callback for sub-lead toggle notifications"
+    # drawKids must accept and forward the callback.
+    kids_fn = re.search(r"function drawKids\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert kids_fn, "drawKids is gone"
+    assert "onSubToggle" in kids_fn.group(
+        1
+    ), "drawKids does not forward the onSubToggle callback to drawKid"
+    # drawKid's sub-lead click handler must call onSubToggle.
+    kid_fn = re.search(r"function drawKid\(kid, into, now[^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert kid_fn, "drawKid is gone"
+    assert "onSubToggle" in kid_fn.group(
+        1
+    ), "drawKid's sub-lead click handler does not call onSubToggle"
+
+
+def test_sub_lead_fold_button_count_includes_its_board_row(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: the sub-lead 'Show N' adds 1 for the ITS BOARD chip.
+
+    The sub-lead group's .oc-kids-body contains an ITS BOARD chip row plus the
+    sub-lead's workers. countVisibleRows(kid.sub, subKey) counts only the workers;
+    the sub-lead label must add 1 for the ITS BOARD chip so N matches what the
+    user sees open up (the count used at the lead level already includes this +1
+    via the `count++` line that runs before the recursion).
+    """
+    _, page = pages["org-chart"]
+    kid = re.search(r"function drawKid\(kid, into, now[^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert kid, "drawKid is gone"
+    source = kid.group(1)
+    # Sub-lead label must add 1 for the ITS BOARD chip row.
+    assert "1 + countVisibleRows(kid.sub, subKey)" in source, (
+        "sub-lead count does not add 1 for the ITS BOARD chip -- "
+        "'Show N' would undercount the hidden rows by one"
+    )
+    # The +1 must appear in all three places: initial label, subRefresh, and click handler.
+    # The countFn lambda has 1 occurrence; makeFoldToggle calls countFn() in all label updates.
+    assert (
+        "1 + countVisibleRows(kid.sub, subKey)" in source
+    ), "drawKid does not pass 1 + countVisibleRows as the countFn"
+
+
+def test_an_empty_board_counts_its_nothing_dispatched_row(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: a board with no task counts as one row.
+
+    drawKids draws a "nothing dispatched" line for a board with no task, so that line
+    is what opens when the group opens. Counted as zero, a folded empty lead reads
+    "Show 0" and then reveals a row, and every empty sub-lead below a lead makes that
+    lead's count one too low. The behaviour is driven in
+    ``website/src/test/orgChartFoldPage.test.ts``; this pins the two halves together.
+    """
+    _, page = pages["org-chart"]
+    count = re.search(r"function countVisibleRows\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert count, "countVisibleRows is gone"
+    first = count.group(1).strip().splitlines()[0].strip()
+    assert (
+        first == "if (!n.kids.length) return 1;"
+    ), "countVisibleRows does not count an empty board's one line before anything else"
+    kids = re.search(r"function drawKids\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert kids, "drawKids is gone"
+    draws = kids.group(1)
+    assert (
+        "if (!n.kids.length)" in draws and "nothing_dispatched" in draws
+    ), "drawKids does not draw one line for an empty board, so the count of 1 is wrong"
+
+
+def test_the_rail_stops_at_the_last_elbow_at_both_widths(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: the last child's mask lands on the rail, and nothing clips it.
+
+    The mask is a 1px strip in the card colour at ``left: -(padding-left + 1)`` from the
+    last child, which is the rail's own column just outside .oc-kids-body's padding box.
+    An ``overflow`` clip on .oc-kids-body cuts it off there, and a narrower padding kept
+    with the wide offset puts it beside the rail. Either way the rail runs past the last
+    elbow. The outer .oc-kids is the box that clips the closing row.
+    """
+    _, page = pages["org-chart"]
+    css = page[: page.index("</style>")]
+    narrow_at = css.index("@media (max-width: 520px)")
+    wide, narrow = css[:narrow_at], css[narrow_at:]
+    body = re.search(r"\.oc-kids-body \{([^}]*)\}", wide)
+    assert body, "the .oc-kids-body rule is gone"
+    assert "overflow" not in body.group(1), ".oc-kids-body clips, which cuts off the mask"
+    outer = re.search(r"\.oc-kids \{([^}]*)\}", wide)
+    assert outer, "the .oc-kids rule is gone"
+    clips = "overflow: hidden" in outer.group(1)
+    assert clips, ".oc-kids does not clip, so a closing group draws over the rows below it"
+    mask_rule = r"\.oc-kids-body > \.oc-node:last-child:after \{[^}]*left: (-\d+)px"
+    for name, block in (("wide", wide), ("narrow", narrow)):
+        pad = re.search(r"\.oc-kids-body \{[^}]*padding-left: (\d+)px", block)
+        mask = re.search(mask_rule, block)
+        assert pad and mask, f"{name}: the body padding or the last-child mask offset is gone"
+        assert int(mask.group(1)) == -(int(pad.group(1)) + 1), (
+            f"{name}: the mask sits at {mask.group(1)}px but the rail is at "
+            f"-{int(pad.group(1)) + 1}px, so the rail runs past the last elbow"
+        )
+
+
+def test_the_fold_button_says_the_cards_below_stay(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """Folding a group leaves the cards section alone, and the button says so.
+
+    The cards are one per worker session, drawn from every task whatever the graph
+    shows, so a reader who folds a group still sees its workers' cards below. The
+    button's title says that in both languages.
+    """
+    _, page = pages["org-chart"]
+    make_fn = re.search(r"function foldControl\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert make_fn, "foldControl is gone"
+    source = make_fn.group(1)
+    assert (
+        "btn.title = i18n('fold_hint')" in source
+    ), "the fold button does not say that the cards below stay"
+    assert page.count("fold_hint: '") == 2, "fold_hint is not in both the en and zh-CN tables"
+
+
+def test_a_re_render_gives_focus_back_to_the_rebuilt_fold_button(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: a host push does not drop keyboard focus off a fold button.
+
+    render() rebuilds the graph on every message event, which replaces every fold
+    button. Unless it notes which group's button had focus before clearing the graph
+    and focuses that group's new button after drawing it, a keyboard reader lands on
+    the page body at each push and has to Tab back from the top.
+    """
+    _, page = pages["org-chart"]
+    render = re.search(r"function render\(\) \{(.*?)\n    \}", page, re.S)
+    assert render, "render is gone"
+    source = render.group(1)
+    clear = source.index("graph.textContent = ''")
+    assert (
+        0 <= source.find("document.activeElement") < clear
+    ), "render does not read which fold button has focus before clearing the graph"
+    assert "foldButtons = {}" in source, "render keeps the previous render's buttons"
+    draw = source.index("drawNode(g.roots[i], graph, now)")
+    assert (
+        source.find("foldButtons[focusKey].focus(") > draw
+    ), "render does not focus the rebuilt button after drawing the graph"
+    make_fn = re.search(r"function foldControl\([^)]*\) \{(.*?)\n    \}", page, re.S)
+    assert make_fn, "foldControl is gone"
+    records = "foldButtons[stateKey] = btn" in make_fn.group(1)
+    assert records, "foldControl does not record its button, so render cannot find it again"
