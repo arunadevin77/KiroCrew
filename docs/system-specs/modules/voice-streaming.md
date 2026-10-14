@@ -175,7 +175,7 @@ The built-in engine broadcasts its completed WAV. Only the explicit Polly
 provider reaches the Polly branch; a future provider cannot silently reach a
 paid AWS service. Both event types include `audioMime` and echo the synthesis `request_id`.
 `voice_complete` also updates the Redux
-`voiceAudio` field; `UseWebSocketCoverage.test.tsx` covers that state update.
+`voiceAudio` field; `UseWebSocketCoverage.voice.test.tsx` covers that state update.
 
 `VoicePcmPlayer` decodes WAV chunks in order and schedules their sources on one
 `AudioContext` clock. Consecutive ready chunks abut on that clock instead of

@@ -486,10 +486,7 @@
 2304 website/src/test/ConnectionsPage.coverage.test.tsx
 2181 website/src/test/DevFleetPage.test.tsx
 2004 website/src/test/InstancesViewport.test.tsx
-2955 website/src/test/KiroPrerequisiteGate.test.tsx
 2166 website/src/test/MarkdownRenderer.test.tsx
 2750 website/src/test/PierreWorkspaceTreeImpl.test.tsx
-3232 website/src/test/UseWebSocketCoverage.test.tsx
-3658 website/src/test/chatSlice.test.ts
 2664 website/src/test/uiPrefs.test.ts
 2166 website/src/types/index.ts

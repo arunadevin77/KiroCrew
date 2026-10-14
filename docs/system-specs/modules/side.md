@@ -860,7 +860,7 @@ Frontend invariants are covered in KiroCrewWebsite under `src/test/`:
 `SideChat.refresh.test.tsx`, `SideChat.thinking.test.tsx`,
 `SideChat.steerQueue.test.tsx`, `SideSlashCommand.test.tsx`,
 `SideSlashCommand.steer.test.tsx` (command interception wins over mid-turn
-steer routing), and the `sseSideResult` block in `chatSlice.test.ts`.
+steer routing), and the `sseSideResult` block in `chatSlice.messages.test.ts`.
 
 Nothing enforces invariant 2 (separate envelope) mechanically. It is a
 review-time rule, held by the backend and frontend suites above plus the

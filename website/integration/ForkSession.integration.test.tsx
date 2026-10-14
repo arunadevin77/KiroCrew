@@ -6,7 +6,7 @@
  *   → addSlotOptimistic → switchSlot → slot state updates.
  *
  * Complements unit tests in src/test/AssistantMessage.test.tsx (button rendering)
- * and src/test/chatSlice.test.ts (thunk isolated).
+ * and src/test/chatSlice.slots.test.ts (thunk isolated).
  */
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Provider } from 'react-redux'
