@@ -53,6 +53,7 @@ from kiro_crew.member_memory_backup import (  # noqa: F401 - facade re-exports
 from kiro_crew.memory_stores import (  # noqa: F401 - facade re-exports
     MEMBER_BACKUPS_DIR_NAME,
     MEMORY_STORES_DIR_NAME,
+    UnknownMemoryStore,
     is_host_local_store_state,
     memory_store_namespace_lock,
     named_store_product_file,
@@ -81,8 +82,11 @@ from kiro_crew.snapshot_archive import (  # noqa: F401 - facade re-exports
     _data_filter,
     _dir_flags_nofollow,
     _escape_one,
+    _hold_reader_lock,
+    _immutable_read_may_stand_in,
     _manifest_components,
     _print_manifest,
+    _refuse_if_changed_since,
     _refuse_oversized_archive,
     _refuse_unsound_required_capture,
     _rejection_recording_filter,
@@ -1184,6 +1188,15 @@ def snapshot_main(
         _audit("snapshot_rejected", f"reason=database_copy_failed detail={e}")
         print(f"❌ {e}")
         print("   No bundle was written. Stop the gateway and re-run.")
+        return 1
+    except UnknownMemoryStore as e:
+        # A memory store refused the read, most often through its locks: one is redirected
+        # or not a private regular file, or the stores changed while they were read without
+        # the namespace lock. The detail names the cause. Raised before the archive was
+        # published, so it is a refusal and reads as one.
+        _audit("snapshot_rejected", f"reason=memory_store_refused detail={e}")
+        print(f"❌ {e}")
+        print("   No bundle was written.")
         return 1
 
     sz = outfile.stat().st_size

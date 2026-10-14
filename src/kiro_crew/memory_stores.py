@@ -20,6 +20,7 @@ and configuration import cycles.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import re
@@ -815,16 +816,113 @@ def named_store_operation(method):
     return guarded
 
 
+def is_lock_write_refusal(exc: OSError) -> bool:
+    """Whether *exc* is this process's view refusing the write a lock open makes.
+
+    A read-only mount answers ``EROFS``; a sandbox that seals the tree answers
+    ``EACCES`` or ``EPERM``. POSIX only: Windows raises ``PermissionError`` for a
+    sharing violation, which is contention on the file rather than a sealed view.
+    """
+    from kiro_crew import platform_compat
+
+    if not platform_compat.IS_POSIX:
+        return False
+    return isinstance(exc, PermissionError) or exc.errno == errno.EROFS
+
+
+def open_existing_lock_read_only(
+    path: Path, *, refusal: type[ValueError], defect: str
+) -> int | None:
+    """Open the lock file at *path* without write access, or ``None`` when it does not exist.
+
+    For a reader on a view that can neither create nor modify the file. ``flock`` needs
+    no write access, so a lock taken on this descriptor contends on the same inode as
+    the writers' and serializes against them exactly as the writable open does. The
+    no-follow open and the regular-file and single-link checks are the writable open's
+    own. The file must also belong to this process's user, which the writable open
+    enforces by tightening its mode, an operation only the owner may make. *defect* is
+    the message *refusal* carries when any check fails.
+    """
+    import stat
+
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        foreign = hasattr(os, "geteuid") and info.st_uid != os.geteuid()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or foreign:
+            raise refusal(defect)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+_NAMESPACE_LOCK_DEFECT = "memory store namespace lock is not a private regular file"
+
+
+def _open_namespace_lock(directory: Path, path: Path, *, read_only_ok: bool) -> int | None:
+    """The namespace lock's descriptor; ``None`` only for a reader that found no lock file.
+
+    A reader on a confirmed read-only mount goes straight to the read-only open, so it
+    makes no write for the owner-only tightening to log as a lockdown failure. Any
+    other view tries the writable open, and a reader falls back on that open's own
+    refusal.
+    """
+    import stat
+
+    from kiro_crew import platform_compat
+
+    if read_only_ok and platform_compat.is_readonly_filesystem(directory.parent):
+        return _open_namespace_lock_read_only(path)
+    try:
+        platform_compat.make_owner_only_dir(directory)
+        if path.resolve() != path:
+            raise UnknownMemoryStore("memory store namespace lock is redirected")
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except OSError as exc:
+        if not (read_only_ok and is_lock_write_refusal(exc)):
+            raise
+        return _open_namespace_lock_read_only(path)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise UnknownMemoryStore(_NAMESPACE_LOCK_DEFECT)
+        platform_compat.restrict_to_owner(path)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _open_namespace_lock_read_only(path: Path) -> int | None:
+    if path.resolve() != path:
+        raise UnknownMemoryStore("memory store namespace lock is redirected")
+    return open_existing_lock_read_only(
+        path, refusal=UnknownMemoryStore, defect=_NAMESPACE_LOCK_DEFECT
+    )
+
+
 @contextmanager
-def memory_store_namespace_lock(root: Path | None = None) -> Iterator[None]:
+def memory_store_namespace_lock(
+    root: Path | None = None, *, read_only_ok: bool = False
+) -> Iterator[None]:
     """Serialize store allocation, publication and replacement before enumerating names.
 
     The lock lives in the host-local directory that replacement and rollback keep.
     Nested operations on the same thread share one hold. Operation-local file and
     configuration locks come after it; replace probes lifetime locks without waiting.
-    """
-    import stat
 
+    *read_only_ok* is for a caller that only reads the stores, such as a snapshot or an
+    export. Where this process's view refuses the lock file's write (a read-only mount,
+    or a sandbox that seals the tree), the same exclusive lock is taken through a
+    read-only descriptor on the existing file. When that view holds no lock file at
+    all, the read proceeds without one and is refused afterwards if the file appeared
+    meanwhile, because only a namespace operation creates it. Writers never pass it,
+    so allocation, publication and replacement keep failing loudly on such a view.
+    """
     from kiro_crew import platform_compat
 
     root = (root if root is not None else memory_stores_root()).resolve()
@@ -837,16 +935,26 @@ def memory_store_namespace_lock(root: Path | None = None) -> Iterator[None]:
     directory = root / MEMBER_BACKUPS_DIR_NAME
     if directory.resolve() != directory:
         raise UnknownMemoryStore("memory store namespace lock directory is redirected")
-    platform_compat.make_owner_only_dir(directory)
     path = directory / ".namespace.lock"
-    if path.resolve() != path:
-        raise UnknownMemoryStore("memory store namespace lock is redirected")
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    fd = _open_namespace_lock(directory, path, read_only_ok=read_only_ok)
+    if fd is None:
+        logger.warning(
+            "memory store namespace lock %s does not exist and this process cannot create "
+            "it; reading the stores without it",
+            path,
+        )
+        held.add(root)
+        try:
+            yield
+        finally:
+            held.remove(root)
+        if os.path.lexists(path):
+            raise UnknownMemoryStore(
+                "the memory stores changed while they were read without the namespace "
+                "lock; run the read again"
+            )
+        return
     try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise UnknownMemoryStore("memory store namespace lock is not a private regular file")
-        platform_compat.restrict_to_owner(path)
         with platform_compat.file_lock(fd, exclusive=True, required=True):
             held.add(root)
             try:
