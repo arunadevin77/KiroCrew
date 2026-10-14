@@ -1997,7 +1997,12 @@ walked past) plus the assistant text it had streamed, bracketed `[INTERRUPTED TU
 A mid-turn steer (a `user` row whose `meta.steer` is true, `replay._is_steer_row`)
 never opens the turn: the walk passes it on the way to the opener, and each steer
 is carried in the partial output, in the order it was sent, prefixed
-`[Steered mid-turn]`. A window that holds steers but no opener restores nothing.
+`[Steered mid-turn]`. A steer whose `meta.steerState` is `requeued` is walked
+past but not carried: the turn never took it, and it runs as its own turn from the
+queue. A window that holds steers but no opener restores nothing. The partial
+output's length cap bounds the assistant text alone, cut where it always was; a
+carried steer never spends it (each steer is capped like the request), so a
+redirect sent after a long stream is kept.
 Only a `role=user` opener is framed as the user's most recent request; a nudge,
 sub-agent, cron, app (`mcp_app`) or synthesis opener is labelled as an automated
 delivery of that kind (`replay._interrupted_opener_kind`), never as something the

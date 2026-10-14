@@ -2,7 +2,8 @@
 
 A steer is a ``user`` row marked ``meta.steer`` that joined a turn already
 running. The restore must name the row that OPENED the turn as the interrupted
-request and carry each steer, in order, with the partial output.
+request and carry each steer, in order, with the partial output -- except a
+steer the turn never took, which runs as its own turn.
 """
 
 from __future__ import annotations
@@ -165,3 +166,119 @@ def test_only_a_true_steer_flag_marks_a_steer():
             row["meta"] = meta
         out = _resume(_earlier_turn() + [row])
         assert "Interrupted request:\nplain request" in out, meta
+
+
+def test_a_requeued_steer_is_walked_past_but_not_carried():
+    # The turn ended before it took this steer, so it waits in the queue as its
+    # own turn (or the user dismissed it). The restore still finds the request
+    # behind it, but must not tell the model the steer redirected this turn.
+    requeued = _steer("also bump the version")
+    requeued["meta"]["steerState"] = "requeued"
+    rows = _earlier_turn() + [
+        {"role": "user", "content": "tag the release"},
+        {"role": "assistant", "content": "Tagging"},
+        _steer("sign the tag"),
+        requeued,
+    ]
+
+    out = _resume(rows)
+
+    assert "Interrupted request:\ntag the release" in out
+    assert "[Steered mid-turn] sign the tag" in out
+    assert "also bump the version" not in out
+
+
+def test_a_steer_with_an_unsettled_or_missing_state_is_carried():
+    # `written` (sent, consumption not yet echoed) and a row with no state may
+    # have redirected the turn; only `requeued` says it did not.
+    for meta in ({"steer": True, "steerState": "written"}, {"steer": True}):
+        rows = [
+            {"role": "user", "content": "tag the release"},
+            {"role": "user", "content": "sign the tag", "meta": meta},
+        ]
+        assert "[Steered mid-turn] sign the tag" in _resume(rows), meta
+
+
+def test_the_requeued_state_matches_the_dashboard_lifecycle():
+    from kiro_crew.context_assembly import replay
+    from kiro_crew.dashboard.chat_delivery import STEER_STATE_REQUEUED
+
+    assert replay._STEER_STATE_REQUEUED == STEER_STATE_REQUEUED
+
+
+def _partial(out: str) -> str:
+    return out.split("Partial response before the interruption:\n", 1)[1].split(
+        "\n[END INTERRUPTED TURN]", 1
+    )[0]
+
+
+def test_a_steer_after_a_long_stream_survives_the_cap():
+    # The cap bounds the streamed assistant text. A redirect sent after the turn
+    # streamed past it is the line the model most needs and must not be cut.
+    rows = [
+        {"role": "user", "content": "summarise the incident"},
+        {"role": "assistant", "content": "x" * 5000},
+        _steer("only the customer impact"),
+        {"role": "assistant", "content": "Narrowing to impact"},
+    ]
+
+    partial = _partial(_resume(rows))
+
+    assert partial.endswith("… [truncated]\n[Steered mid-turn] only the customer impact")
+    assert partial.count("x") == 4000
+    assert "Narrowing to impact" not in partial
+
+
+def test_steer_lines_do_not_spend_the_assistant_budget():
+    rows = [
+        {"role": "user", "content": "draft the plan"},
+        _steer("s" * 3000),
+        {"role": "assistant", "content": "a" * 3500},
+    ]
+
+    partial = _partial(_resume(rows))
+
+    assert partial == f"[Steered mid-turn] {'s' * 3000}\n{'a' * 3500}"
+
+
+def test_without_steers_the_cap_cuts_where_it_always_did():
+    # Reference: the whole assistant text joined, then cut at the cap.
+    cap = 50
+    shapes = [
+        [60],
+        [50],
+        [49, 1],
+        [49, 2],
+        [24, 25],
+        [24, 25, 3],
+        [25, 24, 10],
+        [10, 10, 10, 10, 10, 10],
+        [3] * 20,
+    ]
+    for sizes in shapes:
+        chunks = [chr(ord("a") + i) * n for i, n in enumerate(sizes)]
+        joined = "\n".join(chunks)
+        expected = joined[:cap] + "… [truncated]" if len(joined) > cap else joined
+        rows = [{"role": "user", "content": "go"}] + [
+            {"role": "assistant", "content": c} for c in chunks
+        ]
+        current = {"role": "inject", "content": "resume", "meta": {"injectKind": "recovery"}}
+        rows.append(current)
+        out = build_interrupted_turn_preamble(
+            rows,
+            current=current,
+            opener_inject_kinds=TURN_OPENING_INJECT_KINDS,
+            assist_cap=cap,
+        )
+        assert _partial(out) == expected, sizes
+
+
+def test_a_steer_is_capped_like_the_request():
+    rows = [
+        {"role": "user", "content": "go"},
+        _steer("s" * 9000),
+    ]
+
+    partial = _partial(_resume(rows))
+
+    assert partial == f"[Steered mid-turn] {'s' * 8000}… [truncated]"
