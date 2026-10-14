@@ -1,7 +1,8 @@
 """Coverage for the Kiro Crew gateway's deterministic cron-execution paths.
 
-``test_slack_gateway.py`` and ``test_cron_gateway_integration.py`` drive the
-LLM (``message``) arm of ``_cron_callback`` thoroughly, but the two
+``test_slack_gateway.py``, ``test_cron_gateway_integration.py`` and
+``test_cron_gateway_integration_llm.py`` drive the LLM (``message``) arm of
+``_cron_callback`` thoroughly, but the two
 deterministic arms — ``job.command`` (shell) and ``job.script`` (Python
 callable) — only had their happy paths exercised. Everything reached here was
 uncovered by the whole suite before this file:

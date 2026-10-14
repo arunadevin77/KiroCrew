@@ -481,7 +481,7 @@ def test_all_candidates_corrupt_yields_no_floor(bad: str) -> None:
 # buys false positives that would get suppressed rather than obeyed.
 #
 # What actually pins the property is behavioural, in
-# test_open_slots_persistence.py::test_restore_open_slots_async_reads_off_the_loop
+# test_open_slots_persistence_async_restore.py::test_restore_open_slots_async_reads_off_the_loop
 # and test_session_restore.py's off-loop class: they record the thread each half
 # ran on and fail on the base shape. This gate is the cheap companion that stops
 # a future edit from re-inlining a read straight into a driver.
