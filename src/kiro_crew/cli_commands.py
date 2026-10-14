@@ -343,6 +343,17 @@ def _internal_secret(port: int) -> str:
     return read_local_secret(port, dial_host="127.0.0.1")
 
 
+def _spawn_row_text(row: dict[str, object]) -> str:
+    """A ``spawn list`` row's id and task, as one terminal line.
+
+    Both are agent-authored, so neither may carry a live control sequence or a
+    newline that forges another row.
+    """
+    row_id = safe_terminal_line(str(row["id"]))
+    task = safe_terminal_line(str(row.get("task") or ""))[:60]
+    return f"{row_id}  {task}"
+
+
 def _spawn(args: argparse.Namespace) -> None:
     """Dispatch spawn subcommands: run, list."""
     base = f"http://127.0.0.1:{args.port}"
@@ -376,9 +387,7 @@ def _spawn(args: argparse.Namespace) -> None:
             # Accepted, no run yet (or waiting to resume one): a distinct icon,
             # so this is never read as a run in progress.
             tag = "resuming" if q.get("resuming") is True else "queued, not started"
-            print(
-                f"  🕒 {q['id']}  {str(q.get('task') or '')[:60]}  — {tag}: {queued_wait_text(q)}"
-            )
+            print(f"  🕒 {_spawn_row_text(q)}  — {tag}: {queued_wait_text(q)}")
         if partial:
             print("  (the queued list is partial; more spawns may be queued)")
         for a in agents:
@@ -390,7 +399,7 @@ def _spawn(args: argparse.Namespace) -> None:
                 status, note = "🔐", "  — waiting for spawn approval"
             else:
                 status, note = "⏳", ""
-            print(f"  {status} {a['id']}  {a.get('task', '')[:60]}{note}")
+            print(f"  {status} {_spawn_row_text(a)}{note}")
         return
 
     if action == "run":

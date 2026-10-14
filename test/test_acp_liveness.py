@@ -526,6 +526,61 @@ def test_every_production_dispatch_wires_the_trusted_wait_identity():
     assert not missing, f"dispatch sites not wiring the wait identity: {missing}"
 
 
+@pytest.mark.parametrize(
+    ("trusted", "expected"),
+    [(True, "oracle"), (False, "")],
+)
+def test_main_dispatch_names_the_server_only_from_a_trusted_identity(
+    monkeypatch, trusted, expected
+):
+    """The main handle stamps ``mcp_server_name`` onto the in-flight call ONLY when
+    the event's identity is provenance-verified. The construction-site ratchet
+    above checks that the keyword is passed; this pins its VALUE, so an unverified
+    frame cannot select the wait contract by naming a server."""
+    import asyncio
+    import time
+    from unittest.mock import AsyncMock, MagicMock
+
+    from kiro_crew.acp import session_handle as sh
+    from kiro_crew.acp.types import (
+        EVENT_TOOL_CALL,
+        METHOD_SESSION_UPDATE,
+        AcpEvent,
+        JsonRpcMessage,
+    )
+
+    event = AcpEvent(
+        kind=EVENT_TOOL_CALL,
+        tool_call_id="c1",
+        title="wait",
+        tool_name="wait",
+        mcp_server_name="oracle",
+        mcp_identity_trusted=trusted,
+    )
+    monkeypatch.setattr(sh, "parse_session_update", lambda *_a, **_k: [event])
+    rt = MagicMock()
+    rt._last_activity = time.monotonic()
+    rt.pid = None
+    rt.acp_backend = "kiro"
+    rt.is_alive = MagicMock(return_value=True)
+    rt.send_notification = AsyncMock()
+    rt.send_request = AsyncMock(return_value=1)
+    handle = sh.AcpSessionHandle("sA", asyncio.Queue(), rt)
+
+    handle._handle_update(
+        JsonRpcMessage(
+            method=METHOD_SESSION_UPDATE,
+            params={
+                "sessionId": "sA",
+                "update": {"sessionUpdate": "tool_call", "toolCallId": "c1"},
+            },
+        )
+    )
+
+    assert handle._inflight_tool is not None
+    assert handle._inflight_tool.mcp_server_name == expected
+
+
 def test_missing_boot_stamp_keeps_the_full_window(tmp_path):
     """No boot-clock stamp, no absence claim.
 

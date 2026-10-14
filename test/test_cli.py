@@ -6456,6 +6456,60 @@ class TestSpawnCliAuth:
         assert "Error" in out
         assert "gateway not running" not in out
 
+    def _list_rows(self, monkeypatch, capsys, payload: dict) -> str:
+        """Run ``spawn list`` against a canned gateway answer and return stdout."""
+        monkeypatch.setattr("kiro_crew.cli_commands.read_local_secret", lambda _port, **_kw: "s")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(payload).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr(
+            "kiro_crew.cli_commands.loopback_urlopen", lambda _req, timeout=0: mock_resp
+        )
+
+        from kiro_crew.cli_commands import _spawn
+
+        _spawn(argparse.Namespace(spawn_action="list", port=5476))
+        return capsys.readouterr().out
+
+    def test_spawn_list_queued_row_prints_no_terminal_controls(self, monkeypatch, capsys):
+        """A queued spawn's id and task are agent-authored: no live escape, no forged row."""
+        esc = "\x1b"
+        out = self._list_rows(
+            monkeypatch,
+            capsys,
+            {
+                "agents": [],
+                "queued": [
+                    {
+                        "id": f"q{esc}[2Jid",
+                        "task": f"do it{esc}]0;pwned\x07\n  ✅ forged-row  done",
+                    }
+                ],
+            },
+        )
+        assert esc not in out
+        assert "\x07" not in out
+        assert len(out.strip().splitlines()) == 1
+        assert "forged-row" in out  # kept as visible text, on the SAME line
+
+    def test_spawn_list_running_row_prints_no_terminal_controls(self, monkeypatch, capsys):
+        """The running-agent rows share the queued rows' rule."""
+        esc = "\x1b"
+        out = self._list_rows(
+            monkeypatch,
+            capsys,
+            {
+                "agents": [
+                    {"id": f"a{esc}[31m1", "task": f"t{esc}[2K\r\n  ✅ forged  done", "done": False}
+                ],
+                "queued": [],
+            },
+        )
+        assert esc not in out
+        assert "\r" not in out
+        assert len(out.strip().splitlines()) == 1
+
 
 class TestArtifactCli:
     """CLI-side coverage for security-critical paths in `_artifact`.
