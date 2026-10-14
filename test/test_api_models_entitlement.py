@@ -530,7 +530,7 @@ async def test_full_snapshot_still_yields_the_whole_catalog():
     # A snapshot that already covers the whole catalog narrows nothing. The
     # read path consults the selected provider's revalidation (the would-narrow
     # cheap-path gate that decides whether to actually probe lives inside the
-    # handle, pinned in test_acp_runtime.py), and the catalog is returned intact.
+    # handle, pinned in test_acp_runtime_models.py), and the catalog is returned intact.
     provider = _provider([{"modelId": m["model_name"]} for m in CATALOG])
     request = _request(provider)
     rows = await agents._entitled_kiro_models(request, CATALOG)

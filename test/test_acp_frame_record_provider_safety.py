@@ -140,7 +140,7 @@ async def test_restricted_runtime_disables_recording_before_start_await(mode, mo
 class _LiveRuntime:
     """An ``AcpRuntime`` for *backend* with a fake process and a live reader task.
 
-    Same shape as ``test_acp_runtime._make_runtime``: stdout is a real
+    Same shape as ``acp_runtime_helpers._make_runtime``: stdout is a real
     ``asyncio.StreamReader``, so ``_reader_loop`` runs the genuine decode ->
     record -> route path. ``feed`` pushes a frame; ``expect`` waits for it on
     the session's queue and asserts the runtime survived.

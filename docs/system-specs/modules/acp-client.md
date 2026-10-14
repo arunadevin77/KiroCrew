@@ -2144,9 +2144,10 @@ session: it is counted there, cancelled there, and recovered there. Concretely:
   the next snapshot, and a denial in that window is attributed to a cap truncation
   nobody owns. Attribution only: routing still requires a provable owner. Pinned by
   `test_native_subagent_boundary.py` (the cap and the two reasons end to end) and
-  `test_acp_runtime.py` (one warning per episode however many frames re-announce
-  it, the throttled summary's count and peak, both ways an episode ends re-arming
-  the warning, and the attribution expiring with the snapshot that earned it).
+  `test_acp_runtime_native_children.py` (one warning per episode however many
+  frames re-announce it, the throttled summary's count and peak, both ways an
+  episode ends re-arming the warning, and the attribution expiring with the
+  snapshot that earned it).
 - **Observed, not scheduled.** On a shared runtime with several registered
   sessions, an unannounced child frame names no owner and is dropped (counted by
   `_note_dropped_frame`); the count is best-effort and a display never implies

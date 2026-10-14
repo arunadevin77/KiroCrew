@@ -199,7 +199,7 @@
 2317 test/test_acp_client_more_coverage.py
 3482 test/test_acp_deepseek_backend.py
 2852 test/test_acp_pi_backend.py
-15099 test/test_acp_runtime.py
+8274 test/test_acp_runtime.py
 4284 test/test_acp_seed_provenance.py
 2909 test/test_acp_session_mcp.py
 2780 test/test_admission_gate.py
