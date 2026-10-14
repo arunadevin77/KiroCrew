@@ -238,7 +238,6 @@
  1 test_knowledge_add_source.py
  2 test_knowledge_agent_sync_off_loop.py
  2 test_knowledge_cross_thread.py
- 1 test_knowledge_effort_pools.py
  3 test_knowledge_handlers_coverage.py
  7 test_knowledge_handlers_off_loop.py
  1 test_knowledge_ingest_magic_byte.py
