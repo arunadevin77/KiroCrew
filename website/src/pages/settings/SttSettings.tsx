@@ -19,6 +19,7 @@ import {
   downloadRatio,
   FALLBACK_PROVIDERS,
   FALLBACK_STREAMING_PROVIDERS,
+  INSTALLED_BUT_REFUSED_CODES,
   localeLanguage,
   nextTranscribeLanguages,
   PROVIDER_LOCAL,
@@ -1180,7 +1181,12 @@ export default function SttSettings({ cardIndex }: {
                 // unknown stored value was degraded onto). Neutral, and the reason
                 // line below names the control.
                 ? <Badge variant="muted">{i18nT('pages.settings.sttSettings.status_provider_off')}</Badge>
-                : <Badge variant="warn">{i18nT('pages.settings.sttSettings.not_installed')}</Badge>}
+                : INSTALLED_BUT_REFUSED_CODES.has(status?.code ?? '')
+                  // The recogniser IS installed in these states; it failed to
+                  // load or was refused. "not installed" would contradict
+                  // the reason line right under it.
+                  ? <Badge variant="warn">{i18nT('pages.settings.sttSettings.status_not_working')}</Badge>
+                  : <Badge variant="warn">{i18nT('pages.settings.sttSettings.not_installed')}</Badge>}
             {/* The engine truth rides on the row a user already reads to answer
                 "is this working", rather than in a section of its own. Three
                 read-only numbers each given a labelled row of their own was the

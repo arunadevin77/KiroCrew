@@ -102,6 +102,17 @@ export const UNAVAILABLE_CODE_KEY: Record<string, string> = {
 }
 
 /**
+ * Refusals where the recogniser IS installed but could not be, or would not be, loaded.
+ * The Status badge shows "not working" for these, not "not installed".
+ */
+export const INSTALLED_BUT_REFUSED_CODES: ReadonlySet<string> = new Set([
+  'stt_import_failed',
+  'stt_unsupported_cpu',
+  'stt_load_crashed',
+  'stt_native_probe_crashed',
+])
+
+/**
  * Localised explanation for an availability refusal.
  *
  * Falls back to the backend's own `detail` for a code this build does not know:
@@ -123,8 +134,9 @@ export function unavailableMessage(code: string, detail = ''): string {
  * sentences point "above"/"below" at a control that lives only there:
  * `stt_disabled` ("Switch it on above"), `stt_provider_off` ("Pick another
  * provider from the Provider menu below"), `stt_unsupported_cpu` /
- * `stt_load_crashed` / `stt_native_probe_crashed` ("Turn speech-to-text off
- * above") and `stt_model_missing` ("Download it below"). Pointing the modal user
+ * `stt_load_crashed` / `stt_native_probe_crashed` ("pick another provider or
+ * Off from the Provider menu below") and `stt_model_missing` ("Download it
+ * below"). Pointing the modal user
  * at a control that is not on screen is the dead end this surface removes, so:
  *
  *   - a code whose sentence is self-contained (extra missing, no wheel, import
