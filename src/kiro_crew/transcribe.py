@@ -409,7 +409,17 @@ def _cleanup_stale_ffmpeg_snapshots(root: str) -> None:
         if match is None:
             continue
         pid = int(match.group(1))
-        if pid == os.getpid() or platform_compat.pid_liveness(pid) != platform_compat.PID_DEAD:
+        if pid == os.getpid():
+            continue
+        # A live or unsignalable owner keeps its snapshot -- unless it is the
+        # supervisor an in-app restart through a supervising launcher left
+        # behind: this gateway's own previous image, exec-ed into the launcher
+        # with its pid kept, running no decoder. A snapshot it left
+        # mid-transcription is stale, and the supervisor never reads dead while
+        # this gateway runs. A live gateway ancestor still runs Python and keeps
+        # its snapshot.
+        owner_gone = platform_compat.pid_liveness(pid) == platform_compat.PID_DEAD
+        if not owner_gone and not platform_compat.is_exec_supervisor_of_this_process(pid):
             continue
         parent = os.path.join(root, name)
         payload = os.path.join(parent, "ffmpeg")

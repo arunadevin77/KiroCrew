@@ -1573,6 +1573,13 @@ def build_reconciler(
         predecessor gateway is a real dead record, but ``_untrack_session_pid``
         matches on the CALLING process's prefix and cannot remove anybody else's row
         -- those are the next gateway start's to clear, once its owner reads dead.
+        One predecessor is this process: the supervisor an in-app restart through
+        a supervising launcher leaves behind, a live ancestor whose image is not a
+        Python interpreter (:func:`platform_compat.is_exec_supervisor_of_this_process`).
+        Its rows were filed by this gateway's own previous image, and its owner
+        never reads dead while the supervisor lives, so they are retracted here as
+        this gateway's own. A live gateway ancestor still runs Python and keeps its
+        rows.
         And a pid known only to the MCP backend pidfile, to the app backend table
         or to the manager's in-memory union has no row in either tracking file: the
         MCP sweep owns the first, the app backend's spawn and stop paths the second,
@@ -1596,7 +1603,11 @@ def build_reconciler(
         entry = snapshot.get(pid)
         if entry is not None:
             owner, _token, row = entry
-            if not owner or owner == os.getpid():
+            if (
+                not owner
+                or owner == os.getpid()
+                or platform_compat.is_exec_supervisor_of_this_process(owner)
+            ):
                 mine = True
                 # The captured row, never the number: the untracker matches the
                 # ``<gw_pid>:<pid>`` prefix at any token and would take a
