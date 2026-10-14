@@ -41,6 +41,7 @@ from conftest import requires_symlinks
 from kiro_crew import platform_compat
 from kiro_crew.apps import registry
 from kiro_crew.apps.manifest import AppManifest
+from kiro_crew.testing.wait import await_until
 
 #: The install's refusal for a root `data` the data directory cannot stand beside,
 #: as `manager.gateway_data_dir_obstruction` spells it -- the transaction must carry it
@@ -1820,7 +1821,7 @@ async def test_double_cancel_waits_for_fetch_cleanup_before_restoring_checkout(
             credential_target=raw_url,
         )
     )
-    await asyncio.wait_for(fetch_started.wait(), timeout=5)
+    await await_until(fetch_started, what="the fetch starting")
     task.cancel()
     assert await asyncio.to_thread(cleanup_started.wait, 5)
 
