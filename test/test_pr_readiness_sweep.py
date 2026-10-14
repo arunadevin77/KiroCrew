@@ -1806,9 +1806,10 @@ def test_comments_are_not_read_when_the_pr_is_untouched_since_the_verdict(
 
 # ── Review evidence ──────────────────────────────────────────────────────────
 #
-# Readiness reds a head a reviewer asked changes on, and neither a review nor a
-# dismissal emits an event the aggregator hears or a check-run the modes above
-# see. The scan's newest review time is what re-fires a terminal verdict.
+# Readiness reds a head a reviewer asked changes on. A review reaches the
+# aggregator through the Sensitive Change Review run it starts; the scan's newest
+# review time is what re-fires a terminal verdict when that run never starts or
+# the readiness run it triggers does not publish.
 
 
 @pytest.mark.parametrize("state", ["success", "failure"])

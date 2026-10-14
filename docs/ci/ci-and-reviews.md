@@ -3111,12 +3111,25 @@ status plus one `readiness:` label**.
   reviewer approving or re-reviewing, or a dismissal clears it. That is weaker
   than GitHub's own `reviewDecision`, which holds across new commits until the
   reviewer re-reviews: here the push is the author's answer. A review list it
-  cannot read is `pending`, never red. Readiness hears no review event, so
-  `pr-readiness-sweep.yml` reads each open PR's newest review or dismissal time
-  in its GraphQL scan and re-fires the recompute when one is newer than a
-  `success` or `failure` verdict, against the same publish-lag floor the
-  pending arm uses for checks -- within about two sweep ticks. A `pending`
-  verdict already holds merge, and the check that resolves it re-reads reviews.
+  cannot read is `pending`, never red. A review reaches readiness on two paths.
+  The fast one: a submitted, edited or dismissed review starts a Sensitive
+  Change Review run, and readiness lists that workflow for its
+  `pull_request_review` runs alone (the job gate skips its `pull_request`
+  runs). The readiness run its `in_progress` event starts reads the review
+  either way: if the Sensitive Change Review run is still going it holds the
+  verdict at `pending`, and that run's completion is check evidence on which
+  the sweep recomputes; if it has already completed the hold writes nothing and
+  the same readiness run goes on to the full evaluation, which reads the
+  reviews. The fallback, for a review whose run never starts and a readiness
+  run that does not publish: `pr-readiness-sweep.yml` reads each open PR's
+  newest review or dismissal time in its GraphQL scan and re-fires the
+  recompute when one is newer than a `success` or `failure` verdict, against
+  the same publish-lag floor the pending arm uses for checks -- within about
+  two sweep ticks. A `pending` verdict already holds merge, and the check that
+  resolves it re-reads reviews. Any account can submit a review, so any account
+  can start one of these readiness runs: each publishes only `pending` or the
+  verdict the reviews and lanes support, and costs a few requests from the
+  shared pool.
 - **It also enforces the disposition rule.** Besides scoring lanes, readiness runs
   `pr_status.py --disposition-gate` (checked out from the default branch, never
   from the PR head — this workflow is `pull_request_target` and holds write

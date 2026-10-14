@@ -395,10 +395,12 @@ jobs:
             newest_fail="$(jq -r '.newest_failed_check_at // empty' <<<"$row")"
 
             # Newest human review submission or dismissal on the pull request.
-            # Readiness blocks on a changes-requested review of the head (issue
-            # #17049), and neither a review nor a dismissal emits an event
-            # pr-readiness.yml hears or a check-run the modes above can see, so
-            # this is the only path that re-evaluates one. The success and
+            # Readiness blocks on a changes-requested review of the head. A
+            # review reaches pr-readiness.yml through the Sensitive Change
+            # Review run it starts. This is the path for a review whose run
+            # never starts (a newer event on the same PR cancelled it while
+            # queued) and for a readiness run that is cancelled or cannot
+            # read. The success and
             # failure arms count it against the same floor as check evidence in
             # the pending arm -- the publication stamp minus
             # publish_lag_seconds -- because a review landing inside the

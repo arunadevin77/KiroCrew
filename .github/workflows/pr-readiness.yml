@@ -61,6 +61,17 @@ on:
       # It runs on `pull_request`, so its payload does carry the PR head and
       # its start can hold the verdict like any other lane's.
       - Internal Content Scan Gate
+      # Not a lane: readiness does not aggregate its verdict, and the job gate
+      # skips its `pull_request` runs before a runner starts, so those cost a
+      # dispatch and nothing else. It is listed for its
+      # `pull_request_review` runs, which a submitted, edited or dismissed
+      # review starts and nothing else does. That run's payload carries the PR
+      # head, and either way the hold step finds it, the review is read: while
+      # the run is still going the hold writes `pending` and its completion is
+      # the check evidence on which the sweep recomputes, and once it has
+      # completed the hold writes nothing and this same run goes on to the
+      # full evaluation, which reads the reviews.
+      - Sensitive Change Review
     # ONLY `in_progress`. `completed` is deliberately absent, and so is
     # `requested`.
     #
@@ -205,10 +216,22 @@ jobs:
     # workflow is `workflow_run`-triggered any more -- and this is the second:
     # re-adding such a lane has to clear both, which
     # `test/test_ai_review_workflows.py` refuses.
+    #
+    # Sensitive Change Review is admitted for its `pull_request_review` runs
+    # only. Its `pull_request` runs start on the same opened, synchronize,
+    # reopened and edited events the `pull_request_target` trigger already
+    # re-derives the verdict on, and it is not an aggregated lane, so a run
+    # from one of them would re-check nothing and still spend requests from
+    # the shared pool. A review run is the opposite case: no other event this
+    # workflow hears follows a review. Both clauses name the lane by its
+    # `name:`, the same field the trigger allowlist matches on.
     if: >-
       github.event_name != 'workflow_run'
-      || github.event.workflow_run.event == 'pull_request'
+      || (github.event.workflow_run.event == 'pull_request'
+          && github.event.workflow_run.name != 'Sensitive Change Review')
       || github.event.workflow_run.event == 'dynamic'
+      || (github.event.workflow_run.event == 'pull_request_review'
+          && github.event.workflow_run.name == 'Sensitive Change Review')
     # This is the busiest workflow here: thousands of ~12-second runs a day, in
     # bursts. A same-repository PR's `pull_request_target` run from a listed
     # actor uses the CodeBuild fleet so it stays out of the shared hosted

@@ -183,6 +183,95 @@ def _workflow(name: str) -> str:
     return (WORKFLOWS / name).read_text(encoding="utf-8")
 
 
+_GHA_CONDITION_TOKEN = re.compile(r"\s*(\|\||&&|==|!=|!|\(|\)|'(?:[^']|'')*'|[A-Za-z_][\w.\-]*)")
+
+
+def _eval_gha_condition(expression: str, context: dict[str, object]) -> bool:
+    """Evaluate a job `if:` against ``context`` the way GitHub reads it.
+
+    Covers the subset the readiness job gate uses: `||`, `&&`, `!`, `==`,
+    `!=`, parentheses, single-quoted strings and dotted context paths. A path
+    that is absent reads as null, and string equality ignores case, as on
+    GitHub. Anything outside that subset fails the test rather than guessing.
+    """
+    text = expression.strip()
+    tokens: list[str] = []
+    pos = 0
+    while pos < len(text):
+        match = _GHA_CONDITION_TOKEN.match(text, pos)
+        assert match, f"unsupported expression syntax at {text[pos:]!r}"
+        tokens.append(match.group(1))
+        pos = match.end()
+    index = 0
+
+    def peek() -> str | None:
+        return tokens[index] if index < len(tokens) else None
+
+    def take() -> str:
+        nonlocal index
+        index += 1
+        return tokens[index - 1]
+
+    def lookup(token: str) -> object:
+        if token.startswith("'"):
+            return token[1:-1].replace("''", "'")
+        node: object = context
+        for part in token.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+        return node
+
+    def primary() -> object:
+        token = take()
+        if token == "(":
+            inner = disjunction()
+            assert take() == ")", f"unbalanced parentheses in {expression!r}"
+            return inner
+        if token == "!":
+            return not primary()
+        return lookup(token)
+
+    def comparison() -> object:
+        left = primary()
+        if peek() not in ("==", "!="):
+            return left
+        operator = take()
+        right = primary()
+        if isinstance(left, str) and isinstance(right, str):
+            equal = left.lower() == right.lower()
+        else:
+            equal = left == right
+        return equal if operator == "==" else not equal
+
+    def conjunction() -> object:
+        result = comparison()
+        while peek() == "&&":
+            take()
+            right = comparison()
+            result = result and right
+        return result
+
+    def disjunction() -> object:
+        result = conjunction()
+        while peek() == "||":
+            take()
+            right = conjunction()
+            result = result or right
+        return result
+
+    result = disjunction()
+    assert index == len(tokens), f"unparsed tokens {tokens[index:]!r} in {expression!r}"
+    return bool(result)
+
+
+def _readiness_gate_context(
+    event_name: str, upstream_event: str = "", upstream_name: str = ""
+) -> dict[str, object]:
+    event: dict[str, object] = {}
+    if event_name == "workflow_run":
+        event["workflow_run"] = {"event": upstream_event, "name": upstream_name}
+    return {"github": {"event_name": event_name, "event": event}}
+
+
 def _reads_header_anchored(workflow: str, header: str) -> bool:
     """Whether *workflow*'s verdict CAPTURE reads *header* anchored to line start.
 
@@ -1652,6 +1741,76 @@ class TestPrReadiness:
         assert "github.event.workflow_run.event == 'pull_request'" in gate
         assert "github.event.workflow_run.event == 'dynamic'" in gate
         assert "github.event.workflow_run.event == 'workflow_run'" not in gate
+
+    def test_a_review_holds_readiness_through_the_sensitive_change_review_run(self) -> None:
+        # A submitted, edited or dismissed review starts a Sensitive Change
+        # Review run and no other run readiness hears, so that run's
+        # `in_progress` hold is what reaches the verdict within seconds of the
+        # review. The allowlist matches a workflow by its `name:`, so the name
+        # is read from the workflow file itself: a rename there that the
+        # allowlist and the job gate do not follow fails here instead of
+        # silently dropping the trigger.
+        scr = yaml.safe_load(_workflow("sensitive-change-review.yml"))
+        scr_name = scr["name"]
+        scr_on = scr.get("on") or scr[True]
+        assert {"submitted", "edited", "dismissed"} <= set(scr_on["pull_request_review"]["types"])
+
+        readiness = yaml.safe_load(_workflow("pr-readiness.yml"))
+        monitored = (readiness.get("on") or readiness[True])["workflow_run"]["workflows"]
+        assert scr_name in monitored
+
+        gate = readiness["jobs"]["readiness"]["if"]
+        assert _eval_gha_condition(
+            gate, _readiness_gate_context("workflow_run", "pull_request_review", scr_name)
+        )
+        # Its `pull_request` runs start on events `pull_request_target` already
+        # re-derives the verdict on, and it is not an aggregated lane, so a
+        # readiness run from one of them would re-check nothing.
+        assert not _eval_gha_condition(
+            gate, _readiness_gate_context("workflow_run", "pull_request", scr_name)
+        )
+
+        # The run reads the review whether or not it wins the race against a
+        # short Sensitive Change Review job: a hold that finds the run completed
+        # leaves `held` unset, and the evaluation, which reads the reviews,
+        # is gated on `held` alone rather than on the event.
+        steps = {s.get("name"): s for s in readiness["jobs"]["readiness"]["steps"]}
+        verdict = steps["Evaluate current revision"]
+        assert "steps.hold.outputs.held != 'true'" in verdict["if"]
+        assert "github.event.action" not in verdict["if"]
+        assert "repos/$REPO/pulls/$PR/reviews?per_page=100" in verdict["run"]
+        hold = steps["Hold the verdict while a monitored lane runs"]["run"]
+        completed_arm = hold.split('if [ "$lane_status" = "completed" ]; then', 1)[1]
+        completed_arm = completed_arm.split("fi", 1)[0]
+        assert "exit 0" in completed_arm
+        assert "held=true" not in completed_arm
+
+    @pytest.mark.parametrize(
+        ("event_name", "upstream_event", "upstream_name", "admitted"),
+        [
+            ("pull_request_target", "", "", True),
+            ("workflow_dispatch", "", "", True),
+            ("workflow_run", "pull_request", "CI", True),
+            ("workflow_run", "pull_request", "Internal Content Scan Gate", True),
+            ("workflow_run", "dynamic", "CodeQL", True),
+            ("workflow_run", "workflow_run", "CI", False),
+            ("workflow_run", "pull_request", "Sensitive Change Review", False),
+            ("workflow_run", "pull_request_review", "Sensitive Change Review", True),
+            # A review run is admitted only from the workflow that runs on one.
+            ("workflow_run", "pull_request_review", "CI", False),
+        ],
+    )
+    def test_the_job_gate_admits_exactly_the_upstream_runs_it_can_use(
+        self, event_name: str, upstream_event: str, upstream_name: str, admitted: bool
+    ) -> None:
+        gate = yaml.safe_load(_workflow("pr-readiness.yml"))["jobs"]["readiness"]["if"]
+
+        assert (
+            _eval_gha_condition(
+                gate, _readiness_gate_context(event_name, upstream_event, upstream_name)
+            )
+            is admitted
+        )
 
 
 class TestDesignReviewPresentation:
