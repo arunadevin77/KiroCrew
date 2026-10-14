@@ -1149,11 +1149,16 @@ made; no gate reads it back. Two consumers:
   One label per parent, last writer wins: it is the verdict on the most recent
   row the gate judged for that parent, not a per-row ledger. A parent holding a
   memory-deferred row and then a capacity-queued one shows `concurrency_limit`
-  until the deferred row is re-checked — which the pump does on the next memory
-  wake, and at the latest within `admit_wait_secs` (default 30 s), re-labelling
-  it or starting it — so the label is never more than one admit wait stale. This is accepted: the
+  until the deferred row is re-checked — which the pump does on the next
+  eligible pump pass (after the admit wait, `admit_wait_secs`, default 30 s, or
+  sooner on a memory wake — but only once the pass can reach the pick:
+  `_drain_queue_sync_impl` returns before it while the cap has no free slot,
+  and while the in-startup bound `_startup_cap` is full, and the row is not
+  revisited until a slot opens or a starting child leaves startup),
+  re-labelling it or starting it. So the label has no fixed staleness bound:
+  it stays as it was until the row is picked on an eligible pass. This is accepted: the
   alternative is a per-row label reconciled on every emit, for a chip that
-  states a count, and a stale-by-one-wait label always reads as a wait that
+  states a count, and a stale label always reads as a wait that
   does exist for that parent.
   An event without `reason` (nothing labelled, or an older gateway) leaves the
   dashboard on its default "queued behind the concurrency limit" text; the

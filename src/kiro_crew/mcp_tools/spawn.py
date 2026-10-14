@@ -1035,7 +1035,8 @@ def spawn_run(name: str, args: dict[str, Any]) -> str | DeferredTool:
         if d.get("status") == "queued":
             # Accepted but DEFERRED by the gate (memory floor, critical posture,
             # adaptive cap at 0): keyed and counted like a started member, but
-            # not running, and re-checked only every admit wait. Reported apart
+            # not running, and re-checked on the next eligible pump pass (after
+            # the admit wait, once a slot is free and startup is not full). Reported apart
             # below so the caller does not wait for a completion event as if
             # it had started. An older gateway sends no ``status``; a row
             # waiting merely for a slot or the stagger tick sends ``spawned``.
