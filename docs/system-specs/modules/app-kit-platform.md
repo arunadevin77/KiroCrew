@@ -95,6 +95,15 @@ no host key from an app bundle.
 The dashboard's own client is reachable from host code only; it is absent from
 the import map and from every vendor stub, which is what the boundary rests on.
 
+## Embedded chat file deliveries
+
+The SDK's default `file` renderer draws the shared `FileCard` for a JSON
+record with a non-empty string `filename`. Optional `content_type` and
+`description` fields must be strings when present, and `size` must be a
+number. Invalid records draw nothing; malformed metadata never reaches the
+card. Omitted optional fields remain valid. ChatPage's renderer override
+retains its separate fallback behavior.
+
 ## Host-mediated chat launch and cron toggles
 
 `useChatLauncher().openChat` accepts `slotKey` and `autoSend`. Without a target,

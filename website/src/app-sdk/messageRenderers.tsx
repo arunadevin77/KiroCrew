@@ -535,8 +535,12 @@ function parseFileRow(content: string): FileData | null {
     return null
   }
   if (!parsed || typeof parsed !== 'object') return null
-  const filename = (parsed as { filename?: unknown }).filename
-  return typeof filename === 'string' && filename ? (parsed as FileData) : null
+  const { filename, content_type, description, size } = parsed as Record<string, unknown>
+  if (typeof filename !== 'string' || !filename) return null
+  if (content_type !== undefined && typeof content_type !== 'string') return null
+  if (description !== undefined && typeof description !== 'string') return null
+  if (size !== undefined && typeof size !== 'number') return null
+  return { filename, content_type, description, size }
 }
 
 /**

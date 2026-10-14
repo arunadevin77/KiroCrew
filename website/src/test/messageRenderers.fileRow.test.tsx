@@ -51,6 +51,25 @@ describe('default file row', () => {
     expect(screen.getByRole('img').getAttribute('src')).toBe('/api/outbox/chart.png')
   })
 
+  it.each([
+    { content_type: 7 },
+    { content_type: {} },
+    { content_type: null },
+    { description: { text: 'report' } },
+    { description: 7 },
+    { description: null },
+    { size: '2048' },
+    { size: {} },
+    { size: null },
+  ])('rejects malformed card fields: %j', fields => {
+    expect(draw(JSON.stringify({ filename: 'report.pdf', ...fields }))).toBeNull()
+  })
+
+  it('accepts omitted optional fields and empty string metadata', () => {
+    expect(draw(JSON.stringify({ filename: 'report.pdf' }))).not.toBeNull()
+    expect(draw(JSON.stringify({ filename: 'report.pdf', content_type: '', description: '', size: 0 }))).not.toBeNull()
+  })
+
   it('draws nothing for content that is not a file record', () => {
     expect(draw('not json')).toBeNull()
     expect(draw('null')).toBeNull()
