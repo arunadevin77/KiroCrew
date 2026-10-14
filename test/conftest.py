@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import asyncio.proactor_events
+import errno
 import json
 import os
 import pathlib
@@ -13,6 +14,8 @@ import socket
 import struct
 import sys
 import time
+import urllib.error
+import urllib.parse
 import warnings
 
 import pytest
@@ -2385,6 +2388,72 @@ class _InertGatewayPosts(list):
     __hash__ = None  # type: ignore[assignment]
 
 
+def _exported_gateway_ports() -> frozenset[int]:
+    """Client ports the shell that started pytest exports, read once at import.
+
+    ``KIROCREW_PORT`` is the first step of the client's port resolution and the
+    floor does not clear it, so a developer who exports it to reach their own
+    gateway sends every unconfigured test there. ``KIROCREW_BOUND_PORT`` names the
+    gateway that spawned the run when an agent session runs the suite. Read here,
+    before any test edits the environment, so a test that sets either variable to
+    its own server's port is not mistaken for the shell's choice.
+    """
+    ports: set[int] = set()
+    for name in ("KIROCREW_PORT", "KIROCREW_BOUND_PORT"):
+        try:
+            ports.add(int(os.environ.get(name, "")))
+        except ValueError:
+            continue
+    return frozenset(ports)
+
+
+_EXPORTED_GATEWAY_PORTS = _exported_gateway_ports()
+
+
+def _refuse_developer_gateway(real_urlopen):
+    """Wrap ``mcp_core.loopback_urlopen`` so a test cannot dial a gateway it did not start.
+
+    Every ``mcp_core`` helper (``_get``, ``_post``, ``_patch``, ``_put``,
+    ``_delete``) sends through ``_send`` and from there through this one name,
+    and so does every copy of a helper another module bound by name at import.
+    A client with a transport of its own (``mcp_computer._invoke``,
+    ``cron_trigger``) does not pass through here. A request
+    whose URL names the client's no-evidence default port, or a port in
+    ``_EXPORTED_GATEWAY_PORTS``, is where a developer's own gateway listens:
+    it is refused as a connection nobody answered, which is what a CI runner
+    with nothing listening there returns. ``_send`` turns that into its usual
+    ``{"error": ..., "refused": True}``, with this message appended. The URL's
+    port also names the socket ``_send`` derives for the same attempt
+    (``dashboard-<port>.sock``), so both transports are covered by one check.
+
+    Any other target is one the test chose, by seeding ``mcp_core._API`` /
+    ``_API_UNIX_SOCKET`` at its own server or exporting its own port, and goes
+    to the real transport untouched. The default port is read at call time
+    from ``port_resolution``, the module the client resolves it from.
+    """
+    from kiro_crew import port_resolution
+
+    def _guarded(req, *args, **kwargs):
+        try:
+            port = urllib.parse.urlsplit(str(getattr(req, "full_url", req))).port
+        except ValueError:
+            port = None
+        if port is not None and (
+            port == port_resolution._DEFAULT_PORT or port in _EXPORTED_GATEWAY_PORTS
+        ):
+            raise urllib.error.URLError(
+                ConnectionRefusedError(
+                    errno.ECONNREFUSED,
+                    "Connection refused by test/conftest.py: an unstubbed mcp_core request"
+                    f" to port {port}, where a developer's own gateway listens. Stub the"
+                    " helper the test calls, or point mcp_core._API at the test's own server",
+                )
+            )
+        return real_urlopen(req, *args, **kwargs)
+
+    return _guarded
+
+
 @pytest.fixture(autouse=True)
 def gateway_posts(request, _floor_monkeypatch):
     """Record ``mcp_core._post`` calls instead of letting them reach a gateway.
@@ -2416,6 +2485,15 @@ def gateway_posts(request, _floor_monkeypatch):
     transport is replaced with a refuser instead (their per-test transport
     patches override it), so the no-traffic property holds per test rather
     than resting on every future test remembering its own patch.
+
+    The recorder covers only the ``_post`` name on ``mcp_core``. ``_get``,
+    ``_patch``, ``_put`` and ``_delete`` reach a gateway the same way, and a
+    module that imports a helper by name (``mcp_panel``, ``mcp_work`` and
+    others do) holds the real function from collection on, before any fixture
+    runs. Outside ``_REAL_MCP_POST_MODULES`` the transport all of them share is
+    therefore wrapped by :func:`_refuse_developer_gateway`: a request to the port
+    a developer's gateway listens on gets the refusal a CI runner gets, and a
+    request to a server the test started goes through.
     """
     from kiro_crew import mcp_core
 
@@ -2438,6 +2516,9 @@ def gateway_posts(request, _floor_monkeypatch):
         return {}
 
     _floor_monkeypatch.setattr(mcp_core, "_post", _capture)
+    _floor_monkeypatch.setattr(
+        mcp_core, "loopback_urlopen", _refuse_developer_gateway(mcp_core.loopback_urlopen)
+    )
     yield posted
 
 
