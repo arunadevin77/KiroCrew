@@ -110,8 +110,9 @@ describe('ChatSidebar Folder Grouping', () => {
     ]
     renderWithProviders(<ChatSidebar {...defaultProps} slots={slotsWithSources} />)
 
-    const githubChip = (await screen.findByText('#113')).closest('a')
-    const gitlabChip = screen.getByText('!7').closest('a')
+    // Multi-project strip: qualifier prepended, so search by href via title
+    const githubChip = (await screen.findByTitle(/\/pull\/113/)).closest('a')
+    const gitlabChip = screen.getByTitle(/merge_requests\/7/).closest('a')
     expect(githubChip?.querySelector('[data-provider-mark="github"]')).toBeInTheDocument()
     expect(gitlabChip?.querySelector('[data-provider-mark="gitlab"]')).toBeInTheDocument()
     expect(githubChip?.querySelector('[aria-label="Merged"]')).toHaveClass('text-aim')
