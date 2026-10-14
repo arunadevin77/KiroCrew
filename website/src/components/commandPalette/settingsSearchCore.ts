@@ -102,6 +102,13 @@ export const DECISIONS_SETTING_IDS: ReadonlySet<string> = new Set([
   'developer.also-send-tool-call-arguments-so-jev-can-flag-risky-calls',
   'developer.also-send-the-conversation-and-tool-call-inputs-so-jev-can-score-compaction',
   'developer.also-send-snippets-of-recalled-memories-so-jev-can-drop-the-ones-that-do-not-help',
+  // The judge provider and model selects in `DecisionsPointPanel.tsx`, the card's
+  // detail half. The point panel only mounts when the card is rendered, so the
+  // ceiling that withdraws the card also withdraws these -- a search hit here would
+  // navigate to a section where neither the card nor the point panel is present.
+  // `settingsSearchGovernance.test.ts` asserts the extractor finds them in that file.
+  'developer.which-judge-answers',
+  'developer.model-for-the-small-model-judge',
 ])
 
 /** With `dashboard.tips_enabled` off the rail can drop Discovery, and `sub=discovery`
