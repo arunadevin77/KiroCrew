@@ -116,8 +116,8 @@
  1 test_connections_l1_smoke.py
 12 test_connections_mint.py
  2 test_connections_premint.py
-11 test_connections_warm.py
  8 test_connections_warm_mint_composition_contract.py
+11 test_connections_warm_rearm.py
  1 test_conpty_exit_status.py
  1 test_context_bar_reopen.py
  1 test_context_composition_contract.py

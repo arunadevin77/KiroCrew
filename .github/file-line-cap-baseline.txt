@@ -258,7 +258,6 @@
 8527 test/test_config_loader.py
 2868 test/test_connections_mint.py
 2606 test/test_connections_tool_aliases.py
-3886 test/test_connections_warm.py
 2418 test/test_context.py
 2226 test/test_context_composition_contract.py
 3069 test/test_crew_log_core.py
@@ -453,7 +452,6 @@
 2238 test/test_wheel_engine.py
 4130 test/test_work_ledger_projection.py
 3664 test/test_worker_agent.py
-3954 test/test_ws_event_scoping.py
 2944 website/electron/gateway-supervisor.js
 2903 website/scripts/lib/ui-index.mjs
 2967 website/src/App.tsx

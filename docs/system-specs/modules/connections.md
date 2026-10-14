@@ -470,7 +470,7 @@ rather than a keep-the-first-claimant one.
 Every flow reads the user's config, a private generation tree, the old global agents directory,
 or kiro-cli's OAuth cache, any of which can sit on a network mount where a stat is unbounded, so
 all of that work lives in SYNCHRONOUS helpers and a coroutine reaches them through
-`asyncio.to_thread` -- enforced by a fixed-point drift guard in `test/test_connections_warm.py`
+`asyncio.to_thread` -- enforced by a fixed-point drift guard in `test/test_connections_warm_off_loop.py`
 that reuses the mint engine's own primitive sets so the two cannot drift apart. It reads
 `warm.py` and every `warm_runtime` owner as one call graph, so a coroutine that moves into an
 owner still owes the invariant and a helper the facade re-exports still counts. What the guard

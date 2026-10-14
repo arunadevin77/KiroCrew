@@ -105,7 +105,7 @@ BUDGET: dict[str, int] = {
     "test/test_turn_duration_recorded.py": 1,
     "test/test_turn_metric_all_surfaces.py": 2,
     "test/test_wake_judge_feedback.py": 1,
-    "test/test_ws_event_scoping.py": 1,
+    "test/test_ws_event_scoping_frames.py": 1,
 }
 
 

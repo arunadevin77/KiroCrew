@@ -600,7 +600,7 @@ class TestDriverGate:
 class TestDriverGateIsFunctional:
     """Drive ``api_ws`` and observe whether the recompute runs.
 
-    Modelled on ``test_ws_event_scoping.TestDirectSendGrantsAreAudited``: a fake
+    Modelled on ``test_ws_event_scoping_audit.TestDirectSendGrantsAreAudited``: a fake
     socket through the real connect path, rather than asserting on the shape of
     the source. The observable is ``refresh_session_health`` being called, which
     is the work the gate exists to avoid.
@@ -617,7 +617,7 @@ class TestDriverGateIsFunctional:
     def _fake_ws(self):
         class FakeWebSocket:
             def __init__(self) -> None:
-                # OPEN, unlike the connect-only fake in test_ws_event_scoping:
+                # OPEN, unlike the connect-only fake in test_ws_event_scoping_audit:
                 # the driver loop is `while not ws.closed`, so a closed socket
                 # would make both the gated and ungated cases look identical.
                 self.closed = False

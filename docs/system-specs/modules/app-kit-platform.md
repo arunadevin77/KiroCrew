@@ -1437,7 +1437,7 @@ per socket at ONE chokepoint — `DashboardState._send_ws_all` →
 (`broadcast_ws` and the `_broadcast` `_type` translation) and the
 subagent-subscriber fan-out funnel through it. An event absent from the module's
 tables is DENIED, so a new event name is a silent loss of function for apps until
-it is classified — `test_ws_event_scoping.py` fails the build on an unclassified
+it is classified — `test_ws_event_scoping_frames.py` fails the build on an unclassified
 broadcast name rather than letting it reach production.
 
 Three tiers. Tier 0 (`dashboard`, `refresh`, `update_progress`) carries no
