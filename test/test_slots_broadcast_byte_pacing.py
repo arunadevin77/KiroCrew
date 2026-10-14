@@ -161,22 +161,72 @@ class TestWindowFollowsFrameSize:
         # Leading frame plus the paced ones; well under the old ~5 frames/s.
         assert per_second < 2.5 * _SLOTS_BROADCAST_BYTES_PER_S
 
-    def test_trailing_frame_after_stretch_carries_latest_state(self, state, loop):
+    # Build times that all fit inside the ~0.57 s window a 100-slot frame stretches
+    # to. The fake clock makes build time an input: on real time, a loaded runner
+    # can take longer than the window to build the leading frame, and then the
+    # burst's next push is a second leading edge.
+    @pytest.mark.parametrize("build_s", [0.0, _BUILD_S, 0.5])
+    def test_trailing_frame_after_stretch_carries_latest_state(
+        self, state, loop, monkeypatch, clock, build_s
+    ):
         _fill(state, 100)
         payloads: list[dict] = []
-        state._broadcast = lambda note: payloads.append(note)
+
+        def broadcast(note):
+            payloads.append(note)
+            clock.now += build_s
+
+        state._broadcast = broadcast
         probe = state._slots["chat-0-1790000000"]
+        timers: list[tuple[float, object]] = []
+
+        def capture(delay, callback, *args, **kwargs):
+            timers.append((delay, callback))
+            return MagicMock()
 
         async def _run():
+            monkeypatch.setattr(loop, "call_later", capture)
             state.push_slots_update()
             probe.title = "changed during the window"
             for _ in range(10):
                 state.push_slots_update()
-            await asyncio.sleep(_SLOTS_BROADCAST_MAX_INTERVAL_S + 0.1)
 
         loop.run_until_complete(_run())
+        assert len(payloads) == 1, "every push after the leading edge is absorbed"
+        assert len(timers) == 1, "the burst arms exactly one trailing flush"
+        delay, flush = timers[0]
+        assert delay > 0
+        clock.now += delay
+        flush()
         assert len(payloads) == 2, "a burst is one leading plus one trailing frame"
         assert any(s["title"] == "changed during the window" for s in payloads[1]["_slots_list"])
+
+    def test_build_slower_than_the_window_makes_the_next_push_a_leading_edge(
+        self, state, loop, monkeypatch, clock
+    ):
+        """The window runs from the leading stamp, not from the end of the build."""
+        _fill(state, 100)
+        payloads: list[dict] = []
+
+        def broadcast(note):
+            payloads.append(note)
+            clock.now += _SLOTS_BROADCAST_MAX_INTERVAL_S
+
+        state._broadcast = broadcast
+        timers: list[float] = []
+
+        def capture(delay, callback, *args, **kwargs):
+            timers.append(delay)
+            return MagicMock()
+
+        async def _run():
+            monkeypatch.setattr(loop, "call_later", capture)
+            state.push_slots_update()
+            state.push_slots_update()
+
+        loop.run_until_complete(_run())
+        assert len(payloads) == 2
+        assert timers == []
 
 
 class TestOrderingPathsBypassTheStretch:
