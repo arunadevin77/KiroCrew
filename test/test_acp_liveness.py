@@ -1301,8 +1301,8 @@ def test_helpers_never_raise_on_garbage(tmp_path):
 #
 # consult_offloaded is the single copy of the guard sequence AcpClient and
 # AcpSessionHandle both delegate to. The call-site behaviors (retirement at
-# boundaries, oracle generation swaps) stay pinned by test_acp_client.py and
-# test_acp_stale_recovery.py; these tests pin the helper's own contract so a
+# boundaries, oracle generation swaps) stay pinned by test_acp_client_stale_turn.py
+# and test_acp_stale_recovery.py; these tests pin the helper's own contract so a
 # regression in it is attributed to the shared code, not to one caller.
 
 

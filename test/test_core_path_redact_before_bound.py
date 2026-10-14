@@ -194,7 +194,7 @@ _SCANNED_MODULES = [
     # ordering survived there. NOTE the scan would not have caught
     # that instance -- the slice was a separate statement, not an argument to the
     # redactor -- so the behavioural pin for it lives in
-    # test_acp_client.py::test_credential_straddling_the_bound_is_still_redacted.
+    # test_acp_client_tool_call_updates.py::test_credential_straddling_the_bound_is_still_redacted.
     "src/kiro_crew/acp/client.py",
     # The client's error formatter and classifiers, with their redactor calls.
     "src/kiro_crew/acp/transport_errors.py",

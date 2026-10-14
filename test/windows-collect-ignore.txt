@@ -40,7 +40,20 @@ test_source_providers.py           # providers require the POSIX sandbox
 # Feature-parity gaps observed on the first Windows runs -- each is a
 # POSIX-shaped feature or test suite tracked as a Windows follow-up:
 test_terminal_handler.py           # PTY web terminal is POSIX-only
-test_acp_client.py                 # asserts os.killpg/SIGKILL process control
+test_acp_client.py                 # the test_acp_client suite stays uncollected as one unit
+test_acp_client_binary_resolution.py  # a test_acp_client.py topic part; same suite
+test_acp_client_commands.py        # a test_acp_client.py topic part; same suite
+test_acp_client_compaction.py      # a test_acp_client.py topic part; same suite
+test_acp_client_inbound.py         # a test_acp_client.py topic part; same suite
+test_acp_client_process_lifecycle.py  # asserts os.killpg/SIGKILL process control
+test_acp_client_prompt_turn.py     # a test_acp_client.py topic part; same suite
+test_acp_client_session_setup.py   # a test_acp_client.py topic part; same suite
+test_acp_client_settings_restore.py  # a test_acp_client.py topic part; same suite
+test_acp_client_spawn.py           # a test_acp_client.py topic part; same suite
+test_acp_client_stale_turn.py      # a test_acp_client.py topic part; same suite
+test_acp_client_tool_call_updates.py  # a test_acp_client.py topic part; same suite
+test_acp_client_tool_events.py     # a test_acp_client.py topic part; same suite
+test_acp_client_tool_hooks.py      # a test_acp_client.py topic part; same suite
 test_stop_kill_cancel.py           # killpg/getuid kill-path semantics
 test_app_backend_stale_reap.py     # getpgid/killpg reaping semantics
 test_env.py                        # krb5 ccache resolver is Linux-only (getuid paths)
