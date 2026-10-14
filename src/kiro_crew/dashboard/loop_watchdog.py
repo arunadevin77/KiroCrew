@@ -105,6 +105,7 @@ from kiro_crew.platform_compat import (
     boottime_now,
     process_alarm_available,
 )
+from kiro_crew.update_ownership import Reentry, ReentryVerdict
 
 logger = logging.getLogger("kiro_crew.dashboard.loop_watchdog")
 
@@ -348,6 +349,7 @@ class LoopStallWatchdog:
         enrich_after: float = 15.0,
         enrich: "Callable[[float], list[str]] | None" = None,
         log: logging.Logger | None = None,
+        reentry_check: "Callable[[], ReentryVerdict] | None" = None,
     ) -> None:
         self._stall_after = stall_after
         self._exit_after = exit_after
@@ -379,6 +381,9 @@ class LoopStallWatchdog:
         self._last_poll_suspend: float | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._reentry_check = reentry_check
+        #: The one-shot thread that asked *reentry_check* this episode, if any.
+        self._reentry_thread: threading.Thread | None = None
 
     def beat(self) -> None:
         """Record that the event loop is alive *now* and re-pet the alarm.
@@ -458,6 +463,7 @@ class LoopStallWatchdog:
                 silence,
                 "\n".join(lines),
             )
+            self._ask_reentry()
         if silence >= self._stall_after:
             if not self._dumped:
                 self._dumped = True
@@ -500,6 +506,49 @@ class LoopStallWatchdog:
         self._dumped = False
         self._enriched = False
         return False
+
+    def _ask_reentry(self) -> None:
+        """Ask once per episode whether the supervisor could relaunch the gateway.
+
+        The stall exit is a request to be relaunched, like the stale-asset
+        watchdog's, but it does NOT stand down on a refusal: a wedged loop
+        serves nothing, so staying up would only keep a process that answers no
+        request, and the exit is taken by the kernel alarm in a C signal handler
+        that cannot consult anything at fire time. The check is asked here, at
+        the enrichment stage while the alarm is still pending, only so the
+        journal says before the exit that nothing will relaunch it, and why.
+
+        Runs on its own daemon thread: the check spawns bounded probes, and the
+        soft dump at ``stall_after`` must not wait behind it. Only while the
+        exit is armed, since with no exit there is no relaunch to judge.
+        """
+        if self._reentry_check is None or not self._later_active:
+            return
+        previous = self._reentry_thread
+        if previous is not None and previous.is_alive():
+            return
+        thread = threading.Thread(
+            target=self._report_reentry, name="loop-stall-reentry", daemon=True
+        )
+        self._reentry_thread = thread
+        thread.start()
+
+    def _report_reentry(self) -> None:
+        check = self._reentry_check
+        if check is None:
+            return
+        try:
+            verdict = check()
+        except Exception:
+            self._log.debug("loop watchdog re-entry check failed", exc_info=True)
+            return
+        if verdict.status is Reentry.REFUSED:
+            self._log.critical(
+                "event loop stalled, and the gateway's supervisor could not relaunch "
+                "it (%s): if the stall exit fires, nothing will start the gateway "
+                "again. It still exits, because a wedged event loop serves nothing.",
+                verdict.reason,
+            )
 
     def claim_lag_enrichment(self, lag: float) -> bool:
         """Return ``True`` at most once per episode of heartbeat lag.
@@ -602,9 +651,7 @@ class LoopStallWatchdog:
             except Exception:  # pragma: no cover - degrade to soft dump only
                 self._log.exception("loop watchdog failed to arm the stall alarm")
                 self._later_active = False
-        self._thread = threading.Thread(
-            target=self._run, name="loop-stall-watchdog", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name="loop-stall-watchdog", daemon=True)
         self._thread.start()
         if self._exit_after is not None and self._enrich_after >= self._exit_after:
             # Not fatal — enrichment just never lands before the exit.  Flag it

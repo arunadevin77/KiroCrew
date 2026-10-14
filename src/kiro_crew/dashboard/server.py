@@ -370,6 +370,7 @@ from kiro_crew.dashboard.token_auth import (  # noqa: F401
 from kiro_crew.deploy import _register_core_skills as _register_deploy_skills
 from kiro_crew.deploy.handlers import register_routes as _register_deploy_routes
 from kiro_crew.executors import subprocess_executor
+from kiro_crew.gateway_restart import supervisor_reentry  # noqa: F401
 from kiro_crew.hooks import ScriptHookStore, set_global_hook_store
 from kiro_crew.instances import run_marker  # noqa: F401
 from kiro_crew.instances.registry import InstancesRegistry

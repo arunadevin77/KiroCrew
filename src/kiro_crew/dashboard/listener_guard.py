@@ -56,7 +56,9 @@ shutdown event, so the gateway exits non-zero rather than idling unreachable:
 binding keeps failing, or a probe-triggered rebind BINDS yet the probe still
 gets no answer ``max_unverified`` times in a row. The second exists because a
 rebind cures a closed listener and cannot cure one that is open but serving
-nothing -- exactly the state only the HTTP probe detects.
+nothing -- exactly the state only the HTTP probe detects. Both are requests to
+be relaunched, so both first ask the injected re-entry check
+(``gateway_restart.supervisor_reentry``) and stay up when it refuses.
 """
 
 from __future__ import annotations
@@ -70,6 +72,7 @@ from typing import Any, Protocol
 from aiohttp import web
 
 from kiro_crew.executors import subprocess_executor
+from kiro_crew.update_ownership import Reentry, ReentryVerdict
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +128,10 @@ DEFAULT_MAX_UNVERIFIED_RECOVERIES = 3
 #: :data:`DEFAULT_MAX_BACKOFF_SECS`.
 DEFAULT_BACKOFF_BASE_SECS = 0.5
 DEFAULT_MAX_BACKOFF_SECS = 8.0
+#: Bound on one supervisor re-entry check before the exit (it reads the service
+#: definition and probes an interpreter). Past it the check is inconclusive and
+#: the exit goes ahead, as it did before the check existed.
+REENTRY_CHECK_TIMEOUT_SECS = 30.0
 
 _PROBE_PATH = "/api/live"
 
@@ -268,6 +275,7 @@ class ListenerGuard:
         on_listener_lost: Callable[[], Any] | None = None,
         on_listener_restored: Callable[[], None] | None = None,
         on_give_up: Callable[[str], None] | None = None,
+        reentry_check: Callable[[], ReentryVerdict] | None = None,
     ) -> None:
         self._runner = runner
         self._site = site
@@ -293,6 +301,11 @@ class ListenerGuard:
         self._on_listener_lost = on_listener_lost
         self._on_listener_restored = on_listener_restored
         self._on_give_up = on_give_up
+        # Whether the supervisor could relaunch the gateway
+        # (``gateway_restart.supervisor_reentry``). Asked before the default
+        # exit that exists only to be relaunched; see :meth:`_give_up`.
+        self._reentry_check = reentry_check
+        self._refusal_said: str | None = None
         # Bind parameters are captured from the live site so the rebind lands on
         # the SAME host and the port that was REALLY bound (``--port auto`` binds
         # 0 and reads the OS-assigned port back; rebinding 0 would move it).
@@ -582,7 +595,11 @@ class ListenerGuard:
                     self._host or "*",
                     self._port,
                 )
-                await self._give_up("the listener sidecar could not be withdrawn")
+                # Not gated on the supervisor: this exit is what stops a
+                # credential authenticating, not a request to be relaunched.
+                await self._give_up(
+                    "the listener sidecar could not be withdrawn", ask_supervisor=False
+                )
                 return False
         for attempt in range(1, self._max_attempts + 1):
             if self._stopped or self._shutdown_event.is_set():
@@ -664,7 +681,7 @@ class ListenerGuard:
             return False
         return True
 
-    async def _give_up(self, reason: str) -> None:
+    async def _give_up(self, reason: str, *, ask_supervisor: bool = True) -> None:
         """Terminal action: exit non-zero by default, or run the injected one.
 
         The default is right for the listener a gateway EXISTS to serve: alive
@@ -683,12 +700,45 @@ class ListenerGuard:
         is not cancelled, because this can run INSIDE that task; ``_stopped`` is
         what the loop and every recovery entry point check, so setting it is
         enough and cancelling would raise inside the caller.
+
+        The default exit is a request to be relaunched, so it first asks the
+        injected *reentry_check* whether the supervisor could start the gateway
+        again. On a REFUSED answer the exit would leave nothing running, while
+        staying up keeps every surface that does not need this listener (agent
+        turns already admitted, Slack, crons), so the guard stays up and keeps
+        probing: the next failed probe rebinds again and asks again. An
+        INCONCLUSIVE answer, or a check that does not answer, exits as before.
+        *ask_supervisor* is False for an exit that is not a relaunch request
+        (the sidecar one, which ends a readable credential).
         """
         if self._on_give_up is not None:
             self._stopped = True
             await self._notify(self._on_give_up, "on_give_up", reason)
             self._detach_handler()
             return
+        if ask_supervisor and self._reentry_check is not None:
+            verdict = await self._reentry()
+            if self._stopped or self._shutdown_event.is_set():
+                return
+            if verdict.status is Reentry.REFUSED:
+                if verdict.reason != self._refusal_said:
+                    self._refusal_said = verdict.reason
+                    logger.critical(
+                        "Gateway listener on %s:%d cannot be restored (%s), but the "
+                        "gateway's supervisor could not relaunch it (%s), so it stays "
+                        "up and keeps trying to rebind instead of exiting",
+                        self._host or "*",
+                        self._port,
+                        reason,
+                        verdict.reason,
+                    )
+                return
+            if verdict.status is Reentry.INCONCLUSIVE:
+                logger.warning(
+                    "Listener guard: could not tell whether the gateway's supervisor "
+                    "can relaunch it (%s); exiting anyway.",
+                    verdict.reason,
+                )
         self._exit_code = LISTENER_LOST_EXIT_CODE
         logger.critical(
             "Gateway listener on %s:%d cannot be restored (%s); exiting with "
@@ -700,6 +750,21 @@ class ListenerGuard:
             LISTENER_LOST_EXIT_CODE,
         )
         self._shutdown_event.set()
+
+    async def _reentry(self) -> ReentryVerdict:
+        """Run the re-entry check off the loop, bounded; a failure is inconclusive."""
+        assert self._reentry_check is not None
+        try:
+            loop = asyncio.get_running_loop()
+            return await asyncio.wait_for(
+                loop.run_in_executor(subprocess_executor(), self._reentry_check),
+                REENTRY_CHECK_TIMEOUT_SECS,
+            )
+        except asyncio.TimeoutError:
+            return ReentryVerdict(Reentry.INCONCLUSIVE, "the check did not answer")
+        except Exception as exc:
+            logger.debug("Listener guard: re-entry check failed", exc_info=True)
+            return ReentryVerdict(Reentry.INCONCLUSIVE, str(exc) or type(exc).__name__)
 
     def request_exit(self, reason: str) -> None:
         """Ask for the process-wide exit this guard's default terminal action takes.

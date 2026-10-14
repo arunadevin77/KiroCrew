@@ -34,6 +34,7 @@ from kiro_crew.dashboard.listener_guard import (
     listener_guard_exit_code,
     probe_target,
 )
+from kiro_crew.update_ownership import Reentry, ReentryVerdict
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -305,6 +306,93 @@ async def test_gives_up_with_nonzero_exit_and_shutdown_when_rebind_keeps_failing
         assert served.shutdown.is_set()
         # Nothing half-started is left registered in the runner.
         assert not served.runner.sites
+
+
+@pytest.mark.asyncio
+async def test_stays_up_when_the_supervisor_could_not_relaunch_it(monkeypatch: Any) -> None:
+    """REFUSED re-entry: the relaunch exit stands down and the guard keeps going.
+
+    Exit 69 only asks the supervisor to relaunch the gateway; when the
+    supervisor's own command could not start it, exiting would leave nothing
+    running, so the guard stays up and a later probe tries the rebind again.
+    """
+    asked: list[int] = []
+
+    def _refused() -> ReentryVerdict:
+        asked.append(1)
+        return ReentryVerdict(Reentry.REFUSED, "its supervisor's command is missing")
+
+    async def _refuse_bind(self: web.TCPSite) -> None:
+        raise OSError(98, "Address already in use")
+
+    async with _Served(
+        interval=3600,
+        max_attempts=2,
+        backoff_base=0.001,
+        max_backoff=0.002,
+        reentry_check=_refused,
+    ) as served:
+        guard = served.guard
+        assert guard is not None
+        guard.arm()
+        monkeypatch.setattr(guard, "listener_open", lambda: False)
+        monkeypatch.setattr(web.TCPSite, "start", _refuse_bind)
+
+        assert await guard.check_now("test") is False
+        assert asked == [1]
+        assert guard.exit_code == 0
+        assert not served.shutdown.is_set()
+        # Not stopped: the next incident is handled, and asks again.
+        assert await guard.check_now("again") is False
+        assert asked == [1, 1]
+        assert not served.shutdown.is_set()
+
+
+@pytest.mark.asyncio
+async def test_exits_when_the_relaunch_check_is_inconclusive(monkeypatch: Any) -> None:
+    """Only a proven refusal stands the exit down; an unknown keeps it."""
+
+    async def _refuse_bind(self: web.TCPSite) -> None:
+        raise OSError(98, "Address already in use")
+
+    async with _Served(
+        interval=3600,
+        max_attempts=1,
+        backoff_base=0.001,
+        reentry_check=lambda: ReentryVerdict(Reentry.INCONCLUSIVE, "a shell wrapper"),
+    ) as served:
+        guard = served.guard
+        assert guard is not None
+        guard.arm()
+        monkeypatch.setattr(guard, "listener_open", lambda: False)
+        monkeypatch.setattr(web.TCPSite, "start", _refuse_bind)
+
+        assert await guard.check_now("test") is False
+        assert guard.exit_code == LISTENER_LOST_EXIT_CODE
+        assert served.shutdown.is_set()
+
+
+@pytest.mark.asyncio
+async def test_sidecar_exit_is_not_gated_on_the_supervisor(monkeypatch: Any) -> None:
+    """The exit that ends a readable credential is not a relaunch request."""
+    asked: list[int] = []
+
+    def _refused() -> ReentryVerdict:
+        asked.append(1)
+        return ReentryVerdict(Reentry.REFUSED, "x")
+
+    async with _Served(
+        interval=3600, on_listener_lost=lambda: False, reentry_check=_refused
+    ) as served:
+        guard = served.guard
+        assert guard is not None
+        guard.arm()
+        monkeypatch.setattr(guard, "listener_open", lambda: False)
+
+        assert await guard.check_now("test") is False
+        assert asked == []
+        assert guard.exit_code == LISTENER_LOST_EXIT_CODE
+        assert served.shutdown.is_set()
 
 
 @pytest.mark.asyncio
@@ -748,6 +836,8 @@ async def test_guard_is_armed_on_windows_only(monkeypatch: Any) -> None:
         try:
             assert isinstance(guard, ListenerGuard)
             assert guard.port == served.port
+            # Exit 69 asks the supervisor first.
+            assert guard._reentry_check is srv.supervisor_reentry
         finally:
             guard.stop()
 

@@ -617,7 +617,7 @@ a restart-on-failure supervisor never relaunches an exit 0:
 | 0 | operator (SIGTERM, `systemctl stop`, Ctrl+C) | stay down as asked |
 | 72 (`EX_OSFILE`) | persistence watchdog (`dashboard/persistence_watchdog.py`) | the data home stopped persisting after a healthy boot and the re-confirmed failure is the restart-curable `ENOSYS` case (a seccomp filter inherited from a torn-down sandbox). Only `ENOSYS` self-exits: a failure a restart cannot cure (full disk `ENOSPC`, read-only remount `EROFS`, quota) is logged loudly once per distinct reason (not every tick) but keeps serving, since a relaunch would meet the same boot preflight and crash-loop. Unlike the stale-asset watchdog this one does NOT gate the exit on a supervisor being able to relaunch (`supervisor_reentry`): the gateway this targets is typically started by hand inside a sandbox (`nohup`) and may have no supervisor, where exiting 72 stops a silent zombie loudly rather than restarting it; a systemd/launchd gateway never inherits the filter but gets the clean relaunch when any other persistence fault later turns `ENOSYS`-shaped |
 | 75 (`EX_TEMPFAIL`) | stale-asset watchdog | the served assets vanished and no update step this gateway is running owns the gap. Not while the service manager could not relaunch the gateway (`supervisor_reentry`), or after an update chose to stay up instead of restarting |
-| 69 (`EX_UNAVAILABLE`) | listener guard (`dashboard/listener_guard.py`), primary or secondary listener | the TCP listener could not be restored, so the process was alive but unreachable; a sidecar listener that cannot be withdrawn gives up with 69 before any rebind attempt |
+| 69 (`EX_UNAVAILABLE`) | listener guard (`dashboard/listener_guard.py`), primary or secondary listener | the TCP listener could not be restored, so the process was alive but unreachable; a sidecar listener that cannot be withdrawn gives up with 69 before any rebind attempt. Not while the service manager could not relaunch the gateway (`supervisor_reentry`), except the sidecar exit |
 | 78 (`EX_CONFIG`) | gateway lock refusal (`gateway_lock.LIVE_HOLDER_EXIT_CODE`), before the gateway runs — not a shutdown | the serving-holder predicate (`GatewayLock._serving_verdict`) is True: the process `/proc/locks` positively identifies as holding `gateway.lock` is running, holds the configured dashboard port with its OWN socket at the address this gateway is configured to bind, and answers HTTP there — a sibling gateway already serves this home. The systemd unit's `RestartPreventExitStatus=` names this one status so it is NOT relaunched (see [cli](cli.md), *Service Management*); every other lock refusal — a holder no surface can identify, however the recorded pid looks; a holder whose own socket at the probed address is silent (a wedged gateway); a holder on the port only at another address, or one the platform did not report (the residual row, unasserted by design, so a stranger's answer there is never credited to it) among them — exits 1 and is relaunched |
 
 The listener-guard path is Windows-only in practice: CPython's proactor loop
@@ -625,6 +625,20 @@ closes the LISTEN socket after one failed `accept()` and never re-arms it. The
 guard rebinds first and only sets this status when rebinding keeps failing, or
 when the rebind binds yet the loopback `/api/live` probe still gets no answer —
 a state no rebind can fix.
+Before either of those exits the guard asks `gateway_restart.supervisor_reentry`
+(described below for the stale-asset watchdog), off the loop and bounded at 30s.
+On REFUSED it stays up and keeps probing, since every surface that does not need
+the listener still works and exiting would leave nothing running; a later failed
+probe rebinds and asks again. INCONCLUSIVE, or a check that does not answer,
+exits as before. The sidecar exit is not gated: it is what stops a readable
+credential authenticating, not a relaunch request.
+
+The loop-stall watchdog's exit (`dashboard/loop_watchdog.py`, a kernel alarm
+that ends the process from a C signal handler) is NOT gated: a wedged loop
+serves nothing, so staying up gains nothing. It asks `supervisor_reentry` once
+per stall episode at the enrichment stage, on its own thread while the alarm is
+pending, only so the journal says CRITICAL before the exit that nothing will
+relaunch the gateway, and why.
 
 **The stale-asset watchdog stands down for this gateway's own update steps.**
 Some update steps leave the served bundle missing while they run: a policy

@@ -34,6 +34,7 @@ from kiro_crew.dashboard.loop_watchdog import (
     LoopStallWatchdog,
 )
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
+from kiro_crew.update_ownership import Reentry, ReentryVerdict
 
 
 class _Clock:
@@ -340,6 +341,78 @@ def test_enrichment_fires_once_per_episode_at_threshold() -> None:
     clock.advance(5.0)  # still the same episode — no second capture
     wd.check()
     assert len(calls) == 1
+
+
+def _make_reentry(verdict: ReentryVerdict):
+    """An armed watchdog (recording arm/cancel) whose re-entry check answers *verdict*."""
+    clock = _Clock()
+    arms: list[float] = []
+    cancels: list[int] = []
+    asked: list[int] = []
+    handler = _RecordingHandler()
+    log = logging.Logger("test.loop_watchdog.reentry")
+    log.addHandler(handler)
+
+    def check() -> ReentryVerdict:
+        asked.append(1)
+        return verdict
+
+    wd = LoopStallWatchdog(
+        stall_after=30.0,
+        exit_after=90.0,
+        poll_interval=3600.0,
+        now=clock,
+        dump=lambda: None,
+        arm_later=arms.append,
+        cancel_later=lambda: cancels.append(1),
+        enrich_after=15.0,
+        enrich=lambda _s: ["=== STALL ENRICHMENT (test) ==="],
+        log=log,
+        reentry_check=check,
+    )
+    return wd, clock, arms, cancels, asked, handler
+
+
+def test_stall_exit_still_fires_when_the_supervisor_refuses() -> None:
+    """A REFUSED re-entry is said once, and the armed exit is left alone.
+
+    A wedged loop serves nothing, so the stall exit does not stand down the way
+    the stale-asset watchdog's does: the check only names why nothing will
+    relaunch the gateway, before the alarm fires.
+    """
+    wd, clock, arms, cancels, asked, handler = _make_reentry(
+        ReentryVerdict(Reentry.REFUSED, "its supervisor's command is missing")
+    )
+    wd.start()
+    try:
+        arms_before, cancels_before = list(arms), list(cancels)
+        clock.advance(16.0)  # past enrich_after, the alarm still pending
+        wd.check()
+        thread = wd._reentry_thread
+        assert thread is not None
+        thread.join(5.0)
+        clock.advance(5.0)  # same episode: not asked again
+        wd.check()
+        assert asked == [1]
+        refusals = [r for r in handler.records if r.levelno == logging.CRITICAL]
+        assert len(refusals) == 1
+        assert "its supervisor's command is missing" in refusals[0].getMessage()
+        # The dump-then-exit is untouched: no cancel, no re-arm.
+        assert arms == arms_before
+        assert cancels == cancels_before
+    finally:
+        wd.stop()
+
+
+def test_stall_reentry_is_not_asked_without_an_armed_exit() -> None:
+    wd, clock, _arms, _cancels, asked, _handler = _make_reentry(
+        ReentryVerdict(Reentry.REFUSED, "x")
+    )
+    # Never started: no exit is armed, so there is no relaunch to judge.
+    clock.advance(16.0)
+    wd.check()
+    assert wd._reentry_thread is None
+    assert asked == []
 
 
 def test_recoverable_stall_leaves_dump_file_untouched() -> None:

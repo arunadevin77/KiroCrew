@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         platform_compat,
         resolve_loop_stall_exit_after,
         rotate_dumps,
+        supervisor_reentry,
         sweep_stale_dumps,
     )
 
@@ -77,7 +78,11 @@ async def _open_loop_watchdog(_launch_environment: dict[str, str]) -> LoopStallW
         # Config failure must not erase the managed-service grace that protects
         # the process while its config filesystem is itself under pressure.
         _exit_after = float(resolve_loop_stall_exit_after(environ=_launch_environment))
-    return LoopStallWatchdog(dump_file=_dump_file, exit_after=_exit_after)
+    # The stall exit still fires on a refusal (a wedged loop serves nothing);
+    # the check only makes the journal say that nothing will relaunch it.
+    return LoopStallWatchdog(
+        dump_file=_dump_file, exit_after=_exit_after, reentry_check=supervisor_reentry
+    )
 
 
 def _start_loop_heartbeat(

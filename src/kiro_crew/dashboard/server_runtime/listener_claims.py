@@ -27,6 +27,7 @@ if TYPE_CHECKING:
         port_resolution,
         run_marker,
         shutdown_event,
+        supervisor_reentry,
     )
 
 
@@ -248,6 +249,9 @@ def _arm_listener_guard(
         # generation, not a listener, and a booting pod waits on it.
         on_listener_lost=lambda: _withdraw_listener_sidecar(state, "primary"),
         on_listener_restored=lambda: _republish_listener_sidecar(state, "primary"),
+        # Its exit 69 is a request to be relaunched: stay up instead when the
+        # supervisor could not relaunch the gateway.
+        reentry_check=supervisor_reentry,
     )
     guard.arm()
     state._listener_guard = guard

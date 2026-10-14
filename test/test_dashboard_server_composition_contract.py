@@ -2172,7 +2172,9 @@ async def test_the_watchdog_budget_falls_back_to_the_managed_service_grace(
     monkeypatch.setattr(server, "LoopStallWatchdog", watchdog)
     assert await server._open_loop_watchdog({"KIROCREW_MANAGED": "1"}) is watchdog.return_value
     assert steps == ["sweep", "rotate"]
-    watchdog.assert_called_once_with(dump_file="dump.txt", exit_after=40.0)
+    watchdog.assert_called_once_with(
+        dump_file="dump.txt", exit_after=40.0, reentry_check=server.supervisor_reentry
+    )
 
 
 @pytest.mark.asyncio
