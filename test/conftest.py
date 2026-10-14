@@ -124,12 +124,16 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
 # and it keeps no example database, which would make the sequence depend on what
 # earlier runs saved.  Exploration stays with "default" locally or
 # ``HYPOTHESIS_PROFILE=thorough``; a red reproduces from the printed blob.
-settings.register_profile("default", max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+settings.register_profile(
+    "default", max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None
+)
 settings.register_profile(
     "ci", parent=settings.get_profile("default"), derandomize=True, database=None, print_blob=True
 )
 settings.register_profile("thorough", max_examples=100)
-settings.load_profile(os.getenv("HYPOTHESIS_PROFILE") or ("ci" if "CI" in os.environ else "default"))
+settings.load_profile(
+    os.getenv("HYPOTHESIS_PROFILE") or ("ci" if "CI" in os.environ else "default")
+)
 
 
 _HAS_GIT = shutil.which("git") is not None
@@ -250,11 +254,7 @@ def _collect_ignore_from(listname: str) -> list:
     path = os.path.join(os.path.dirname(__file__), listname)
     try:
         with open(path, encoding="utf-8") as fh:
-            return [
-                name
-                for name in (ln.split("#", 1)[0].strip() for ln in fh)
-                if name
-            ]
+            return [name for name in (ln.split("#", 1)[0].strip() for ln in fh) if name]
     except OSError:  # pragma: no cover - list file absent in a partial checkout
         return []
 
@@ -418,9 +418,7 @@ CREDENTIAL_STRADDLE_SHAPES = [
     pytest.param("https://evil.test/?q=AKIAIOSFODNN7", "EXAMPLE.", id="url-punctuation"),
     pytest.param("[l](https://ex.test/x/AKIAIOSF", "ODNN7EXAMPLE)", id="cut-inside-a-url"),
     pytest.param(f"{_PEM_DASHES}BEGIN RSA PRIV", _PEM_TAIL_HALF, id="pem-anchor"),
-    pytest.param(
-        f"{_PEM_DASHES}BEG**IN** RSA PRIV", _PEM_TAIL_HALF, id="pem-anchor-markup-split"
-    ),
+    pytest.param(f"{_PEM_DASHES}BEG**IN** RSA PRIV", _PEM_TAIL_HALF, id="pem-anchor-markup-split"),
     pytest.param("AKIAIOSF", "ODNN7EXAMPLE", id="no-markup-at-all"),
 ]
 
@@ -517,8 +515,7 @@ def assert_rejected_without_backtracking(
         settle_below = bound if n == REDOS_LARGE_PUMPS[-1] else 0.0
         cost = floor_of_readings(build_pump(n), settle_below, bound)
         assert cost < budget_seconds, (
-            f"handling a {n}-unit pump cost {cost:.2f}s of CPU -- superlinear in the "
-            "pump length"
+            f"handling a {n}-unit pump cost {cost:.2f}s of CPU -- superlinear in the " "pump length"
         )
         if previous is not None:
             assert cost <= bound, (
@@ -646,7 +643,9 @@ def _small_default_host(_floor_monkeypatch):
     _floor_monkeypatch.setattr(
         session_start_sizing,
         "_host_cached",
-        session_start_sizing.HostCapacity(affinity_cpus=8, quota_cpus=None, cpus=8, available_gb=16.0),
+        session_start_sizing.HostCapacity(
+            affinity_cpus=8, quota_cpus=None, cpus=8, available_gb=16.0
+        ),
     )
 
 
@@ -927,9 +926,7 @@ def pytest_handlecrashitem(crashitem, report, sched) -> None:
     _crash_victims.append(str(crashitem))
 
 
-def _format_abandoned_run_report(
-    crashes: list[tuple[str, str]], victims: list[str]
-) -> str:
+def _format_abandoned_run_report(crashes: list[tuple[str, str]], victims: list[str]) -> str:
     """Build the terminal report for a run abandoned after worker crashes.
 
     Wording is deliberately non-causal: worker replacement is routine here
@@ -1877,7 +1874,18 @@ class MockSlackClient(SlackClientOps):
         return f"D{user_id}"
 
     async def post_ephemeral(self, channel, user_id, text, blocks=None, thread_ts=None):
-        self.actions.append(("ephemeral", {"channel": channel, "user_id": user_id, "text": text, "blocks": blocks, "thread_ts": thread_ts}))
+        self.actions.append(
+            (
+                "ephemeral",
+                {
+                    "channel": channel,
+                    "user_id": user_id,
+                    "text": text,
+                    "blocks": blocks,
+                    "thread_ts": thread_ts,
+                },
+            )
+        )
 
     async def views_publish(self, user_id, view):
         self.actions.append(("views_publish", {"user_id": user_id, "view": view}))
@@ -1903,7 +1911,9 @@ class MockSlackClient(SlackClientOps):
         )
 
     async def start_stream(self, channel, thread_ts, initial_text=None, team_id=None, user_id=None):
-        if not getattr(self, "_stream_enabled", False) or getattr(self, "_start_stream_fails", False):
+        if not getattr(self, "_stream_enabled", False) or getattr(
+            self, "_start_stream_fails", False
+        ):
             return None
         ts = f"{self._next_ts}.000000"
         self._next_ts += 1
@@ -1958,8 +1968,20 @@ class MockSlackClient(SlackClientOps):
         self.actions.append(("fetch_message", {"channel": channel, "ts": ts}))
         return self._fetch_message_result
 
-    async def fetch_thread_replies(self, channel: str, thread_ts: str, limit: int = 200, warn_on_pagination: bool = True) -> list[dict]:
-        self.actions.append(("fetch_thread_replies", {"channel": channel, "thread_ts": thread_ts, "limit": limit, "warn_on_pagination": warn_on_pagination}))
+    async def fetch_thread_replies(
+        self, channel: str, thread_ts: str, limit: int = 200, warn_on_pagination: bool = True
+    ) -> list[dict]:
+        self.actions.append(
+            (
+                "fetch_thread_replies",
+                {
+                    "channel": channel,
+                    "thread_ts": thread_ts,
+                    "limit": limit,
+                    "warn_on_pagination": warn_on_pagination,
+                },
+            )
+        )
         return self._fetch_thread_replies_result
 
 
@@ -2230,9 +2252,7 @@ def healthy_host_memory(monkeypatch: pytest.MonkeyPatch) -> None:
 
     real_check = subagent.check_memory_available
 
-    def _pinned_check(
-        min_gb: float | None = None, path: str | None = None
-    ) -> tuple[bool, float]:
+    def _pinned_check(min_gb: float | None = None, path: str | None = None) -> tuple[bool, float]:
         if path is None:
             floor = DEFAULT_SPAWN_MIN_MEMORY_GB if min_gb is None else min_gb
             return (_HEALTHY_AVAILABLE_GB >= floor, _HEALTHY_AVAILABLE_GB)
@@ -2454,6 +2474,56 @@ def _refuse_developer_gateway(real_urlopen):
     return _guarded
 
 
+def _refuse_developer_gateway_opener(real_build_loopback_opener):
+    """Wrap ``loopback_http.build_loopback_opener`` so a test cannot dial a gateway it did not start.
+
+    ``loopback_http.loopback_urlopen`` looks up ``build_loopback_opener`` in its own
+    module on every TCP request, so wrapping this name intercepts every caller —
+    ``cron_trigger``, ``cli_commands``, ``cli_server``, ``cron_script``,
+    ``mcp_shared``, ``mcp_computer`` and others — regardless of how they imported
+    ``loopback_urlopen``. A request whose URL names the client's no-evidence default
+    port, or a port in ``_EXPORTED_GATEWAY_PORTS``, is where a developer's own
+    gateway listens: refused as a connection nobody answered, which is what a CI
+    runner with nothing listening there returns. Any other target is one the test
+    chose (a server it started on a random port) and goes to the real opener.
+
+    The default port is read at request time from ``port_resolution``, the module
+    the client resolves it from, so a test can point it at a stand-in by patching
+    that attribute and the guard will follow.
+    """
+    from kiro_crew import port_resolution
+
+    def _guarded_opener():
+        real_opener = real_build_loopback_opener()
+        original_open = real_opener.open
+
+        def _guarded_open(req, data=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT):
+            try:
+                port = urllib.parse.urlsplit(str(getattr(req, "full_url", req))).port
+            except ValueError:
+                port = None
+            if port is not None and (
+                port == port_resolution._DEFAULT_PORT or port in _EXPORTED_GATEWAY_PORTS
+            ):
+                raise urllib.error.URLError(
+                    ConnectionRefusedError(
+                        errno.ECONNREFUSED,
+                        "Connection refused by test/conftest.py: an unstubbed loopback"
+                        f" request to port {port}, where a developer's own gateway"
+                        " listens. Stub the caller or point it at a server the test"
+                        " started (see _refuse_developer_gateway_opener)",
+                    )
+                )
+            return original_open(req, data=data, timeout=timeout)
+
+        # Wrap only .open so add_handler and the rest of OpenerDirector's API
+        # remain available to callers that use the full opener interface.
+        real_opener.open = _guarded_open
+        return real_opener
+
+    return _guarded_opener
+
+
 @pytest.fixture(autouse=True)
 def gateway_posts(request, _floor_monkeypatch):
     """Record ``mcp_core._post`` calls instead of letting them reach a gateway.
@@ -2494,6 +2564,14 @@ def gateway_posts(request, _floor_monkeypatch):
     therefore wrapped by :func:`_refuse_developer_gateway`: a request to the port
     a developer's gateway listens on gets the refusal a CI runner gets, and a
     request to a server the test started goes through.
+
+    Clients that import ``loopback_urlopen`` from ``kiro_crew.loopback_http``
+    directly (``cron_trigger``, ``cli_commands``, ``cli_server``, ``cron_script``,
+    ``mcp_shared``, ``mcp_computer``) bypass ``mcp_core``. They all call
+    ``loopback_http.loopback_urlopen``, which looks up ``build_loopback_opener``
+    in its own module on every request. Wrapping that name via
+    :func:`_refuse_developer_gateway_opener` covers all of them regardless of how
+    they imported ``loopback_urlopen``.
     """
     from kiro_crew import mcp_core
 
@@ -2518,6 +2596,13 @@ def gateway_posts(request, _floor_monkeypatch):
     _floor_monkeypatch.setattr(mcp_core, "_post", _capture)
     _floor_monkeypatch.setattr(
         mcp_core, "loopback_urlopen", _refuse_developer_gateway(mcp_core.loopback_urlopen)
+    )
+    from kiro_crew import loopback_http
+
+    _floor_monkeypatch.setattr(
+        loopback_http,
+        "build_loopback_opener",
+        _refuse_developer_gateway_opener(loopback_http.build_loopback_opener),
     )
     yield posted
 

@@ -259,7 +259,6 @@ src/kiro_crew/testing/channel_fixtures.py
 src/kiro_crew/webhooks.py
 src/kiro_crew/weixin/client.py
 src/kiro_crew/workflows/context.py
-test/conftest.py
 test/fake_mcp_app_server.py
 test/metrics/test_context_occupancy.py
 test/metrics/test_cost_breakdown.py
@@ -420,7 +419,6 @@ test/test_cron_skip_dates.py
 test/test_cron_slack_delivery.py
 test/test_cron_thread_routing.py
 test/test_cron_timezone_display.py
-test/test_cron_trigger.py
 test/test_cse_2026_08_05_fixes.py
 test/test_cse_2026_08_07_fixes.py
 test/test_dashboard.py

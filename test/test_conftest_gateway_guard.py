@@ -9,6 +9,12 @@ The helpers are taken from ``mcp_core`` when this module is collected, before an
 fixture runs. That is exactly what a module holds after
 ``from kiro_crew.mcp_core import _get, _post`` (``mcp_panel``, ``mcp_work`` and
 others), so the ``_post`` driven here is the real one, not the recorder.
+
+``test_loopback_guard_covers_build_loopback_opener`` adds coverage for the second
+guard: clients that import ``loopback_urlopen`` directly from
+``kiro_crew.loopback_http`` (``cron_trigger``, ``cli_commands``, etc.) bypass
+``mcp_core`` entirely and are covered by a guard on
+``kiro_crew.loopback_http.build_loopback_opener`` instead.
 """
 
 from __future__ import annotations
@@ -188,3 +194,40 @@ def test_the_exported_ports_come_from_both_client_variables(request, monkeypatch
     monkeypatch.setenv("KIROCREW_BOUND_PORT", "not-a-port")
     monkeypatch.delenv("KIROCREW_PORT")
     assert conftest_module._exported_gateway_ports() == frozenset()
+
+
+def test_loopback_guard_covers_build_loopback_opener(monkeypatch, tmp_path, stand_in):
+    """The conftest guard on build_loopback_opener refuses cron_trigger to the gateway port.
+
+    ``cron_trigger.trigger_cron_job`` reaches the network through
+    ``kiro_crew.loopback_http.loopback_urlopen``, which looks up
+    ``build_loopback_opener`` in its own module on every request. The
+    ``_refuse_developer_gateway_opener`` guard intercepts there.
+
+    The stand-in server is started on a dynamic port. The test makes that port
+    look like the default gateway port (by patching ``port_resolution._DEFAULT_PORT``)
+    and asks ``trigger_cron_job`` to dial it. The guard must refuse before any
+    TCP connection is made, so the stand-in receives nothing.
+
+    If someone moves the guard back up to ``mcp_core.loopback_urlopen``,
+    ``trigger_cron_job`` bypasses ``mcp_core`` and the stand-in would receive the
+    request, failing the ``assert gateway.seen == []`` below.
+    """
+    from kiro_crew.cron_trigger import trigger_cron_job
+
+    gateway = stand_in("default-gateway")
+    # Make *gateway.port* look like the default gateway port so the guard targets it.
+    monkeypatch.setattr(port_resolution, "_DEFAULT_PORT", gateway.port)
+    # Clear any shell-exported port so the test does not depend on the environment.
+    monkeypatch.delenv("KIROCREW_PORT", raising=False)
+    monkeypatch.delenv("KIROCREW_BOUND_PORT", raising=False)
+
+    secret = tmp_path / ".local_secret"
+    secret.write_text("any-secret")
+
+    ok, msg = trigger_cron_job("abc12345", gateway.port, secret)
+
+    assert ok is False, f"expected guard to refuse the request, got ok=True msg={msg!r}"
+    assert gateway.seen == [], (
+        f"stand-in received {gateway.seen!r}; " "the guard did not intercept before TCP connect"
+    )
