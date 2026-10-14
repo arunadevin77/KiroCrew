@@ -29,12 +29,14 @@ async def _session_replay_history(
     _context_is_new: bool,
     _provider_has_history: bool,
     _current_replay_message: dict | None,
+    clip_newest_row: bool = False,
 ) -> str | None:
     """The provider-agnostic history replay a cold-start turn carries, or ``""``.
 
     Built off the loop from the conversation log plus the slot's live tail, unless
     the provider resumed its own native session or an explicit conversation reset
-    asked for a cold start without history.
+    asked for a cold start without history. *clip_newest_row* is
+    ``build_session_replay``'s, passed when a rotation compaction is configured.
     """
     compressed: str | None = ""
     # Provider-agnostic session replay: Kiro Crew's conversation_log
@@ -77,6 +79,7 @@ async def _session_replay_history(
                     pending_messages=list(slot.messages),
                     current_message=_current_replay_message,
                     model_window=window_for_provider_client(client),
+                    clip_newest_row=clip_newest_row,
                 )
                 or ""
             )

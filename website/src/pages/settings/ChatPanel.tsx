@@ -66,6 +66,18 @@ function compactLabels(): string[] {
   return ['20%', '40%', '60%', `70% (${i18nT('components.jobForm.default')})`, '80%', '90%']
 }
 
+// Weakest first, the order of `config.sections.COMPACTION_METHODS`; the backend's
+// PATCH allowlist accepts exactly these values. Each label is one catalog value
+// (Native's carries its own default marker), so no translation is glued together.
+const COMPACTION_METHOD_OPTIONS = ['native', 'soft', 'shake']
+function compactionMethodLabels(): string[] {
+  return [
+    i18nT('pages.settings.chatPanel.compaction_method_native'),
+    i18nT('pages.settings.chatPanel.compaction_method_soft'),
+    i18nT('pages.settings.chatPanel.compaction_method_shake'),
+  ]
+}
+
 // About You — slugs shared with onboarding step 2 and context.py's prompt maps.
 const ROLE_OPTIONS = ['', ...ROLE_SLUGS]
 function roleLabels(): string[] {
@@ -177,7 +189,7 @@ type ClampNotice = { requested: number; stored: number; min: number; max: number
 
 /** Shape of the kirocrewConfig query payload this panel reads and patches. */
 type KirocrewConfigShape = {
-  session?: { autocompact_pct?: number; compact_wait_secs?: number }
+  session?: { autocompact_pct?: number; compact_wait_secs?: number; compaction_method?: string }
   session_summary?: { enabled?: boolean }
   agent?: {
     model?: string
@@ -691,6 +703,12 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
     queryFn: () => api.kirocrewConfig(),
   })
   const mcCfg = mcQ.data
+  const compactionMethod = mcCfg?.session?.compaction_method ?? 'native'
+  const compactionMethodMut = useMutation({
+    mutationFn: (v: string) => api.patchConfig('session.compaction_method', v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kirocrewConfig'] }),
+    onError: () => setSaveError(i18nT('pages.settings.chatPanel.failed_to_save_compaction_method')),
+  })
 
   /**
    * Mutation options for a config PATCH with an OPTIMISTIC display: the seven
@@ -1715,6 +1733,16 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
             }
             disabled={!mcQ.isSuccess}
             configKey="session.autocompact_pct"
+          />
+          <SettingsSelect
+            label={i18nT('pages.settings.chatPanel.compaction_method')}
+            description={i18nT('pages.settings.chatPanel.compaction_method_desc')}
+            value={compactionMethod}
+            options={COMPACTION_METHOD_OPTIONS}
+            optionLabels={compactionMethodLabels()}
+            onChange={v => compactionMethodMut.mutate(v)}
+            disabled={!mcQ.isSuccess}
+            configKey="session.compaction_method"
           />
           <SettingsInput
             label={i18nT('pages.settings.chatPanel.compaction_wait_budget')}

@@ -919,6 +919,145 @@ class TestCompactCallbackWiring:
         assert added.get("meta", {}).get("kind") == "compaction"
 
     @pytest.mark.asyncio
+    async def test_rotation_notice_names_the_method_and_the_history_fate(
+        self, state: DashboardState
+    ) -> None:
+        """A ``soft``/``shake`` rotation reaches the callback through the same
+        ``success=True`` call as an in-place summary, but the user now has a
+        different memory: the notice says which method ran and what became of the
+        history older than the carried tail, where the native line would have
+        called it a summary. A rotation IS a recycle to the outcome arm, so it
+        arrives as ``recycled`` too; ``method`` is read first, or the restart
+        wording would announce a failure the user never had."""
+        slot = state.get_or_create_slot("chat-1")
+        cb = self._captured_callback(state)
+
+        await cb("dashboard:chat-1", 70.0, success=True, outcome="recycled", method="soft")
+        await cb("dashboard:chat-1", 70.0, success=True, outcome="recycled", method="shake")
+        await cb("dashboard:chat-1", 70.0, success=True, method="native")
+
+        soft, shake, native = [m["content"] for m in slot.messages[-3:]]
+        # Screen vs memory, the restart lines' phrasing: the transcript on screen
+        # is untouched, so the notice says so before it speaks of what the agent
+        # still remembers. A bare "older history dropped" beside an intact
+        # transcript read as a deletion.
+        for text in (soft, shake):
+            assert "The conversation above is still here" in text
+            assert "remembers only the recent turns" in text
+            assert "dropped" not in text and "digested" not in text
+        assert "rotated (soft)" in soft and "earlier ones are gone from its memory" in soft
+        assert "rotated (shake)" in shake and "earlier ones are condensed into its memory" in shake
+        # The seed row draws nothing, so the shake clause must not promise a
+        # digest the user could open.
+        assert "kept as a digest" not in shake
+        assert native == "\U0001f504 Auto-compacted at 70%."
+        # Every shape stays a status notice for the frontend card: the 🔄 lead is
+        # stripped by CompactionCard's STATUS_LEAD_RE, and none carries the
+        # failure wording its FAILED_LEAD_RE would read as an error.
+        for text in (soft, shake, native):
+            assert text.startswith("\U0001f504 ")
+            assert "failed" not in text and "timed out" not in text
+        assert all(m.get("meta", {}).get("kind") == "compaction" for m in slot.messages[-3:])
+
+    @pytest.mark.asyncio
+    async def test_kept_all_rotation_notice_says_the_whole_conversation_was_carried(
+        self, state: DashboardState
+    ) -> None:
+        """A ``shake`` whose seed writer found the tail covers every row recycles
+        as ``soft`` and arrives with ``all_kept=True``: the method is still the
+        one that ran, but nothing left the agent's memory, so the soft line's
+        "earlier ones are gone" would be false. The notice names the method and
+        says the whole conversation was carried, and speaks of no recent turns.
+        ``all_kept`` changes nothing for the other shapes."""
+        slot = state.get_or_create_slot("chat-1")
+        cb = self._captured_callback(state)
+
+        await cb(
+            "dashboard:chat-1", 70.0, success=True, outcome="recycled", method="soft", all_kept=True
+        )
+        await cb("dashboard:chat-1", 70.0, success=True, outcome="recycled", method="soft")
+        await cb("dashboard:chat-1", 70.0, success=True, outcome="recycled", method="shake")
+        await cb("dashboard:chat-1", 70.0, success=True, method="native")
+
+        kept_all, soft, shake, native = [m["content"] for m in slot.messages[-4:]]
+        assert kept_all.startswith("\U0001f504 Auto-compacted at 70%.")
+        assert "rotated (soft)" in kept_all
+        assert "carried the whole conversation into the fresh session" in kept_all
+        for word in ("gone", "condensed", "recent turns", "remembers only", "failed"):
+            assert word not in kept_all, word
+        # The other shapes read exactly as before: the signal is off for them.
+        assert "earlier ones are gone from its memory" in soft
+        assert "earlier ones are condensed into its memory" in shake
+        assert "carried the whole conversation" not in soft
+        assert "carried the whole conversation" not in shake
+        assert native == "\U0001f504 Auto-compacted at 70%."
+        assert slot.messages[-4].get("meta", {}).get("kind") == "compaction"
+
+    @pytest.mark.asyncio
+    async def test_every_notice_a_rotation_posts_is_marked_and_a_native_one_is_not(
+        self, state: DashboardState
+    ) -> None:
+        """The successor's replay leaves a rotation's notices out (the rotation's
+        own one is appended after the seed writer split the rows); it finds them by
+        this marker. A native notice carries none, so it replays as before."""
+        from kiro_crew.session_compaction_methods import (
+            ROTATION_NOTICE_META_KEY,
+            is_rotation_notice,
+        )
+
+        slot = state.get_or_create_slot("chat-1")
+        cb = self._captured_callback(state)
+
+        await cb("dashboard:chat-1", 70.0, success=True, outcome="recycled", method="soft")
+        await cb("dashboard:chat-1", 70.0, success=False, outcome="cancelled", method="shake")
+        await cb("dashboard:chat-1", 70.0, success=False, method="soft")
+        await cb("dashboard:chat-1", 70.0, success=True, method="native")
+        await cb("dashboard:chat-1", 70.0, success=False, outcome="recycled", method="native")
+
+        marks = [m.get("meta", {}).get(ROTATION_NOTICE_META_KEY) for m in slot.messages[-5:]]
+        assert marks == ["soft", "shake", "soft", None, None]
+        assert all(m.get("meta", {}).get("kind") == "compaction" for m in slot.messages[-5:])
+        # The rows the dashboard writes are the rows the replay's predicate
+        # leaves out: the shape check and the writer cannot drift apart.
+        assert [is_rotation_notice(m) for m in slot.messages[-5:]] == [
+            True,
+            True,
+            True,
+            False,
+            False,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_rotation_waiting_for_sub_agents_is_not_called_a_failure(
+        self, state: DashboardState
+    ) -> None:
+        """A rotation holds for sub-agents that share the process, as a failed
+        compaction's restart does, but nothing failed: its notice names the
+        rotation and has none of the failure wording."""
+        slot = state.get_or_create_slot("chat-1")
+        cb = self._captured_callback(state)
+
+        await cb(
+            "dashboard:chat-1",
+            70.0,
+            success=False,
+            outcome="waiting_for_subagents",
+            method="shake",
+        )
+        await cb(
+            "dashboard:chat-1",
+            70.0,
+            success=False,
+            outcome="waiting_for_subagents",
+            method="native",
+        )
+
+        rotation, restart = [m["content"] for m in slot.messages[-2:]]
+        assert "rotates (shake)" in rotation and "waiting for its sub-agents" in rotation
+        assert "failed" not in rotation
+        assert restart.startswith("⏸ Auto-compact failed at 70%."), "the restart line is unchanged"
+
+    @pytest.mark.asyncio
     async def test_callback_rounds_pct_in_notice(self, state: DashboardState) -> None:
         """`{pct:.0f}` format keeps the notice terse — 91.7 renders as 92."""
         state.get_or_create_slot("chat-1")

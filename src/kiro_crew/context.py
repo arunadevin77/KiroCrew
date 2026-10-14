@@ -169,6 +169,7 @@ from kiro_crew.context_assembly.replay import (  # noqa: F401
     _merge_replay_rows,
     _replay_identity,
     build_interrupted_turn_preamble,
+    replay_walk_options,
 )
 from kiro_crew.context_assembly.sections import (  # noqa: F401
     _RESPONSE_PREFERENCES_FOOTER,
@@ -1480,20 +1481,71 @@ def _replay_rows(
     exclude_last_n: int = 0,
     pending_messages: list[dict] | None = None,
     current_message: dict | None = None,
+    full_rows: bool = False,
 ) -> list[dict]:
     """Tail of the chain under per-role quotas, in chronological order.
 
     Conversation rows get the full quota whatever the inject volume, which a
     single bounded query cannot guarantee.
+
+    A ``compaction`` seed row, left by a rotation compaction for its successor,
+    is admitted once: the newest one is kept (with its ``meta``), and the row it
+    covers through, and every row older than it, end the walk, because the seed
+    already stands in for them. Older seeds are skipped.
+
+    *full_rows* returns the stored rows themselves, ``ts`` and ``meta``
+    included, instead of role/content pairs; the rotation surface reads that
+    shape to split the transcript at the same rows this walk admits.
     """
     messages = conversation_log.read_messages_chained(session_key) if conversation_log else []
     if pending_messages is not None or current_message is not None:
         messages = _merge_replay_rows(messages, pending_messages or [], current_message)
     elif exclude_last_n > 0:
         messages = messages[:-exclude_last_n]
-    return _replay._quota_tail(
-        messages, conv_max=_REPLAY_CONVERSATION_MAX_ROWS, inject_max=_REPLAY_INJECT_MAX_ROWS
+    return _replay._quota_walk(
+        messages,
+        conv_max=_REPLAY_CONVERSATION_MAX_ROWS,
+        inject_max=_REPLAY_INJECT_MAX_ROWS,
+        seeds=True,
+        full_rows=full_rows,
+    )[0]
+
+
+class RotationRows(list[dict]):
+    """Replay-admitted rotation rows plus whether the conversation quota cut a row."""
+
+    __slots__ = ("conversation_quota_cut",)
+
+    def __init__(self, rows: list[dict], *, conversation_quota_cut: bool) -> None:
+        super().__init__(rows)
+        self.conversation_quota_cut = conversation_quota_cut
+
+
+def rotation_rows(
+    conversation_log: "ConversationLog | None",
+    session_key: str,
+    *,
+    pending_messages: list[dict] | None = None,
+) -> RotationRows:
+    """Stored rows a rotation compaction splits and whether its conversation read was complete.
+
+    The same admission as the successor's replay (``_replay_rows``):
+    conversation and inject rows under their quotas, the newest seed row, nothing
+    the seed already covers. Rows keep ``ts`` and ``meta``, so the digest can
+    record the newest row it covers. ``conversation_quota_cut`` comes from that
+    same walk: true only when the conversation-row quota left a row out.
+    """
+    messages = conversation_log.read_messages_chained(session_key) if conversation_log else []
+    if pending_messages is not None:
+        messages = _merge_replay_rows(messages, pending_messages, None)
+    rows, quota_cut = _replay._quota_walk(
+        messages,
+        conv_max=_REPLAY_CONVERSATION_MAX_ROWS,
+        inject_max=_REPLAY_INJECT_MAX_ROWS,
+        seeds=True,
+        full_rows=True,
     )
+    return RotationRows(rows, conversation_quota_cut=quota_cut)
 
 
 def _recall_rows(
@@ -1537,6 +1589,7 @@ def build_session_replay(
     model_window: int | None = None,
     pending_messages: list[dict] | None = None,
     current_message: dict | None = None,
+    clip_newest_row: bool = False,
 ) -> str | None:
     """Build session replay from KiroCrew's conversation_log.
 
@@ -1556,6 +1609,12 @@ def build_session_replay(
     smaller model just like the capped sections do, or it would dominate a 200K
     window). ``None`` ⇒ the 1M reference (unchanged default). The budget is
     scaled by the same factor as the section caps and floored to one message.
+
+    *clip_newest_row* clips an oversized newest row to the budget with the
+    truncation mark. The caller passes it only when a rotation compaction
+    method is configured: a rotation is judged on a projection that charges
+    exactly this budget for the tail, so the carried tail may not exceed it.
+    Without one, the newest row is carried whole, as ``main`` carries it.
     """
     messages = _replay_rows(
         conversation_log,
@@ -1567,7 +1626,7 @@ def build_session_replay(
     if not messages:
         return None
 
-    replay = _replay.replay_text(messages, model_window)
+    replay = _replay.replay_text(messages, model_window, clip_newest=clip_newest_row)
     replay, _ = redact_exfiltration_urls(replay)
     replay, _ = redact_credentials(replay)
     return replay.translate(_MULTIBYTE_TABLE)

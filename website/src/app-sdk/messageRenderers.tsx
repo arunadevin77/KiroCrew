@@ -39,7 +39,7 @@ import { decisionStripFieldOf } from '../pages/chat/decisionRecord'
 import { resolveTransientNotice } from '../pages/chat/transientNotice'
 import StopEventCard from '../pages/chat/StopEventCard'
 import { isSubagentCompletionMessage } from '../pages/chat/subagentCompletion'
-import { REASONING_ROLES, stripAppEnvelope } from '../pages/chat/groupDisplayItems'
+import { COMPACTION_SEED_ROLE, REASONING_ROLES, stripAppEnvelope } from '../pages/chat/groupDisplayItems'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import MessageErrorBoundary from '../components/MessageErrorBoundary'
 import { renderUserContent } from '../pages/chat/ChatPageMessageContent'
@@ -709,7 +709,9 @@ export const defaultMessageRenderers: readonly MessageRenderer[] = [
     // surfaces that DO draw them; the lifecycle roles are local to this entry.
     // `card` is a change card / guide offer: drawn only by a host that
     // has the card stores (pages/chat/transcriptRenderers), never as a bubble.
-    roles: [...REASONING_ROLES, 'system', 'done', 'queued', 'card'],
+    // The compaction seed row is model-facing history (same module): claimed
+    // here so no surface's unclaimed-role fallback prints its digest.
+    roles: [...REASONING_ROLES, 'system', 'done', 'queued', 'card', COMPACTION_SEED_ROLE],
     render: () => null,
   },
   {

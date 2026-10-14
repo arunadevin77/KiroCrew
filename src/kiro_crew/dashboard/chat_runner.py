@@ -626,6 +626,7 @@ from kiro_crew.session_agent_selection import (  # noqa: F401
     session_agent_selection_kind,
 )
 from kiro_crew.session_capabilities import CapabilityStartupError
+from kiro_crew.session_compaction_methods import rotation_ladder
 from kiro_crew.slack.handler import post_linked_approval, resolve_linked_approval
 from kiro_crew.slack.outbound import PostedOptions
 from kiro_crew.start_priority import StartPriority, person_priority
@@ -1263,6 +1264,11 @@ COMPACT_AFTER_TURN_NOTICE = (
 #: ``meta["notice"]`` on that row. A notice marker keeps ``is_turn_interrupted``
 #: from reading the row as a ``/compact`` result: nothing has been compacted yet.
 COMPACT_AFTER_TURN_NOTICE_KIND = "compact_after_turn"
+#: ``meta`` key on that row naming the rotation method (``session.compaction_method``)
+#: the turn read. A rotation keeps recent turns instead of summarizing, so the
+#: CompactionCard words the notice for it from this key. The row carries no such
+#: key with ``native``, whose notice stays as it was.
+COMPACT_AFTER_TURN_METHOD_KEY = "compaction_method"
 
 
 def _tool_rows_settled(slot: Any) -> bool:
@@ -1284,7 +1290,12 @@ def _tool_rows_settled(slot: Any) -> bool:
 
 
 async def _notice_compaction_after_turn(
-    state: DashboardState, slot: Any, client: Any, session_key: str
+    state: DashboardState,
+    slot: Any,
+    client: Any,
+    session_key: str,
+    *,
+    rotation_method: str = "",
 ) -> bool:
     """Tell the person "will compact after this turn", once, while the turn still runs.
 
@@ -1295,6 +1306,10 @@ async def _notice_compaction_after_turn(
     can make it once per turn. A display row only: the model is not told anything
     and the turn runs on unchanged. Never compacts: compaction stays where it was,
     after the turn. Never raises.
+
+    *rotation_method* is the rotation method the turn read from
+    ``session.compaction_method`` (empty with ``native``). The row records it
+    under :data:`COMPACT_AFTER_TURN_METHOD_KEY`.
     """
     try:
         # `is not True`: only the manager's own verdict counts, never a truthy stand-in.
@@ -1307,6 +1322,9 @@ async def _notice_compaction_after_turn(
         return False
     if not _tool_rows_settled(slot):
         return False
+    meta = {"kind": "compaction", "notice": COMPACT_AFTER_TURN_NOTICE_KIND}
+    if rotation_method:
+        meta[COMPACT_AFTER_TURN_METHOD_KEY] = rotation_method
     try:
         # Finalize the clients' streaming message first. Pre-tool narration was
         # persisted without a broadcast, so an open client still holds it as the
@@ -1318,7 +1336,7 @@ async def _notice_compaction_after_turn(
             "assistant",
             COMPACT_AFTER_TURN_NOTICE.format(pct=pct, limit=limit),
             "msg msg-a",
-            meta={"kind": "compaction", "notice": COMPACT_AFTER_TURN_NOTICE_KIND},
+            meta=meta,
         )
     except Exception:
         logger.debug("compact-after-turn: notice row failed", exc_info=True)
@@ -10865,6 +10883,26 @@ async def _run_chat(
             if slot.memory_store or isinstance(exc, UnknownMemoryStore):
                 raise _MemoryUnavailable(f"memory_unavailable: {exc}") from exc
 
+        # The configured rotation method, read once for the turn. The replay
+        # clips an oversized newest row only when one is configured: a rotation
+        # is judged on a projection that charges the replay budget for the
+        # tail, so the carried tail may not exceed it. The mid-turn compaction
+        # notice records it too, because a rotation does not summarize. With
+        # the default (native) the newest row is carried whole and the notice
+        # is main's, and a config whose method cannot be read keeps that
+        # default too: this read may not end a turn that main would have run.
+        _rotation_methods: tuple[str, ...] = ()
+        if loaded_cfg is not None:
+            try:
+                _rotation_methods = rotation_ladder(loaded_cfg.session.compaction_method)
+            except Exception:
+                logger.warning(
+                    "session.compaction_method read failed in _run_chat; "
+                    "the replay carries the newest row whole",
+                    exc_info=True,
+                )
+        _replay_clips_newest_row = bool(_rotation_methods)
+
         _require_current_binding()
         if (
             bindings is not None
@@ -11915,6 +11953,7 @@ async def _run_chat(
                 _context_is_new=_context_is_new,
                 _provider_has_history=_provider_has_history,
                 _current_replay_message=_current_replay_message,
+                clip_newest_row=_replay_clips_newest_row,
             )
             # After a soft-cancel, kiro-cli drops the cancelled turn from its
             # conversation log — but everything BEFORE the cancel is preserved.
@@ -12224,6 +12263,7 @@ async def _run_chat(
                         slot,
                         conversation_log=state.conversation_log,
                         current_message=_current_replay_message,
+                        clip_newest_row=_replay_clips_newest_row,
                     )
                     full_message = history + full_message
 
@@ -14410,7 +14450,11 @@ async def _run_chat(
                     # working. Compaction waits for the turn to end, so say so to
                     # the person, once per turn.
                     _compact_after_turn_noticed = await _notice_compaction_after_turn(
-                        state, slot, client, session_key
+                        state,
+                        slot,
+                        client,
+                        session_key,
+                        rotation_method=_rotation_methods[0] if _rotation_methods else "",
                     )
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 # Drain the key as soon as its permission decision begins. The

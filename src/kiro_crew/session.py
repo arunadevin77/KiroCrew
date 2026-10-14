@@ -208,6 +208,7 @@ from kiro_crew.session_compaction import (
     CompactionCoordinator,
     CompactionDeps,
     CompactionState,
+    SeedWriter,
 )
 from kiro_crew.session_lifecycle import (
     SessionLifecycleConstants,
@@ -738,12 +739,16 @@ _POST_COMPACT_RESET_PCT = 95.0
 
 
 class _CompactCallback(Protocol):
-    # Mirrors ``session_compaction.CompactCallback`` exactly, including ``outcome``:
-    # this facade re-declares the shape so callers need not import the coordinator,
-    # and a narrower copy here makes the two disagree about what a registration must
-    # accept. ``outcome`` says WHICH arm ran -- compacted or recycled -- because a
-    # recycle is equally "successful" to a caller that only needs headroom, and a
-    # surface told only ``success`` announced a summary that never happened.
+    # Mirrors ``session_compaction.CompactCallback`` exactly, including ``outcome``,
+    # ``method`` and ``all_kept``: this facade re-declares the shape so callers need
+    # not import the coordinator, and a narrower copy here makes the two disagree
+    # about what a registration must accept. ``outcome`` says WHICH arm ran --
+    # compacted or recycled -- because a recycle is equally "successful" to a caller
+    # that only needs headroom, and a surface told only ``success`` announced a
+    # summary that never happened. ``method`` names the compaction method that ran
+    # (a rotation or ``native``), which the notice needs for the same reason.
+    # ``all_kept`` marks the one ``soft`` rotation that dropped nothing (the seed
+    # writer found the tail covers every row), whose notice must not announce a loss.
     async def __call__(  # noqa: E704
         self,
         key: str,
@@ -751,6 +756,8 @@ class _CompactCallback(Protocol):
         *,
         success: bool,
         outcome: str = COMPACT_OUTCOME_COMPACTED,
+        method: str,
+        all_kept: bool = False,
     ) -> None: ...
 
 
@@ -2923,6 +2930,10 @@ class SessionManager:
     def compaction_waits_for_turn(self, key: str) -> bool:
         """Whether *key*'s compaction still waits for the turn holding the session."""
         return self._compaction.compaction_waits_for_turn(key)
+
+    def set_compaction_seed_writer(self, writer: SeedWriter | None) -> None:
+        """Register the surface hook both rotation methods ask ``supports`` of; ``shake`` writes its seed row through it."""
+        self._compaction.set_seed_writer(writer)
 
     def mark_needs_reinjection(self, key: str) -> None:
         """Mark a live session for one-shot context reinjection."""

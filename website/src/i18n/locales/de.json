@@ -11266,6 +11266,7 @@
       },
       "compactionCard": {
         "after_turn": "Kontext bei {{pct}}, über dem Schwellenwert für automatische Verdichtung von {{limit}} – der Chat wird nach diesem Zug zusammengefasst",
+        "after_turn_rotation": "Kontext bei {{pct}}, über dem Schwellenwert für automatische Verdichtung von {{limit}} – der Chat wird nach diesem Zug verdichtet",
         "no_summary": "Fertig – keine Zusammenfassung vorhanden",
         "summary_hint": "Zusammenfassung eingeklappt – zum Lesen aufklappen",
         "title": "Kontext komprimiert"
@@ -16161,7 +16162,13 @@
         "turn_time_limit_description": "Wie lange ein Chat-Zug höchstens laufen darf, bevor er gestoppt wird. 300 bis 86.400 s (24 h). Standard 14.400 s (4 h).",
         "turn_time_limit_hint": "Ein Zug, der dieses Limit erreicht, stoppt; bereits auf die Festplatte geschriebene Arbeit bleibt erhalten. Nimm ihn wieder auf, um weiterzumachen. Erhöhe das Limit für lange unbeaufsichtigte Züge wie vollständige Testläufe. Gilt ab dem nächsten Zug.",
         "failed_to_save_compaction_wait_budget": "Wartezeit für Verdichtung konnte nicht gespeichert werden",
-        "failed_to_save_turn_time_limit": "Zeitlimit pro Zug konnte nicht gespeichert werden"
+        "failed_to_save_turn_time_limit": "Zeitlimit pro Zug konnte nicht gespeichert werden",
+        "compaction_method": "Verdichtungsmethode",
+        "compaction_method_desc": "Was beim Schwellenwert für automatische Verdichtung läuft. Soft und Shake rufen kein Modell auf und laufen nur in Dashboard-Chats; wo sie nicht laufen können, läuft Native.",
+        "compaction_method_native": "Native (Standard) – an Ort und Stelle zusammenfassen",
+        "compaction_method_soft": "Soft – Sitzung rotieren, letzte Runden behalten",
+        "compaction_method_shake": "Shake – Sitzung rotieren, frühere Runden als Digest",
+        "failed_to_save_compaction_method": "Verdichtungsmethode konnte nicht gespeichert werden"
       },
       "computerUsePanel": {
         "accessibility": "Bedienungshilfen",

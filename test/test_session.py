@@ -1979,7 +1979,14 @@ class TestCompactCallback:
         # This fixture's provider serves no native compaction, so the in-place
         # attempt falls through to the recycle. The callback reports the arm that
         # ran; the key/pct/success threading this case exists for is unchanged.
-        cb.assert_awaited_once_with("dashboard:chat-1", 92.0, success=True, outcome="recycled")
+        cb.assert_awaited_once_with(
+            "dashboard:chat-1",
+            92.0,
+            success=True,
+            outcome="recycled",
+            method="native",
+            all_kept=False,
+        )
         # A fresh successor holds the key.
         assert mgr._sessions["dashboard:chat-1"].first_turn.is_new
         await mgr.close_all()
@@ -2021,7 +2028,14 @@ class TestCompactCallback:
         # This fixture's provider serves no native compaction, so the in-place
         # attempt falls through to the recycle. The callback reports the arm that
         # ran; the key/pct/success threading this case exists for is unchanged.
-        cb.assert_awaited_once_with("dashboard:chat-1", 92.0, success=True, outcome="recycled")
+        cb.assert_awaited_once_with(
+            "dashboard:chat-1",
+            92.0,
+            success=True,
+            outcome="recycled",
+            method="native",
+            all_kept=False,
+        )
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -2082,7 +2096,7 @@ class TestCompactCallback:
         mgr.release("dashboard:chat-2")
         captured: list[tuple[str, float, bool]] = []
 
-        async def cb(key, pct, *, success, outcome="compacted"):
+        async def cb(key, pct, *, success, outcome="compacted", method="native", all_kept=False):
             captured.append((key, pct, success))
 
         mgr.set_compact_callback(cb)
@@ -2104,7 +2118,7 @@ class TestCompactCallback:
         provider.context_usage_pct = lambda: 93.0
         captured: list[tuple[str, float, bool]] = []
 
-        async def cb(key, pct, *, success, outcome="compacted"):
+        async def cb(key, pct, *, success, outcome="compacted", method="native", all_kept=False):
             captured.append((key, pct, success))
 
         mgr.set_compact_callback(cb)
@@ -4841,7 +4855,7 @@ class TestCompaction:
         mgr.release("k1")
         callback_args: list[tuple[str, float, bool]] = []
 
-        async def cb(key, pct, *, success, outcome="compacted"):
+        async def cb(key, pct, *, success, outcome="compacted", method="native", all_kept=False):
             callback_args.append((key, pct, success))
 
         mgr.set_compact_callback(cb)
@@ -4869,7 +4883,7 @@ class TestClaudeBackendCompaction:
         provider.compact = AsyncMock()
         callback_args: list[tuple[str, float, bool]] = []
 
-        async def cb(key, pct, *, success, outcome="compacted"):
+        async def cb(key, pct, *, success, outcome="compacted", method="native", all_kept=False):
             callback_args.append((key, pct, success))
 
         mgr.set_compact_callback(cb)
@@ -4902,7 +4916,9 @@ class TestClaudeBackendCompaction:
         provider.shutdown.assert_not_awaited()
         # Failure callback fires with success=False so the dashboard can
         # show a "compact failed" banner. (Behavior changed in the I2 fix.)
-        cb.assert_awaited_once_with("k1", 92.0, success=False, outcome="compacted")
+        cb.assert_awaited_once_with(
+            "k1", 92.0, success=False, outcome="compacted", method="native", all_kept=False
+        )
         assert "k1" not in mgr._compacting
         assert any("Compact failed" in r.message for r in caplog.records)
 
@@ -5087,7 +5103,14 @@ class TestKiroInPlaceCompaction:
         assert mgr._sessions["dashboard:chat-1"].provider is provider
         provider.stream_command.assert_called_once_with("/compact")
         provider.shutdown.assert_not_awaited()
-        cb.assert_awaited_once_with("dashboard:chat-1", 92.0, success=True, outcome="compacted")
+        cb.assert_awaited_once_with(
+            "dashboard:chat-1",
+            92.0,
+            success=True,
+            outcome="compacted",
+            method="native",
+            all_kept=False,
+        )
         # Semaphore released: the next turn can proceed immediately.
         assert not mgr._sessions["dashboard:chat-1"].semaphore.locked()
         await mgr.close_all()
@@ -5111,7 +5134,14 @@ class TestKiroInPlaceCompaction:
         provider.shutdown.assert_awaited_once()
         # The provider was REPLACED, not summarized, so the callback
         # reports that arm -- what the notice needs to tell the user.
-        cb.assert_awaited_once_with("dashboard:chat-1", 92.0, success=True, outcome="recycled")
+        cb.assert_awaited_once_with(
+            "dashboard:chat-1",
+            92.0,
+            success=True,
+            outcome="recycled",
+            method="native",
+            all_kept=False,
+        )
         assert "dashboard:chat-1" not in mgr._recycling
         await mgr.close_all()
 
@@ -5134,7 +5164,14 @@ class TestKiroInPlaceCompaction:
         provider.shutdown.assert_awaited_once()
         # The provider was REPLACED, not summarized, so the callback
         # reports that arm -- what the notice needs to tell the user.
-        cb.assert_awaited_once_with("dashboard:chat-1", 92.0, success=True, outcome="recycled")
+        cb.assert_awaited_once_with(
+            "dashboard:chat-1",
+            92.0,
+            success=True,
+            outcome="recycled",
+            method="native",
+            all_kept=False,
+        )
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -5178,7 +5215,14 @@ class TestKiroInPlaceCompaction:
         assert "dashboard:chat-1" in mgr._sessions
         provider.wait_for_compaction.assert_not_awaited()
         provider.shutdown.assert_not_awaited()
-        cb.assert_awaited_once_with("dashboard:chat-1", 92.0, success=True, outcome="compacted")
+        cb.assert_awaited_once_with(
+            "dashboard:chat-1",
+            92.0,
+            success=True,
+            outcome="compacted",
+            method="native",
+            all_kept=False,
+        )
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -5371,7 +5415,9 @@ class TestKiroInPlaceCompaction:
         old_provider.shutdown.assert_awaited_once()
         # The provider was REPLACED, not summarized, so the callback
         # reports that arm -- what the notice needs to tell the user.
-        cb.assert_awaited_once_with("k1", 92.0, success=True, outcome="recycled")
+        cb.assert_awaited_once_with(
+            "k1", 92.0, success=True, outcome="recycled", method="native", all_kept=False
+        )
         await mgr.close_all()
 
 
@@ -5454,7 +5500,7 @@ class TestCompactTimeout:
         provider.compact = _hang
         callback_calls: list[tuple[str, float, bool]] = []
 
-        async def cb(key, pct, *, success, outcome="compacted"):
+        async def cb(key, pct, *, success, outcome="compacted", method="native", all_kept=False):
             callback_calls.append((key, pct, success))
 
         mgr.set_compact_callback(cb)
@@ -5486,7 +5532,7 @@ class TestCompactCallbackSuccessFlag:
 
         calls: list[tuple[str, float, bool]] = []
 
-        async def cb(key, pct, *, success, outcome="compacted"):
+        async def cb(key, pct, *, success, outcome="compacted", method="native", all_kept=False):
             calls.append((key, pct, success))
 
         mgr.set_compact_callback(cb)
@@ -7177,7 +7223,14 @@ class TestIneffectiveCompactionCooldown:
         # The compaction DID complete and rewrote the conversation: the
         # callback stays success=True (reinjection must run; the failure
         # notice would misdescribe a completed attempt).
-        cb.assert_awaited_once_with("dashboard:chat-1", 92.0, success=True, outcome="compacted")
+        cb.assert_awaited_once_with(
+            "dashboard:chat-1",
+            92.0,
+            success=True,
+            outcome="compacted",
+            method="native",
+            all_kept=False,
+        )
         # The immediate next trigger is suppressed by the cooldown.
         assert mgr._trigger_compaction("dashboard:chat-1", "context 92%", 92.0, provider) == (
             "cooldown"
@@ -7204,7 +7257,9 @@ class TestIneffectiveCompactionCooldown:
 
         assert mgr._compact_cooldown_until.get("k1", 0.0) > time.monotonic()
         assert any("ineffective" in r.message for r in caplog.records)
-        cb.assert_awaited_once_with("k1", 92.0, success=True, outcome="compacted")
+        cb.assert_awaited_once_with(
+            "k1", 92.0, success=True, outcome="compacted", method="native", all_kept=False
+        )
         assert mgr.has_session("k1")  # in place: the session survives
         await mgr.close_all()
 

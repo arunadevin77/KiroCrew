@@ -3664,6 +3664,10 @@ def _build_session_config(session_data: dict) -> SessionConfig:
         # is capped. Bounds are referenced via the module handle, not imported:
         # this module's top-level names are a frozen compatibility facade.
         compact_wait_secs=section.read("compact_wait_secs", _clamp_compact_wait_secs),
+        # The compaction key resolves through the sections module handle for the
+        # same reason as `empty_response_max_continues` above: this module's
+        # top-level names are a frozen facade, so no new re-export.
+        compaction_method=_sections._compaction_method(session_data),
         pool_size=_safe_int(
             session_data.get("pool_size", DEFAULT_POOL_SIZE),
             DEFAULT_POOL_SIZE,

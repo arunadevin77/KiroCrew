@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from kiro_crew.providers.base import LLMEvent
     from kiro_crew.slack.outbound import PostedOptions
 
+from kiro_crew.async_utils import run_to_completion
 from kiro_crew.context_blocks import attributable_user_chars
 from kiro_crew.dashboard.slot_queue_repository import ATTACHMENT_META_KEYS
 from kiro_crew.dashboard.state import (
@@ -247,41 +248,6 @@ async def run_config_write(fn, /, *args, **kwargs):
         if cancelled:
             raise asyncio.CancelledError
         return result
-
-
-async def run_to_completion(aw):
-    """Await *aw* so that a cancellation cannot abandon it part-way.
-
-    The awaitable runs as its own task behind ``asyncio.shield``; a
-    ``CancelledError`` delivered to the CALLER is remembered and the caller
-    keeps waiting until the task finishes, then the cancellation is re-raised.
-    The loop, not a single re-await, is what makes that hold under repeated
-    cancellation (a graceful shutdown escalating after its timeout): each
-    re-shield absorbs one more cancel, and only a finished task ends it.
-
-    For a multi-phase write -- a channel saver's config.json commit followed by
-    its ``.env`` credential write, the MCP gateway toggle's persist followed by
-    its live apply -- a cancellation between the phases would leave the stored
-    state and the effective state disagreeing; wrapping the whole transaction
-    here is what keeps the pair consistent. Cancellation is deferred, never
-    swallowed: the caller still unwinds with ``CancelledError`` afterwards, and
-    an exception from the task propagates as usual.
-    """
-    task = asyncio.ensure_future(aw)
-    cancelled: asyncio.CancelledError | None = None
-    while True:
-        try:
-            result = await asyncio.shield(task)
-            break
-        except asyncio.CancelledError as exc:
-            if task.cancelled():
-                raise
-            # OUR await was cancelled, not the task: remember it, keep waiting
-            # for the still-running work.
-            cancelled = exc
-    if cancelled is not None:
-        raise cancelled
-    return result
 
 
 async def drained_to_thread(fn, /, *args):
