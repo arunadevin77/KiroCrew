@@ -20,6 +20,7 @@ from typing import Any
 
 from kiro_crew.decisions.impl_jev import _to_wire
 from kiro_crew.decisions.types import Choice
+from kiro_crew.testing.wait import await_until
 
 _LAUNCHER = (
     Path(__file__).resolve().parents[1]
@@ -160,7 +161,7 @@ class _Inference:
         self.entered.set()
         try:
             if scope["path"] == _DECIDE:
-                await asyncio.wait_for(self.release.wait(), _HOLD_BOUND_SECS)
+                await await_until(self.release, what="release signal")
             if self.fail:
                 raise RuntimeError("inference failed")
             await send({"type": "http.response.start", "status": 200, "headers": []})

@@ -170,7 +170,6 @@
  6 test_decisions_local_runtime.py
  5 test_decisions_local_runtime_real_spawn.py
  1 test_decisions_points.py
- 1 test_decisions_strands_launcher_wire.py
  2 test_denied_commands_security.py
 57 test_deny_bounded_write.py
  1 test_dependency_coordinator.py
