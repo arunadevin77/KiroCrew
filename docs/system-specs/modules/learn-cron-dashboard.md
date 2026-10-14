@@ -1466,6 +1466,18 @@ flow again. Replay remains merge-only and idempotent.
 
 ## Dashboard (`dashboard/`)
 
+An interrupt response with `queue_held: true` leaves the selected queue card
+queued; the backend starts the queue once teardown ends. ChatPage and ChatPane
+show the same informational notice immediately above QueueStack, using its
+lightning glyph and localized copy saying the message sends once the turn stops.
+While the slot's `stop_teardown` summary flag is true, every card's lightning
+button is disabled with a "Still stopping…" tooltip. The notice clears when that
+flag becomes false, the card retires, or the user leaves the slot. A delayed held
+response cannot restore it after teardown has settled. The frontend sends no
+automatic retry and does not change queue order.
+Pending controls follow the current queued IDs. A reply from an earlier slot
+visit cannot release or relatch a newer request after the user returns.
+
 The Developer → Config MCP Tool Search toggle saves `agent.tool_search` as a
 boolean through `PATCH /api/config/kirocrew`. The config watcher refreshes the
 defaults used by new sessions.
