@@ -38,7 +38,7 @@ it, and a patch through the facade reaches every owner holding the name, so the 
 code reads its names as plain module globals. Owners never import the facade, and new
 work goes to the owner of its responsibility rather than back into the facade.
 A new fold goes in its own `projection_<fold>.py`, or in its family's owner, and adds
-only its registry entry (`_FOLDS`, in `crew_log/projection.py`) beside the others.
+only its registry entry (`_FOLDS`, in `crew_log/projection_registry.py`) beside the others.
 
 | Owner | Holds |
 |---|---|
@@ -47,9 +47,21 @@ only its registry entry (`_FOLDS`, in `crew_log/projection.py`) beside the other
 | `crew_log/projection_values.py` | the bounded coercions every fold applies to entry data (`_as_str`, `_as_id`, `_keyable`, `TEXT_LIMIT`, `ID_LIMIT`) and `_rows_in` |
 | `crew_log/projection_side_panel.py` | the `status`, `timeline`, `tools` and `approvals` folds and their caps |
 | `crew_log/projection_usage.py` | the `usage` fold, its caps, and the credit table (`CREDIT_SOURCES`) every billing fold charges by |
+| `crew_log/projection_subagents.py` | the `subagents` fold |
+| `crew_log/projection_ledger.py` | the `ledger` slot fold |
 | `crew_log/projection_internal.py` | the internal `class` and `outline` folds |
 | `crew_log/projection_radar.py` | the `radar` slot fold |
-| `crew_log/projection.py` | the registry (`_FOLDS`, what each fold touches and retains, the import-time checks), `Checkpoint` and the pure fold API, the `subagents`, `ledger`, `work`, `workstreams`, `worktree`, `panel`, `agentic` and `mistakes` folds, the warm byte budget, and the session and slot drivers with their memos |
+| `crew_log/projection_dashboard.py` | the `panel`, `agentic` and `mistakes` slot folds |
+| `crew_log/projection_work.py` | the `work` slot fold, and which units a work board spans (`_work_units`, `work_slots_naming_board`) |
+| `crew_log/projection_workstreams.py` | the `workstreams` slot fold and its board closure |
+| `crew_log/projection_worktree.py` | the `worktree` tree fold |
+| `crew_log/projection_registry.py` | `_FOLDS`: what each fold touches, copies and retains, its eager or lazy posture, and the import-time checks over the registry |
+| `crew_log/projection_kernel.py` | `Checkpoint` and the pure fold API (`require_name`, `fold_state_version`, `initial`, `advance`, `projection_of`, `fold`) |
+| `crew_log/projection_budget.py` | the warm memo's byte budget: each fold's measured row cost and the operator ceiling |
+| `crew_log/projection_session.py` | folding one session's log on the projection kernel (`SessionProjections`, `fold_session`) and its savepoint |
+| `crew_log/projection_slot_memo.py` | a slot's folds kept warm: the memo, its locks, the revision counter, resume and persist |
+| `crew_log/projection_readers.py` | reading a slot's and a tree's folds (`fold_slot_checkpoint`, `read_slot_projection`, `units_in_succession`, `read_tree_projection`) |
+| `crew_log/projection_session_memo.py` | a session's folds kept warm, and `read_projection` |
 
 ## 2. The fold contract
 

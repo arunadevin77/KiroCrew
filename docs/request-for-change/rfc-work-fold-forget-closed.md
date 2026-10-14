@@ -44,7 +44,7 @@ units, read a unit at a time; it grows without a cap.
 The limit is the `work` **fold**: the projection that replays the log into one
 in-memory state per board. It keeps every item it has seen, closed ones included,
 each with up to `WORK_EVENT_LIMIT = 200` event lines of up to 500 characters. The
-fold-budget note in `crew_log/projection.py` measures the cap-state at **165.6 MiB**
+fold-budget note in `crew_log/projection_budget.py` measures the cap-state at **165.6 MiB**
 for 256 items x 200 events. So the fold caps itself at `WORK_ITEM_LIMIT` (=
 `WORK_STORED_ITEM_LIMIT`) and drops later creates into `omitted`, and the writer caps
 lifetime creates at the same number so the fold never has to drop one

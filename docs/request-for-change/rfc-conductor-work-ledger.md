@@ -322,7 +322,7 @@ key whichever party wrote it. The entry carries `actor`, `by`, `action` and only
 fields that action set; an omitted field means "unchanged".
 
 The `work` fold in
-[`src/kiro_crew/crew_log/projection.py`](../../src/kiro_crew/crew_log/projection.py),
+[`src/kiro_crew/crew_log/projection_work.py`](../../src/kiro_crew/crew_log/projection_work.py),
 registered in the projection registry beside the session folds, replays those entries
 across the conductor's and its workers' units into the shape the readers already
 consume: the conductor header and every item in creation order, each with its event

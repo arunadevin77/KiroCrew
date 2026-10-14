@@ -74,7 +74,6 @@
 4102 src/kiro_crew/context.py
 5311 src/kiro_crew/crew_log/emit.py
 2798 src/kiro_crew/crew_log/entry_types.py
-6632 src/kiro_crew/crew_log/projection.py
 2260 src/kiro_crew/crew_log/session_tree_projection.py
 5054 src/kiro_crew/crew_log/store.py
 5580 src/kiro_crew/cron.py
