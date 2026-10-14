@@ -298,3 +298,46 @@ describe('ChatEmbed attachments with the upload grant', () => {
     expect(await screen.findByTestId('chat-embed-attach-notice')).toHaveTextContent('Upload failed: file too large')
   })
 })
+
+describe('shared Attach integration', () => {
+  it('uses the shared picker without a store or router and queues a file-only turn', async () => {
+    mockGet.mockResolvedValue({ messages: [], running: true, title: '' })
+    uploadReturns(['/up/spec.pdf'])
+    await act(async () => { mount(GRANTED) })
+    const input = screen.getByTestId('chat-embed-file-input')
+    expect(input).toHaveAttribute('data-composer-attach')
+    expect(screen.getByLabelText('Chat message')).toHaveAttribute('data-composer-editor')
+    fireEvent.change(input, { target: { files: [pdf()] } })
+    const queue = await screen.findByRole('button', { name: 'Queue message' })
+    await waitFor(() => expect(queue).not.toBeDisabled())
+    await act(async () => { fireEvent.click(queue) })
+    const chat = mockPost.mock.calls.find(c => c[0] === '/api/chat?ws=1')!
+    expect(chat[1].meta.files).toEqual(['/up/spec.pdf'])
+  })
+
+  it('holds the shared Send button as well as Enter during an upload', async () => {
+    let settle!: (response: Response) => void
+    mockRaw.mockReturnValueOnce(new Promise<Response>(resolve => { settle = resolve }))
+    await act(async () => { mount(GRANTED) })
+    fireEvent.change(screen.getByLabelText('Chat message'), { target: { value: 'wait for my file' } })
+    fireEvent.change(screen.getByTestId('chat-embed-file-input'), { target: { files: [pdf()] } })
+    await waitFor(() => expect(mockRaw).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+    await act(async () => settle(new Response(JSON.stringify({ paths: ['/up/spec.pdf'] }))))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled())
+  })
+
+  it('restores files and text when the host onSend rejects, without posting chat itself', async () => {
+    uploadReturns(['/up/spec.pdf'])
+    const onSend = vi.fn().mockRejectedValue(new Error('no receipt'))
+    await act(async () => { mount(GRANTED, { onSend }) })
+    fireEvent.change(screen.getByLabelText('Chat message'), { target: { value: 'my draft' } })
+    fireEvent.change(screen.getByTestId('chat-embed-file-input'), { target: { files: [pdf()] } })
+    await waitFor(() => expect(screen.getByRole('group', { name: '/up/spec.pdf' })).toBeInTheDocument())
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Send message' })))
+    await waitFor(() => expect(screen.getByLabelText('Chat message')).toHaveValue('my draft'))
+    expect(screen.getByRole('group', { name: '/up/spec.pdf' })).toBeInTheDocument()
+    expect(onSend).toHaveBeenCalledWith(expect.stringContaining('[attached_file 1]'), { files: ['/up/spec.pdf'] })
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+})

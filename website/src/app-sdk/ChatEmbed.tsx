@@ -35,6 +35,7 @@ import ErrorNotice from '../components/ErrorNotice'
 import { FilePreviewStrip } from '../components/chat-input/FilePreviewStrip'
 import { buildOutgoingTurn } from '../chat-core/composer/outgoingTurn'
 import { useEmbedAttachments } from './useEmbedAttachments'
+import { ComposerAttach } from '../chat-core/composer/Attach'
 import { JumpToBottomButton } from './ChatScrollChrome'
 import FollowUpBar from '../components/FollowUpBar'
 import ChatFooter from '../pages/chat/ChatFooter'
@@ -1025,19 +1026,14 @@ function ChatEmbed({
         >
           {attachments.granted && (
             <>
-              <input
+              <ComposerAttach
                 ref={fileInputRef}
-                type="file"
                 multiple
                 hidden
                 tabIndex={-1}
                 aria-hidden="true"
                 data-testid="chat-embed-file-input"
-                onChange={e => {
-                  attachments.addFiles(Array.from(e.target.files ?? []))
-                  // Reset so picking the same file again still fires a change.
-                  e.target.value = ''
-                }}
+                onFiles={attachments.addFiles}
               />
               <button
                 type="button"

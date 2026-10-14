@@ -552,14 +552,9 @@ export function usePasteTokens({ value, onChange, pasteBlocks, onPasteBlocksChan
     e.preventDefault()
   }, [expandSelectionForClipboard, value, onChange])
 
-  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    if (files.length && onUploadFiles) onUploadFiles(files)
-    e.target.value = '' // reset so same file can be re-selected
-  }, [onUploadFiles])
 
   return {
     mirrorRef, hoverRef, pastePreviewPanelId, setPastePreviewPanelId, rawPasteRef, noteKeyDown,
-    handleTokenKey, handlePaste, handleTextareaClick, handleSelectSnap, handleCopy, handleCut, handleFileInputChange,
+    handleTokenKey, handlePaste, handleTextareaClick, handleSelectSnap, handleCopy, handleCut,
   }
 }
