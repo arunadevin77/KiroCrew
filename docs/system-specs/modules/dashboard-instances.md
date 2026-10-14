@@ -17,14 +17,18 @@ The agent-facing surface is separate and MCP-only: `dashboard/handlers/agent_pan
 
 An array or object field is emptied with `dashboard_write` `clear: true` and no
 `value`. The MCP server (`mcp_panel.py`) reads the field's declared type from the
-`/api/agent-panel/dashboard/fields` route, then posts `value: []` for array fields
-and `value: {}` for object fields, so the write route and its body schema
+`/api/agent-panel/dashboard/fields` route, then posts `value: {}` for an object field
+and `value: []` for any other field, so the write route and its body schema
 (`DASHBOARD_WRITE_SCHEMA`) see an ordinary write and type-check it the same way; the
-tool's own argument schema is `DASHBOARD_WRITE_TOOL_SCHEMA`. Fields of other types
-(string, number, boolean) are refused before the POST. The flag exists because an MCP
-client can drop an empty list, an empty object or a top-level null from a tool call's
-arguments before the server reads them, so `value: []` or `value: {}` arrives as no
-value at all and is refused as missing; a boolean arrives intact.
+tool's own argument schema is `DASHBOARD_WRITE_TOOL_SCHEMA`. The MCP server does not
+refuse a clear for the field's type or source: a string, number or boolean field, a
+fold-sourced field and an unknown field all reach the write route, which refuses them
+(`wrong_type`, `field_not_agentic`, `unknown_field`) and records each refusal in the
+mistake book. When the field list cannot be read, the server posts `value: []`, so
+emptying an array field does not depend on the fields route. The flag exists because
+an MCP client can drop an empty list, an empty object or a top-level null from a tool
+call's arguments before the server reads them, so `value: []` or `value: {}` arrives
+as no value at all and is refused as missing; a boolean arrives intact.
 
 The sharing and snapshot modules are designed in the RFC and built behind the surface
 that calls each -- a chooser, an export button -- because a module with no caller is

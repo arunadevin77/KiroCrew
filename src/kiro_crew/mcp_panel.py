@@ -529,9 +529,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             # intact. Which empty value depends on the field's declared type, read
             # from the same list dashboard_fields shows; the gateway still
             # type-checks the write like any other.
-            to_write, refusal = _empty_value_for(field, sk)
-            if refusal:
-                return refusal
+            to_write = _empty_value_for(field, sk)
         else:
             to_write = args["value"]
         d = _post(
@@ -1013,37 +1011,28 @@ def _render_fields(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _empty_value_for(field: str, sk: str) -> "tuple[Any, str]":
-    """The value ``clear: true`` writes to *field*, or a refusal to return instead.
+def _empty_value_for(field: str, sk: str) -> Any:
+    """The value ``clear: true`` writes to *field*: ``{}`` for an object field, else ``[]``.
 
-    Returns the empty value of the field's declared type, from the field list the
-    ``dashboard_fields`` tool reads, so the type is the one the write route checks
-    against. A field the list does not name gets ``[]``, and the write route answers
-    it with its own unknown-field refusal, the same as any other write.
+    The type comes from the field list ``dashboard_fields`` shows, which is the
+    declared type the write route checks against. Nothing is refused here. The write
+    route answers every clear: a string, number or boolean field with ``wrong_type``,
+    a fold-sourced field with ``field_not_agentic`` and a field the list does not name
+    with ``unknown_field``, each recorded in the mistake book. A refusal here would
+    repeat that answer and keep it out of the book.
+
+    A field list that cannot be read gets ``[]`` as well, so emptying an array field
+    does not depend on the fields route answering. An object field cleared then is
+    refused by the write route as ``wrong_type``, and the next clear that can read
+    the list writes ``{}``.
     """
     d = _get("/api/agent-panel/dashboard/fields", session_key=sk)
-    if d.get("error"):
-        return None, redact(f"Error: could not read your fields to clear `{field}`: {d['error']}")
-    rows = d.get("fields")
-    row = (
-        next(
-            (r for r in rows if isinstance(r, dict) and r.get("field") == field),
-            None,
-        )
-        if isinstance(rows, list)
-        else None
-    )
-    if row is None:
-        return [], ""
-    declared = row.get("type")
-    if declared == "array":
-        return [], ""
-    if declared == "object":
-        return {}, ""
-    return None, (
-        f"Error: clear: true empties an array or object field, and `{field}` is a "
-        f"{declared} field; write its new value instead"
-    )
+    rows = None if d.get("error") else d.get("fields")
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict) and row.get("field") == field:
+                return {} if row.get("type") == "object" else []
+    return []
 
 
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:

@@ -544,16 +544,23 @@ class TestDashboardWriteClear:
 
         assert mock_post.call_args[0][1] == {"field": "asks", "value": {}}
 
-    def test_clear_on_a_string_field_is_refused_before_the_gateway(self) -> None:
+    def test_clear_on_a_scalar_field_falls_through_to_the_gateway(self) -> None:
+        """A scalar field gets ``[]`` and the gateway's own refusal, not an early one.
+
+        The gateway records the ``wrong_type`` refusal in the mistake book; an early
+        refusal here would duplicate it and bypass the book. Fold-sourced fields follow
+        the same path and receive ``field_not_agentic`` from the route.
+        """
         string_fields = {"fields": [{"field": "headline", "type": "string", "source": "agentic"}]}
+        gateway_reply = {"error": "headline wants string, and this value is array."}
         with (
             patch("kiro_crew.mcp_panel._get", return_value=string_fields),
-            patch("kiro_crew.mcp_panel._post") as mock_post,
+            patch("kiro_crew.mcp_panel._post", return_value=gateway_reply) as mock_post,
         ):
             out = _call_tool("dashboard_write", {"field": "headline", "clear": True})
 
-        assert out.startswith("Error:") and "string" in out and "clear: true" in out, out
-        mock_post.assert_not_called()
+        assert out.startswith("Error:") and "wants string" in out, out
+        assert mock_post.call_args[0][1] == {"field": "headline", "value": []}, mock_post.call_args
 
     def test_clear_on_an_unknown_field_posts_an_empty_list_for_the_route_to_refuse(
         self,
@@ -568,15 +575,34 @@ class TestDashboardWriteClear:
 
         assert mock_post.call_args[0][1] == {"field": "unknown_field", "value": []}
 
-    def test_clear_returns_error_when_fields_get_fails(self) -> None:
-        with (
-            patch("kiro_crew.mcp_panel._get", return_value={"error": "not found"}),
-            patch("kiro_crew.mcp_panel._post") as mock_post,
-        ):
-            out = _call_tool("dashboard_write", {"field": "asks", "clear": True})
+    @pytest.mark.parametrize(
+        "listed",
+        [
+            {"error": "dashboard fields failed"},
+            {"error": "Kiro Crew gateway not reachable on 127.0.0.1:1", "refused": True},
+            {},
+            {"fields": "not a list"},
+        ],
+        ids=["route-error", "refused", "no-fields-key", "fields-not-a-list"],
+    )
+    def test_clear_posts_an_empty_list_when_the_field_list_cannot_be_read(
+        self, listed: dict[str, Any]
+    ) -> None:
+        """No field list still clears an array field: the write gets ``[]``.
 
-        assert out.startswith("Error:") and "could not read" in out, out
-        mock_post.assert_not_called()
+        Emptying an array field must not depend on the fields route answering, so the
+        clear goes on to the write route, which type-checks whatever arrives.
+        """
+        with (
+            patch("kiro_crew.mcp_panel._get", return_value=listed) as mock_get,
+            patch("kiro_crew.mcp_panel._post", return_value=self.WRITTEN_ARRAY) as mock_post,
+        ):
+            out = _call_tool("dashboard_write", {"field": "for_you", "clear": True})
+
+        assert mock_get.call_args[0][0] == "/api/agent-panel/dashboard/fields"
+        assert not out.startswith("Error:"), out
+        assert mock_post.call_args[0][0] == "/api/agent-panel/dashboard/write"
+        assert mock_post.call_args[0][1] == {"field": "for_you", "value": []}
 
     @pytest.mark.parametrize("value", [[1], {"a": 1}, "x", 0, False])
     def test_clear_beside_another_value_is_refused_before_the_gateway(self, value: Any) -> None:
