@@ -59,8 +59,8 @@ _CACHE_TTL_SECS = 30
 # lifecycle (see `_revalidate_pull_request`), so post-merge comments and a
 # reopen reach the panel within one TTL for one rate-limit-free request.
 # Mutation invalidation still drops these entries, the explicit refresh bypasses
-# them, and the turn-boundary force still re-reads a CLOSED chip, never a merged
-# one.
+# them, and the turn-boundary force still re-reads a CLOSED chip; it does not
+# bypass a merged one's clock (a forced call reads it once that clock runs out).
 _TERMINAL_TTL_SECS = 6 * 60 * 60
 _CLOSED_TTL_SECS = 60 * 60
 # Ceiling on how long conditional revalidation may keep re-stamping one full

@@ -3850,6 +3850,92 @@ async def test_refresh_check_status_issues_pending_follow_up_force(monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_follow_up_forced_read_burns_the_floor(monkeypatch) -> None:
+    """A follow-up forced read that starts is floor-stamped.
+
+    Without the stamp, a turn boundary inside the floor that lands while the
+    follow-up is in flight queues another unstamped follow-up, so forced reads
+    run back to back for as long as turns keep ending during reads.
+    """
+    url = "https://github.com/acme/repo/pull/95"
+    source._check_cache.clear()
+    source._check_inflight.clear()
+    source._check_forced_at.clear()
+    source._check_force_pending.clear()
+    source._status_delta_sinks.clear()
+    real_refresh = source._refresh_check_status
+    monkeypatch.setattr(
+        source, "_fetch_check_status", AsyncMock(return_value={"state": "open"})
+    )
+    # Started follow-ups stay "in flight" until the test clears them.
+    monkeypatch.setattr(source, "_refresh_check_status", AsyncMock(return_value=None))
+    source._check_cache[url] = (source.time.monotonic(), {"state": "open"})
+    source._check_inflight.add(url)
+    try:
+        # Turn boundary while a paced read is in flight: one follow-up is queued.
+        assert source.request_check_refresh_now([url]) == [url]
+        assert url in source._check_force_pending
+        # The read completes and the follow-up forced read really starts.
+        await real_refresh(url)
+        assert url in source._check_inflight
+        assert url not in source._check_force_pending
+        assert url in source._check_forced_at
+        # A second boundary inside the floor, during the follow-up, is paced: it
+        # queues no further follow-up and starts no other forced read.
+        source.request_check_refresh_now([url])
+        assert url not in source._check_force_pending
+        # After the floor it is eligible again.
+        source._check_forced_at[url] = (
+            source.time.monotonic() - source._CHECK_FORCE_MIN_INTERVAL_SECS - 1
+        )
+        assert source.request_check_refresh_now([url]) == [url]
+        assert url in source._check_force_pending
+    finally:
+        source._check_cache.clear()
+        source._check_inflight.clear()
+        source._check_forced_at.clear()
+        source._check_force_pending.clear()
+
+
+@pytest.mark.asyncio
+async def test_deferred_follow_up_caches_the_result_already_due(monkeypatch) -> None:
+    """A follow-up deferred by a full pending cap leaves the entry due.
+
+    The read that completed may predate the turn's final push, so it must not be
+    cached as fresh for a full TTL when its corrective follow-up could not start.
+    """
+    url = "https://github.com/acme/repo/pull/96"
+    source._check_cache.clear()
+    source._check_inflight.clear()
+    source._check_forced_at.clear()
+    source._check_force_pending.clear()
+    source._status_delta_sinks.clear()
+    monkeypatch.setattr(
+        source, "_fetch_check_status", AsyncMock(return_value={"state": "open"})
+    )
+    real_refresh = source._refresh_check_status
+    spawned = AsyncMock(return_value=None)
+    monkeypatch.setattr(source, "_refresh_check_status", spawned)
+    source._check_cache[url] = (source.time.monotonic() - 120, {"state": "open"})
+    for n in range(source._CHECK_PENDING_MAX):
+        source._check_inflight.add(f"https://github.com/acme/other/pull/{n}")
+    source._check_force_pending.add(url)
+    try:
+        await real_refresh(url)
+        spawned.assert_not_called()
+        assert url not in source._check_force_pending
+        assert url not in source._check_forced_at
+        entry = source._check_cache[url]
+        assert entry[1] == {"state": "open"}
+        assert source._chip_refresh_due(entry, source.time.monotonic(), force=False)
+    finally:
+        source._check_cache.clear()
+        source._check_inflight.clear()
+        source._check_forced_at.clear()
+        source._check_force_pending.clear()
+
+
+@pytest.mark.asyncio
 async def test_chip_refresh_damps_projection_flap(monkeypatch) -> None:
     """A URL whose chip status keeps flapping must stop driving the invalidation loop.
 
