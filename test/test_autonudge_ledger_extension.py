@@ -18,6 +18,7 @@ import pytest
 from kiro_crew import autonudge as _an
 from kiro_crew.autonudge import AutoNudgeService, NudgeLoop
 from kiro_crew.autonudge_service import firing, model
+from kiro_crew.testing.wait import await_until
 
 
 @pytest.fixture(autouse=True)
@@ -333,4 +334,26 @@ async def test_an_armed_tick_survives_its_own_update_and_logs(svc, _nosleep, led
     assert not tick.cancelled(), "the update cancelled the tick that called it"
     assert svc._loops[loop.id].max_cycles == 18
     assert any("extended it to 18" in r.getMessage() for r in caplog.records)
+    await _drain(svc)
+
+
+@pytest.mark.asyncio
+async def test_an_armed_tick_survives_its_own_runtime_extension(
+    svc, _nosleep, ledger, monkeypatch, caplog
+):
+    """The runtime-budget sibling of the case above, on the same real path."""
+    loop = await _armed(svc, max_runtime_secs=7200)
+    now = 1_900_000_000.0
+    _freeze_clock(monkeypatch, now)
+    loop.created_ts = now - 7300
+    with caplog.at_level(logging.WARNING, logger="kiro_crew.autonudge"):
+        svc._arm_timer(loop, delay=0)
+        tick = svc._timers[loop.id]
+        await await_until(
+            asyncio.gather(tick, return_exceptions=True), what="the tick's runtime extension"
+        )
+
+    assert not tick.cancelled(), "the update cancelled the tick that called it"
+    assert svc._loops[loop.id].max_runtime_secs == 7300 + 3600
+    assert any("extended it to 10900" in r.getMessage() for r in caplog.records)
     await _drain(svc)

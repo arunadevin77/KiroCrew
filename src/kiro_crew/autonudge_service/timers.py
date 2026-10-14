@@ -18,6 +18,7 @@ plain helpers beside them are imported directly by the owners that use them.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import time
 from copy import deepcopy
@@ -93,6 +94,18 @@ def _current_task_or_none() -> "asyncio.Task[Any] | None":
         return asyncio.current_task()
     except RuntimeError:
         return None
+
+
+#: The timer task an update runs on behalf of. ``_timer`` binds it only around its own
+#: ``update`` calls (``firing._tick_update``), so the binding reaches the shielded task
+#: in which ``update`` mutates and re-arms, and nothing else the tick spawns. From that
+#: task the running tick is not "the current task", and without this binding
+#: ``_cancel_timer`` would cancel the tick mid-await, skipping whatever the tick does
+#: after its own update returns (the ``expired`` event of every terminal bound, a
+#: ledger extension's WARNING).
+_ACTING_TIMER: contextvars.ContextVar["asyncio.Task[Any] | None"] = contextvars.ContextVar(
+    "autonudge_acting_timer", default=None
+)
 
 
 def notify_approval_stalled(self: AutoNudgeService, slot_key: str) -> None:
@@ -703,7 +716,9 @@ def _cancel_timer(self: AutoNudgeService, loop_id: str, *, drop_claims: bool = T
 
     * **The currently running timer task** (a self-re-arm from inside ``_timer``) is
       about to return on its own, and cancelling it would inject a spurious
-      ``CancelledError`` into the finishing task.
+      ``CancelledError`` into the finishing task. That includes a cancel reached from
+      ``update``'s shielded mutation when the tick itself issued that update,
+      recognised through :data:`_ACTING_TIMER`.
     * **A task whose event loop has already closed.** ``Task.cancel`` schedules the
       cancellation through ``loop.call_soon``, which raises ``RuntimeError: Event loop
       is closed`` — so this raises out of ``remove``/``remove_sync`` and the dashboard
@@ -732,7 +747,7 @@ def _cancel_timer(self: AutoNudgeService, loop_id: str, *, drop_claims: bool = T
             loop_id,
         )
         return
-    if t is _current_task_or_none():
+    if t is _current_task_or_none() or t is _ACTING_TIMER.get():
         return
     t.cancel()
     if not drop_claims:
