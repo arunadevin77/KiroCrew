@@ -10,6 +10,7 @@ import sys
 import pytest
 
 import kiro_crew.dashboard.chat_utils as chat_utils
+from kiro_crew.dashboard import display_battery
 from kiro_crew.dashboard.chat_utils import (
     _history_key_for,
     _normalize_model,
@@ -242,6 +243,7 @@ class TestRedactForDisplay:
             return real(value)
 
         monkeypatch.setattr(chat_utils, "redact_exfiltration_urls", counted)
+        monkeypatch.setattr(display_battery, "redact_exfiltration_urls", counted)
         exempt = {"hosts": frozenset()}
         monkeypatch.setattr(chat_utils, "_exempt_exact_hosts", lambda: exempt["hosts"])
 
@@ -274,6 +276,8 @@ class TestRedactForDisplay:
 
         monkeypatch.setattr(chat_utils, "redact_exfiltration_urls", counted_exfiltration)
         monkeypatch.setattr(chat_utils, "redact_credentials", counted_credentials)
+        monkeypatch.setattr(display_battery, "redact_exfiltration_urls", counted_exfiltration)
+        monkeypatch.setattr(display_battery, "redact_credentials", counted_credentials)
         secret = "AKIAIOSFODNN7EXAMPLE"
         messages = [
             {
@@ -361,6 +365,8 @@ class TestRedactForDisplay:
 
         monkeypatch.setattr(chat_utils, "redact_exfiltration_urls", counted_exfiltration)
         monkeypatch.setattr(chat_utils, "redact_credentials", counted_credentials)
+        monkeypatch.setattr(display_battery, "redact_exfiltration_urls", counted_exfiltration)
+        monkeypatch.setattr(display_battery, "redact_credentials", counted_credentials)
         secret = "AKIAIOSFODNN7EXAMPLE"
         rows = chat_utils.SLOT_DETAIL_MAX_LIMIT
         messages = [
@@ -418,6 +424,8 @@ class TestRedactForDisplay:
 
         monkeypatch.setattr(chat_utils, "redact_exfiltration_urls", counted_exfiltration)
         monkeypatch.setattr(chat_utils, "redact_credentials", counted_credentials)
+        monkeypatch.setattr(display_battery, "redact_exfiltration_urls", counted_exfiltration)
+        monkeypatch.setattr(display_battery, "redact_credentials", counted_credentials)
         secret = "AKIAIOSFODNN7EXAMPLE"
         rows = 12_000
         messages = [
@@ -462,6 +470,7 @@ class TestRedactForDisplay:
             return real(value)
 
         monkeypatch.setattr(chat_utils, "redact_credentials", counted)
+        monkeypatch.setattr(display_battery, "redact_credentials", counted)
         chat_utils._redact_for_display("plain text 0")
         chat_utils._redact_for_display("plain text 999")
         assert calls["n"] == 1

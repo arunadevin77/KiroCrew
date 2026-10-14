@@ -454,6 +454,7 @@ _LAZY_IMPORTS = {
     "kiro_crew.config.live": "ConfigChange",
     "kiro_crew.config.resolution": "DEGRADED_WHOLE_CONFIG",
     "kiro_crew.connections.warm": "scavenge_warm_mint_artifacts shutdown_warm_mint",
+    "kiro_crew.dashboard": "display_verdicts",
     "kiro_crew.dashboard.chat": "_run_chat",
     "kiro_crew.dashboard.handlers": "wf_handlers work_ledger",
     "kiro_crew.dashboard.handlers.ask_question": (
@@ -512,7 +513,7 @@ def test_the_lazy_imports_stay_inside_the_functions_that_need_them() -> None:
                     for alias in node.names:
                         local.setdefault(alias.asname or alias.name, set()).add(alias.name)
     assert local == {name: {module} for name, module in expected.items()}
-    assert len(expected) == 82
+    assert len(expected) == 83
 
 
 def test_a_star_import_carries_the_moved_public_names(tmp_path: Path) -> None:
@@ -1444,6 +1445,7 @@ _DASHBOARD_BOOT = tuple("""
     _reconcile_listener_publication _kick_workflow_initialization
     _kick_connections_warm_scavenge _kick_session_search_index _kick_config_watch
     _kick_local_decision_model _kick_knowledge_orphan_reclaim _kick_owner_only_sweep
+    _kick_display_verdicts
     load_loop_stall_exit_after
     _arm_prevent_sleep_poll register_pre_exec_stop safety_override safety_override
     safety_override
@@ -1498,7 +1500,8 @@ _API_BOOT = tuple("""
     subprocess_executor _resolved_bound_host _resolved_bound_host _note_listener_sidecar
     _resolved_bound_host _reconcile_listener_publication _kick_workflow_initialization
     _kick_connections_warm_scavenge _kick_session_search_index _kick_config_watch
-    _kick_local_decision_model _kick_owner_only_sweep _arm_prevent_sleep_poll
+    _kick_local_decision_model _kick_owner_only_sweep _kick_display_verdicts
+    _arm_prevent_sleep_poll
     register_pre_exec_stop record_boot_to_ready _dispatch_healthy_boot_marker
     """.split())
 _API_TEARDOWN: tuple[str, ...] = ("_release_sleep_block",)

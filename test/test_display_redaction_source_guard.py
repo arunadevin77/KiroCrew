@@ -381,8 +381,10 @@ def test_operator_file_read_sits_under_the_oauth_flag(graph: _Graph) -> None:
 
 
 def test_display_cache_memoizes_exactly_the_guarded_battery() -> None:
-    """The consumer composes exactly the two roots this guard walks, in order."""
-    fn = ast.parse(inspect.getsource(chat_utils._redact_for_display)).body[0]
+    """The consumer runs ``display_battery``, which composes exactly the guarded roots, in order."""
+    from kiro_crew.dashboard import display_battery
+
+    fn = ast.parse(inspect.getsource(display_battery.display_battery)).body[0]
     assert isinstance(fn, ast.FunctionDef)
     redactor_calls = [
         node.func.id
@@ -392,6 +394,14 @@ def test_display_cache_memoizes_exactly_the_guarded_battery() -> None:
         and node.func.id.startswith("redact_")
     ]
     assert redactor_calls == [root for _, root in BATTERY_ROOTS]
+    consumer = ast.parse(inspect.getsource(chat_utils._redact_for_display)).body[0]
+    calls = [
+        node.func.id
+        for node in ast.walk(consumer)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    assert calls.count("display_battery") == 1
+    assert not [c for c in calls if c.startswith("redact_")]
 
 
 def test_display_battery_never_touches_the_operator_file(monkeypatch: pytest.MonkeyPatch) -> None:

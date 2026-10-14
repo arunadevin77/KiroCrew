@@ -1285,6 +1285,23 @@ def _isolate_advertised_model_cache(_floor_monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_display_verdicts():
+    """Turn ``display_verdicts`` persistence off after every test.
+
+    Any test that boots the dashboard's startup hooks turns it on for the whole
+    process, and nothing turns it off. A later test in the same worker then gets
+    the persistent MAC key instead of the per-process salt, and the cache-key
+    tests in ``test_chat_utils`` fail depending on test order.
+    """
+    try:
+        yield
+    finally:
+        from kiro_crew.dashboard import display_verdicts as _dv
+
+        _dv.disable_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_message_entry_cache():
     """Give every test an EMPTY ``chat_persistence`` persisted-entry cache.
 
