@@ -65,13 +65,12 @@ logger = logging.getLogger(__name__)
 #: test rather than copied by eye.
 CONTROL_SECRET_HEADER = "X-SMC-Control-Secret"
 
-#: Where a crew's control secret lives, by crew name. The same path the lane's
-#: own launch spec builds (``MicroVmLaunchSpec.control_secret_name``) and the same
-#: one the Fargate task definition references, so the hub reads what the deploy
-#: wrote instead of being told a path by the caller.
-#: The shape a per-crew control secret's name has, as the lane writes it. Used
-#: only to DERIVE an id when the lane recorded none; the recorded reference is
-#: always preferred, because it is what the launch actually minted.
+#: The shape a per-crew control secret's name has, as the lane writes it: the
+#: path the lane's own launch spec builds (``MicroVmLaunchSpec.control_secret_name``)
+#: from the crew's launch tag, so the hub derives the name itself instead of
+#: being told a path by the caller. Used only to DERIVE an id when the lane
+#: recorded none; the recorded reference is always preferred, because it is what
+#: the launch actually minted.
 _SECRET_PATH = "{prefix}/{crew}/CONTROL_SECRET"
 
 
@@ -397,8 +396,6 @@ async def _read_control_secret(secret_id: str, profile: str, region: str) -> Opt
     complete -- and distinguishing them in the reply would report whether a
     named secret exists.
     """
-    import asyncio
-
     from kiro_crew.cloud.aws import AWSError, checked_json
 
     def _read() -> Optional[str]:

@@ -65,7 +65,7 @@ def test_the_far_ends_own_turn_url_wins_over_a_composed_one():
 
 
 def test_the_secret_path_is_the_one_the_deploy_wrote():
-    """Derived from the crew name, never supplied by the caller.
+    """Derived from the crew's launch tag, never supplied by the caller.
 
     A caller-supplied secret path would let any request name a secret for the
     gateway to read with the owner's credentials and send to an endpoint of the
