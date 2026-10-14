@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from git_maintenance_helpers import git_maintenance_off_entries
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _REGISTRY = "src/kiro_crew/docs/settings-registry.generated.json"
@@ -36,6 +37,7 @@ def test_checkout_preserves_the_registry_bytes(tmp_path: Path, autocrlf: str) ->
     # Real Git conversion, without inheriting host or repository overrides.
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    env.update(git_maintenance_off_entries(env))
     git = ["git", "-c", f"core.autocrlf={autocrlf}", "-c", f"core.attributesFile={os.devnull}"]
     for args in (
         ["init", "--quiet"],
