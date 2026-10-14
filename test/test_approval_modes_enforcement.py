@@ -45,6 +45,7 @@ from kiro_crew.platform import context as ctx_mod
 from kiro_crew.platform import governance_profiles as gp
 from kiro_crew.platform.bootstrap import build_default_context
 from kiro_crew.platform.governance import parse_policy
+from kiro_crew.testing.wait import await_until
 
 
 @pytest.fixture(autouse=True)
@@ -1151,7 +1152,7 @@ class TestTheRevocationNoticeReachesTheLoopItWasInstalledOn:
             _deny("yolo")
 
         await asyncio.to_thread(_install)
-        await asyncio.wait_for(notified.wait(), timeout=5)
+        await await_until(notified, what="the policy-revocation notification")
 
         # Which THREAD each half ran on is the timing-independent form of "one is
         # inline and the other is deferred": sampling the ordering mid-flight would
@@ -1326,7 +1327,7 @@ class TestTheRevocationNoticeReachesTheLoopItWasInstalledOn:
         # The teardown is NOT deferred: it is done by the time the install returns.
         assert override.has_grant() is False
 
-        await asyncio.wait_for(fired.wait(), timeout=5)
+        await await_until(fired, what="the loop-affine expiry callback")
         assert threads == [main_thread], (
             "the handler must run on the loop it was installed from, not on the "
             "worker thread that installed the ceiling"

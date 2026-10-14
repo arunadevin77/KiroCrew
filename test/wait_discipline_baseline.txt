@@ -60,7 +60,6 @@
  2 test_apple_speech.py
  1 test_approval_and_update_task.py
  3 test_approval_decide_owner_bound.py
- 2 test_approval_modes_enforcement.py
  1 test_apps_backend_coverage.py
  1 test_apps_registry.py
  2 test_apps_registry_coverage.py
