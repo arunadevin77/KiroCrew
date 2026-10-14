@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from threading import RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from aiohttp import web
 
@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from kiro_crew.slack.outbound import PostedOptions
 
 from kiro_crew.context_blocks import attributable_user_chars
+from kiro_crew.dashboard import display_verdicts as _display_verdicts
+from kiro_crew.dashboard.display_battery import display_battery
 from kiro_crew.dashboard.slot_queue_repository import ATTACHMENT_META_KEYS
 from kiro_crew.dashboard.state import (
     BUSY_RECOVERY_PREFIX,
@@ -2366,7 +2368,12 @@ _display_redaction_cache_bytes = 0
 _display_redaction_cache_lock = RLock()
 
 
-def _display_redaction_cache_key(text: str) -> tuple[_DisplayRedactionKey, int]:
+_NO_BASE = object()
+
+
+def _display_redaction_cache_key(
+    text: str, base: object = _NO_BASE
+) -> tuple[_DisplayRedactionKey, int]:
     """Digest the exact string entering the battery together with the exempt sets it reads.
 
     The key is fixed-size: a 32-byte digest and the input byte length. The host set
@@ -2383,11 +2390,27 @@ def _display_redaction_cache_key(text: str) -> tuple[_DisplayRedactionKey, int]:
     hosts = "\0".join(sorted(_exempt_exact_hosts() | current_scoped_exempt_hosts())).encode(
         "utf-8", errors="surrogatepass"
     )
-    mac_input = raw + b"\0" + hosts
     prefixes = _token_param_exempt_prefixes()
+    tail = hosts
     if prefixes:
-        mac_input += b"\x01" + "\0".join(prefixes).encode("utf-8", errors="surrogatepass")
-    digest = hmac.new(_DISPLAY_REDACTION_SALT, mac_input, hashlib.sha256).digest()
+        tail += b"\x01" + "\0".join(prefixes).encode("utf-8", errors="surrogatepass")
+    if base is _NO_BASE:
+        base = _display_verdicts.mac_base()
+    if base is None:
+        digest = hmac.new(_DISPLAY_REDACTION_SALT, raw + b"\0" + tail, hashlib.sha256).digest()
+    else:
+        # Persistent verdicts (display_verdicts): the same keyed MAC, under the
+        # gateway's verdict subkey with the rules version already absorbed, so a
+        # digest names the same text under the same rules across restarts. The
+        # stored tag is the digest alone, so the text's length goes INTO the MAC:
+        # without it ``T + NUL + host`` under a smaller host set would hash the
+        # same bytes as ``T`` under the larger one.
+        mac = cast("hmac.HMAC", base).copy()
+        mac.update(len(raw).to_bytes(8, "big"))
+        mac.update(raw)
+        mac.update(b"\0")
+        mac.update(tail)
+        digest = mac.digest()
     return (digest, len(raw)), len(raw)
 
 
@@ -2399,6 +2422,11 @@ def _clear_display_redaction_cache() -> None:
         _display_redaction_cache_bytes = 0
         _display_clean_young = set()
         _display_clean_old = set()
+
+
+# Entries keyed under the per-process salt are unreachable once the
+# persistent verdict key turns on; drop them rather than let them age out.
+_display_verdicts.on_enable(lambda: _clear_display_redaction_cache())
 
 
 def _display_redaction_cache_info() -> tuple[int, int]:
@@ -2465,32 +2493,60 @@ def _display_clean_add(ck: int) -> None:
 
 def _redact_for_display(text: str) -> str:
     """Apply all display redactors, reusing only an exact content-hash match."""
-    global _display_redaction_cache_bytes
-    key, input_bytes = _display_redaction_cache_key(text)
+    stored, base = _display_verdicts.active()
+    key, input_bytes = _display_redaction_cache_key(text, base)
     ck = _clean_verdict_key(key)
+    tag = key[0]
     with _display_redaction_cache_lock:
         if _display_clean_seen(ck):
+            if stored is not None:
+                stored.note(tag, _display_verdicts.CLEAN, from_memory=True)
             return text
         cached = _display_redaction_cache.get(key)
         if cached is not None:
             _display_redaction_cache.move_to_end(key)
+            if stored is not None:
+                stored.note(tag, cached[0], from_memory=True)
             return cached[0]
 
-    redacted, _ = redact_exfiltration_urls(text)
-    redacted, _ = redact_credentials(redacted)
+    if stored is not None:
+        # The session's stored verdicts (display_verdicts): read once per render,
+        # only after the process cache missed, and only ever under a tag that
+        # binds this exact text to the current rules and host set.
+        verdict = stored.lookup(tag)
+        if verdict is _display_verdicts.CLEAN:
+            with _display_redaction_cache_lock:
+                _display_clean_add(ck)
+            return text
+        if isinstance(verdict, str):
+            _remember_redacted(key, input_bytes, verdict)
+            return verdict
+
+    redacted = display_battery(text)
     if redacted == text:
         with _display_redaction_cache_lock:
             _display_clean_add(ck)
+        if stored is not None:
+            stored.note(tag, _display_verdicts.CLEAN, from_memory=False)
         return text
+    if stored is not None:
+        stored.note(tag, redacted, from_memory=False)
+    _remember_redacted(key, input_bytes, redacted)
+    return redacted
+
+
+def _remember_redacted(key: _DisplayRedactionKey, input_bytes: int, redacted: str) -> None:
+    """File one changed string's output in the bounded output cache."""
+    global _display_redaction_cache_bytes
     entry_bytes = len(key[0]) + input_bytes + len(redacted.encode("utf-8", errors="surrogatepass"))
     if entry_bytes > _DISPLAY_REDACTION_CACHE_MAX_BYTES:
-        return redacted
+        return
 
     with _display_redaction_cache_lock:
         cached = _display_redaction_cache.get(key)
         if cached is not None:
             _display_redaction_cache.move_to_end(key)
-            return cached[0]
+            return
         _display_redaction_cache[key] = (redacted, entry_bytes)
         _display_redaction_cache_bytes += entry_bytes
         while (
@@ -2499,7 +2555,6 @@ def _redact_for_display(text: str) -> str:
         ):
             _, (_, evicted_bytes) = _display_redaction_cache.popitem(last=False)
             _display_redaction_cache_bytes -= evicted_bytes
-    return redacted
 
 
 def redact_display_content(content: Any) -> str:

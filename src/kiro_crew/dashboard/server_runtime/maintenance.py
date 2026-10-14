@@ -102,6 +102,31 @@ def _kick_local_decision_model(state: DashboardState) -> None:
     task.add_done_callback(state._background_tasks.discard)
 
 
+def _kick_display_verdicts(state: DashboardState) -> None:
+    """Turn on the stored display-redaction verdicts, post-bind, off the loop.
+
+    ``display_verdicts.enable`` loads the token-signing subkey, computes the
+    rules version (hashing the rule source files) and sweeps orphaned
+    sidecars, so it runs on a worker thread after the listener is serving.
+    Until it returns, renders use the per-process cache exactly as before.
+    """
+
+    def _enable_in_thread() -> None:
+        from kiro_crew.dashboard import display_verdicts
+
+        display_verdicts.enable(data_home())
+
+    async def _display_verdicts_enable() -> None:
+        try:
+            await asyncio.to_thread(_enable_in_thread)
+        except Exception:  # noqa: BLE001 -- verdicts are an optimisation only
+            logger.warning("display verdicts could not be enabled", exc_info=True)
+
+    task = asyncio.create_task(_display_verdicts_enable())
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
+
+
 def _kick_owner_only_sweep(state: DashboardState) -> None:
     """Repair the data home's file modes as a tracked background task, post-bind.
 

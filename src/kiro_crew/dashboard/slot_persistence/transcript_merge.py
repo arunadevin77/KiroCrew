@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from kiro_crew.chat_attachments import same_text_modulo_images
 from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.dashboard import display_verdicts
 from kiro_crew.dashboard.state import _TRANSIENT_ROLES, row_mid
 from kiro_crew.history import _archive_lines, latest_transcript_ts, transcript_sort_key
 
@@ -752,6 +753,9 @@ def compose_payload(
         e for m in window if (e := build_entry(m, attachments=attachments)) is not None
     ]
     window_lines = [json.dumps(e) + "\n" for e in window_entries]
+    # Rows this transcript has not had its display verdicts recorded for; the
+    # save projects them once its write commits (display_verdicts).
+    display_verdicts.note_written_lines(history_key, window_lines)
     # A rewrite archives every old line its payload does not repeat, so a bound
     # applied on that save would archive the rewritten rows a second time; the
     # next ordinary save applies it instead.

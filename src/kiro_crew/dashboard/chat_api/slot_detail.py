@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 if TYPE_CHECKING:
+    from kiro_crew.dashboard import display_verdicts
     from kiro_crew.dashboard.chat_handlers import (
         _FLUSH_SNAPSHOT_RETRIES,
         _TRANSIENT_ROLES,
@@ -1223,6 +1224,7 @@ async def api_chat_slot_detail(request: web.Request) -> web.Response:
     key = slot.key
     workspace = slot.workspace
     turn_running = slot.turn_running
+    verdict_key = slot_history_key(slot)
     running = slot.running
     # Admission-only running has no numbered turn yet. Omitting the pair keeps
     # this response from naming the preceding turn as the one currently running.
@@ -1271,15 +1273,19 @@ async def api_chat_slot_detail(request: web.Request) -> web.Response:
         # and spliced between the fields before and after it. The result is
         # byte-for-byte the ``json.dumps`` of the single dict these two halves
         # are cut from.
-        messages_json = (
-            wire_render.prepare_messages_json(
-                messages, running, live_child=live_child, workspace=workspace
+        #
+        # The session's stored display verdicts (display_verdicts) let a cold
+        # render skip the scan for every string a save already judged.
+        with display_verdicts.session(verdict_key):
+            messages_json = (
+                wire_render.prepare_messages_json(
+                    messages, running, live_child=live_child, workspace=workspace
+                )
+                if use_memo
+                else json.dumps(
+                    _prepare_messages(messages, running, live_child=live_child, workspace=workspace)
+                )
             )
-            if use_memo
-            else json.dumps(
-                _prepare_messages(messages, running, live_child=live_child, workspace=workspace)
-            )
-        )
         head = json.dumps(
             {
                 "key": key,

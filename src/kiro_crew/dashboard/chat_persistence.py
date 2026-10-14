@@ -60,6 +60,7 @@ from kiro_crew.config.loader import (  # noqa: F401
     KiroCrewConfig,
     config_dir,
 )
+from kiro_crew.dashboard import display_verdicts as _display_verdicts
 from kiro_crew.dashboard.channel_slots import slot_closed_since
 from kiro_crew.dashboard.chat_delivery import (  # noqa: F401
     ATTACHMENT_LIST_MAX_ITEMS,
@@ -3142,7 +3143,16 @@ def _save_slot_to_history(
                 except OSError:
                     _preserve_mtime = None
 
-            atomic_write(path, payload, fsync=True)
+            try:
+                atomic_write(path, payload, fsync=True)
+            except BaseException:
+                # A failed save keeps nothing staged: its rows stay unjudged and
+                # the next save offers them again.
+                _display_verdicts.take_pending()
+                raise
+            # The rows just written are judged for display once, now, on the
+            # verdict worker (display_verdicts); a cheap hand-off, not the work.
+            _display_verdicts.submit_committed(slot.workspace)
             # The staged value is now durable. Flip the live flag HERE, still
             # inside the transcript ``_locked`` block, so a concurrent dirty
             # flush -- which needs this same lock to serialize the slot -- cannot

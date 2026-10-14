@@ -254,6 +254,7 @@ from kiro_crew.dashboard.server_runtime.listener_claims import (  # noqa: F401
 )
 from kiro_crew.dashboard.server_runtime.maintenance import (  # noqa: F401
     _kick_connections_warm_scavenge,
+    _kick_display_verdicts,
     _kick_knowledge_orphan_reclaim,
     _kick_local_decision_model,
     _kick_owner_only_sweep,
@@ -2183,6 +2184,7 @@ async def start_dashboard(
     # And for the data home's owner-only mode repair, whose walk grows with the
     # files the user has accumulated.
     _kick_owner_only_sweep(state)
+    _kick_display_verdicts(state)
     # Bind the crew-log push to this loop and register it with the session emitter,
     # once the listener is serving: installing it imports and builds the publisher,
     # which the crew log's default-on flag would otherwise put in front of the bind.
@@ -2761,6 +2763,7 @@ async def start_api_server(
     _kick_config_watch(app, state)
     _kick_local_decision_model(state)
     _kick_owner_only_sweep(state)
+    _kick_display_verdicts(state)
 
     logger.info("API-only server listening on %s:%d", bind_addr, port)
 

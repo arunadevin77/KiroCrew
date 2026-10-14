@@ -2202,6 +2202,10 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # the existing dashboard handler sink. Its empty-string redaction key
         # shares that sink's policy context; it opens no separate output path.
         "dashboard/wire_render.py",
+        # The display battery chat_utils composes (both shared redactors, in
+        # order), moved beside it so the rules version can hash it. It returns
+        # the redacted string to chat_utils and emits nothing of its own.
+        "dashboard/display_battery.py",
         "dashboard/chat_voice.py",
         # The content-search engines composed into dashboard/handlers/files.py:
         # they redact each hit row, and that facade's api_file_grep, a registered
