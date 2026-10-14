@@ -483,7 +483,10 @@ function adoptedGatewayHarness({
     fsMod: {
       ...baseFs,
       readFileSync(file) {
-        if (String(file).endsWith(".local_secret")) return "boot-secret\n";
+        // The gateway publishes one secret under every address it bound; the
+        // home-wide slot holds a different value so a test proves it is never sent.
+        if (/[\\/]run[\\/]gateway-5476-[^\\/]+\.secret$/.test(String(file))) return "boot-secret\n";
+        if (String(file).endsWith(".local_secret")) return "home-wide-secret\n";
         if (String(file).endsWith("gateway.lock")) return "123\n";
         throw new Error(`unexpected filesystem read: ${file}`);
       },

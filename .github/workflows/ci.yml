@@ -180,6 +180,8 @@ jobs:
               - 'website/electron/runtime/update/**'
               # Loaded by both update lanes: the pre-swap stop's refusal code.
               - 'website/electron/gateway-stop.js'
+              # gateway-stop.js loads it to pick the shutdown secret.
+              - 'website/electron/local-token.js'
               - 'website/electron/bundle-location.js'
               - 'packaging/build-desktop.sh'
               - 'scripts/stamp-distribution.sh'

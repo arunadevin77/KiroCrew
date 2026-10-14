@@ -1622,22 +1622,6 @@ function createGatewaySupervisor({
     resolve(true);
   }
 
-  // The secrets POST /api/shutdown is tried with, resolved at call time. The
-  // gateway accepts only the secret for its current boot; trying every readable
-  // candidate prevents a stale copy from forcing the hard-signal path and
-  // skipping session/memory/cron flushes.
-  function readShutdownSecrets() {
-    const candidates = secretCandidates();
-    const secrets = [];
-    for (const candidate of candidates) {
-      try {
-        const value = fs.readFileSync(candidate, "utf8").trim();
-        if (value) secrets.push(value);
-      } catch { /* absent or unreadable */ }
-    }
-    return { home: path.dirname(candidates[0]), secrets };
-  }
-
   // The command a refused update names for stopping the adopted gateway by
   // hand. A service-managed gateway is stopped through its service (the CLI's
   // `stop` without --port stops the service first), because a signal to the
@@ -1663,15 +1647,13 @@ function createGatewaySupervisor({
       return;
     }
     glog("Stopping gateway gracefully...");
-    // Resolve the home at call time: the gateway publishes the secret for its
-    // current boot there. postShutdown picks which secret may go to BACKEND_URL;
-    // the child handle, plus the kernel naming it as the port's only listener,
-    // is what lets it use the home-wide one.
+    // Resolve the home at call time: the gateway publishes its listener entries
+    // there. postShutdown sends only the entry for the listener BACKEND_URL
+    // dials, never the home-wide `.local_secret`.
     const currentHome = path.dirname(secretCandidates()[0]);
     await stopGatewayProcessGracefully(gateway, {
       backendUrl: BACKEND_URL,
       kirocrewHome: currentHome,
-      listenerPidsFn: snapshotGatewayPortPids,
       timeoutMs,
       // 3s PowerShell + 2s WMIC + 5s taskkill fits inside the 18s hard
       // shutdown deadline. The tree sweep is awaited because taskkill can emit
@@ -1721,11 +1703,11 @@ function createGatewaySupervisor({
     const incumbentPids = await snapshotGatewayPortPids(PORT);
     const pid = incumbentPids?.length === 1 ? incumbentPids[0] : 0;
     glog(`update: the adopted gateway on :${PORT} (pid ${pid || "?"}) runs from this app's bundle — stopping it before the update`);
-    const { home: secretHome, secrets } = readShutdownSecrets();
+    // postShutdown sends only the entry this gateway published for the
+    // listener BACKEND_URL dials, never the home-wide `.local_secret`.
     let accepted = await postShutdown({
       backendUrl: BACKEND_URL,
-      kirocrewHome: secretHome,
-      secrets,
+      kirocrewHome: path.dirname(secretCandidates()[0]),
       httpMod: http,
       fsMod: fs,
       pathMod: path,
