@@ -974,8 +974,8 @@
           "pending": "ausstehend",
           "read_namespace": "Namespace {{name}} lesen",
           "invalid_namespace_name": "Namespace-Namen werden zu Ordnernamen und dürfen daher nur Kleinbuchstaben des lateinischen Alphabets (a–z), Ziffern (0–9), Punkte, Bindestriche und Unterstriche enthalten, müssen mit einem Buchstaben oder einer Ziffer beginnen und enden und 2 bis 64 Zeichen lang sein.",
-          "invalid_namespace_name_char": "„{{char}}“ kann in einem Namespace-Namen nicht verwendet werden. Namespace-Namen werden zu Ordnernamen und dürfen daher nur Kleinbuchstaben des lateinischen Alphabets (a–z), Ziffern (0–9), Punkte, Bindestriche und Unterstriche enthalten, müssen mit einem Buchstaben oder einer Ziffer beginnen und enden und 2 bis 64 Zeichen lang sein.",
-          "invalid_namespace_name_letter": "„{{char}}“ ist kein lateinischer Buchstabe (a–z) und kann daher nicht in einem Namespace-Namen verwendet werden. Namespace-Namen werden zu Ordnernamen und dürfen daher nur Kleinbuchstaben des lateinischen Alphabets (a–z), Ziffern (0–9), Punkte, Bindestriche und Unterstriche enthalten, müssen mit einem Buchstaben oder einer Ziffer beginnen und enden und 2 bis 64 Zeichen lang sein."
+          "invalid_namespace_name_char": "„{{char}}“ kann in einem Namespace-Namen nicht verwendet werden. Nutze Kleinbuchstaben a–z, 0–9, . - _",
+          "invalid_namespace_name_letter": "„{{char}}“ ({{script}}, {{code}}) kann in einem Namespace-Namen nicht verwendet werden. Nutze Kleinbuchstaben a–z, 0–9, . - _"
         },
         "leftRail": {
           "code_review_sage": "Code Review Sage",
@@ -4648,8 +4648,8 @@
         "verifying_compiler": "Wird überprüft…",
         "your_papers": "Ihre Papers",
         "invalid_project_name": "Paper-Namen werden zu Ordnernamen und dürfen daher nur Kleinbuchstaben des lateinischen Alphabets (a–z), Ziffern (0–9), Punkte, Bindestriche und Unterstriche enthalten, müssen mit einem Buchstaben oder einer Ziffer beginnen und dürfen höchstens 64 Zeichen lang sein.",
-        "invalid_project_name_char": "„{{char}}“ kann in einem Paper-Namen nicht verwendet werden. Paper-Namen werden zu Ordnernamen und dürfen daher nur Kleinbuchstaben des lateinischen Alphabets (a–z), Ziffern (0–9), Punkte, Bindestriche und Unterstriche enthalten, müssen mit einem Buchstaben oder einer Ziffer beginnen und dürfen höchstens 64 Zeichen lang sein.",
-        "invalid_project_name_letter": "„{{char}}“ ist kein lateinischer Buchstabe (a–z) und kann daher nicht in einem Paper-Namen verwendet werden. Paper-Namen werden zu Ordnernamen und dürfen daher nur Kleinbuchstaben des lateinischen Alphabets (a–z), Ziffern (0–9), Punkte, Bindestriche und Unterstriche enthalten, müssen mit einem Buchstaben oder einer Ziffer beginnen und dürfen höchstens 64 Zeichen lang sein."
+        "invalid_project_name_char": "„{{char}}“ kann in einem Paper-Namen nicht verwendet werden. Nutze Kleinbuchstaben a–z, 0–9, . - _",
+        "invalid_project_name_letter": "„{{char}}“ ({{script}}, {{code}}) kann in einem Paper-Namen nicht verwendet werden. Nutze Kleinbuchstaben a–z, 0–9, . - _"
       },
       "preview": {
         "compile_to_see_the_pdf": "Kompilieren, um das PDF zu sehen.",
@@ -10145,6 +10145,12 @@
       "max": "Maximal",
       "medium": "Mittel",
       "xhigh": "Sehr hoch"
+    },
+    "scriptLabel": {
+      "cyrillic": "kyrillischer Buchstabe",
+      "greek": "griechischer Buchstabe",
+      "latin": "lateinischer Buchstabe",
+      "other": "Zeichen"
     },
     "sttProviders": {
       "downloading_decoder": "Audio-Decoder wird heruntergeladen: {{pct}} ({{done}} von {{total}})",

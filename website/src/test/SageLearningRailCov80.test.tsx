@@ -160,8 +160,10 @@ describe('LearningRail create', () => {
   // The namespace name is its folder, so the backend keeps it a lowercase Latin
   // slug; a name typed in another script is refused with the character that
   // stopped it, and the rail explains the rule in the app's language instead of
-  // showing the server's English sentence.
-  it('explains a refused name, naming the character the server refused', async () => {
+  // showing the server's English sentence. A look-alike capital is named with its
+  // script and code point, and the rule is one clause so the 320px rail keeps it
+  // to a few lines.
+  it('explains a refused name, naming the script and code point of the letter', async () => {
     api.createNamespace.mockRejectedValue(Object.assign(
       new Error("invalid namespace name: 'отчет' (use lowercase a-z ...)"),
       { code: 'invalid_namespace_name', char: 'О' },
@@ -169,20 +171,23 @@ describe('LearningRail create', () => {
     mount()
     await userEvent.click(await screen.findByRole('button', { name: /New namespace/i }))
     await userEvent.type(screen.getByRole('textbox', { name: /New namespace name/i }), 'Отчет{Enter}')
-    expect(await screen.findByText(/^“О” isn’t a Latin letter \(a–z\), so it can’t be used in a namespace name\./)).toBeInTheDocument()
-    expect(screen.getByText(/lowercase Latin letters \(a–z\)/)).toBeInTheDocument()
+    const message = await screen.findByText(
+      '“О” (Cyrillic letter, U+041E) can’t be used in a namespace name. Use lowercase a–z, 0–9, . - _',
+    )
+    expect(message).toBeInTheDocument()
+    expect(message.textContent!.length).toBeLessThanOrEqual(100)
     expect(screen.queryByText(/use lowercase a-z/)).not.toBeInTheDocument()
   })
 
-  it('names a refused non-letter without calling it a letter', async () => {
+  it('names a refused non-letter without a script or code point', async () => {
     api.createNamespace.mockRejectedValue(Object.assign(
       new Error('invalid namespace name'), { code: 'invalid_namespace_name', char: '/' },
     ))
     mount()
     await userEvent.click(await screen.findByRole('button', { name: /New namespace/i }))
     await userEvent.type(screen.getByRole('textbox', { name: /New namespace name/i }), 'team/a{Enter}')
-    expect(await screen.findByText(/^“\/” can’t be used in a namespace name\./)).toBeInTheDocument()
-    expect(screen.queryByText(/isn’t a Latin letter/)).not.toBeInTheDocument()
+    expect(await screen.findByText('“/” can’t be used in a namespace name. Use lowercase a–z, 0–9, . - _')).toBeInTheDocument()
+    expect(screen.queryByText(/U\+/)).not.toBeInTheDocument()
   })
 
   it('states the rule alone when the refusal names no character', async () => {

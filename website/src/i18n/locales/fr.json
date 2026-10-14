@@ -996,8 +996,8 @@
           "pending": "en attente",
           "read_namespace": "Lire le namespace {{name}}",
           "invalid_namespace_name": "Les noms de namespace servent de noms de dossier. Ils ne peuvent donc contenir que des lettres latines minuscules (a–z), des chiffres (0–9), des points, des traits d’union et des tirets bas, doivent commencer et finir par une lettre ou un chiffre et comporter de 2 à 64 caractères.",
-          "invalid_namespace_name_char": "« {{char}} » ne peut pas être utilisé dans un nom de namespace. Les noms de namespace servent de noms de dossier. Ils ne peuvent donc contenir que des lettres latines minuscules (a–z), des chiffres (0–9), des points, des traits d’union et des tirets bas, doivent commencer et finir par une lettre ou un chiffre et comporter de 2 à 64 caractères.",
-          "invalid_namespace_name_letter": "« {{char}} » n’est pas une lettre latine (a–z) et ne peut donc pas être utilisé dans un nom de namespace. Les noms de namespace servent de noms de dossier. Ils ne peuvent donc contenir que des lettres latines minuscules (a–z), des chiffres (0–9), des points, des traits d’union et des tirets bas, doivent commencer et finir par une lettre ou un chiffre et comporter de 2 à 64 caractères."
+          "invalid_namespace_name_char": "« {{char}} » ne peut pas être utilisé dans un nom de namespace. Utilise des minuscules a–z, 0–9, . - _",
+          "invalid_namespace_name_letter": "« {{char}} » ({{script}}, {{code}}) ne peut pas être utilisé dans un nom de namespace. Utilise des minuscules a–z, 0–9, . - _"
         },
         "leftRail": {
           "code_review_sage": "Code Review Sage",
@@ -4731,8 +4731,8 @@
         "verifying_compiler": "Vérification…",
         "your_papers": "Vos articles",
         "invalid_project_name": "Les noms d’article servent de noms de dossier. Ils ne peuvent donc contenir que des lettres latines minuscules (a–z), des chiffres (0–9), des points, des traits d’union et des tirets bas, doivent commencer par une lettre ou un chiffre et comporter au plus 64 caractères.",
-        "invalid_project_name_char": "« {{char}} » ne peut pas être utilisé dans un nom d’article. Les noms d’article servent de noms de dossier. Ils ne peuvent donc contenir que des lettres latines minuscules (a–z), des chiffres (0–9), des points, des traits d’union et des tirets bas, doivent commencer par une lettre ou un chiffre et comporter au plus 64 caractères.",
-        "invalid_project_name_letter": "« {{char}} » n’est pas une lettre latine (a–z) et ne peut donc pas être utilisé dans un nom d’article. Les noms d’article servent de noms de dossier. Ils ne peuvent donc contenir que des lettres latines minuscules (a–z), des chiffres (0–9), des points, des traits d’union et des tirets bas, doivent commencer par une lettre ou un chiffre et comporter au plus 64 caractères."
+        "invalid_project_name_char": "« {{char}} » ne peut pas être utilisé dans un nom d’article. Utilise des minuscules a–z, 0–9, . - _",
+        "invalid_project_name_letter": "« {{char}} » ({{script}}, {{code}}) ne peut pas être utilisé dans un nom d’article. Utilise des minuscules a–z, 0–9, . - _"
       },
       "preview": {
         "compile_to_see_the_pdf": "Compilez pour voir le PDF.",
@@ -10287,6 +10287,12 @@
       "max": "Maximal",
       "medium": "Moyen",
       "xhigh": "Très élevé"
+    },
+    "scriptLabel": {
+      "cyrillic": "lettre cyrillique",
+      "greek": "lettre grecque",
+      "latin": "lettre latine",
+      "other": "caractère"
     },
     "sttProviders": {
       "downloading_decoder": "Téléchargement du décodeur audio : {{pct}} ({{done}} sur {{total}})",

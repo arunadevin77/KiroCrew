@@ -414,26 +414,36 @@ describe('maxChatWidth', () => {
 // lowercase Latin slug, and what the user gets is that rule in the app's own
 // language, naming the character the server refused.
 describe('projectErrorText', () => {
-  it('says a refused letter is not a Latin letter, then states the rule', () => {
+  it('names a refused letter with its script and code point, then the one-clause rule', () => {
     const err = new PapyrusApiError('invalid project name', 400, '', 'invalid_project_name', '论')
     const text = projectErrorText(err)
-    expect(text).toMatch(/^“论” isn’t a Latin letter \(a–z\), so it can’t be used in a paper name\./)
-    expect(text).toContain('lowercase Latin letters (a–z)')
+    expect(text).toBe('“论” (character, U+8BBA) can’t be used in a paper name. Use lowercase a–z, 0–9, . - _')
     expect(text).not.toContain('invalid project name')
   })
 
-  it('says so for a capital that renders like the Latin one the rule allows', () => {
+  it('names the script of a capital that renders like the Latin one the rule allows', () => {
     // Cyrillic capital O: drawn exactly like Latin "O".
     const err = new PapyrusApiError('invalid project name', 400, '', 'invalid_project_name', 'О')
-    expect(projectErrorText(err)).toContain('isn’t a Latin letter')
+    expect(projectErrorText(err)).toMatch(/^“О” \(Cyrillic letter, U\+041E\) can’t be used in a paper name\./)
   })
 
-  it('names a refused non-letter without calling it a letter', () => {
+  it('tells a Greek capital and an accented Latin letter apart by script', () => {
+    const greek = new PapyrusApiError('invalid project name', 400, '', 'invalid_project_name', 'Ο')
+    expect(projectErrorText(greek)).toContain('(Greek letter, U+039F)')
+    const accented = new PapyrusApiError('invalid project name', 400, '', 'invalid_project_name', 'é')
+    expect(projectErrorText(accented)).toContain('(Latin letter, U+00E9)')
+  })
+
+  it('writes the code point of a letter outside the Basic Multilingual Plane in full', () => {
+    // MATHEMATICAL BOLD CAPITAL A: one letter, two UTF-16 code units.
+    const err = new PapyrusApiError('invalid project name', 400, '', 'invalid_project_name', '𝐀')
+    expect(projectErrorText(err)).toContain('U+1D400')
+  })
+
+  it('names a refused non-letter without a script or code point', () => {
     for (const char of ['/', 'U+202E']) {
       const err = new PapyrusApiError('invalid project name', 400, '', 'invalid_project_name', char)
-      const text = projectErrorText(err)
-      expect(text).toMatch(new RegExp(`^“${char.replace('+', '\\+')}” can’t be used in a paper name\\.`))
-      expect(text).not.toContain('isn’t a Latin letter')
+      expect(projectErrorText(err)).toBe(`“${char}” can’t be used in a paper name. Use lowercase a–z, 0–9, . - _`)
     }
   })
 

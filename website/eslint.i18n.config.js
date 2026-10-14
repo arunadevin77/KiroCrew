@@ -870,6 +870,10 @@ export default [
               // splits into `data:`, `;base64,` and `` — the first matches the data-URI
               // pattern above, the second needs this.
               '[;,]?base64,?$',
+              // The `U+` of Unicode code-point notation (`U+${hex}`), which every
+              // locale writes the same way. Only the bare two-character quasi is
+              // exempt, so no sentence can pass as one.
+              'U\\+$',
               // API paths with an optional query string: `/api/file-raw?path=`. The
               // `^[.~]?/` entry above cannot match these — the plugin full-anchors every
               // pattern, so a prefix-only one is inert.

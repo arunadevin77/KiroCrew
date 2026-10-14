@@ -9061,6 +9061,12 @@
       "medium": "Medium",
       "xhigh": "Extra High"
     },
+    "scriptLabel": {
+      "cyrillic": "Cyrillic letter",
+      "greek": "Greek letter",
+      "latin": "Latin letter",
+      "other": "character"
+    },
     "sttProviders": {
       "downloading_decoder": "Downloading the audio decoder: {{pct}} ({{done}} of {{total}})",
       "downloading_speech_model": "Downloading the speech model: {{pct}} ({{done}} of {{total}})",

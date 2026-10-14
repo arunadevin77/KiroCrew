@@ -85,7 +85,10 @@ that looks like an allowed Latin `o`. A bidi override, zero-width or other invis
 character is sent as its `U+XXXX` code point instead, so it cannot hide or reorder the
 message, and `char` is `""` when the name failed on its length or first character.
 The dashboard renders that code as the rule in the user's own language; the English
-`error` is for logs. Pinned by `test/test_papyrus_store.py::TestProjectNameStaysAscii`
+`error` is for logs. A refused letter is shown with its script and code point
+(`“О” (Cyrillic letter, U+041E)`), because a Cyrillic or Greek capital renders exactly
+like the Latin one the rule allows, and the rule beside it is one clause
+(`Use lowercase a–z, 0–9, . - _`). Pinned by `test/test_papyrus_store.py::TestProjectNameStaysAscii`
 and the `test_create_explains_*` tests in `test/test_papyrus_routes.py`.
 
 ## Security model

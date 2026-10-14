@@ -996,8 +996,8 @@
           "pending": "in attesa",
           "read_namespace": "Leggi il namespace {{name}}",
           "invalid_namespace_name": "I nomi dei namespace diventano nomi di cartella, quindi possono contenere solo lettere latine minuscole (a–z), cifre (0–9), punti, trattini e trattini bassi, devono iniziare e finire con una lettera o una cifra e avere da 2 a 64 caratteri.",
-          "invalid_namespace_name_char": "«{{char}}» non può essere usato nel nome di un namespace. I nomi dei namespace diventano nomi di cartella, quindi possono contenere solo lettere latine minuscole (a–z), cifre (0–9), punti, trattini e trattini bassi, devono iniziare e finire con una lettera o una cifra e avere da 2 a 64 caratteri.",
-          "invalid_namespace_name_letter": "«{{char}}» non è una lettera latina (a–z), quindi non può essere usato nel nome di un namespace. I nomi dei namespace diventano nomi di cartella, quindi possono contenere solo lettere latine minuscole (a–z), cifre (0–9), punti, trattini e trattini bassi, devono iniziare e finire con una lettera o una cifra e avere da 2 a 64 caratteri."
+          "invalid_namespace_name_char": "«{{char}}» non può essere usato nel nome di un namespace. Usa lettere minuscole a–z, 0–9, . - _",
+          "invalid_namespace_name_letter": "«{{char}}» ({{script}}, {{code}}) non può essere usato nel nome di un namespace. Usa lettere minuscole a–z, 0–9, . - _"
         },
         "leftRail": {
           "code_review_sage": "Code Review Sage",
@@ -4641,8 +4641,8 @@
         "verifying_compiler": "Verifica in corso…",
         "your_papers": "I tuoi articoli",
         "invalid_project_name": "I nomi degli articoli diventano nomi di cartella, quindi possono contenere solo lettere latine minuscole (a–z), cifre (0–9), punti, trattini e trattini bassi, devono iniziare con una lettera o una cifra e avere al massimo 64 caratteri.",
-        "invalid_project_name_char": "«{{char}}» non può essere usato nel nome di un articolo. I nomi degli articoli diventano nomi di cartella, quindi possono contenere solo lettere latine minuscole (a–z), cifre (0–9), punti, trattini e trattini bassi, devono iniziare con una lettera o una cifra e avere al massimo 64 caratteri.",
-        "invalid_project_name_letter": "«{{char}}» non è una lettera latina (a–z), quindi non può essere usato nel nome di un articolo. I nomi degli articoli diventano nomi di cartella, quindi possono contenere solo lettere latine minuscole (a–z), cifre (0–9), punti, trattini e trattini bassi, devono iniziare con una lettera o una cifra e avere al massimo 64 caratteri."
+        "invalid_project_name_char": "«{{char}}» non può essere usato nel nome di un articolo. Usa lettere minuscole a–z, 0–9, . - _",
+        "invalid_project_name_letter": "«{{char}}» ({{script}}, {{code}}) non può essere usato nel nome di un articolo. Usa lettere minuscole a–z, 0–9, . - _"
       },
       "preview": {
         "compile_to_see_the_pdf": "Compila per vedere il PDF.",
@@ -10287,6 +10287,12 @@
       "max": "Massimo",
       "medium": "Medio",
       "xhigh": "Molto alto"
+    },
+    "scriptLabel": {
+      "cyrillic": "lettera cirillica",
+      "greek": "lettera greca",
+      "latin": "lettera latina",
+      "other": "carattere"
     },
     "sttProviders": {
       "downloading_decoder": "Download del decodificatore audio: {{pct}} ({{done}} di {{total}})",

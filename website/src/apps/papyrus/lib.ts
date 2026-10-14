@@ -3,6 +3,7 @@
 
 import { compareText } from '../../i18n/format'
 import { i18nT } from '../../i18n/t'
+import { refusedLetterParams } from '../../lib/scriptLabel'
 import { PapyrusApiError, type Diagnostic, type GitStatus } from './api'
 
 /** localStorage key holding the project the user last had open. */
@@ -285,16 +286,16 @@ export function gitBranchLabel(status: GitStatus | undefined): string {
  * stopped it when there was one (a name typed in another script stops at its
  * first letter). That is explained in the app's language: the paper name is its
  * folder name, so it stays a lowercase Latin slug on purpose, and the server's
- * English sentence is only for logs. A refused LETTER is said not to be a Latin
- * letter, because a Cyrillic or Greek capital renders exactly like the Latin one
- * the rule allows. Any other failure keeps the server's text.
+ * English sentence is only for logs. A refused LETTER is shown with its script
+ * and code point, because a Cyrillic or Greek capital renders exactly like the
+ * Latin one the rule allows. Any other failure keeps the server's text.
  */
 export function projectErrorText(err: Error): string {
   if (err instanceof PapyrusApiError && err.code === 'invalid_project_name') {
     // `\p{L}` alone: the server only refuses a letter that is not lowercase a–z,
     // so any single letter here is one the rule's Latin alphabet does not hold.
     if (/^\p{L}$/u.test(err.char)) {
-      return i18nT('apps.papyrus.page.invalid_project_name_letter', { char: err.char })
+      return i18nT('apps.papyrus.page.invalid_project_name_letter', refusedLetterParams(err.char))
     }
     return err.char
       ? i18nT('apps.papyrus.page.invalid_project_name_char', { char: err.char })
