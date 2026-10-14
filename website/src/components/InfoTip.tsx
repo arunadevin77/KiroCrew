@@ -249,14 +249,18 @@ export default function InfoTip({ text, placement = 'auto' }: {
              the glyph and end the focus reveal). So while the tip is open the
              scroll keys act on the bubble from the glyph: arrows by a line,
              Page keys by a view, Home / End to either end. Closed, the keys
-             fall through to the page as usual. `scrollTop` is assigned rather
-             than `scrollBy` called, so the step works wherever the element is
-             scrollable at all. */
+             fall through to the page as usual, and so do they when the open
+             bubble has nothing to scroll (it fits its cap): claiming a key
+             that would do nothing strands a keyboard reader on the glyph,
+             unable to scroll the page until the tip closes. `scrollTop` is
+             assigned rather than `scrollBy` called, so the step works
+             wherever the element is scrollable at all. */
           const tip = tipRef.current
           if (!tip) return
           const LINE = 24
           const view = tip.clientHeight
           const max = tip.scrollHeight - view
+          if (max <= 0) return
           let next: number | null = null
           switch (e.key) {
             case 'ArrowDown': next = tip.scrollTop + LINE; break
