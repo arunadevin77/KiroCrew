@@ -4,8 +4,9 @@
  * Parses `src/pages/settings/*.tsx` for JSX usages of settings primitives
  * (SettingsToggle, SettingsSelect, SettingsMultiSelect, SettingsInput,
  * SettingsStepper, SettingsButtonGroup) and extracts label + description (the
- * `hint` tip text first, then the description, when a row carries both; the tip
- * alone when a row has no description) + primitive type.
+ * row's always-visible help) + hint (the text behind its info tip) + primitive
+ * type. The two help fields stay apart so no reader quotes tip prose as on-row
+ * copy.
  *
  * A label/description is read from EITHER form:
  *   - a string literal          `label="Zoom Level"`
@@ -403,14 +404,13 @@ export function extractFromSource(
       }
       const labelKey = extractTranslationKeyProp(props, 'label')
       // A row's help may sit on the always-visible `description`, behind the
-      // `hint` tip, or on both; each is text a palette search should match on,
-      // so a row keeping both indexes both. The tip states what the row is and
-      // the visible description states the consequence, so the tip goes first:
-      // definition-then-consequence reads as prose in the palette subtitle. The
-      // tip stands in alone when the row keeps nothing permanently visible.
-      const description = [extractStringProp(props, 'hint'), extractStringProp(props, 'description')]
-        .filter((s): s is string => s !== undefined)
-        .join(' ')
+      // `hint` tip, or on both. The two are kept in separate fields so a reader
+      // can tell on-row copy from tip prose: `description` holds only what the
+      // row shows, `hint` only what its info tip shows. Readers that want all
+      // of a row's help (search, the palette subtitle) join them through
+      // `settingHelpText`.
+      const description = extractStringProp(props, 'description')
+      const hint = extractStringProp(props, 'hint')
       const configKey = extractStringProp(props, 'configKey')
       const settingId = extractStringProp(props, 'settingId')
       // A rail-hosting panel renders each page in a `case '<key>':` block;
@@ -435,6 +435,7 @@ export function extractFromSource(
           ...(labelKey ? { labelKey } : {}),
           ...(suffix && labelKey ? { labelSuffix: suffix } : {}),
           description: description || undefined,
+          ...(hint ? { hint } : {}),
           tab,
           type: PRIMITIVE_MAP[primitiveName],
           occurrence: 1,
@@ -591,8 +592,10 @@ export interface AgentSettingEntry {
   tab: string
   /** Prebuilt in-app link `/settings/<tab>[/<sub>]?…&highlight=…`, usable verbatim. */
   route: string
-  /** In-panel help text, when the control has any. */
+  /** Help text the row shows on screen, when it has any. Safe to quote as on-row copy. */
   description?: string
+  /** Help text behind the row's info tip, when it has any. Never shown on the row itself. */
+  hint?: string
   /** Schema key this control writes, when it maps to exactly one. */
   configKey?: string
 }
@@ -625,6 +628,7 @@ export function buildAgentRegistry(entries: SettingEntry[]): AgentSettingEntry[]
       entry.configKey ? { ...entry, id: `${HIGHLIGHT_KEY_PREFIX}${entry.configKey}` } : entry,
     ),
     ...(entry.description ? { description: entry.description } : {}),
+    ...(entry.hint ? { hint: entry.hint } : {}),
     ...(entry.configKey ? { configKey: entry.configKey } : {}),
   }))
 }

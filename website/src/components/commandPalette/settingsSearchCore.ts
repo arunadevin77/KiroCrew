@@ -37,7 +37,7 @@ import { fuzzyMatch } from '../../utils/fuzzyMatch'
 import { i18nT } from '../../i18n/t'
 import { SETTINGS_KEYWORDS } from './settingsKeywords'
 import { settingsTabLabel } from './settingsTabLabel'
-import type { SettingEntry } from './settingsTypes'
+import { settingHelpText, type SettingEntry } from './settingsTypes'
 
 export interface SettingEntryScore {
   /** Comparable score (same scale as fuzzyMatch). Higher is better. */
@@ -238,7 +238,10 @@ export function scoreSettingEntry(
   // scattered subsequence. See the module comment.
   const q = query.trim().toLowerCase()
   const parts: string[] = []
-  if (entry.description) parts.push(entry.description)
+  // Tip and on-row help together, as one part: both are words the row
+  // explains itself with, wherever they render.
+  const help = settingHelpText(entry)
+  if (help) parts.push(help)
   if (kws) parts.push(...kws)
   if (opts.includeTab !== false) {
     parts.push(entry.tab)

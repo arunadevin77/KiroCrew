@@ -233,7 +233,9 @@ def _tool_definitions() -> list[dict[str, Any]]:
             "description": (
                 "Search the Settings page for a setting to change, e.g. 'shorter "
                 "replies' or 'restore sessions'. Returns up to 10 matches: "
-                "setting_id, label, path (the Settings click path), description, tab, "
+                "setting_id, label, path (the Settings click path), description "
+                "(help text the row shows), hint (help text behind the row's info "
+                "tip, never shown on the row; only when the row has one), tab, "
                 "writable (whether a "
                 "setting.change card can change it), current_value and "
                 "allowed_values; a list setting adds value_type 'string_list' "

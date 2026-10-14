@@ -1553,6 +1553,31 @@ def test_find_setting_returns_writable_matches_and_withholds_credential_values(m
     assert cards.find_settings("  ") == []
 
 
+def test_find_setting_keeps_tip_text_apart_from_row_text(monkeypatch):
+    """A row's tip prose comes back as `hint`, never inside `description`, so
+    the agent quotes only what the row shows as on-row text."""
+    entry = {
+        "id": "chat.example",
+        "label": "Example",
+        "tab": "chat",
+        "hint": "Tip words zebrafinch.",
+        "description": "Row words.",
+    }
+    tip_only = {
+        "id": "chat.tiponly",
+        "label": "Tip only",
+        "tab": "chat",
+        "hint": "Only zebrafinch.",
+    }
+    monkeypatch.setattr(cards, "settings_registry", lambda: (entry, tip_only))
+    monkeypatch.setattr(cards, "resolve_setting", lambda p: None)
+    rows = {r["setting_id"]: r for r in cards.find_settings("zebrafinch")}
+    assert rows["chat.example"]["description"] == "Row words."
+    assert rows["chat.example"]["hint"] == "Tip words zebrafinch."
+    assert rows["chat.tiponly"]["description"] == ""
+    assert rows["chat.tiponly"]["hint"] == "Only zebrafinch."
+
+
 def test_find_setting_flags_only_settings_that_wait_for_a_restart(monkeypatch):
     # Most settings apply live; the schema's restart mark is what lets Mate
     # say "restart" for the few that need it and stay quiet for the rest.
