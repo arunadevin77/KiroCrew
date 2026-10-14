@@ -20,6 +20,7 @@ import pytest
 import yaml  # type: ignore[import-untyped]
 
 from kiro_crew.acp import _dispatch
+from kiro_crew.acp.harness import goose as goose_mod
 from kiro_crew.acp.harness.goose import build_side_goose_root, goose_config_dir
 from kiro_crew.acp.transport_errors import AcpError
 from kiro_crew.acp.types import JsonRpcMessage
@@ -27,6 +28,11 @@ from kiro_crew.acp_backends import ACP_BACKEND_GOOSE, ACP_BACKENDS_SIDE_READONLY
 from kiro_crew.llm_helpers import ToolApprovalPolicy, stream_and_collect
 from kiro_crew.providers.acp import AcpProvider
 from kiro_crew.providers.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
+
+#: The side home is POSIX-only (``goose.side_home_supported``); these tests build one.
+_posix_home = pytest.mark.skipif(
+    os.name == "nt", reason="a goose side home is built on POSIX hosts only"
+)
 
 # (extension, toolName as goose states it, rawInput)
 _READS = [
@@ -214,6 +220,7 @@ async def test_a_read_of_a_sensitive_path_is_refused_on_a_side_turn(tool, tmp_pa
     assert provider.rejected == ["perm-1"]
 
 
+@_posix_home
 @pytest.mark.asyncio
 async def test_the_linked_secrets_file_in_the_side_home_is_refused(tmp_path, monkeypatch):
     """The side home links goose's secrets.yaml; a read through that link is the
@@ -278,6 +285,7 @@ def _user_config(tmp_path: Path) -> Path:
     return source
 
 
+@_posix_home
 def test_the_side_home_leaves_out_permission_yaml_and_extensions(tmp_path):
     source = _user_config(tmp_path)
     scratch = tmp_path / "scratch"
@@ -297,6 +305,7 @@ def test_the_side_home_leaves_out_permission_yaml_and_extensions(tmp_path):
     assert not (root / "data").exists()
 
 
+@_posix_home
 def test_the_side_home_is_rebuilt_on_every_spawn(tmp_path):
     """A permission.yaml goose wrote into an earlier side home does not survive."""
     source = _user_config(tmp_path)
@@ -311,6 +320,7 @@ def test_the_side_home_is_rebuilt_on_every_spawn(tmp_path):
     assert not (again / "config" / "permission.yaml").exists()
 
 
+@_posix_home
 def test_the_side_home_needs_no_user_config(tmp_path):
     scratch = tmp_path / "scratch"
     scratch.mkdir()
@@ -318,6 +328,46 @@ def test_the_side_home_needs_no_user_config(tmp_path):
     assert list((root / "config").iterdir()) == []
 
 
+@_posix_home
+@pytest.mark.parametrize("name", ["Permission.yaml", "PERMISSION.YAML", "permission.YAML.lock"])
+def test_a_case_variant_of_permission_yaml_is_not_linked(tmp_path, name):
+    """On case-insensitive storage goose opens ``Permission.yaml`` as its own store."""
+    source = tmp_path / "user-config"
+    source.mkdir()
+    (source / name).write_text("user:\n  always_allow: [shell]\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    root = build_side_goose_root(source, scratch)
+    assert list((root / "config").iterdir()) == []
+
+
+@_posix_home
+def test_a_home_that_cannot_be_built_refuses_the_side_session(tmp_path, monkeypatch):
+    source = _user_config(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+
+    def _no_links(*args, **kwargs):
+        raise OSError("symlink privilege not held")
+
+    monkeypatch.setattr(goose_mod.os, "symlink", _no_links)
+    with pytest.raises(AcpError):
+        build_side_goose_root(source, scratch)
+
+
+@pytest.mark.asyncio
+async def test_a_host_without_a_side_home_keeps_goose_side_turns_tool_free(monkeypatch):
+    """Where no separate home can be built, the side turn and the footer both
+    answer no tools, and a launch asked for one refuses."""
+    from kiro_crew.dashboard.handlers import side as side_mod
+
+    monkeypatch.setattr(side_mod, "goose_side_home_supported", lambda: False)
+    assert await side_mod._side_read_only_tools(ACP_BACKEND_GOOSE) is False
+    monkeypatch.setattr(side_mod, "goose_side_home_supported", lambda: True)
+    assert await side_mod._side_read_only_tools(ACP_BACKEND_GOOSE) is True
+
+
+@_posix_home
 @pytest.mark.parametrize("body", ["- a list\n", "key: [unclosed\n"])
 def test_an_unreadable_config_refuses_the_side_session(tmp_path, body):
     source = tmp_path / "user-config"
@@ -381,6 +431,7 @@ async def _launch_env(monkeypatch, tmp_path, session: _Session) -> dict[str, str
     return env
 
 
+@_posix_home
 @pytest.mark.asyncio
 async def test_a_side_session_is_spawned_on_its_own_goose_home(monkeypatch, tmp_path):
     user = tmp_path / "home" / ".config" / "goose"
@@ -407,6 +458,7 @@ async def test_a_normal_session_keeps_the_users_goose_home(monkeypatch, tmp_path
     assert list(scratch.iterdir()) == []
 
 
+@_posix_home
 @pytest.mark.asyncio
 async def test_a_side_session_with_no_scratch_window_is_refused(monkeypatch, tmp_path):
     with pytest.raises(AcpError):

@@ -30,7 +30,7 @@ from kiro_crew.acp.harness.base import ProcessAdapter, SpawnContext, SpawnPlan
 from kiro_crew.acp.transport_errors import AcpError
 from kiro_crew.agent_sdk.backends import ACP_BACKEND_GOOSE
 
-__all__ = ["GooseLaunch", "build_side_goose_root", "goose_config_dir"]
+__all__ = ["GooseLaunch", "build_side_goose_root", "goose_config_dir", "side_home_supported"]
 
 # The channel Crew's permission routing travels down on this harness: goose resolves
 # its mode from a PLAIN ENVIRONMENT VARIABLE, above its own config file, so the seed
@@ -66,19 +66,26 @@ _SIDE_ROOT_UNLINKED = frozenset(
 _SIDE_CONFIG_DROPPED_KEYS = ("extensions",)
 
 
-def goose_config_dir(env: Mapping[str, str]) -> Path:
-    """The config directory goose resolves under *env* (``Paths::config_dir``).
+def side_home_supported() -> bool:
+    """Whether a goose Side Chat session can be given a goose home of its own here.
 
-    ``GOOSE_PATH_ROOT`` first, when absolute; otherwise etcetera's app strategy
-    for app ``goose`` by ``Block``: ``%APPDATA%\\Block\\goose\\config`` on Windows,
-    else ``$XDG_CONFIG_HOME/goose`` when that is absolute, else ``~/.config/goose``.
+    POSIX only. On Windows goose keeps its secrets under ``%APPDATA%``, outside
+    the credential leaf the sensitive-path deny names for it, and linking the
+    user's config entries needs a symlink privilege; a goose side turn there keeps
+    running ``REJECT_ALL``.
+    """
+    return os.name != "nt"
+
+
+def goose_config_dir(env: Mapping[str, str]) -> Path:
+    """The config directory goose resolves under *env* on POSIX (``Paths::config_dir``).
+
+    ``GOOSE_PATH_ROOT`` first, when absolute; otherwise the XDG layout goose uses:
+    ``$XDG_CONFIG_HOME/goose`` when that is absolute, else ``~/.config/goose``.
     """
     root = env.get(_ENV_GOOSE_PATH_ROOT, "")
     if root and os.path.isabs(root):
         return Path(root) / "config"
-    if os.name == "nt":
-        appdata = env.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-        return Path(appdata) / "Block" / "goose" / "config"
     xdg = env.get("XDG_CONFIG_HOME", "")
     if xdg and os.path.isabs(xdg):
         return Path(xdg) / "goose"
@@ -94,10 +101,20 @@ def build_side_goose_root(source_config_dir: Path, parent: Path) -> Path:
     ``extensions`` block. ``data`` and ``state`` start empty. Any earlier home at
     the same path is removed first, so one spawn never inherits another's grants.
 
-    Raises :class:`AcpError` when ``config.yaml`` cannot be read as a mapping: the
-    session is then refused rather than started with an unknown configuration.
-    Blocking; run it off the loop.
+    Raises :class:`AcpError` when the home cannot be built or ``config.yaml``
+    cannot be read as a mapping: the session is then refused rather than started
+    with an unknown configuration. Blocking; run it off the loop.
     """
+    try:
+        return _build_side_goose_root(source_config_dir, parent)
+    except OSError as exc:
+        raise AcpError(
+            f"a separate goose home for this Side Chat session could not be built ({exc}); "
+            "the side turn is refused."
+        ) from None
+
+
+def _build_side_goose_root(source_config_dir: Path, parent: Path) -> Path:
     root = parent / _SIDE_ROOT_DIRNAME
     if root.is_symlink() or root.is_file():
         root.unlink()
@@ -107,14 +124,16 @@ def build_side_goose_root(source_config_dir: Path, parent: Path) -> Path:
     config_dir.mkdir(parents=True, mode=0o700)
     if source_config_dir.is_dir():
         for entry in sorted(source_config_dir.iterdir()):
-            if entry.name in _SIDE_ROOT_UNLINKED:
+            # Case-folded: on case-insensitive storage ``Permission.yaml`` is the
+            # file goose opens as ``permission.yaml``.
+            if entry.name.casefold() in _SIDE_ROOT_UNLINKED:
                 continue
             os.symlink(entry, config_dir / entry.name)
     source_config = source_config_dir / "config.yaml"
     if source_config.is_file():
         try:
             data = yaml.safe_load(source_config.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        except (UnicodeDecodeError, yaml.YAMLError) as exc:
             raise AcpError(
                 f"goose's config.yaml could not be read for a Side Chat session ({exc}); "
                 "the side turn runs no tools until it parses."
@@ -209,6 +228,11 @@ class GooseLaunch(ProcessAdapter):
         if self._side_scratch is None:
             return
         scratch = self._side_scratch()
+        if not side_home_supported():
+            raise AcpError(
+                "a goose Side Chat session cannot be given a separate goose home on "
+                "this platform; the side turn is refused."
+            )
         if scratch is None:
             raise AcpError(
                 "a goose Side Chat session needs its own scratch directory for a "

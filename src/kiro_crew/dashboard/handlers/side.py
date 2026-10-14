@@ -22,7 +22,10 @@ from kiro_crew.acp.client import AcpAuthRequired
 from kiro_crew.acp_backends import ACP_BACKEND_GOOSE, ACP_BACKENDS_SIDE_READONLY
 from kiro_crew.agent_discovery import warm_project_agent_names
 from kiro_crew.agent_sdk.backend_identity import is_claude_backend_name
-from kiro_crew.agent_sdk.drivers.acp import claude_adapter_honours_session_options
+from kiro_crew.agent_sdk.drivers.acp import (
+    claude_adapter_honours_session_options,
+    goose_side_home_supported,
+)
 from kiro_crew.config.loader import (
     KiroCrewConfig,
     refresh_materialized_agents,
@@ -319,6 +322,9 @@ async def _side_read_only_tools(side_backend: str | None) -> bool:
         # The confinement rides _meta.claudeCode.options, which an adapter
         # below the verified floor may ignore.
         return await asyncio.to_thread(claude_adapter_honours_session_options)
+    if side_backend == ACP_BACKEND_GOOSE:
+        # The confinement is a separate goose home, which only POSIX hosts get.
+        return goose_side_home_supported()
     return True
 
 

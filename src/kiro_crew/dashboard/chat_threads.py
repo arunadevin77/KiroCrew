@@ -30,7 +30,10 @@ from aiohttp import web
 from kiro_crew.acp_backends import ACP_BACKEND_GOOSE, ACP_BACKENDS_SIDE_READONLY
 from kiro_crew.agent_discovery import warm_project_agent_names
 from kiro_crew.agent_sdk.backend_identity import is_claude_backend_name
-from kiro_crew.agent_sdk.drivers.acp import claude_adapter_honours_session_options
+from kiro_crew.agent_sdk.drivers.acp import (
+    claude_adapter_honours_session_options,
+    goose_side_home_supported,
+)
 from kiro_crew.agent_sdk.host_auth import signed_out_message
 from kiro_crew.config.loader import KiroCrewConfig, resolve_agent_bindings
 from kiro_crew.dashboard.chat_utils import slot_history_key
@@ -975,6 +978,8 @@ async def _run_thread_turn(
         claude_thread = tools_available and is_claude_backend_name(backend)
         if claude_thread and not await asyncio.to_thread(claude_adapter_honours_session_options):
             tools_available = claude_thread = False
+        if backend == ACP_BACKEND_GOOSE and not goose_side_home_supported():
+            tools_available = False
         goose_thread = tools_available and backend == ACP_BACKEND_GOOSE
         session_kwargs: dict[str, Any] = {}
         if claude_thread or goose_thread:

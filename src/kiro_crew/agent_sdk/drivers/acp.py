@@ -56,6 +56,7 @@ __all__ = [
     "agent_spec_mcp_refs",
     "claude_adapter_cached_negative",
     "claude_adapter_honours_session_options",
+    "goose_side_home_supported",
     "claude_adapter_install_command",
     "claude_components_resolve",
     "derived_agent_permissions",
@@ -469,6 +470,17 @@ def claude_adapter_cached_negative() -> bool:
     except Exception:
         return False
     return not argv
+
+
+def goose_side_home_supported() -> bool:
+    """Whether a goose Side Chat session can be started on a goose home of its own.
+
+    The read-only shape of a goose side or thread-reply session depends on it
+    (``acp.harness.goose.side_home_supported``); off it the turn runs no tools.
+    """
+    from kiro_crew.acp.harness.goose import side_home_supported
+
+    return side_home_supported()
 
 
 def claude_adapter_honours_session_options() -> bool:

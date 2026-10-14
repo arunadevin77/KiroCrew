@@ -1513,6 +1513,7 @@ async def test_a_goose_turn_runs_read_only_on_its_own_goose_home(tmp_path, monke
     state = _make_state(tmp_path)
     slot, mid = _member_slot(state)
     calls = _arm_turn(state, monkeypatch, answer="ok", backend="goose")
+    monkeypatch.setattr(chat_threads, "goose_side_home_supported", lambda: True)
     assert _seed_reply(state, slot, mid, "user", "hi") == "ok"
     await _run_thread_turn(
         state, slot, mid, "run-1", "hi", _parent(), [], f"{slot.key}:{mid}", _identity(state, slot)
@@ -1523,6 +1524,22 @@ async def test_a_goose_turn_runs_read_only_on_its_own_goose_home(tmp_path, monke
     assert acquired["side_read_only"] is True
     assert streamed["approval_policy"] == chat_threads.ToolApprovalPolicy.READ_ONLY
     assert chat_threads.THREAD_BOUNDARY_PROMPT_LISTING in streamed["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_goose_turn_on_a_host_without_a_side_home_runs_no_tools(tmp_path, monkeypatch):
+    state = _make_state(tmp_path)
+    slot, mid = _member_slot(state)
+    calls = _arm_turn(state, monkeypatch, answer="ok", backend="goose")
+    monkeypatch.setattr(chat_threads, "goose_side_home_supported", lambda: False)
+    assert _seed_reply(state, slot, mid, "user", "hi") == "ok"
+    await _run_thread_turn(
+        state, slot, mid, "run-1", "hi", _parent(), [], f"{slot.key}:{mid}", _identity(state, slot)
+    )
+    acquired = next(c for c in calls if "key" in c)
+    streamed = next(c for c in calls if "message" in c)
+    assert "side_read_only" not in acquired
+    assert streamed["approval_policy"] == chat_threads.ToolApprovalPolicy.REJECT_ALL
 
 
 @pytest.mark.asyncio

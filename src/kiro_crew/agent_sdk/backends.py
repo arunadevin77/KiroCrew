@@ -2448,7 +2448,9 @@ ACP_BACKENDS_MCP_CONFIG_HOT_RELOAD = frozenset({ACP_BACKEND_KIRO})
 #   ``config.yaml`` copied without ``extensions``, and no MCP server on the
 #   array. A read is proved from the (extension, tool) pair goose stamps, as
 #   written: ``("developer", "tree")`` and ``("developer", "read_image")`` only
-#   (``acp.harness_tool_names.GOOSE_READ_ONLY_BUILTINS``).
+#   (``acp.harness_tool_names.GOOSE_READ_ONLY_BUILTINS``). POSIX hosts only
+#   (``acp.harness.goose.side_home_supported``); elsewhere the turn runs
+#   ``REJECT_ALL``.
 #
 # Off this set the side turn runs ``REJECT_ALL``, the pre-allowance posture, and
 # its footer says tools are unavailable there.

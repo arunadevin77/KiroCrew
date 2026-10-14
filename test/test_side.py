@@ -1555,10 +1555,12 @@ async def test_side_turn_on_goose_runs_read_only_on_its_own_goose_home(
     ``side_read_only``: nothing is derived, the turn streams READ_ONLY, and the
     prompt names neither a shell nor a file-text read, because there is neither."""
     from kiro_crew.acp_backends import ACP_BACKEND_GOOSE
+    from kiro_crew.dashboard.handlers import side as side_mod
     from kiro_crew.dashboard.side_prompts import SIDE_BOUNDARY_PROMPT_LISTING
     from kiro_crew.llm_helpers import ToolApprovalPolicy
 
     _configure_backend(monkeypatch, ACP_BACKEND_GOOSE)
+    monkeypatch.setattr(side_mod, "goose_side_home_supported", lambda: True)
     state, parent, _events, created = _side_turn_fixture(tmp_path, "run-goose")
     stream_mock = AsyncMock(return_value=_SIDE_ANSWER)
     monkeypatch.setattr("kiro_crew.dashboard.handlers.side.stream_and_collect", stream_mock)
@@ -1634,6 +1636,7 @@ async def test_side_tools_answers_what_a_side_turn_runs(
     monkeypatch.setattr(
         side_mod, "claude_adapter_honours_session_options", lambda: adapter_verified
     )
+    monkeypatch.setattr(side_mod, "goose_side_home_supported", lambda: True)
     async with TestClient(TestServer(_make_side_app(_make_state(tmp_path)))) as client:
         resp = await client.get("/api/chat/side/tools")
         assert resp.status == 200
