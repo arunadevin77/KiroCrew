@@ -16267,7 +16267,7 @@
         "category_taskrunner": "タスク",
         "category_taskrunner_description": "Task Runnerの完了",
         "category_turn": "会話の引き継ぎ",
-        "category_turn_description": "会話が終了するか、入力待ちで一時停止したとき",
+        "category_turn_description": "会話が終了し、操作があなたに戻ったとき。エージェントからの質問には、代わりに「承認と質問」の音が鳴ります。",
         "category_dictation": "口述の中断",
         "category_dictation_description": "自分で終える前に口述が止まったときに音を鳴らします",
         "channel_default": "チャネルのデフォルト",

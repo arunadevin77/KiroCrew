@@ -1257,7 +1257,7 @@
       "label": "Conversation handoffs",
       "tab": "notifications",
       "route": "/settings/notifications/percategory?highlight=notifications.sound-category-turn",
-      "description": "When a conversation finishes or pauses for your input"
+      "description": "When a conversation finishes and hands control back to you. Agent questions use the “Approvals and questions” sound instead."
     },
     {
       "id": "notifications.sound-category-cron",

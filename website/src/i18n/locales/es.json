@@ -16775,7 +16775,7 @@
         "category_taskrunner": "Tareas",
         "category_taskrunner_description": "Finalizaciones del Task Runner",
         "category_turn": "Traspasos de conversación",
-        "category_turn_description": "Cuando una conversación termina o se detiene a la espera de tu respuesta",
+        "category_turn_description": "Cuando una conversación termina y te devuelve el control. Las preguntas del agente usan en su lugar el sonido de “Aprobaciones y preguntas”.",
         "category_dictation": "Dictado interrumpido",
         "category_dictation_description": "Reproduce un sonido cuando el dictado se detiene antes de que lo termines",
         "channel_default": "Predeterminado del canal",

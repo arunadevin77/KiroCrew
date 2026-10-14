@@ -16279,7 +16279,7 @@
         "category_taskrunner": "작업",
         "category_taskrunner_description": "Task Runner 완료",
         "category_turn": "대화 인계",
-        "category_turn_description": "대화가 끝나거나 입력을 기다리며 일시 중지될 때",
+        "category_turn_description": "대화가 끝나고 제어가 다시 돌아올 때. 에이전트의 질문에는 대신 ‘승인 및 질문’ 소리가 재생됩니다.",
         "category_dictation": "구술 중단",
         "category_dictation_description": "직접 끝내기 전에 구술이 멈추면 소리를 재생합니다",
         "channel_default": "채널 기본값",

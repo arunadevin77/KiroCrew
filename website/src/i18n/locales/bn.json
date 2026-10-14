@@ -16521,7 +16521,7 @@
         "category_taskrunner": "টাস্ক",
         "category_taskrunner_description": "Task Runner শেষ হলে",
         "category_turn": "কথোপকথনের হ্যান্ডঅফ",
-        "category_turn_description": "যখন কথোপকথন শেষ হয় বা তোমার ইনপুটের জন্য থামে",
+        "category_turn_description": "যখন কথোপকথন শেষ হয়ে নিয়ন্ত্রণ তোমাকে ফিরিয়ে দেয়। এজেন্টের প্রশ্নে এর বদলে “অনুমোদন ও প্রশ্ন”-এর শব্দ বাজে।",
         "category_dictation": "বাধাপ্রাপ্ত ডিকটেশন",
         "category_dictation_description": "তুমি শেষ করার আগেই ডিকটেশন থেমে গেলে একটি শব্দ বাজায়",
         "channel_default": "চ্যানেলের ডিফল্ট",

@@ -16775,7 +16775,7 @@
         "category_taskrunner": "Tarefas",
         "category_taskrunner_description": "Conclusões do Task Runner",
         "category_turn": "Transferências de conversa",
-        "category_turn_description": "Quando uma conversa termina ou pausa aguardando sua resposta",
+        "category_turn_description": "Quando uma conversa termina e devolve o controle a você. As perguntas do agente usam o som de “Aprovações e perguntas” em vez deste.",
         "category_dictation": "Ditado interrompido",
         "category_dictation_description": "Toca um som quando o ditado para antes de você terminá-lo",
         "channel_default": "Padrão do canal",

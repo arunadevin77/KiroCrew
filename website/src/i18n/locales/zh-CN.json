@@ -16267,7 +16267,7 @@
         "category_taskrunner": "任务",
         "category_taskrunner_description": "Task Runner完成",
         "category_turn": "对话交接",
-        "category_turn_description": "对话结束或暂停等待你输入时",
+        "category_turn_description": "对话结束并把控制权交还给你时。代理的提问改用“审批与提问”的提示音。",
         "category_dictation": "口述中断",
         "category_dictation_description": "口述在你结束之前停止时播放提示音",
         "channel_default": "渠道默认",

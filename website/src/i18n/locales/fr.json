@@ -16775,7 +16775,7 @@
         "category_taskrunner": "Tâches",
         "category_taskrunner_description": "Fins de l’Task Runner",
         "category_turn": "Relais de conversation",
-        "category_turn_description": "Lorsqu’une conversation se termine ou s’interrompt en attendant ta réponse",
+        "category_turn_description": "Lorsqu’une conversation se termine et te rend la main. Les questions de l’agent utilisent plutôt le son « Approbations et questions ».",
         "category_dictation": "Dictée interrompue",
         "category_dictation_description": "Joue un son lorsque la dictée s’arrête avant que tu la termines",
         "channel_default": "Valeur par défaut du canal",
