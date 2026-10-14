@@ -5211,7 +5211,11 @@ conductor pattern (loop expires, the wake turn re-arms). On a crew/member slot
 that wake only exists because the fire-time guard already proved the loop
 self-armed. A cron injection, a sub-agent sharing the slot or an app-driven
 turn carries neither mark; those pass an empty initiator and the crew/member
-refusal stands (visibly, via the notice row). The wake mark is self-arm
+refusal stands (visibly, via the notice row). On the directive path that
+refusal names the turn's origin (`session_directive_apply._origin_arm_refusal`,
+keyed on `_turn_actor`): "this turn was started by a cron job, so it cannot
+start or change a loop. To do it, send the request yourself in this chat." The
+authorizer's own text for REST and workflow callers is unchanged. The wake mark is self-arm
 provenance ONLY — `set_project` / `chat_tag` stay human-only, so a
 wake can never retarget the slot's project. `reset_conversation` admits one wake: a
 conductor's own patrol wake at a round close, under the checks in

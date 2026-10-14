@@ -387,6 +387,7 @@ async def apply_session_directive(
     producer_is_self_wake: bool = False,
     producer_is_channel: bool = False,
     producer_wake_loop_id: str = "",
+    producer_turn_actor: str = "",
 ) -> str:
     """Apply directive *kind*; return the confirmation TEXT only.
 
@@ -405,6 +406,7 @@ async def apply_session_directive(
         producer_is_self_wake=producer_is_self_wake,
         producer_is_channel=producer_is_channel,
         producer_wake_loop_id=producer_wake_loop_id,
+        producer_turn_actor=producer_turn_actor,
     )
     return outcome.text
 
@@ -431,6 +433,7 @@ async def apply_session_directive_outcome(
     producer_is_self_wake: bool = False,
     producer_is_channel: bool = False,
     producer_wake_loop_id: str = "",
+    producer_turn_actor: str = "",
 ) -> DirectiveOutcome:
     """Apply directive *kind* with *args* to *slot*/*session_key*; return the
     structured :class:`DirectiveOutcome` (confirmation text for the model plus
@@ -604,19 +607,24 @@ async def apply_session_directive_outcome(
             _audit(session_key, kind, "error")
             return DirectiveOutcome(f"Error: unknown session directive {kind!r}.")
     except _DirectiveDenied as exc:
+        reason = str(exc)
+        if not self_arm_ok and kind in _ARMING_DIRECTIVES | _REVISION_DIRECTIVES:
+            # The directive targets the session that produced it, so an "outside
+            # the session" refusal here was earned by the turn's origin.
+            reason = _origin_arm_refusal(reason, producer_turn_actor)
         _audit(session_key, kind, "denied")
         logger.warning(
             "session-directive DENIED at apply for session_key=%r kind=%r: %s",
             session_key,
             kind,
-            exc,
+            reason,
         )
         if kind in _ARMING_DIRECTIVES:
             _surface_arm_refusal(
                 state,
                 slot,
                 kind,
-                str(exc),
+                reason,
                 session_key=session_key,
                 producer_is_self_wake=producer_is_self_wake,
                 producer_wake_loop_id=producer_wake_loop_id,
@@ -626,7 +634,7 @@ async def apply_session_directive_outcome(
                 state,
                 slot,
                 kind,
-                str(exc),
+                reason,
                 prefix=REVISION_REFUSAL_NOTICE_PREFIX,
                 session_key=session_key,
                 producer_is_self_wake=producer_is_self_wake,
@@ -637,13 +645,13 @@ async def apply_session_directive_outcome(
                 state,
                 slot,
                 kind,
-                str(exc),
+                reason,
                 prefix=STOP_REFUSAL_NOTICE_PREFIX,
                 session_key=session_key,
                 producer_is_self_wake=producer_is_self_wake,
                 producer_wake_loop_id=producer_wake_loop_id,
             )
-        return DirectiveOutcome(str(exc))
+        return DirectiveOutcome(reason)
     except Exception as exc:  # never propagate into the turn loop
         logger.warning("apply_session_directive(%s) failed", kind, exc_info=True)
         _audit(session_key, kind, "error")
@@ -656,6 +664,26 @@ async def apply_session_directive_outcome(
     outcome = _outcome(result)
     _audit(session_key, kind, "error" if outcome.text.startswith("Error:") else "success")
     return outcome
+
+
+_TURN_ORIGINS = {"subagent": "a sub-agent result", "cron": "a cron job", "app": "an app"}
+
+
+def _origin_arm_refusal(reason: str, turn_actor: str) -> str:
+    """Reword the crew/member outside-arm refusal for a turn that is not the session's own.
+
+    Text only: who may arm (``autonudge_authz.is_self_arm``) is unchanged."""
+    from kiro_crew.autonudge_authz import _EXTERNAL_ARM_REFUSED_MODES, external_arm_refusal
+
+    origin = _TURN_ORIGINS.get(turn_actor, "something other than the user")
+    for mode in sorted(_EXTERNAL_ARM_REFUSED_MODES):
+        reason = reason.replace(
+            external_arm_refusal(mode),
+            # The notice row shows this to the person, so it speaks to them.
+            f"this turn was started by {origin}, so it cannot start or change a loop. "
+            "To do it, send the request yourself in this chat.",
+        )
+    return reason
 
 
 # ── autonudge trio ──────────────────────────────────────────────────────────

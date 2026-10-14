@@ -13980,6 +13980,7 @@ async def _run_chat(
                             producer_is_self_wake=_directive_self_wake,
                             producer_is_channel=_directive_producer_is_channel(),
                             producer_wake_loop_id=_directive_loop_id,
+                            producer_turn_actor=_turn_actor,
                         )
                         _applied_one = _applied_outcome.text
                         _record_terminal_directive(
@@ -14196,6 +14197,7 @@ async def _run_chat(
                                 producer_is_self_wake=_directive_self_wake,
                                 producer_is_channel=_directive_producer_is_channel(),
                                 producer_wake_loop_id=_directive_loop_id,
+                                producer_turn_actor=_turn_actor,
                             )
                             _applied_one = _applied_outcome.text
                             _record_terminal_directive(
