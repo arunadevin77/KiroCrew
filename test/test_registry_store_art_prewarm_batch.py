@@ -715,9 +715,31 @@ class TestBoundedPostBudgetCleanup:
                 raise
             return True
 
+        from kiro_crew.apps.registry_pipeline import store_art
+
+        class _WaitSpy:
+            """``asyncio`` for the prewarm's owner, recording each ``asyncio.wait``
+            timeout so the test reads which budget bounds each phase, not how long
+            the phase took."""
+
+            def __init__(self) -> None:
+                self.timeouts: list[float | None] = []
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(asyncio, name)
+
+            async def wait(self, fs, *, timeout=None, **kwargs):
+                self.timeouts.append(timeout)
+                return await asyncio.wait(fs, timeout=timeout, **kwargs)
+
+        # Distinct budgets, so a cleanup wait bounded by the batch budget (or by any
+        # value but the cleanup budget) shows up in the recorded order.
+        batch_budget, cleanup_budget = 0.2, 0.3
+        spy = _WaitSpy()
         monkeypatch.setattr(reg_mod, "_fetch_owner_tier_store_assets", _fetch)
-        monkeypatch.setattr(reg_mod, "_PREWARM_BATCH_BUDGET", 0.2)
-        monkeypatch.setattr(reg_mod, "_PREWARM_CLEANUP_BUDGET", 0.2)
+        monkeypatch.setattr(reg_mod, "_PREWARM_BATCH_BUDGET", batch_budget)
+        monkeypatch.setattr(reg_mod, "_PREWARM_CLEANUP_BUDGET", cleanup_budget)
+        monkeypatch.setattr(store_art, "asyncio", spy)
         entry = _entry()
         # Everything from the first ``await`` to the last assertion that precedes the
         # release runs under ``try/finally``: the fake cleanup parks a default-executor
@@ -747,9 +769,14 @@ class TestBoundedPostBudgetCleanup:
 
             assert fetched == 0
             assert cleanup_began.is_set(), "the batch budget never cancelled the row"
-            assert (
-                not cleanup_finished.is_set()
-            ), "the request waited for the cleanup instead of detaching it"
+            # The batch phase waits the batch budget and the cleanup phase the cleanup
+            # budget, each read from its own constant.
+            assert spy.timeouts == [batch_budget, cleanup_budget], (
+                "expected waits bounded by the batch then the cleanup budget, "
+                f"got {spy.timeouts}"
+            )
+            # A request that waited on the cleanup is caught by the hang guard above:
+            # ``release`` is still unset here, so the cleanup cannot have finished.
             messages = [r.getMessage() for r in caplog.records]
             assert any("cleanup exceeded its" in m for m in messages)
             assert any("exceeded its" in m and "batch budget" in m for m in messages)
