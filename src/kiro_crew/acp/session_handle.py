@@ -1502,6 +1502,10 @@ class AcpSessionHandle:
         # (mirrors AcpClient._resolved_model_id; avoids the profile-id
         # pinning trap where a resolved profile id poisons slot.model).
         self._resolved_model_id: str = ""
+        # True after set_mode switched a live session's agent, until the model
+        # kiro-cli reported for that activation has been judged against the
+        # served list (see _served_default_after_set_mode).
+        self._mode_model_unjudged: bool = False
         # The model a non-strict config-option push was refused on, or the
         # startup pin the provider factory withheld because the account does not
         # serve it, or ``""`` (mirrors AcpClient.model_pin_refused). Either way
@@ -1836,6 +1840,10 @@ class AcpSessionHandle:
             await self._settle_abandoned_steering()
         if self._abandoned_prompt_id is not None:
             await self._close_abandoned_turn()
+        if getattr(self, "_mode_model_unjudged", False):
+            # Before the turn is marked active: a set_model the judgement sends
+            # awaits its own answer on this queue.
+            await self._served_default_after_set_mode()
 
         self._cancelled = False
         self._cancel_ts = 0.0
@@ -2933,10 +2941,37 @@ class AcpSessionHandle:
             raise AcpRuntimeError(str(exc)) from exc
         # send_request only queues the request; it does not await a mode ACK.
         self.active_agent = ""
+        take = getattr(self._runtime, "take_switched_model", None)
+        if take is not None:
+            # Only the agent/switched frame THIS activation sends may be judged.
+            take(self._session_id)
         await self._runtime.send_request(
             METHOD_SET_MODE,
             set_mode_params(self._session_id, agent_name),
         )
+        if take is not None:
+            self._mode_model_unjudged = True
+
+    async def _served_default_after_set_mode(self) -> None:
+        """Judge the model a mid-session :meth:`set_mode` put the session on.
+
+        kiro-cli moves the session to the model the switched-to agent's spec
+        pins and reports it only in ``_kiro.dev/agent/switched``, which the
+        runtime's reader records for this session as it arrives. Runs before
+        each turn while a switch is unjudged: a recorded model goes through
+        :meth:`ensure_served_default` the way the start paths' activation does,
+        so an unserved one is moved to a served model before the prompt and a
+        served one is adopted with no extra write. Until the frame has arrived
+        nothing is judged and the next turn looks again; a frame without a
+        model records nothing, so it changes nothing. The frame is kiro-cli's
+        own, so a host that never sends it never has a model to judge.
+        """
+        take = getattr(self._runtime, "take_switched_model", None)
+        activated = take(self._session_id) if take is not None else ""
+        if not activated:
+            return
+        self._mode_model_unjudged = False
+        await self.ensure_served_default(activated_model=activated)
 
     async def set_model(self, model_id: str) -> None:
         """Switch model via session/set_model.
@@ -3038,6 +3073,13 @@ class AcpSessionHandle:
                 return
         self._model = resolved
         self.model_pin_refused = ""
+        if getattr(self, "_mode_model_unjudged", False):
+            # The session runs this model now, not the one an earlier set_mode
+            # activation put it on, so that activation's frame is not judged.
+            self._mode_model_unjudged = False
+            take = getattr(self._runtime, "take_switched_model", None)
+            if take is not None:
+                take(self._session_id)
         # Parity with AcpClient.set_model: keep _resolved_model_id in sync so
         # _backfill_context_window looks up the NEW model's window after a switch
         # (otherwise the context meter converts pct against the stale session/new

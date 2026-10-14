@@ -2256,6 +2256,15 @@ class AcpClient:
         # from self._model when that's the "auto" sentinel). Used to look up
         # the context window when usage_update isn't sent (see _track_metadata).
         self._resolved_model_id: str | None = None
+        # The model a ``_kiro.dev/agent/switched`` frame says the session now
+        # runs, waiting to be judged by ``_judge_activated_model`` before the next
+        # prompt. ``""`` = nothing to judge. See ``_note_agent_switched``.
+        self._activated_model: str = ""
+        # True from the start path's ``session/set_mode`` until the first
+        # agent/switched frame after it, and whether a ``session/set_model``
+        # went out in between (that later write is what the session runs).
+        self._mode_frame_awaited: bool = False
+        self._mode_frame_superseded: bool = False
         # Model the backend last substituted to via the -32603 admin-tier policy
         # advisory ("Using X instead"). Set by _wait_for_response when it sees the
         # advisory; consumed by the session/new path to re-issue creation on the
@@ -5552,6 +5561,50 @@ class AcpClient:
         elif self._is_claude:
             await self._reassert_adapter_resolved_model()
 
+    def _note_agent_switched(self, params: dict[str, Any] | None) -> None:
+        """Record the model a ``_kiro.dev/agent/switched`` frame names.
+
+        kiro-cli's ``session/set_mode`` puts the session on the model the
+        activated agent's spec pins and reports it only in this frame, which
+        lands whenever the next read reaches it: during the start drain, or
+        inside a later prompt. The record waits there for
+        :meth:`_judge_activated_model`, which runs before the next prompt.
+
+        The first frame after the start path's ``set_mode`` belongs to that
+        activation. A ``session/set_model`` sent after the ``set_mode`` and
+        before this frame was read is what the session runs, so that frame's
+        model is ignored. A frame without a model is no evidence and records
+        nothing.
+        """
+        superseded = getattr(self, "_mode_frame_awaited", False) and getattr(
+            self, "_mode_frame_superseded", False
+        )
+        self._mode_frame_awaited = False
+        self._mode_frame_superseded = False
+        if superseded:
+            return
+        model = (params or {}).get("model")
+        if isinstance(model, str) and model.strip():
+            self._activated_model = model.strip()
+
+    async def _judge_activated_model(self) -> None:
+        """Run the served-default check on the model an agent switch applied.
+
+        The startup check in :meth:`_apply_startup_model` judges the
+        ``session/new`` id, which an agent activation replaces. The model the
+        recorded agent/switched frame named is the one the session runs now:
+        a served one is adopted as the resolved model with no extra write, an
+        unserved one is moved to a served model before the next prompt. kiro
+        only, the one backend that sends the frame with a model.
+        """
+        activated = getattr(self, "_activated_model", "")
+        if not activated:
+            return
+        self._activated_model = ""
+        if self._is_kiro:
+            self._resolved_model_id = activated
+            await self._ensure_served_default()
+
     async def _reassert_adapter_resolved_model(self) -> None:
         """Send an inheriting claude session the model its adapter reports.
 
@@ -7864,6 +7917,12 @@ class AcpClient:
             # modeId sent is the same launch identity, which request() tolerates
             # for the agent's own first activation.
             if not self._modes_advertised or self._agent in self._available_mode_ids:
+                # The answer is not awaited, so the model this activation puts the
+                # session on is judged from its agent/switched frame wherever that
+                # frame is read (_note_agent_switched).
+                self._activated_model = ""
+                self._mode_frame_awaited = True
+                self._mode_frame_superseded = False
                 await self._send_request(
                     METHOD_SET_MODE,
                     {"sessionId": self._session_id, "modeId": self._agent},
@@ -7897,6 +7956,10 @@ class AcpClient:
 
         # Drain MCP server init notifications
         await self._drain_notifications()
+
+        # The drain usually reads step 4's agent/switched frame; judge the model
+        # it named before the first prompt can run on it.
+        await self._judge_activated_model()
 
     async def ensure_ready(self) -> None:
         """Ensure process is spawned and session is initialized.
@@ -7939,6 +8002,10 @@ class AcpClient:
             await asyncio.to_thread(ensure_directory, self._work_dir)
             self._work_dir_ready = True
         if self._process and self._process.returncode is None and self._session_id:
+            if getattr(self, "_activated_model", ""):
+                # An agent/switched frame read after the start drain (inside a
+                # prompt) is judged here, before the next prompt goes out.
+                await self._judge_activated_model()
             return
 
         # Telemetry (kirocrew.session.startup.duration): time the cold-start work
@@ -8263,6 +8330,13 @@ class AcpClient:
             on_id(req_id)
         req = JsonRpcRequest(method=method, params=params, id=req_id)
         data = json.dumps(req.to_dict()) + "\n"
+        if method == METHOD_SET_MODEL:
+            # The session runs this model from here on, whatever an earlier
+            # agent activation put it on (see _note_agent_switched). Marked
+            # before the write, whose drain can suspend while a read runs.
+            self._activated_model = ""
+            if getattr(self, "_mode_frame_awaited", False):
+                self._mode_frame_superseded = True
         try:
             # Bounded on the reader's PROGRESS, not held across a raw drain: a
             # request write that parks while the backend is flow-control-paused
@@ -8790,11 +8864,16 @@ class AcpClient:
             if isinstance(update, dict) and update.get("sessionUpdate") == UPDATE_CONFIG_OPTION:
                 self._handle_config_option_update(msg)
 
+        def _capture_agent_switched(msg: JsonRpcMessage) -> None:
+            if msg.is_method(METHOD_AGENT_SWITCHED):
+                self._note_agent_switched(msg.params if isinstance(msg.params, dict) else None)
+
         # Process notifications buffered during _wait_for_response
         for idx, msg in enumerate(self._mcp_notifications):
             drained += 1
             _capture_oauth(msg)
             _capture_config_update(msg)
+            _capture_agent_switched(msg)
             # Frames below the floor were buffered by an EARLIER session attempt
             # (a session/load that failed before the fallback session/new). The
             # OAuth and config captures above still want them — the user must
@@ -8842,6 +8921,7 @@ class AcpClient:
                 drained += 1
                 _capture_oauth(read_msg)
                 _capture_config_update(read_msg)
+                _capture_agent_switched(read_msg)
                 self._mcp_report.record_frame(read_msg, owned=True)
                 if "mcp" in (read_msg.method or ""):
                     name = ""
@@ -9944,6 +10024,7 @@ class AcpClient:
                 saw_agent_switch = True
                 params = msg.params or {}
                 agent_name = params.get("agentName", "")
+                self._note_agent_switched(params if isinstance(params, dict) else None)
                 yield AcpEvent(kind=EVENT_AGENT_SWITCHED, text=agent_name)
             elif action == "mcp_oauth_request":
                 params = msg.params or {}

@@ -6220,6 +6220,15 @@ class AcpRuntime:
         if isinstance(model, str) and model.strip():
             self._switched_model_record()[session_id] = model.strip()
 
+    def take_switched_model(self, session_id: str) -> str:
+        """Remove and return the model recorded for *session_id*, or ``""``.
+
+        For a session handle whose ``set_mode`` switches a live session's agent:
+        it clears the record before sending, so only that activation's frame is
+        read back, and takes it before the next turn.
+        """
+        return self._switched_model_record().pop(session_id, "")
+
     async def _served_default_after_mode(self, handle: AcpSessionHandle, session_id: str) -> None:
         """Re-run the served-default check for the model ``set_mode`` just applied.
 

@@ -108,9 +108,24 @@ of the stale `session/new` id. The record is cleared before each start-path
 `set_mode`, so only that activation's frame counts. The spec file is not read
 again: it can change after kiro-cli read it, and only the host knows which copy of
 the agent it loaded. No frame, or a frame without a model, is no evidence and
-changes nothing. Both `create_session` and `load_session` run it. The non-pooled
-`AcpClient._initialize_session` kiro branch sends `set_mode` without waiting for its
-answer and does not run this second check yet.
+changes nothing. Both `create_session` and `load_session` run it.
+
+The non-pooled `AcpClient._initialize_session` kiro branch sends `set_mode` without
+waiting for its answer, so it judges the frame wherever it is read instead.
+`_note_agent_switched` records the `model` of the first agent/switched frame after
+that `set_mode`, read by the start drain or inside a later prompt, unless a
+`session/set_model` went out in between (the session runs that model instead). The
+record is judged by `_judge_activated_model`: after the start drain, and in
+`ensure_ready` before the next prompt when the frame came later. A served model is
+adopted as `_resolved_model_id` with no write; an unserved one goes through
+`_ensure_served_default`. Any `session/set_model` write drops a pending record.
+
+A live pooled session switched with `AcpSessionHandle.set_mode` is judged the same
+way. The handle clears the runtime's record for the session before sending, and each
+`_run_turn` takes the recorded model (`AcpRuntime.take_switched_model`) before the
+turn starts and passes it to `ensure_served_default(activated_model=...)`. A frame
+not yet read is looked for again at the following turn; a `set_model` that lands
+first ends the wait, since the session runs that model.
 
 KAS sends no `models` object; its list is only the `configOptions` `model`
 select, and it defaults a new session to `auto`. The pooled check asks that select
