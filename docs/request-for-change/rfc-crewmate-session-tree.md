@@ -37,7 +37,7 @@ The Crewmates page does not change. The crewmate shows as an ordinary crewmate. 
 | Part | Today | Where | Gap |
 |---|---|---|---|
 | Session tree | `fold_tree(records, edges)` folds `session/opened.parent` edges and applies `session/adopted` / `session/released` moves per slot | `src/kiro_crew/crew_log/session_tree.py` `fold_tree` | Membership must honour the move edges, not the opened edge alone |
-| Crew-log folds | Named folds served from the projection | `src/kiro_crew/crew_log/projection.py` `FOLD_NAMES` | No fold rooted at a session |
+| Crew-log folds | Named folds served from the projection | `src/kiro_crew/crew_log/projection_catalogue.py` `FOLD_NAMES` (served from `projection.py`) | No fold rooted at a session |
 | Entries the fold sums | `session/opened`, `session/closed`; `turn/completed`, `subagent/completed`, `subagent/failed` and `background/completed` (each carries `credits`); `approval/requested`, `approval/decided` (a host auto-decline is `approval/decided` with `by: "host"` and a `cause`); `crew/report` / `work/recorded` (worker `status`, including `question` and `blocked`) | `src/kiro_crew/crew_log/entry_types.py` | Already logged |
 | Crewmate and team routes for apps | Every route calls `_deny_app_caller`; an app token gets 404 | `src/kiro_crew/dashboard/handlers/members.py` `_deny_app_caller`, `handlers/teams.py` | An app cannot see any crewmate |
 | Work ledger board | `require_owner_dashboard_request` | `src/kiro_crew/dashboard/handlers/work_ledger_board.py` | An app cannot read goals |
