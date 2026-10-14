@@ -968,6 +968,41 @@ class TestCiReach:
             assert selector.collect("backend") == [f"test/{THIS.name}"]
 
 
+class TestCiWiring:
+    """The jobs that enforce the scoped verdict run the guard with full history."""
+
+    @staticmethod
+    def _job(workflow: str, job: str) -> dict:
+        import yaml
+
+        text = (REPO_ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+        return yaml.safe_load(text)["jobs"][job]
+
+    @staticmethod
+    def _runs(job: dict) -> list[str]:
+        return [str(step.get("run") or "") for step in job.get("steps") or []]
+
+    @pytest.mark.parametrize("job", ["backend-lint", "frontend-lint"])
+    def test_a_lint_job_runs_the_guard_on_full_history(self, job: str) -> None:
+        spec = self._job("ci.yml", job)
+        checkouts = [
+            step.get("with") or {}
+            for step in spec["steps"]
+            if str(step.get("uses", "")).startswith("actions/checkout@")
+        ]
+        # A shallow clone leaves the scope undeterminable, and the guard then
+        # judges the whole tree, failing this change for every other change's file.
+        assert [c.get("fetch-depth") for c in checkouts] == [0], checkouts
+        runs = "\n".join(self._runs(spec))
+        assert "python3 scripts/check_file_line_cap.py --test" in runs
+        assert "python3 scripts/check_file_line_cap.py\n" in runs + "\n"
+
+    def test_the_main_audit_judges_the_whole_tree(self) -> None:
+        spec = self._job("main-ratchet-audit.yml", "ratchet-gates")
+        assert spec["env"]["RATCHET_SCOPE_WHOLE_TREE"] == "1"
+        assert any("python3 scripts/check_file_line_cap.py" in run for run in self._runs(spec))
+
+
 class TestDocs:
     _DOCS = ("AGENTS.md", "docs/system-specs/common/code-style.md", "website/AGENTS.md")
 

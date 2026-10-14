@@ -565,6 +565,16 @@ jobs:
           python3 scripts/check_subprocess_encoding.py --test
           python3 scripts/check_subprocess_encoding.py
 
+      # No hand-written code file over 2,000 lines (AGENTS.md), behind the
+      # shrink-only .github/file-line-cap-baseline.txt. The verdict is scoped to
+      # this change through scripts/ratchet_scope.py, which needs the full
+      # history checked out above: a file the change does not touch is reported
+      # as main drift, never failed. Self-test first, same reason as above.
+      - name: Check file line cap (gate, baselined)
+        run: |
+          python3 scripts/check_file_line_cap.py --test
+          python3 scripts/check_file_line_cap.py
+
       # A committed ACP frame fixture carries what the WIRE carried. The class that
       # gets through a credential scrub is an ENUMERATION -- a provider catalog, a
       # command inventory -- because it reads as product data while describing what
@@ -2341,7 +2351,11 @@ jobs:
     steps:
       # persist-credentials retained: frontend-lint/Check for new hardcoded UI strings runs `git fetch origin`
       # against the same remote, through the shared diff-base resolver script.
+      # Full history so the file line cap below can compute THIS change's scope:
+      # Backend Lint, its other home, is skipped on a frontend-only diff.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       # CodeBuild images have no tool cache, so setup-node would resolve the
       # major through a GitHub API manifest call on every run; seed the cache
@@ -2490,6 +2504,14 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             setup.cfg
+
+      # The same file line cap gate as Backend Lint, which a frontend-only diff
+      # skips. Stdlib only, so it needs no install; scoped to this change through
+      # the full-history checkout above.
+      - name: Check file line cap (gate, baselined)
+        run: |
+          python3 scripts/check_file_line_cap.py --test
+          python3 scripts/check_file_line_cap.py
 
       - name: Check the find_ui location index is fresh
         # The packaged index the guide server's find_ui reads is generated from

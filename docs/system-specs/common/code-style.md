@@ -190,9 +190,11 @@ that were each green can together push a file over the cap.
 | A listed file that grew past its row | Reported, not failed. It must not grow; split it. |
 | A malformed or unsorted baseline | Fails. |
 
-CI does not fail on the cap: the test runs on a shallow checkout that cannot
-tell which files a change touched, so there it reports violations without
-failing. The script's exit code is the verdict, so run it before you push.
+Backend Lint and Frontend Lint run the script on the full history and enforce
+the scoped verdict, and the main ratchet audit judges the whole tree, so main
+drift turns red there. The test runs on the backend shards' shallow checkout,
+which cannot tell which files a change touched, so there it reports violations
+without failing.
 
 After a split, delete your own row in the same commit. Delete only your own
 rows: never edit someone else's, by hand or with `--update-baseline`. The
