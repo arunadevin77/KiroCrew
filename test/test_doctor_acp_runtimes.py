@@ -417,6 +417,70 @@ def test_no_rate_is_said_so() -> None:
     assert lines[1].startswith("  cpu:         ⏹ could not take a rate")
 
 
+def test_unowned_runtimes_show_their_memory() -> None:
+    """``_acp_runtime_lines`` names untracked-runtime RSS and points to the reclaim UI.
+
+    Untracked runtimes accumulate silently; each tree holds roughly 1-1.5 GiB.
+    Without a memory figure the doctor row gives no clue that a pile-up can
+    exhaust the host and stop dependent services. Only ``untracked`` runtimes
+    are shown with the reclaim pointer because the Services card that reclaims
+    them reads from ``runtime_reconcile``; ``stale`` runtimes have a registry
+    record and are not in that card's population.
+
+    Reader: test/test_doctor_acp_runtimes.py
+    """
+    # 1.2 GiB untracked + 0.8 GiB stale.  Only the untracked MiB appears in
+    # the reclaim line; the stale MiB is shown in the no-owner count but is NOT
+    # added to the reclaim pointer.
+    r1 = resources._AcpRuntime(
+        10, "untracked", cpu_pct=1.0, age_secs=3600.0, rss_bytes=1_200 * 1024 * 1024
+    )
+    r2 = resources._AcpRuntime(
+        20, "stale", cpu_pct=0.5, age_secs=7200.0, rss_bytes=800 * 1024 * 1024
+    )
+    lines = resources._acp_runtime_lines(resources._AcpCensus([r1, r2]), 1.0)
+    full = "\n".join(lines)
+    assert "  no owner:" in full
+    # The untracked MiB is present and NOT the stale + untracked sum.
+    assert "~1200 MiB" in full
+    assert "~2000 MiB" not in full and "~1999 MiB" not in full
+    # The dashboard reclaim path is named alongside the untracked figure.
+    assert "Leaked agent runtimes" in full or "Services" in full
+
+
+def test_stale_runtimes_alone_show_no_reclaim_pointer() -> None:
+    """A stale runtime's RSS does not trigger the reclaim pointer.
+
+    Services > Leaked Runtimes reclaims untracked runtimes only.  A stale
+    runtime has a registry record and is handled outside that card; sending an
+    operator to the card for a stale runtime would point them to a remedy that
+    does not apply.
+
+    Reader: test/test_doctor_acp_runtimes.py
+    """
+    r = resources._AcpRuntime(
+        10, "stale", cpu_pct=1.0, age_secs=3600.0, rss_bytes=900 * 1024 * 1024
+    )
+    lines = resources._acp_runtime_lines(resources._AcpCensus([r]), 1.0)
+    full = "\n".join(lines)
+    assert "  no owner:" in full
+    # No reclaim pointer for a stale-only set.
+    assert "Leaked Runtimes" not in full and "MiB" not in full
+
+
+def test_unowned_runtimes_without_rss_do_not_show_a_memory_line() -> None:
+    """When ``rss_bytes`` is ``None`` the memory line is silently absent.
+
+    The census omits ``rss_bytes`` when the page size is unavailable; the rows
+    must not raise or emit a placeholder.
+
+    Reader: test/test_doctor_acp_runtimes.py
+    """
+    r = resources._AcpRuntime(10, "untracked", cpu_pct=1.0, age_secs=3600.0, rss_bytes=None)
+    lines = resources._acp_runtime_lines(resources._AcpCensus([r]), 1.0)
+    assert not any("MiB" in ln or "GiB" in ln for ln in lines)
+
+
 # ── The section ───────────────────────────────────────────────────────────────
 
 
