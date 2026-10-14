@@ -947,19 +947,27 @@ export const SessionRow = memo(function SessionRow({ view, actions }: SessionRow
     // context subscriptions.
     const rowKey = s.key
     const rowTitle = s.title
+    // Both foreground gestures (modifier-click and the row menu's open-in-tab)
+    // are a selection, so they report it and the host clears Split View the same
+    // way a plain click does. Middle-click stays a background open and skips this.
+    // Offline, the host opens the tab but cannot switch to it, so the selection is
+    // not reported: clearing Split View then would show the old session alone.
+    const openInForegroundTab = useMemo(() => onOpenSlotInNewTab
+      ? (key: string) => { onOpenSlotInNewTab(key); if (connected) onSelectSlot?.(key) }
+      : undefined, [onOpenSlotInNewTab, onSelectSlot, connected])
     const rowMenuProps = useMemo(() => ({
       slotKey: rowKey,
       mode,
       onRename: () => onRenameStart(rowKey, scope, rowTitle && rowTitle !== rowKey ? rowTitle : '', true),
       onAutoTitle: () => onAutoTitle(rowKey),
-      onOpenInNewTab: onOpenSlotInNewTab ? () => onOpenSlotInNewTab(rowKey) : undefined,
+      onOpenInNewTab: openInForegroundTab ? () => openInForegroundTab(rowKey) : undefined,
       // A row menu opens from inside this panel, where the folder-order banner
       // (when there is one) sits over the tree -- the menu need not repeat it.
       sidebarOnScreen: true,
       // On a card with sessions under it, the menu's Close says it reaches this
       // one session only, as visible text: a phone has no hover tooltip.
       closeHint: closeReachHint,
-    }), [rowKey, mode, onRenameStart, onAutoTitle, scope, rowTitle, onOpenSlotInNewTab, closeReachHint])
+    }), [rowKey, mode, onRenameStart, onAutoTitle, scope, rowTitle, openInForegroundTab, closeReachHint])
     const rowActions = useMemo(() => (void langGen, !renamingHere && !foreignRow ? (isMobile ? (
       <div className="absolute top-1/2 -translate-y-1/2 right-1.5 flex items-center gap-0.5">
         <DropdownMenu>
@@ -1170,11 +1178,13 @@ export const SessionRow = memo(function SessionRow({ view, actions }: SessionRow
             // it, so `switchSlot` would land on a transcript the surface filter
             // hides and leave the user on the previous one. Go where it lives.
             if (onOpenElsewhere) { onOpenElsewhere(); return }
-            // Modifier-click = open as a background tab, matching the
-            // editor/browser convention. Platform split lives in the predicate.
-            if (onOpenSlotInNewTab && isOpenInTabModifierClick(e)) {
+            // Modifier-click opens the session in a new tab and moves to it,
+            // keeping the current tab. Middle-click (onAuxClick above) is the
+            // background gesture for queueing several rows. Platform split
+            // lives in the predicate.
+            if (openInForegroundTab && isOpenInTabModifierClick(e)) {
               e.preventDefault()
-              onOpenSlotInNewTab(s.key, { background: true })
+              openInForegroundTab(s.key)
               return
             }
             dispatch(switchSlot({ key: s.key, announceOnMissing: true }))
