@@ -1,6 +1,6 @@
 ---
 title: Python+Rust hybrid backend — share managed MCP servers by default, then a native stub
-status: draft
+status: accepted
 revision: v1
 author: zejiangg (iamwhatever), with Kiro
 created: 2026-10-12
@@ -15,7 +15,7 @@ superseded-by: []
 
 # RFC: Python+Rust hybrid backend, starting with a native MCP stub
 
-Status: draft. Nothing built. Every code reference below was read at the commit in `audited-at`. Resource numbers come from one 48-core Linux host running 546 user processes (49.2 GB RSS, 7.27 cores busy); they show where memory goes, not a fleet average.
+Status: accepted. [#19611](https://github.com/kirodotdev/KiroCrew/pull/19611) was approved and merged on 2026-10-13 by chenmingwei23, and the maintainer iamwhatever records the acceptance here, covering all phases in §1. Nothing built. Every code reference below was read at the commit in `audited-at`. Resource numbers come from one 48-core Linux host running 546 user processes (49.2 GB RSS, 7.27 cores busy); they show where memory goes, not a fleet average.
 
 This document lands on its own, before any implementation, because Phase 1 changes a product default (a default install starts the MCP broker and shares Kiro Crew's own servers) and Phase 3 adds a native package to every supported platform. The First Principles lane reads both decisions from the base branch.
 
