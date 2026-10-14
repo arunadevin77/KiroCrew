@@ -1935,6 +1935,27 @@ then raises that failure; a row whose report raised was removed and counts as
 stopped. Pinned by
 `test_queue_depth_reconcile.py::test_a_row_that_could_not_be_unqueued_fails_the_stop_and_reaps_nothing`.
 
+
+#### Dashboard Stop cascade
+
+The dashboard Stop button (`api_chat_slot_stop`) calls `cancel_for_parent`
+after `stop_slot_turn` returns to cascade the stop to in-flight subagents.
+This mirrors what the messaging-API Stop-all (`api_spawn_stop_all`) already
+does, but scoped to the single user-initiated route.
+
+Only `api_chat_slot_stop` cascades. Other callers of `stop_slot_turn` —
+steer-containment stops, agent-driven session stops, work-ledger board stops —
+do **not** cancel subagents, because their intent is to end the parent turn
+without disrupting delegated work that may outlive it.
+
+| Caller | Cancels subagents? |
+|---|---|
+| `api_chat_slot_stop` (dashboard Stop button) | **yes** — `cancel_for_parent` after the turn stops |
+| `api_chat_slot_interrupt` (queue-promote) | no — promotes a queued message, not a full stop |
+| steer-containment stop | no — the steer targets the parent, not its children |
+| agent-driven session stop | no — programmatic stop; children may be intentionally long-lived |
+| work-ledger board stop | no — crew board item stop; children owned by the crew |
+
 ### `cancel_queued(agent_id, parent_session_key, *, stop_origin="") -> bool`
 The queued half of `cancel_for_parent` for ONE accepted, not-started spawn: the
 same writer-thread store phase (`_stop_queued`) under the same refill hold
