@@ -1297,6 +1297,32 @@ def expand_skill_uri(
     return str(base / raw)
 
 
+def skill_uri_for_path(skill_md: Path) -> str:
+    """Render a ``SKILL.md`` path as a ``skill://`` resource URI.
+
+    The forward direction of :func:`expand_skill_uri`, and the one renderer both
+    writers that MINT a mapping call -- the Agent Templates editor
+    (``dashboard.handlers._shared.skill_uri_for_key``) and the builtin-agent
+    installers (``agent_materialization.skill_resources``) -- so a mapping written
+    by either expands back to the same path.
+
+    A path under ``$HOME`` is emitted in ``~/`` form: kiro-cli expands it, and it
+    keeps the written spec portable across machines and home directories. Anything
+    else is emitted absolute, the form :func:`expand_skill_uri` returns unchanged.
+
+    ``agent._relocated_skill_uri`` renders a ``skill://`` URI too and deliberately
+    does NOT come here: it REPOINTS an existing mapping at a relocated skill and
+    keeps whichever form that mapping was already written in, so a ``~/`` entry a
+    person authored stays portable instead of being rewritten absolute. Minting and
+    repointing are different rules, which is why there are two.
+    """
+    try:
+        rel_home = skill_md.relative_to(Path.home())
+    except ValueError:
+        return f"{SKILL_URI_PREFIX}{skill_md.as_posix()}"
+    return f"{SKILL_URI_PREFIX}~/{rel_home.as_posix()}"
+
+
 def parsed_agent_specs(
     agents_dir: Path | None = None,
     *,

@@ -4081,7 +4081,13 @@ not recorded for older turns.
 A signed session resolves its active template and project at the gateway. An
 unreadable or missing custom template fails scope resolution rather than widening
 to the global catalog. A custom template with no mapping has an empty scope; only
-the default `kirocrew` template without mappings gets the global catalog. An
+the default `kirocrew` template without mappings gets the global catalog. Every
+spec Kiro Crew generates for itself counts as a custom template under that rule, so
+each generated agent whose prompt names a skill carries a `skill://` entry for it,
+written by `agent_materialization/skill_resources.py` from `skills_dir()` at
+install time and merged into whatever `resources` already hold. Without it those
+agents searched an empty scope and could not find the operating procedure their own
+prompt told them to read. An
 unsigned caller searches the global installed catalog, without borrowing a session.
 Search combines metadata and body term matches: query coverage first, then inverse
 term frequency, metadata coverage, usage and stable full key. This prevents common

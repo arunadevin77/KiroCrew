@@ -560,6 +560,19 @@ mapping, not the backend:
 | custom | none | nothing — the agent brings its own | nothing |
 | custom | mapped | mapped set only, injected by Crew | mapped set only, injected by Crew |
 
+Every spec Kiro Crew generates for itself is a `custom` row, so a generated agent
+whose prompt names a skill must MAP that skill — the row above is why, and
+`agent_materialization/skill_resources.py` is how. `map_prompt_skills` renders one
+`skill://` entry per catalog key through `skills_dir()` at install time, never as a
+literal path, because every generated spec is rewritten on each boot and
+`KIROCREW_HOME` decides where the skills tree lives. It MERGES: an entry already in
+`resources` keeps its index, whether that is the inherited `file://` steering glob
+or a mapping a person saved in Capabilities. Each installer declares only the keys
+its own prompt names, because a mapping is also that agent's search scope. A
+consequence worth stating plainly: a person who removes one of those skills in
+Capabilities gets it back on the next boot, since the prompt written beside it
+cannot be followed without it. Removing any other skill still holds.
+
 What Crew injects is a bounded directory of the mapped set, plus the full body of
 every `always: true` skill inside it — a required instruction is never reduced to a
 directory entry. The rest load on demand through `skill_search`. It is the same
@@ -833,7 +846,7 @@ fence requirement, the JSON-twin precedence, and which backends run the form.
 |---|---|
 | both on-disk forms, the parser | `src/kiro_crew/agent_spec_format.py` |
 | `name`, `description`, `model`, `welcomeMessage`, the roster | `src/kiro_crew/agent_discovery.py` |
-| `resources` `skill://` | `src/kiro_crew/agent_discovery.py` (`skill_resource_uris`, `expand_skill_uri`, `agent_skill_globs`) |
+| `resources` `skill://` | `src/kiro_crew/agent_discovery.py` (`skill_resource_uris`, `expand_skill_uri`, `skill_uri_for_path`, `agent_skill_globs`); a generated spec's own mapping: `src/kiro_crew/agent_materialization/skill_resources.py` |
 | `resources` `file://`, the injection decision | `src/kiro_crew/context.py` (`_load_steering_resources`, `_skills_injection_plan`) |
 | `tools`, `allowedTools`, `excludedTools`, `mcpServers`, `hooks`, `toolsSettings` — the default spec's composition and the rebuild order | `src/kiro_crew/agent.py` (`build_agent_config`, `_refresh_dynamic_fields`, `rebuild_agent_config`), the facade every writer below is reached through |
 | `hooks` — normalization and the kiro-cli object form | `src/kiro_crew/agent_materialization/kiro_hooks.py` |

@@ -19,7 +19,7 @@ from kiro_crew.agent_files import KNOWLEDGE_AGENT_FILENAME as _KNOWLEDGE_AGENT_F
 from kiro_crew.agent_files import LITE_AGENT_FILENAME as _LITE_AGENT_FILENAME
 from kiro_crew.agent_files import RESEARCH_AGENT_FILENAME as _RESEARCH_AGENT_FILENAME
 from kiro_crew.agent_files import TEAM_LEAD_AGENT_FILENAME as _TEAM_LEAD_AGENT_FILENAME
-from kiro_crew.agent_materialization import auto_approve, managed_mcp
+from kiro_crew.agent_materialization import auto_approve, managed_mcp, skill_resources
 
 
 def _install_guest_agent() -> None:
@@ -231,6 +231,12 @@ def _install_team_lead_agent() -> None:
         "other one, and patrols that fleet."
     )
     config["prompt"] = agent_mod._TEAM_LEAD_SYSTEM_PROMPT
+    # The three skills this agent is told to read: ``team-lead`` ("read it before
+    # acting on a goal"), ``goal-conductor`` for the patrol procedure the charter
+    # shares with the conductors, and ``dashboard`` because a lead is a crewmate and
+    # the crewmate protocol sends it there to change its own page. Without the
+    # mapping its search scope is empty and none of the three can be found.
+    skill_resources.map_prompt_skills(config, "team-lead", "goal-conductor", "dashboard")
     _mount_team_lead_dispatch(config)
     agent_mod.kiro_agents_dir_path().mkdir(parents=True, exist_ok=True)
     path = agent_mod.kiro_agents_dir_path() / _TEAM_LEAD_AGENT_FILENAME
@@ -304,6 +310,14 @@ def _install_dashboard_manager_agent() -> None:
         "allowedTools": ["fs_read", *agent_mod._MEMBER_PANEL_GRANTS],
         "mcpServers": {"kirocrew-panel": managed_mcp._managed_opt_in_entry("mcp-panel")},
     }
+    # The one skill this prompt names ("load the ``dashboard`` skill first"). This
+    # spec mounts no search tool on purpose, and the mapping does not add one: on
+    # the kiro backend kiro-cli loads a mapped ``SKILL.md`` itself when the subagent
+    # is spawned with ``--agent``, and with native skill projection on, the
+    # projection answers a mapped spec with a read-only search mount it does not
+    # auto-approve. Either way the document arrives without this installer granting
+    # a verb, which is why the mapping is the whole change here.
+    skill_resources.map_prompt_skills(config, "dashboard")
     agent_mod.kiro_agents_dir_path().mkdir(parents=True, exist_ok=True)
     path = agent_mod.kiro_agents_dir_path() / _DASHBOARD_MANAGER_AGENT_FILENAME
     auto_approve.write_governed_spec(path, config, source="_install_dashboard_manager_agent")

@@ -32,6 +32,7 @@ from kiro_crew.agent_discovery import (
     expand_skill_uri,
     parsed_agent_specs,
     skill_resource_uris,
+    skill_uri_for_path,
 )
 from kiro_crew.config.loader import KiroCrewConfig, config_dir
 from kiro_crew.config.paths import kiro_agents_dir
@@ -2863,19 +2864,6 @@ def enumerate_skill_catalog(state: DashboardState, session_key: str = "") -> dic
     return walk_skill_catalog(state, session_key).entries
 
 
-def _skill_uri_for_path(skill_md: Path) -> str:
-    """Render a discovered ``SKILL.md`` path as a ``skill://`` resource URI.
-
-    Paths under ``$HOME`` are emitted in ``~/`` form: kiro-cli expands it, and
-    it keeps the written agent spec portable across machines and home dirs.
-    """
-    try:
-        rel_home = skill_md.relative_to(Path.home())
-    except ValueError:
-        return f"{SKILL_URI_PREFIX}{skill_md.as_posix()}"
-    return f"{SKILL_URI_PREFIX}~/{rel_home.as_posix()}"
-
-
 def skill_key_for_uri(
     uri: str,
     agent_path: Path,
@@ -2937,7 +2925,10 @@ def skill_uri_for_key(
     skill_md = entries.get(key)
     if skill_md is None:
         return None
-    return _skill_uri_for_path(skill_md)
+    # The one renderer the builtin-agent installers call too, so the editor's
+    # mappings and theirs cannot drift into two forms ``expand_skill_uri`` treats
+    # differently.
+    return skill_uri_for_path(skill_md)
 
 
 def agent_skill_views(

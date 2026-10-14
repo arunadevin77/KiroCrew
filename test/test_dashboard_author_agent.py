@@ -26,7 +26,7 @@ import pytest
 
 from kiro_crew import agent, agent_state
 from kiro_crew.agent_files import DASHBOARD_AUTHOR_AGENT_FILENAME, OWNED_KIRO_AGENT_FILES
-from kiro_crew.agent_materialization import worker_agent
+from kiro_crew.agent_materialization import skill_resources, worker_agent
 from kiro_crew.kiro_cli import SPEC_PERMISSIONS_MIN_VERSION
 
 
@@ -666,9 +666,14 @@ def test_a_rebuild_preserves_the_pinned_model_and_skill_mappings(
     agent.rebuild_agent_config()
 
     refreshed = rig.read(DASHBOARD_AUTHOR_AGENT_FILENAME)
-    # The pinned model and the user skill mappings survived the rebuild.
+    # The pinned model and the user skill mappings survived the rebuild. The charter
+    # skill the prompt names is APPENDED after them, by merge: the user's entry keeps
+    # its place and its order.
     assert refreshed["model"] == "claude-user-pinned"
-    assert refreshed.get("resources") == ["skill://user/mapped-one"]
+    assert refreshed.get("resources") == [
+        "skill://user/mapped-one",
+        *skill_resources.prompt_skill_uris("kirocrew-dev/dashboard-template"),
+    ]
     # Governed grants were still regenerated from the shipped spec.
     assert refreshed["name"] == "kirocrew-dashboard-author"
     assert _is_installers(target) is True

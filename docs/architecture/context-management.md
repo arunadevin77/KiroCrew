@@ -523,9 +523,17 @@ Its name is not `kirocrew`, so `_skills_injection_plan` reads it as a custom age
 with no mapping — row 3 of the table. A dispatched worker therefore sees **no skill
 catalog, no `skill://` bodies and no trigger matching** (matching is gated on
 `not is_custom` for the same reason). A worker that needs a procedure must be told
-to read it — `skill_search` / `skill_fetch` still work, and the usual instruction
-names the SKILL.md path in the brief. Memory, lessons, critical rules and hooks are
+to read it: with an empty scope `skill_search` finds nothing and an exact read
+returns nothing either, so the instruction has to name the SKILL.md path in the
+brief. Memory, lessons, critical rules and hooks are
 unaffected: those are injected for every agent.
+
+The generated agents whose own prompt names a skill do not rely on a brief for it —
+each conductor, the team lead, the dashboard author and the dashboard manager carry
+a `skill://` entry for exactly the skills their prompt tells them to read
+(`agent_materialization/skill_resources.py`), which is row 4 of the table rather
+than row 3. The worker stays on row 3 on purpose: what it needs comes from the
+item it was dispatched for, not from its spec.
 
 ## 5. Crew mode (Crew page)
 

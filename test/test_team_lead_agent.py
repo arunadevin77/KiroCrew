@@ -91,6 +91,10 @@ class TestTheInstallerWritesADefaultAgent:
         baseline = service_agents._without_guide_server(agent.build_agent_config())
         mounted = {"name", "description", "prompt", "tools", "allowedTools", "mcpServers"}
         mounted |= {"permissions"}
+        # ``resources`` is mounted too: the installer maps the skills this prompt names
+        # (``TestItMapsTheSkillsItsPromptNames``), and the baseline's own steering globs
+        # are kept beside them, which that class pins.
+        mounted |= {"resources"}
         assert set(baseline) - {"permissions"} <= set(installed)
         for key in set(installed) - mounted:
             assert installed[key] == baseline[key], f"{key} was changed by this installer"

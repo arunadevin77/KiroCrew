@@ -284,6 +284,10 @@ if TYPE_CHECKING:  # served by ``__getattr__`` at runtime; named here for mypy
         _install_research_agent,
         _install_team_lead_agent,
     )
+    from kiro_crew.agent_materialization.skill_resources import (  # noqa: F401
+        map_prompt_skills,
+        prompt_skill_uris,
+    )
     from kiro_crew.agent_materialization.worker_agent import (  # noqa: F401
         _DEFAULT_SPEC_OBSERVATION_ATTEMPTS,
         _WORKER_AGENT_FILENAME,
@@ -2174,6 +2178,10 @@ _EXPORTS_BY_OWNER: dict[str, tuple[str, ...]] = {
         "_filter_auto_approve",
         "may_skip_gate_now",
         "strip_ungoverned_auto_approve",
+    ),
+    "kiro_crew.agent_materialization.skill_resources": (
+        "prompt_skill_uris",
+        "map_prompt_skills",
     ),
     "kiro_crew.agent_materialization.mcp_sources": (
         "_extra_mcp_scope_globals",
@@ -6661,6 +6669,7 @@ from kiro_crew.agent_materialization import (  # noqa: E402, F401 -- the owners 
     mcp_aliases,
     mcp_sources,
     service_agents,
+    skill_resources,
     worker_agent,
 )
 

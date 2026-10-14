@@ -28,7 +28,7 @@ from kiro_crew.agent_files import (
 from kiro_crew.agent_files import (
     SECURITY_CONDUCTOR_AGENT_FILENAME as _SECURITY_CONDUCTOR_AGENT_FILENAME,
 )
-from kiro_crew.agent_materialization import auto_approve, managed_mcp
+from kiro_crew.agent_materialization import auto_approve, managed_mcp, skill_resources
 
 
 def _conductor_prompt(charter: str) -> str:
@@ -673,6 +673,13 @@ def _conductor_spec(
     # The charter already states the work-ledger flow in detail, so the shared
     # protocol block (``_conductor_prompt``) is not appended here.
     config["prompt"] = agent_mod._CONDUCTOR_SYSTEM_PROMPT
+    # The two skills this prompt names: ``goal-conductor`` carries the operating
+    # procedure it says to read first, and ``dashboard`` is how it changes the page
+    # it reports on. Mapped rather than assumed reachable: this spec is a custom
+    # template, so with no mapping its search scope is empty and neither document
+    # can be found. The alias installer emits this same body, so the alias carries
+    # the mapping too.
+    skill_resources.map_prompt_skills(config, "goal-conductor", "dashboard")
     config["tools"] = [
         "execute_bash",
         "fs_read",
@@ -866,6 +873,12 @@ def _install_pipeline_conductor_agent(*, clean: bool = False) -> bool:
         "work item's work itself."
     )
     config["prompt"] = _conductor_prompt(agent_mod._PIPELINE_CONDUCTOR_SYSTEM_PROMPT)
+    # The skills this prompt and that skill name: ``pipeline-conductor`` is the
+    # procedure it says to read, and the skill itself sends the reader to
+    # ``dashboard`` for the page. Note ``pipeline-conductor/SKILL.md`` is larger
+    # than one read's capacity, so reaching it is paged -- a separate limit the
+    # mapping does not change.
+    skill_resources.map_prompt_skills(config, "pipeline-conductor", "dashboard")
     config["tools"] = [
         "execute_bash",
         "fs_read",
@@ -949,6 +962,11 @@ def _install_security_conductor_agent(*, clean: bool = False) -> bool:
         "any fix behind a human yes. Never touches the target itself."
     )
     config["prompt"] = _conductor_prompt(agent_mod._SECURITY_CONDUCTOR_SYSTEM_PROMPT)
+    # The one skill this prompt names. Its fixer dispatch hands a worker the
+    # ``kirocrew-prepare-pr`` skill, but that worker is a separate session on its
+    # own spec, so mapping it here would widen this agent's search scope past what
+    # its own charter reads.
+    skill_resources.map_prompt_skills(config, "security-conductor")
     config["tools"] = [
         "execute_bash",
         "fs_read",

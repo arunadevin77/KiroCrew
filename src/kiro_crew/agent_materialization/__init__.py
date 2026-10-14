@@ -13,6 +13,9 @@ layout below can change without touching a caller.
 * :mod:`.mcp_aliases` -- MCP server-key aliasing and the Connections tool aliases.
 * :mod:`.auto_approve` -- what a spec may auto-approve under the governance ceiling,
   and the KAS ``permissions`` block derived from it.
+* :mod:`.skill_resources` -- the ``skill://`` mapping a generated spec's own prompt
+  requires, derived from the live skills directory and merged into the resources a
+  person saved.
 * :mod:`.mcp_sources` -- projecting the app, global and dashboard-store MCP sources
   into the default spec during a rebuild.
 * :mod:`.default_spec_commit` -- the rebuild's locked write of the default spec.

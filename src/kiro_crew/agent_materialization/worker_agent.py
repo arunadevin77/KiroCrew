@@ -29,7 +29,7 @@ from kiro_crew.agent_files import (
 )
 from kiro_crew.agent_files import HEARTBEAT_AGENT_FILENAME as _HEARTBEAT_FILENAME
 from kiro_crew.agent_files import WORKER_AGENT_FILENAME as _WORKER_AGENT_FILENAME
-from kiro_crew.agent_materialization import auto_approve, managed_mcp
+from kiro_crew.agent_materialization import auto_approve, managed_mcp, skill_resources
 from kiro_crew.agent_spec_format import parse_markdown_spec, volatile_env_keys
 
 #: The keys the worker spec MIRRORS from the resolved default agent spec, so its
@@ -1696,6 +1696,7 @@ def _install_dashboard_author_agent() -> None:
         # and the governance ceiling, so a grant the ceiling strips still goes. Read once,
         # under the lock, so the carry-over cannot race the write.
         existing = agent_mod._read_spec_capped(path)
+        removed_all_skills = False
         if isinstance(existing, dict) and _is_confirmed_managed_dashboard_author(existing):
             if agent_state.get_model_managed(_MANAGED_OWNED_NAME) is False:
                 pinned = existing.get("model")
@@ -1711,8 +1712,22 @@ def _install_dashboard_author_agent() -> None:
                 carried = existing["resources"]
                 if isinstance(carried, list):
                     config["resources"] = carried
+                    # An explicit remove-all is the one selection the charter mapping
+                    # below does not touch. "No skills" is a thing a person can SAY
+                    # here -- the key is present and empty -- and it is pinned, so the
+                    # mapping respects it and the spec keeps no skill at all.
+                    removed_all_skills = not carried
             else:
                 config.pop("resources", None)
+        if not removed_all_skills:
+            # The one skill the shipped charter names ("load the ``dashboard-template``
+            # skill before you write anything"). AFTER the carry-over above, and by
+            # MERGE: a person's saved selection keeps its entries and their order, and
+            # only the missing charter skill is appended. Dropping just that one entry
+            # from a non-empty list is therefore not expressible: a list without it
+            # reads the same as one saved before the mapping existed, and re-adding it
+            # is what carries the fix to everyone who already has a selection.
+            skill_resources.map_prompt_skills(config, "kirocrew-dev/dashboard-template")
         _write_dashboard_author_spec(path, config)
 
 
