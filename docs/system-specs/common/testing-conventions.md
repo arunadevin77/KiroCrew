@@ -139,9 +139,9 @@ enclosing function, or the same line in TypeScript, that left another file in th
 change; a function edited in place, or a site a `flake-ok` still excuses, has not
 left). When no merge-base is readable, the test
 warns `compared nothing` and passes rather than judge a change by sites other merged
-changes added. CI's Backend Tests checkout is depth 1 today, so it is a local, pre-push
-gate until that checkout keeps the merge commit's parents: run
-`python -m pytest -n0 test/test_flake_pattern_ratchet.py` before pushing. It does not
+changes added. CI's Backend Tests checkout is depth 2, so the merge commit's first
+parent is readable there and CI gates the comparison; run
+`python -m pytest -n0 test/test_flake_pattern_ratchet.py` before pushing to see it first. It does not
 count an order assertion (D4) or a network call (D10): those rest on review. A
 `flake-ok` line whose reason has ten characters or more, words and not just punctuation
 or digits, is not counted. `python test/test_flake_pattern_ratchet.py` prints each

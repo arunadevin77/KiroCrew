@@ -652,6 +652,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Depth 2 keeps the merge commit's parents (a push or merge-queue
+          # commit's parent), which is all test_flake_pattern_ratchet.py needs to
+          # compare a change with its base. At depth 1 it compares nothing.
+          fetch-depth: 2
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:

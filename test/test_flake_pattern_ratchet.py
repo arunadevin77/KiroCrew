@@ -24,10 +24,10 @@ each file a change touches is held to its own count at the change's merge-base.
   module ten other diff-scoped gates read. Precedence: ``FLAKE_RATCHET_BASE`` when
   set; on CI the first parent of the merge commit a pull request, push or merge
   queue run checks out; else the newer of the merge-bases with ``upstream/<base>``
-  and ``origin/<base>``, or the local ``<base>`` branch. When none is readable (a
-  shallow clone, as CI's backend shards are today), the ratchet warns and compares
-  nothing: judging against a stored count would red a change for sites that other,
-  already merged changes added.
+  and ``origin/<base>``, or the local ``<base>`` branch. CI's Backend Tests checkout
+  is depth 2 so that first parent is readable. When none is readable (a depth-1
+  clone), the ratchet warns and compares nothing: judging against a stored count
+  would red a change for sites that other, already merged changes added.
 * A line that keeps a shape on purpose carries ``# flake-ok: <reason>`` (``//
   flake-ok: <reason>`` in TypeScript) with a reason of ten characters or more, words
   not punctuation, on a line of the finding.
@@ -54,6 +54,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
+import yaml
 from source_corpus import repo_files, repo_root
 from test_ratchet_scope import (
     _GIT_COMMAND_LINE_CONFIG,
@@ -1102,6 +1103,44 @@ def test_a_pull_request_merge_commit_is_measured_against_its_first_parent(
     base, how = merge_base(git_repo)
     assert base == before and "first parent" in how
     assert change_risen(git_repo, base) == {("K6-raw-environ-write", "test/test_b.py"): (1, 0)}
+
+
+def _ci_shaped_checkout(source: Path, dest: Path, depth: int) -> Path:
+    """Fetch ``source``'s ``main`` at ``depth`` into a fresh repo, detached, the way
+    ``actions/checkout`` fetches the merge ref: no ``origin/main`` and no ``main``."""
+    _run_git(dest.parent, "init", "-q", dest.name)
+    _run_git(dest, "fetch", "-q", f"--depth={depth}", source.as_uri(), "main")
+    _run_git(dest, "checkout", "-q", "--detach", "FETCH_HEAD")
+    return dest
+
+
+@pytest.mark.parametrize("depth", [1, 2])
+def test_a_ci_checkout_needs_depth_two_to_compare(git_repo, monkeypatch, depth) -> None:
+    # The base gains a commit after the branch point, so depth 2 is not the whole history.
+    (git_repo / "test" / "test_b.py").write_text(_sites("b"), encoding="utf-8")
+    _run_git(git_repo, "commit", "-q", "-am", "change")
+    _run_git(git_repo, "checkout", "-q", "main")
+    (git_repo / "test" / "test_c.py").write_text("def test_c():\n    assert 1\n", encoding="utf-8")
+    _run_git(git_repo, "add", "-A")
+    _run_git(git_repo, "commit", "-q", "-m", "main moved")
+    before = _run_git(git_repo, "rev-parse", "main")
+    _run_git(git_repo, "merge", "-q", "--no-ff", "-m", "merge", "change")
+    checkout = _ci_shaped_checkout(git_repo, git_repo.parent / f"ci-{depth}", depth)
+    monkeypatch.setenv("GITHUB_BASE_REF", "main")
+    base, how = merge_base(checkout)
+    if depth == 1:
+        assert base is None, how
+        return
+    assert base == before and "first parent" in how
+    assert change_risen(checkout, base) == {("K6-raw-environ-write", "test/test_b.py"): (1, 0)}
+
+
+def test_the_backend_tests_checkout_keeps_the_merge_parent() -> None:
+    # Without the merge parent the ratchet compares nothing on CI and gates nothing.
+    workflow = yaml.safe_load((repo_root() / ".github/workflows/ci.yml").read_text("utf-8"))
+    steps = workflow["jobs"]["backend-test"]["steps"]
+    checkout = next(step for step in steps if "actions/checkout" in str(step.get("uses", "")))
+    assert (checkout.get("with") or {}).get("fetch-depth") == 2
 
 
 def test_a_site_already_on_the_base_does_not_red_a_change_to_another_file(git_repo) -> None:
