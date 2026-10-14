@@ -242,7 +242,6 @@
  3 test_knowledge_handlers_coverage.py
  7 test_knowledge_handlers_off_loop.py
  1 test_knowledge_ingest_magic_byte.py
- 1 test_knowledge_reclaim_deferred.py
  1 test_knowledge_sync_local_file.py
  3 test_lessons_context_embedding_deadline.py
  1 test_listener_guard.py

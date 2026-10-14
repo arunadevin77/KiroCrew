@@ -27,6 +27,7 @@ from kiro_crew.knowledge import ingestion as ingestion_mod
 from kiro_crew.knowledge import store as store_mod
 from kiro_crew.knowledge.ingestion import IngestionPipeline
 from kiro_crew.knowledge.store import KnowledgeStore
+from kiro_crew.testing.wait import await_until
 
 # The store binds ``pysqlite3`` when it is installed, so both the raw reads and
 # the connect patch below go through the SAME module the store uses.
@@ -758,7 +759,7 @@ class TestHandoffJoinsTheHoldersAdmission:
                 assert window_waiting.wait(2)
                 await asyncio.sleep(0.1)  # the window is now waiting on this hold
                 task = asyncio.create_task(child(), context=ingestion_mod.handoff_gate_context())
-                await asyncio.wait_for(taken.wait(), timeout=2.0)
+                await await_until(taken, what="taken event")
             await task
             th.join(timeout=10)
             return time.monotonic() - started
