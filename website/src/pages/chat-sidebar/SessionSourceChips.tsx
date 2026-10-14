@@ -1,12 +1,12 @@
 /** A session row's pull-request and issue chips: the provider mark, the one
  *  status glyph a change chip shows, and the strip with its expandable `+N`
  *  overflow, which fetches the links the slots payload leaves out. */
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { X, ChevronUp, Link2, Circle, Check, Loader2, RotateCcw, GitMerge, CircleDot, TriangleAlert } from 'lucide-react'
 import GithubLogo from '../../components/icons/GithubLogo'
 import GitlabLogo from '../../components/icons/GitlabLogo'
 import JiraLogo from '../../components/icons/JiraLogo'
-import { sourceProviderMeta } from '../../utils/sourceProviderMeta'
+import { sourceProviderMeta, sourceTabQualifier } from '../../utils/sourceProviderMeta'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { platformShortcut } from '../../utils/platform'
@@ -206,6 +206,10 @@ export function SessionSourceChips({ slotKey, links, total, connected, isActive,
   const hidden = typeof total === 'number' ? Math.max(0, total - shownAll.length) : 0
   const changeLinks = shown.filter(link => (link.kind ?? 'change') !== 'issue')
   const issueLinks = shown.filter(link => (link.kind ?? 'change') === 'issue')
+  // Qualify chip labels when the visible strip spans more than one project, so
+  // `group-a/svc#1` and `group-b/svc#1` are not both rendered as `#1`.
+  // Returns null (-> bare chipLabel) when all shown links share one project.
+  const qualify = useMemo(() => sourceTabQualifier(shown), [shown])
 
   const expand = () => {
     if (isFetching) return
@@ -282,7 +286,7 @@ export function SessionSourceChips({ slotKey, links, total, connected, isActive,
           className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded-[4px] text-[10px] leading-none font-medium text-muted no-underline border border-border bg-bg-elevated/60 hover:text-text hover:border-accent"
           title={chipTitle(link)}>
           <SourceLinkIcon provider={link.provider} />
-          {chipLabel(link)}
+          {qualify(link) != null ? `${qualify(link)} ${chipLabel(link)}` : chipLabel(link)}
           {link.state === 'merged' && (
             <span className="inline-flex shrink-0 text-aim" aria-label={i18nT('pages.chatSidebar.merged')} title={i18nT('pages.chatSidebar.merged')}>
               <GitMerge className="lucide-inline" aria-hidden="true" />
@@ -344,7 +348,7 @@ export function SessionSourceChips({ slotKey, links, total, connected, isActive,
           title={chipTitle(link)}>
           <SourceLinkIcon provider={link.provider} />
           {link.provider !== 'jira' && <CircleDot className="lucide-inline shrink-0" aria-hidden="true" />}
-          {chipLabel(link)}
+          {qualify(link) != null ? `${qualify(link)} ${chipLabel(link)}` : chipLabel(link)}
         </a>
       ))}
       {hidden > 0 && (

@@ -34,6 +34,13 @@ export interface PullRequestLink {
   kind: SourceLinkKind
 }
 
+/** Minimum shape needed to extract a project path or host from a link URL.
+ *  Both PullRequestLink and the sidebar's SidebarSourceLink satisfy this. */
+export interface SourceLinkRef {
+  url: string
+  provider: PullRequestProvider
+}
+
 /** Split one extraction result into its two kinds, preserving first-seen order. */
 export function partitionSourceLinks(
   links: readonly PullRequestLink[],
@@ -617,7 +624,7 @@ export function forgeChipLabel(link: PullRequestLink): string | null {
  *  Jira, for a registered provider (which owns its own chip grammar), and for
  *  any shape the parser would not have produced. Derives only from a url THIS
  *  module built, never from raw chat text. */
-export function sourceProjectPath(link: PullRequestLink): string | null {
+export function sourceProjectPath(link: SourceLinkRef): string | null {
   if (link.provider !== 'github' && link.provider !== 'gitlab') return null
   return projectPathFromUrl(link)
 }
@@ -627,7 +634,7 @@ export function sourceProjectPath(link: PullRequestLink): string | null {
  *  configuration, so `group/svc` can exist on two hosts at once — which makes
  *  the host part of a project's identity even though it is usually elided from
  *  labels. Null for Jira and registered providers, matching sourceProjectPath. */
-export function sourceProjectHost(link: PullRequestLink): string | null {
+export function sourceProjectHost(link: SourceLinkRef): string | null {
   if (link.provider !== 'github' && link.provider !== 'gitlab') return null
   try {
     return new URL(link.url).host
@@ -636,7 +643,7 @@ export function sourceProjectHost(link: PullRequestLink): string | null {
   }
 }
 
-function projectPathFromUrl(link: PullRequestLink): string | null {
+function projectPathFromUrl(link: SourceLinkRef): string | null {
   let path: string
   try {
     path = new URL(link.url).pathname

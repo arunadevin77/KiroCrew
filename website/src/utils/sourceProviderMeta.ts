@@ -28,8 +28,8 @@ import {
   sourceProjectHost,
   sourceProjectPath,
   sourceProviderDescriptor,
-  type PullRequestLink,
   type PullRequestProvider,
+  type SourceLinkRef,
   type SourceProviderCapabilities,
   type SourceProviderIcon,
 } from './pullRequestLinks'
@@ -173,9 +173,9 @@ export function sourceProviderCapabilities(
  *  different hosts count as distinct and engage qualification. The `MR`/`PR`
  *  word stays with `refLabel` and the i18n catalog; the prefix is an
  *  identifier, not prose, exactly like a provider `displayName`. */
-export function sourceTabQualifier(
-  sources: PullRequestLink[],
-): (link: PullRequestLink) => string | null {
+export function sourceTabQualifier<T extends SourceLinkRef>(
+  sources: T[],
+): (link: T) => string | null {
   const identities = new Set<string>()
   const hostsByPath = new Map<string, Set<string>>()
   for (const item of sources) {
@@ -188,7 +188,7 @@ export function sourceTabQualifier(
     hosts.add(host)
   }
   if (identities.size <= 1) return () => null
-  const fullQualifier = (link: PullRequestLink): string[] | null => {
+  const fullQualifier = (link: SourceLinkRef): string[] | null => {
     const path = sourceProjectPath(link)
     if (!path) return null
     const segments = path.split('/')
