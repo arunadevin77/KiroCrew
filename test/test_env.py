@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -146,6 +147,42 @@ class TestAugmentedPath:
             assert dirs.index("/opt/homebrew/bin") < dirs.index("/usr/bin")
             assert dirs.index("/usr/local/bin") < dirs.index("/usr/bin")
             assert dirs.index("/opt/homebrew/bin") < dirs.index("/usr/local/bin")
+
+    def test_includes_every_node_manager_shim_dir(self, tmp_path) -> None:
+        """A shim dir the build toolchain searches is also on the MCP/ACP search path.
+
+        ``npm i -g`` under a shim manager (volta, n) installs the binary into the
+        same dir that holds its ``node``, so a dir :func:`node_bin_dirs` finds node
+        in but :func:`augmented_path` omits is one where an adapter is installed and
+        reported "not found". Format each template against the same home so the
+        assertion compares one spelling of one directory.
+        """
+        home = str(tmp_path)
+        mise_data = env_mod.mise_data_dir(home)
+        env_mod._node_all_bin_dirs.cache_clear()
+        try:
+            dirs = {os.path.normpath(d) for d in augmented_path("", home=home).split(os.pathsep)}
+        finally:
+            env_mod._node_all_bin_dirs.cache_clear()
+        for template in env_mod._NODE_MANAGER_DIRS:
+            expected = os.path.normpath(template.format(home=home, mise_data=mise_data))
+            assert expected in dirs, f"{template} is a node manager dir but not searched"
+
+    def test_finds_an_adapter_installed_under_the_dotted_n_prefix(self, tmp_path) -> None:
+        """``N_PREFIX=~/.n`` puts a global ``codex-acp`` in ``~/.n/bin``; the resolver must see it."""
+        bin_dir = tmp_path / ".n" / "bin"
+        bin_dir.mkdir(parents=True)
+        adapter = bin_dir / ("codex-acp.cmd" if sys.platform == "win32" else "codex-acp")
+        adapter.write_text("@echo off\n" if sys.platform == "win32" else "#!/bin/sh\n")
+        adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
+        env_mod._node_all_bin_dirs.cache_clear()
+        try:
+            search_path = augmented_path("", home=str(tmp_path))
+        finally:
+            env_mod._node_all_bin_dirs.cache_clear()
+        found = shutil.which("codex-acp", path=search_path)
+        assert found is not None
+        assert os.path.normcase(os.path.normpath(found)) == os.path.normcase(str(adapter))
 
     def test_empty_base(self) -> None:
         result = augmented_path("")

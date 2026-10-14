@@ -46,6 +46,9 @@ _EXTRA_PATH_DIRS = (
     "{home}/.npm-packages/bin",
     "{mise_data}/shims",
     "{home}/.volta/bin",
+    # n's node dir is also its ``npm i -g`` bin, so a global adapter lands here.
+    "{home}/n/bin",
+    "{home}/.n/bin",
     "/opt/homebrew/bin",  # Apple Silicon Homebrew node / global npm bins
     "/usr/local/bin",  # Intel Homebrew + pkg-installer symlink dir
 )
@@ -306,7 +309,7 @@ _NODE_MANAGER_GLOBS = (
     "{home}/.fnm/node-versions/*/bin",
 )
 # Shim / single-dir managers, which have no per-version path to glob.
-# Two of these (mise shims, volta) also appear in ``_EXTRA_PATH_DIRS`` above.
+# Every one of these also appears in ``_EXTRA_PATH_DIRS`` above.
 # The repetition is deliberate, not an oversight: that list is the broad
 # MCP-binary search path and this one is the narrow build toolchain, and entries
 # here are additionally gated on actually containing an executable ``node``. If
