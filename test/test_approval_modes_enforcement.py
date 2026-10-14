@@ -1493,7 +1493,7 @@ class TestOnlyOneSurfaceWritesGrantDerivedTrust:
 
     #: ``<path under src/kiro_crew>`` -> why its grant-derived write is safe.
     WRITERS = {
-        "dashboard/chat_handlers.py": (
+        "dashboard/chat_api/slot_approval.py": (
             "api_chat_slot_approve's action=yolo branch writes approval_policy='auto' "
             "onto every slot from the ActivationResult, then re-reads the verdict and "
             "clears what it just set if policy now denies -- preserving standing trust "

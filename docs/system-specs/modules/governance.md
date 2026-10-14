@@ -3490,7 +3490,7 @@ the posture is worse than one that fails to load.
 **Enforced at every `yolo` surface**, because a mode is only actually off if every
 path that can arm it — and every path that HONOURS an existing grant — refuses:
 
-- `dashboard/chat_handlers.py::api_chat_mode` — the explicit mode switch. Refuses
+- `dashboard/chat_api/slot_approval.py::api_chat_mode` — the explicit mode switch. Refuses
   with `403` + `mode_disabled_by_policy` **before any mutation**.
 - `safety_override` arming — `_commit_activation` and `activate_scoped`,
   fail-closed, so YOLO stays blocked however it is armed (dashboard, Slack `!yolo`,

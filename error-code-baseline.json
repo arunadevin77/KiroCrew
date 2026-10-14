@@ -72,11 +72,32 @@
     "dashboard/agent_admin/installed_agents.py": {
       "missing_code": 2
     },
+    "dashboard/chat_api/agent_switch.py": {
+      "missing_code": 1
+    },
+    "dashboard/chat_api/followup_card.py": {
+      "missing_code": 2
+    },
+    "dashboard/chat_api/session_relaunch.py": {
+      "missing_code": 3
+    },
+    "dashboard/chat_api/slot_approval.py": {
+      "missing_code": 6
+    },
+    "dashboard/chat_api/slot_effort.py": {
+      "missing_code": 1
+    },
+    "dashboard/chat_api/slot_model.py": {
+      "missing_code": 4
+    },
+    "dashboard/chat_api/slot_settings.py": {
+      "missing_code": 1
+    },
     "dashboard/chat_folders.py": {
       "missing_code": 19
     },
     "dashboard/chat_handlers.py": {
-      "missing_code": 31
+      "missing_code": 13
     },
     "dashboard/chat_mirror.py": {
       "missing_code": 6

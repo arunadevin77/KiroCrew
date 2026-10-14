@@ -318,7 +318,7 @@ section_marker(label?: string, collapse_earlier?: boolean = true) -> string
 ```
 
 - `label` — optional, ≤120 chars, control characters rejected. Validate with the
-  helper `/note` uses (`_validate_content` at `chat_handlers.py`).
+  helper `/note` uses (`_validate_content` at `dashboard/chat_api/pending_context.py`).
 - `collapse_earlier` — whether this marker sets the default viewport or is a
   visual rule only. Defaults true; present so a caller can annotate a boundary
   without moving the reader's window.

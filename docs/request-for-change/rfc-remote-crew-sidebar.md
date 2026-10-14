@@ -216,7 +216,7 @@ adds the one new peer read and must stay GET-only.
    `website/src/api/client/chatSlotSettings.ts` has no non-test caller). The
    composer shows only `ProjectPicker` (`website/src/pages/ChatPage.tsx`), a
    browser of THIS machine's directories. `api_chat_slot_workspace`
-   (`chat_handlers.py`) leaves `slot.project` local for a remote slot on
+   (`dashboard/chat_api/session_relaunch.py`) leaves `slot.project` local for a remote slot on
    purpose and forwards the workspace name to the peer (`_apply_remote_pick`).
    The peer's `capabilities.workspaces` is parsed in `handlers_instances.py`
    but read by no frontend code. Proposed under (b): the peer decides, and the

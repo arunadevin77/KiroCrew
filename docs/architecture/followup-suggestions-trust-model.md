@@ -130,7 +130,7 @@ Both endpoints emit SEL audit records.
 | Directive marker codec | `src/kiro_crew/session_directive.py` |
 | Directive applier (the effect) | `src/kiro_crew/dashboard/session_directive_apply.py` |
 | Arg schema | `src/kiro_crew/validation.py` |
-| Card endpoint | `src/kiro_crew/dashboard/chat_handlers.py` |
+| Card endpoint | `src/kiro_crew/dashboard/chat_api/followup_card.py` |
 | Worktree endpoint | `src/kiro_crew/dashboard/handlers/worktree.py` |
 | WS event → state | `website/src/hooks/useWebSocket.ts` (routes the frame), `website/src/hooks/websocket/composerCards.ts` (validates it), `website/src/store/chat/composerCards.ts` (the reducer) |
 | Card UI | `website/src/components/FollowUpCard.tsx` |

@@ -314,7 +314,15 @@ class TestResolveApprovalFlushes:
         import kiro_crew.dashboard as pkg
 
         root = Path(pkg.__file__).parent
-        sources = [root / name for name in ("chat_handlers.py", "chat_runner.py", "state.py")]
+        sources = [
+            root / name
+            for name in (
+                "chat_handlers.py",
+                "chat_api/slot_approval.py",
+                "chat_runner.py",
+                "state.py",
+            )
+        ]
         sources += sorted((root / "chat_turn").glob("*.py"))
         for path in sources:
             src = path.read_text(encoding="utf-8")

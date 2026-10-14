@@ -586,7 +586,9 @@ class TestTheRoutingFlag:
         defect was a write placed ABOVE the busy check where no rollback covers it."""
         import kiro_crew.dashboard.chat_handlers as handlers
 
-        source = Path(handlers.__file__).read_text(encoding="utf-8")
+        source = (Path(handlers.__file__).parent / "chat_api" / "slot_model.py").read_text(
+            encoding="utf-8"
+        )
         body = source[source.index("async def api_chat_slot_model(") :]
         body = body[: body.index("\nasync def ")]
         busy = body.index('"code": "turn_in_flight"')

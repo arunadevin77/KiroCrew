@@ -103,7 +103,7 @@ rule a provider switch applies to every slot (`server_runtime/config_watch.py`).
 A switch that is refused or rolled back restores both.
 
 A switch while a turn is in flight is refused with 409, as
-`api_chat_slot_model` in `src/kiro_crew/dashboard/chat_handlers.py` refuses a
+`api_chat_slot_model` in `src/kiro_crew/dashboard/chat_api/slot_model.py` refuses a
 model switch that would tear down a streaming turn. Setting the backend the
 slot already has is a no-op.
 

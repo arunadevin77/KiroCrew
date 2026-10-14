@@ -1565,7 +1565,25 @@ specified compatibility change.
   - `resume` — resume from History (the request-free core
     `resume_slot_from_history`, materialisation, hydration, window reconciliation);
   - `slot_lifecycle` — the shared close path (`close_slot`) and delete, the idle
-    cleanup sweep, and the fresh-conversation reset.
+    cleanup sweep, and the fresh-conversation reset;
+  - `slot_guards` — the guards and records every slot-mutating request shares: the
+    per-request commit token, the replaced-while-queued and busy checks, the
+    attached-sub-agent refusal, the session reset with its teardown warning, and the
+    explicit agent-selection record;
+  - `agent_switch` — the agent route, its request-free core `switch_slot_agent`, and
+    the model-binding reset a switch runs;
+  - `slot_model` — the per-slot and bulk model routes and the live model switch;
+  - `slot_effort` — the selection capabilities and the reasoning-effort route;
+  - `slot_settings` — the auto-compact threshold, the turn timeout and the tab
+    colour;
+  - `session_relaunch` — reload (`reload_slot_session`), workspace and project;
+  - `slot_approval` — the approval-mode change (`api_chat_mode` and its core
+    `apply_approval_mode`), the approve route, and the caller gates both run;
+  - `followup_card` — the follow-up card route;
+  - `project_lists` — the recent and favourite project lists;
+  - `pending_context` — the pending-context route, with the validators and the
+    per-source cap the note route shares;
+  - `slot_note` — the note route and its deferred hold.
 
   `chat_api.compose` runs every owner function on `chat_handlers`' globals, so a
   patch of `kiro_crew.dashboard.chat_handlers.<name>` reaches moved code, records
@@ -1578,19 +1596,19 @@ specified compatibility change.
   composition and the patch reach.
 
   What stays in `chat_handlers.py`: the send path (`api_chat`), stop, continue,
-  interrupt, end-wait and the queue routes, the selection transactions (agent,
-  model, bulk model, effort, autocompact, workspace, project) and the selection
-  capabilities, mode and approval, follow-up, context and note, summary, color and
-  recent and favourite projects; slot create (`api_chat_slot_create`) and `reload_slot_session`,
-  whose eager-spawn priority `test/test_start_priority.py` reads by function name in
-  this file, with the reload route (`api_chat_slot_reload`) kept beside that core;
-  the hand-over drain `_persist_handover_tail`, the shared
-  protocol records (`ResumeRefusal`, `ResumeOutcome`, `SlotCloseError`) and the
-  shared chokepoints (`_unblock_pending_waits`, `_reset_slot_session`, the
-  ownership and app-isolation checks); and every construct a guard reads in that
-  file by path (the three baselined ACP and provider imports, the turn dispatch, the
-  remote peer calls with their gate and the pick chokepoint, the approval-mode
-  writers, the synthesis boundary, the permission-resolution sites).
+  interrupt, end-wait and the queue routes, summary, and slot create
+  (`api_chat_slot_create`), whose eager-spawn priority `test/test_start_priority.py`
+  reads by function name in this file; the hand-over drain `_persist_handover_tail`,
+  the shared protocol records (`ResumeRefusal`, `ResumeOutcome`, `SlotCloseError`)
+  and the shared chokepoints (`_unblock_pending_waits`, `_reset_slot_session`, the
+  ownership and app-isolation checks such as `deny_non_dashboard_caller` and
+  `_reauthorize_after_await`); and every construct a guard reads in that
+  file by path (the three baselined ACP and provider imports, which
+  `_ACP_LAYER_TYPES` binds for the owners that read them, the turn dispatch, the
+  synthesis boundary, the stop path's permission-resolution site). The
+  approval-mode writers, the approve route's permission-resolution site and the
+  approval-resolved broadcasts live in `slot_approval`, where their guards read
+  them; the contract test maps each guarded construct to the file that holds it.
 
   **Where new code goes**: new work for a family an owner holds goes in that owner;
   new work for a family that stays goes in `chat_handlers.py`, beside it. Every name

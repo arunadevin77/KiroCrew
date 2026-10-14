@@ -3052,6 +3052,7 @@ class TestApprovalResolvedCarriesSlot:
             for f in (
                 "interaction_coordinator.py",
                 "chat_handlers.py",
+                "chat_api/slot_approval.py",
                 "chat_runner.py",
             )
         ]

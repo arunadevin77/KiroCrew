@@ -3081,7 +3081,7 @@ tools requiring approval, not every action. Invalid strict selectors return
 `400 / invalid_approval_target`; a missing strict native future returns
 `404 / approval_not_pending` without cross-origin fallback.
 
-**3-tier interactive trust escalation** (`dashboard/chat_runner.py`, `dashboard/chat_handlers.py`):
+**3-tier interactive trust escalation** (`dashboard/chat_runner.py`, `dashboard/chat_api/slot_approval.py`):
 
 When the dashboard presents a tool approval prompt, users can now choose from three trust levels:
 

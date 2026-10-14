@@ -927,7 +927,7 @@ def test_the_dashboard_runner_allocates_at_the_turns_priority():
     ("path", "function"),
     [
         ("dashboard/chat_handlers.py", "api_chat_slot_create"),
-        ("dashboard/chat_handlers.py", "api_chat_slot_project"),
+        ("dashboard/chat_api/session_relaunch.py", "api_chat_slot_project"),
     ],
 )
 def test_an_owner_slot_action_arms_its_eager_spawn_by_who_asked(path, function):
@@ -942,7 +942,7 @@ def test_the_agent_switch_arms_its_eager_spawn_by_who_asked():
     # rather than a request. The route derives that bit from the same owner gate
     # ``owner_start_priority`` reads; a turn's command never claims it.
     assert _priority_args(
-        "dashboard/chat_handlers.py", "switch_slot_agent", "schedule_eager_spawn"
+        "dashboard/chat_api/agent_switch.py", "switch_slot_agent", "schedule_eager_spawn"
     ) == ["person_priority(caller.owner)"]
 
 
@@ -972,7 +972,7 @@ def test_a_slot_action_arms_its_eager_spawn_by_who_asked(request_fields, expecte
     ("path", "function"),
     [
         ("dashboard/ws.py", "_handle_slot_focused"),
-        ("dashboard/chat_handlers.py", "reload_slot_session"),
+        ("dashboard/chat_api/session_relaunch.py", "reload_slot_session"),
     ],
 )
 def test_the_focus_prefetch_and_reload_arm_background_eager_spawns(path, function):

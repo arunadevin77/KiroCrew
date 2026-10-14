@@ -1222,11 +1222,11 @@ _EXPECTED_PROJECT_FILES_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
 # highest-traffic route to the scan (a chat turn's ``slot.project`` reaches it
 # every turn), so it is exactly where attribution matters most.
 _EXPECTED_WARM_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
-    "kiro_crew/dashboard/chat_handlers.py": [
-        ("api_chat", "dashboard"),
+    "kiro_crew/dashboard/chat_api/agent_switch.py": [
         ("api_chat_slot_agent", "dashboard"),
         ("api_chat_slot_agent", "dashboard"),
     ],
+    "kiro_crew/dashboard/chat_handlers.py": [("api_chat", "dashboard")],
     "kiro_crew/dashboard/chat_runner.py": [("chat_turn", "unknown")],
     "kiro_crew/dashboard/chat_threads.py": [("thread_reply", "dashboard")],
     "kiro_crew/dashboard/handlers/side.py": [("side_panel", "dashboard")],

@@ -130,7 +130,7 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 # so it reads the reservation, not the turn.
                 ("mate_welcome.py", "maybe_start_first_greeting"),
                 ("chat_folders.py", "api_chat_slot_mode"),
-                ("chat_handlers.py", "_switch_target_busy"),
+                ("chat_api/slot_guards.py", "_switch_target_busy"),
                 # The palette create's retraction of a newborn whose app-agent
                 # binding did not persist: it reads the RESERVATION, because a
                 # turn that started on the slot during the write keeps it.
@@ -138,19 +138,19 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("handlers/members.py", "_turn_busy"),
                 ("handlers/members.py", "_turn_ends_within"),
                 # The agent route's transaction; the in-turn /agent command shares it.
-                ("chat_handlers.py", "switch_slot_agent"),
+                ("chat_api/agent_switch.py", "switch_slot_agent"),
                 ("chat_handlers.py", "api_chat_slot_interrupt"),
-                ("chat_handlers.py", "api_chat_slot_model"),
-                ("chat_handlers.py", "api_chat_slot_note"),
-                ("chat_handlers.py", "api_chat_slot_reasoning_effort"),
+                ("chat_api/slot_model.py", "api_chat_slot_model"),
+                ("chat_api/slot_note.py", "api_chat_slot_note"),
+                ("chat_api/slot_effort.py", "api_chat_slot_reasoning_effort"),
                 # Reload refuses a reserved slot or sibling alias through
                 # _switch_target_busy, as the session_reload verb does.
-                ("chat_handlers.py", "api_chat_slot_reload"),
+                ("chat_api/session_relaunch.py", "api_chat_slot_reload"),
                 ("chat_api/slot_lifecycle.py", "api_chat_slot_reset_conversation"),
                 ("chat_api/resume.py", "api_chat_slot_resume"),
-                ("chat_handlers.py", "api_chat_slot_workspace"),
+                ("chat_api/session_relaunch.py", "api_chat_slot_workspace"),
                 ("chat_api/slot_lifecycle.py", "api_chat_slots_cleanup"),
-                ("chat_handlers.py", "api_chat_slots_model"),
+                ("chat_api/slot_model.py", "api_chat_slots_model"),
                 ("chat_handlers.py", "continue_slot_turn"),
                 ("chat_handlers.py", "stop_slot_turn"),
                 ("chat_rewind.py", "api_chat_slot_rewind"),
