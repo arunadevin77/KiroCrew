@@ -4210,3 +4210,100 @@ async def test_private_thread_reopen_rechecks_running_after_assignment(
             if turn is not None:
                 await await_until(turn, what="the turn task")
             slot.task = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["pin_raises", "pin_mismatch"])
+async def test_fresh_private_thread_pin_failure_leaves_no_ghost_slot(tmp_path, monkeypatch, fault):
+    """A pin failure on a fresh private-store open leaves no ghost slot.
+
+    The v2 collision guard and ``pin_private_agent_store`` run BEFORE
+    ``get_or_create_slot`` (pin-before-mint).  A refused pin returns without
+    ever creating a slot, so no member-prefixed key enters ``state._slots``
+    and no such key reaches any broadcast.
+
+    ``pin_raises``: ``pin_private_agent_store`` raises → route answers 503.
+    ``pin_mismatch``: two members share the same slug and the canonical key
+    has no protected assignment → route answers 409 (member_pin_mismatch).
+    """
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.config.sections import MemoryStoreConfig
+    from kiro_crew.dashboard.handlers import members as members_mod
+    from kiro_crew.memory_stores import UnknownMemoryStore, provision_member_memory
+
+    # Provision a v2 private store for CREW so the pin path is reached.
+    def configure():
+        cfg = KiroCrewConfig.load()
+        cfg.agents[CREW] = KiroCrewAgentConfig(kiro_agent="kirocrew")
+        provision_member_memory(cfg, CREW)
+
+        if fault == "pin_mismatch":
+            # Add a second member whose name produces the SAME slug as CREW,
+            # so len(slug_owners) == 2 and the collision guard fires.
+            # Build a minimal v2 record; the store directory need not exist
+            # because the route refuses before touching it.
+            twin = CREW + "-twin"
+            cfg.agents[twin] = KiroCrewAgentConfig(kiro_agent="kirocrew")
+            twin_store = f"member-{twin}-store"
+            cfg.memory_stores[twin_store] = MemoryStoreConfig(
+                owner_member=twin, owner_member_id="twin-id", memory_version=2
+            )
+            cfg.agents[twin].memory_store = twin_store
+            # Patch slug resolution to report twin as a slug_owner for CREW's
+            # slug: the real slug_for_name would give a different key, so we
+            # override _member_names_for_slug instead.
+            real_names = members_mod._member_names_for_slug
+
+            def _patched_names(cfg, slug):
+                owners = real_names(cfg, slug)
+                if CREW in owners and twin not in owners:
+                    owners = owners + [twin]
+                return owners
+
+            monkeypatch.setattr(members_mod, "_member_names_for_slug", _patched_names)
+
+        cfg.save()
+
+    await asyncio.to_thread(configure)
+    state = _make_state(tmp_path)
+
+    # Record the slot keys visible at each push_slots_update call.
+    broadcast_snapshots: list[list[str]] = []
+
+    _real_push = state.push_slots_update
+
+    def _recording_push():
+        broadcast_snapshots.append(sorted(state._slots.keys()))
+        _real_push()
+
+    monkeypatch.setattr(state, "push_slots_update", _recording_push)
+
+    if fault == "pin_raises":
+        monkeypatch.setattr(
+            members_mod,
+            "pin_private_agent_store",
+            AsyncMock(side_effect=UnknownMemoryStore("disk full")),
+        )
+
+    async with TestClient(TestServer(_make_members_app(state))) as client:
+        resp = await client.post(f"/api/members/{CREW}/thread")
+        body = await resp.json()
+
+    if fault == "pin_raises":
+        # The route returns 503 (store_unavailable).
+        assert resp.status == 503, body
+        assert body.get("code") == "store_unavailable"
+    else:
+        # Two owners → the collision guard fires → 409 (member_pin_mismatch).
+        assert resp.status == 409, body
+        assert body.get("code") == "member_pin_mismatch"
+
+    # No ghost slot left in the registry (V1 or V2 key): the pre-flight
+    # pin runs before get_or_create_slot, so no slot is created on a refusal.
+    lingering = [k for k in state._slots if k.startswith("member-")]
+    assert not lingering, f"ghost slot(s) in _slots after refused open: {lingering}"
+    # No member slot reached any broadcast.
+    ghost_broadcasts = [
+        snap for snap in broadcast_snapshots if any(k.startswith("member-") for k in snap)
+    ]
+    assert not ghost_broadcasts, f"ghost slot broadcast after refused open: {ghost_broadcasts}"
