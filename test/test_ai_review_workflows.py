@@ -8755,284 +8755,62 @@ class TestBlockAdjudicationExtraction:
 
 
 class TestGptVerdictVisibility:
-    """An incomplete run must never make a posted GPT verdict invisible.
+    """The same-repo GPT lane publishes through the shared guard.
 
-    The GPT summary comment is upserted in place, so an unconditional PATCH let
-    a "review incomplete" body replace a posted ``[BLOCK-MERGE]`` verdict; the
-    REST comments API exposes no edit history, so the verdict survived only in
-    GraphQL userContentEdits. The post step now refuses exactly that one
-    transition. These tests run the step's real bash body with a stubbed ``gh``
-    for the three contract cases.
+    An inline lookup, verdict guard or notice strip in this step is a second
+    spelling of the visibility invariant: a position-blind ``sed`` range strip
+    deletes lines of a standing verdict whenever a bare quoted begin marker
+    sits inside preserved review prose. The behavioural contract -- an
+    incomplete run never buries a posted verdict, a completed one replaces it,
+    a superseded one leaves it alone -- is the shared ``guarded_comment_upsert``
+    and is exercised for this lane by ``TestReviewLaneVerdictVisibility``. What
+    stays lane-specific is pinned here: the stamp each kind publishes under, and
+    the gate that stays outside the convergence.
     """
 
-    HEAD = "1234567890abcdef1234567890abcdef12345678"
-    OLD = "aaaa567890abcdef1234567890abcdef1234aaaa"
-    MARKER = "<!-- codex-ai-review -->"
-
-    def _verdict_body(self, sha: str) -> str:
-        return (
-            f"{self.MARKER}\n"
-            "## GPT 6.1 Review — 🔴 changes requested (blocking)\n"
-            "\n"
-            f"GPT 6.1 found at least one blocking issue that must be resolved before merging `{sha}`.\n"
-            "\n"
-            f"[GPT-REVIEWED] {sha}\n"
-            f"[BLOCK-MERGE] {sha}\n"
-        )
-
-    def _run_step(
-        self,
-        tmp_path: Path,
-        *,
-        existing_body: str | None,
-        review_output: str | None,
-    ) -> tuple[Path, "subprocess.CompletedProcess[bytes]"]:
-        bash = _bash()
-        if bash is None or shutil.which("jq") is None:
-            pytest.skip("GPT comment upsert test requires Bash and jq")
-        if os.name == "nt":
-            pytest.skip("stubbed-PATH gh interception is exercised on POSIX runners")
-
-        stub_dir = tmp_path / "stub"
-        stub_dir.mkdir()
-        calls_dir = tmp_path / "calls"
-        calls_dir.mkdir()
-        runner_temp = tmp_path / "runner-temp"
-        runner_temp.mkdir()
-        cwd = tmp_path / "workspace"
-        cwd.mkdir()
-
-        finder_file = tmp_path / "finder-comments.json"
-        if existing_body is None:
-            finder_file.write_text("[]", encoding="utf-8")
-        else:
-            finder_file.write_text(
-                json.dumps(
-                    [
-                        {"id": 999, "user": {"login": "mallory"}, "body": existing_body},
-                        {
-                            "id": 123,
-                            "user": {"login": "github-actions[bot]"},
-                            "body": existing_body,
-                        },
-                    ]
-                ),
-                encoding="utf-8",
-            )
-        if review_output is not None:
-            (cwd / "codex-review-output.md").write_text(review_output, encoding="utf-8")
-
-        gh_stub = stub_dir / "gh"
-        gh_stub.write_text(
-            "#!/usr/bin/env bash\n"
-            "# Emulates the two gh surfaces the step uses; records mutations.\n"
-            "# The finder branch runs the step's REAL --jq filter with real jq\n"
-            "# over an array fixture, so a drift in the filter (dropped @json,\n"
-            "# changed author guard) fails these tests instead of hiding.\n"
-            'if [ "$1" = "api" ] && [ "$2" = "--method" ] && [ "$3" = "PATCH" ]; then\n'
-            '  printf \'%s\\n\' "$4" >> "$STUB_CALLS/patch-calls.txt"\n'
-            "  # Every attempt at the comment WRITE fails, so the retry is\n"
-            "  # visible in the recorded call count. Records no body: a write\n"
-            "  # that failed left nothing on the comment, and asserting on a\n"
-            "  # body the API never accepted is how a lost write reads as a\n"
-            "  # published one.\n"
-            '  if [ -n "${STUB_PATCH_FAIL:-}" ]; then exit 6; fi\n'
-            '  for a in "$@"; do\n'
-            '    case "$a" in body=*) printf \'%s\' "${a#body=}" > "$STUB_CALLS/patched-body.md";; esac\n'
-            "  done\n"
-            "  exit 0\n"
-            "fi\n"
-            'if [ "$1" = "api" ]; then\n'
-            '  filter=""\n'
-            "  grab=0\n"
-            '  for a in "$@"; do\n'
-            '    if [ "$grab" = 1 ]; then filter="$a"; grab=0; fi\n'
-            '    [ "$a" = "--jq" ] && grab=1\n'
-            "  done\n"
-            '  jq -r "$filter" < "$FINDER_COMMENTS_FILE"\n'
-            "  exit 0\n"
-            "fi\n"
-            'if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then\n'
-            '  printf \'%s\\n\' "$3" >> "$STUB_CALLS/create-calls.txt"\n'
-            "  shift 3\n"
-            '  if [ -n "${STUB_CREATE_FAIL:-}" ]; then\n'
-            "    # STUB_CREATE_LANDS emulates the lost-ack partial failure that\n"
-            "    # makes a create unsafe to repeat: GitHub ACCEPTS the POST, so\n"
-            "    # the comment now exists, but the CLI still reports failure.\n"
-            "    # The body is written into the finder fixture, so the step's own\n"
-            "    # confirmation query sees it through real jq.\n"
-            '    if [ -n "${STUB_CREATE_LANDS:-}" ] && [ "$1" = "--body-file" ]; then\n'
-            '      jq -n --arg b "$(cat "$2")" \\\n'
-            "        '[{id:777,user:{login:\"github-actions[bot]\"},body:$b}]' \\\n"
-            '        > "$FINDER_COMMENTS_FILE"\n'
-            "    fi\n"
-            "    exit 7\n"
-            "  fi\n"
-            '  if [ "$1" = "--body-file" ]; then cp "$2" "$STUB_CALLS/created-body.md"; fi\n'
-            "  exit 0\n"
-            "fi\n"
-            "exit 0\n",
-            encoding="utf-8",
-        )
-        gh_stub.chmod(0o755)
-
-        # `sleep` is an external command, so a shim earlier on PATH intercepts
-        # the retry backoff without a test-only knob in the workflow: the lanes
-        # keep their real production budget and these tests do not wait it out.
-        # Records each interval, so the SCHEDULE is assertable rather than just
-        # the attempt count.
-        sleep_stub = stub_dir / "sleep"
-        sleep_stub.write_text(
-            "#!/usr/bin/env bash\n"
-            'printf \'%s\\n\' "$1" >> "$STUB_CALLS/sleeps.txt"\n'
-            "exit 0\n",
-            encoding="utf-8",
-        )
-        sleep_stub.chmod(0o755)
-
-        script = _step_script(_workflow("codex-review.yml"), "Post/update review comment")
-        script_file = tmp_path / "step.sh"
-        script_file.write_text(script, encoding="utf-8")
-
-        env = {
-            **os.environ,
-            "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}",
-            "REPO": "example/repo",
-            "PR": "1",
-            "HEAD": self.HEAD,
-            "HUMAN_OVERRIDE": "false",
-            "OVERRIDE_ACTOR": "",
-            "OVERRIDE_SOURCE": "",
-            "GH_TOKEN": "stub-token",
-            "RUNNER_TEMP": str(runner_temp),
-            "STUB_CALLS": str(calls_dir),
-            "FINDER_COMMENTS_FILE": str(finder_file),
-        }
-        # GitHub runs `run:` blocks with `bash -e {0}` when no shell is set.
-        result = subprocess.run(
-            [bash, "-e", str(script_file)],
-            check=False,
-            capture_output=True,
-            cwd=cwd,
-            env=_child_env(env),
-        )
-        return calls_dir, result
-
-    def test_incomplete_run_never_overwrites_a_posted_verdict(self, tmp_path: Path) -> None:
-        # The existing comment already carries a notice from an earlier
-        # incomplete run: the new notice must REPLACE it, not stack.
-        existing = (
-            f"{self.MARKER}\n"
-            "<!-- codex-stale-notice-begin -->\n"
-            "> ⚠️ **Stale verdict notice (2026-01-01 00:00 UTC):** a later GPT 6.1 run did not produce a completed verdict for `feedbead`; the verdict below is from an earlier completed run. Inspect the GPT 6.1 Review job logs and re-run the workflow.\n"
-            "<!-- codex-stale-notice-end -->\n"
-            "\n" + self._verdict_body(self.OLD).removeprefix(f"{self.MARKER}\n")
-        )
-        calls, result = self._run_step(tmp_path, existing_body=existing, review_output=None)
-
-        assert result.returncode == 0, result.stderr.decode()
-        patched = (calls / "patched-body.md").read_text(encoding="utf-8")
-        # The comment finder keys on startswith(marker): the merged body must
-        # keep the marker as its first line.
-        assert patched.startswith(f"{self.MARKER}\n")
-        # The old verdict stays visible, markers included.
-        assert f"[BLOCK-MERGE] {self.OLD}" in patched
-        assert f"[GPT-REVIEWED] {self.OLD}" in patched
-        assert "🔴 changes requested (blocking)" in patched
-        # Exactly ONE dated notice, naming the sha whose run failed.
-        assert patched.count("<!-- codex-stale-notice-begin -->") == 1
-        assert f"did not produce a completed verdict for `{self.HEAD}`" in patched
-        assert "feedbead" not in patched
-        # The incomplete body itself must not have replaced the verdict.
-        assert "## GPT 6.1 Review — ⚠️ review incomplete" not in patched
-        assert not (calls / "created-body.md").exists()
-        # The author guard ran inside the real filter: the PATCH must target
-        # the bot's comment (123), not the marker-planting impostor's (999).
-        patch_calls = (calls / "patch-calls.txt").read_text(encoding="utf-8")
-        assert "/comments/123" in patch_calls
-        assert "/comments/999" not in patch_calls
-
-    def test_a_verdict_that_quotes_the_notice_markers_is_not_truncated(
-        self, tmp_path: Path
-    ) -> None:
-        # The preserved body embeds model-authored review prose. A finding
-        # that QUOTES the notice markers — inline or as a bare fenced line —
-        # must not start an unbounded delete: the notice strip is
-        # line-anchored and bounded to the head window, so quoted markers in
-        # the verdict text survive and the trailing [BLOCK-MERGE] marker
-        # stays visible.
-        existing = (
-            f"{self.MARKER}\n"
-            "## GPT 6.1 Review — 🔴 changes requested (blocking)\n"
-            "\n"
-            "GPT 6.1 found at least one blocking issue that must be resolved"
-            f" before merging `{self.OLD}`.\n"
-            "\n"
-            "_This comment is updated in place on each push._\n"
-            "\n"
-            "BLOCKING — .github/workflows/codex-review.yml:727 — the sed range"
-            " keyed on <!-- codex-stale-notice-begin --> can over-delete\n"
-            "Quoted reproduction of the notice block:\n"
-            "```\n"
-            "<!-- codex-stale-notice-begin -->\n"
-            "> a quoted notice line\n"
-            "```\n"
-            f"[GPT-REVIEWED] {self.OLD}\n"
-            f"[BLOCK-MERGE] {self.OLD}\n"
-        )
-        calls, result = self._run_step(tmp_path, existing_body=existing, review_output=None)
-
-        assert result.returncode == 0, result.stderr.decode()
-        patched = (calls / "patched-body.md").read_text(encoding="utf-8")
-        # The verdict and its markers survive the notice cleanup.
-        assert f"[GPT-REVIEWED] {self.OLD}" in patched
-        assert f"[BLOCK-MERGE] {self.OLD}" in patched
-        assert "can over-delete" in patched
-        assert "> a quoted notice line" in patched
-        # And the fresh notice was still prepended exactly once.
-        assert f"did not produce a completed verdict for `{self.HEAD}`" in patched
-
-    def test_completed_verdict_still_replaces_the_comment(self, tmp_path: Path) -> None:
-        review_output = f"FINDINGS\n[GPT-REVIEWED] {self.HEAD}\n[BLOCK-MERGE] {self.HEAD}\n"
-        calls, result = self._run_step(
-            tmp_path,
-            existing_body=self._verdict_body(self.OLD),
-            review_output=review_output,
-        )
-
-        assert result.returncode == 0, result.stderr.decode()
-        patched = (calls / "patched-body.md").read_text(encoding="utf-8")
-        # A completed verdict replaces the comment wholesale, exactly as before.
-        assert patched.startswith(f"{self.MARKER}\n")
-        assert f"[BLOCK-MERGE] {self.HEAD}" in patched
-        assert f"[GPT-REVIEWED] {self.OLD}" not in patched
-        assert "<!-- codex-stale-notice-begin -->" not in patched
-        assert not (calls / "created-body.md").exists()
-
-    def test_incomplete_with_no_existing_comment_creates_as_before(self, tmp_path: Path) -> None:
-        calls, result = self._run_step(tmp_path, existing_body=None, review_output=None)
-
-        assert result.returncode == 0, result.stderr.decode()
-        created = (calls / "created-body.md").read_text(encoding="utf-8")
-        assert created.startswith(f"{self.MARKER}\n")
-        assert "⚠️ review incomplete" in created
-        assert "<!-- codex-stale-notice-begin -->" not in created
-        assert not (calls / "patched-body.md").exists()
-
-    def test_guard_is_scoped_to_the_post_step_and_gate_is_untouched(self) -> None:
+    def test_the_post_step_routes_through_the_shared_guard(self) -> None:
         workflow = _workflow("codex-review.yml")
+        script = _step_script(workflow, "Post/update review comment")
+        # The function is defined in this step and pinned byte-identical to
+        # every other lane's copy by the identity test. Both publication kinds
+        # name their own head-scoped stamp: a review carries [GPT-REVIEWED] and
+        # an accepted override [GPT-OVERRIDE], so a standing block for this
+        # same head can never read as the override's own write.
+        assert "guarded_comment_upsert() {" in script
+        assert (
+            'guarded_comment_upsert "$MARKER" "[GPT-REVIEWED]" "GPT 6.1 Review"'
+            ' "${RUNNER_TEMP:-/tmp}/codex-comment.md"'
+        ) in script
+        assert (
+            'guarded_comment_upsert "$MARKER" "[GPT-OVERRIDE]" "GPT 6.1 Review"'
+            ' "${RUNNER_TEMP:-/tmp}/codex-comment.md"'
+        ) in script
+        assert 'echo "[GPT-OVERRIDE] $HEAD"' in script
+        # The override arm is selected by `kind`, a shell variable this step
+        # assigns from the review's outcome, and the selection comes AFTER that
+        # assignment: a call placed above it would test an empty kind and route
+        # the one body that must replace a standing block through the review
+        # stamp no override body carries.
+        assert script.index('kind="override"') < script.index(
+            'guarded_comment_upsert "$MARKER" "[GPT-OVERRIDE]"'
+        )
+        # The inline shape is gone with the defect it carried: no body read, no
+        # merged body, no notice strip.
+        assert "stale-notice" not in script
+        assert "codex-existing-comment.md" not in script
+        assert "codex-merged-comment.md" not in script
+        assert "head_needle" not in script
+        assert "| {id, body} | @json" not in script
 
-        # The body is captured in the SAME query that finds the id, before any
-        # PATCH decision, one compact line per match.
-        assert "| {id, body} | @json" in workflow
-        # The guard tests the marker against a FILE with grep -Fq, mirroring
-        # the step's existing marker checks — bodies never enter shell strings.
-        assert 'grep -Fq "[GPT-REVIEWED]"' in workflow
-        # The gate's fail-closed contract is byte-identical to before.
-        gate = _step_script(workflow, "Gate on findings")
+    def test_the_gate_is_untouched(self) -> None:
+        # The convergence changes the posting tail only. The gate's fail-closed
+        # contract is byte-identical to before: it reads the captured review
+        # text for this head's stamp and fails without it.
+        gate = _step_script(_workflow("codex-review.yml"), "Gate on findings")
         assert 'if ! grep -Fq "$reviewed" codex-review-output.md; then' in gate
         assert "Failing closed" in gate
         assert "stale-notice" not in gate
+        assert "publication" not in gate
 
 
 def _exec_transcript(runner_temp: Path, review_text: str) -> dict[str, str]:
@@ -9121,6 +8899,37 @@ def _fork_scope_comment(
 # (body carries "<stamp> <head>") and an incomplete one (no verdict for the
 # current head), plus the phrase its incomplete body is known by.
 _GUARDED_LANES = [
+    {
+        # The same-repo GPT lane. It is FAIL-CLOSED: its gate reads the captured
+        # review text rather than the PR, so a completed verdict that did not
+        # reach the slot exits non-zero (`missed_slot_rc`), where every other
+        # guarded lane stays green and lets its annotation carry the loss. The
+        # upsert itself is the same byte-identical function; the exit is read
+        # off its `publication` output after it returns.
+        "id": "codex",
+        "workflow": "codex-review.yml",
+        "step": "Post/update review comment",
+        "marker": "<!-- codex-ai-review -->",
+        "stamp": "[GPT-REVIEWED]",
+        "incomplete_text": "review incomplete",
+        "needs_perl": False,
+        "missed_slot_rc": 1,
+        "env": {
+            "HUMAN_OVERRIDE": "false",
+            "OVERRIDE_ACTOR": "",
+            "OVERRIDE_SOURCE": "",
+            "REFUSED": "",
+            "ADJ_DECISION": "",
+            "ADJ_NOTE": "",
+        },
+        "completed": lambda cwd, rt, head: (
+            (cwd / "codex-review-output.md").write_text(
+                f"FINDINGS\n[GPT-REVIEWED] {head}\n", encoding="utf-8"
+            ),
+            {},
+        )[1],
+        "incomplete": lambda cwd, rt, head: {},
+    },
     {
         "id": "fork-gpt",
         "workflow": "fork-gpt-review.yml",
@@ -9348,20 +9157,28 @@ _GUARDED_LANES = [
 # the model produced -- and without the stamp the guarded upsert withholds the whole
 # comment, leaving the broken operation and its tier readable only in the job logs.
 
-#: The fork lanes whose accepted human override note goes through the guarded
-#: upsert. The fork UX lane writes it the way ux-review.yml does instead,
-#: because its scope skip exits before the upsert is defined, and the scope
-#: lane's override note carries the lane's own stamp.
-_GUARDED_OVERRIDE_LANES = ("fork-gpt", "fork-opus", "fork-design", "fork-first-principles")
+#: The lanes whose accepted human override note goes through the guarded
+#: upsert under the `[<LANE>-OVERRIDE]` needle. The fork UX lane writes it the
+#: way ux-review.yml does instead, because its scope skip exits before the
+#: upsert is defined, and the scope lane's override note carries the lane's
+#: own stamp.
+_GUARDED_OVERRIDE_LANES = ("codex", "fork-gpt", "fork-opus", "fork-design", "fork-first-principles")
 
 _GUARDED_LANE_PARAMS = [pytest.param(lane, id=lane["id"]) for lane in _GUARDED_LANES]
 
+
+def _missed_slot_rc(lane: dict) -> int:
+    """The step's exit status when a completed verdict for the current head never
+    reached the slot. Advisory lanes stay green and annotate; the same-repo GPT
+    lane is fail-closed and exits 1, read off the upsert's `publication` output."""
+    return int(lane.get("missed_slot_rc", 0))
+
+
 # Every lane that publishes a review VERDICT into a marker comment, including
-# the two same-repo lanes that do not route through guarded_comment_upsert
-# (claude-review.yml and codex-review.yml). Spelled out rather than globbed for
-# the primitive's name: a lane that DROPS the write primitive must fail this
-# list, and a glob keyed on the primitive would silently stop measuring exactly
-# that lane.
+# the one same-repo lane that does not route through guarded_comment_upsert
+# (claude-review.yml). Spelled out rather than globbed for the primitive's
+# name: a lane that DROPS the write primitive must fail this list, and a glob
+# keyed on the primitive would silently stop measuring exactly that lane.
 _VERDICT_PUBLISHING_LANES = (
     ("claude-review.yml", "Post Opus 5.5 review summary"),
     ("codex-review.yml", "Post/update review comment"),
@@ -9381,12 +9198,15 @@ _VERDICT_PUBLISHING_LANES = (
 class TestReviewLaneVerdictVisibility:
     """No review lane may bury a posted verdict under an incomplete body.
 
-    Covers every lane that upserts a marker-keyed summary comment outside
-    codex-review.yml. Each lane defines the guarded upsert as a byte-identical
-    ``guarded_comment_upsert`` bash function; the identity test pins every
-    copy to one canonical body so the invariant cannot drift lane by lane, and
-    the behavioral tests run each lane's REAL step bash with a stubbed ``gh``
-    for the contract cases.
+    Covers every lane that upserts a marker-keyed summary comment through the
+    shared guard, the same-repo GPT lane included. Each lane defines
+    the guarded upsert as a byte-identical ``guarded_comment_upsert`` bash
+    function; the identity test pins every copy to one canonical body so the
+    invariant cannot drift lane by lane, and the behavioral tests run each
+    lane's REAL step bash with a stubbed ``gh`` for the contract cases. The
+    one per-lane difference is the exit status after a completed verdict
+    missed the slot (``_missed_slot_rc``): the fail-closed GPT lane exits 1
+    where the advisory lanes stay green.
 
     The guarded transition is a NO-TOUCH, not a merge: a run whose body
     carries no ``"<stamp> <head>"`` proof marker leaves an existing comment
@@ -9735,7 +9555,7 @@ class TestReviewLaneVerdictVisibility:
             extra_env={"STUB_PR_HEAD": ""},
         )
 
-        assert result.returncode == 0, result.stderr.decode()
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         reads = (calls / "pr-head-reads.txt").read_text(encoding="utf-8").splitlines()
         assert len(reads) == 6, reads
         assert not (calls / "patched-body.md").exists()
@@ -10112,7 +9932,7 @@ class TestReviewLaneVerdictVisibility:
 
         # An unpublishable verdict is an infrastructure failure, not a BLOCK
         # verdict, so it still must not fail an advisory lane's gate.
-        assert result.returncode == 0, result.stderr.decode()
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         # The write is retried on the gating reads' budget, not attempted once.
         attempts = (calls / "patch-calls.txt").read_text(encoding="utf-8").splitlines()
         assert len(attempts) == 6, attempts
@@ -10165,40 +9985,58 @@ class TestReviewLaneVerdictVisibility:
         # fresh sample the re-run was asked for, and the earlier verdict keeps
         # whatever it said -- so a stale blocking line goes on gating the PR
         # while the lane reports green, which is the silence this change removes.
-        for workflow, step in (
-            ("claude-review.yml", "Post Opus 5.5 review summary"),
-            ("codex-review.yml", "Post/update review comment"),
-        ):
-            code = _step_script(_workflow(workflow), step).splitlines()
-            missed = [
-                n
-                for n, line in enumerate(code)
-                if "::error::" in line
-                and (
-                    "could not publish" in line
-                    or "slot is already taken" in line
-                    or "was not published" in line
-                )
-            ]
-            # Four arms per lane: the replace that did not land, the create that
-            # did not land, the create that found the slot taken, and the create
-            # that found an earlier run's verdict for this same head. The last is
-            # the one a re-run exists to replace, so discarding it silently is
-            # the same loss as never publishing at all.
-            assert len(missed) == 4, (workflow, missed)
-            for n in missed:
-                assert code[n + 1].strip() == "exit 1", (workflow, code[n])
-            # The outcomes where the PR is not missing this run's verdict by
-            # accident do NOT exit: it moved to a newer head whose own run
-            # publishes, or a human override occupies the comment and decided
-            # what it says.
-            for n, line in enumerate(code):
-                if "moved to a newer head" in line or "accepted human override" in line:
-                    assert code[n + 1].strip() != "exit 1", (workflow, line)
-        # The shared function carries no exit at all, in any arm: ten lanes use
-        # it, three of them the ones readiness reads as a judged BLOCK.
+        code = _step_script(
+            _workflow("claude-review.yml"), "Post Opus 5.5 review summary"
+        ).splitlines()
+        missed = [
+            n
+            for n, line in enumerate(code)
+            if "::error::" in line
+            and (
+                "could not publish" in line
+                or "slot is already taken" in line
+                or "was not published" in line
+            )
+        ]
+        # Four arms in the Opus lane's inline tail: the replace that did not
+        # land, the create that did not land, the create that found the slot
+        # taken, and the create that found an earlier run's verdict for this
+        # same head. The last is the one a re-run exists to replace, so
+        # discarding it silently is the same loss as never publishing at all.
+        assert len(missed) == 4, missed
+        for n in missed:
+            assert code[n + 1].strip() == "exit 1", code[n]
+        # The outcomes where the PR is not missing this run's verdict by
+        # accident do NOT exit: it moved to a newer head whose own run
+        # publishes, or a human override occupies the comment and decided
+        # what it says.
+        for n, line in enumerate(code):
+            if "moved to a newer head" in line or "accepted human override" in line:
+                assert code[n + 1].strip() != "exit 1", line
+        # The GPT lane publishes through the shared function and keeps
+        # the same rule with ONE arm after it returns: the function's
+        # `publication` output is read back, and a body stamped for this head
+        # that reached neither `published` nor `superseded` exits 1. Reading the
+        # output rather than the function's log keeps the function itself
+        # byte-identical to the advisory lanes' copies.
+        code = _step_script(
+            _workflow("codex-review.yml"), "Post/update review comment"
+        ).splitlines()
+        tail = code[code.index("}", code.index("guarded_comment_upsert() {")) + 1 :]
+        assert any("publication=" in line and "GITHUB_OUTPUT" in line for line in tail), tail
+        assert "    published|superseded) ;;" in tail
+        exits = [n for n, line in enumerate(tail) if line.strip() == "exit 1"]
+        assert len(exits) == 1, exits
+        assert "::error::" in tail[exits[0] - 1]
+        # And that arm is gated on the body carrying a head-scoped stamp: an
+        # incomplete or refused run has no verdict to miss the slot with, and
+        # the gate below fails it closed on its own evidence.
+        assert any('grep -Eq -- "-(REVIEWED|OVERRIDE)\\] $HEAD"' in line for line in tail), tail
+        # The shared function carries no exit at all, in any arm: eleven lanes
+        # use it, three of them the ones readiness reads as a judged BLOCK, and
+        # the fail-closed GPT lane's exit lives outside it.
         for workflow, step in _VERDICT_PUBLISHING_LANES:
-            if workflow in ("claude-review.yml", "codex-review.yml"):
+            if workflow == "claude-review.yml":
                 continue
             guard = _shell_function(
                 _step_script(_workflow(workflow), step), "guarded_comment_upsert"
@@ -10225,9 +10063,15 @@ class TestReviewLaneVerdictVisibility:
             },
         )
 
-        # Green: a human decided what this slot says, so this run publishing
-        # nothing is the correct outcome rather than a loss.
-        assert result.returncode == 0, result.stderr.decode()
+        # Advisory lanes stay green: a human decided what this slot says, so
+        # this run publishing nothing is the correct outcome rather than a
+        # loss. The fail-closed GPT lane reads the same `not_published` the
+        # fork GPT finalize reads for this arm, and answers it the same way:
+        # an override for THIS head is this run's own override input, and a
+        # note that arrived mid-write belongs to the run the override handler
+        # cancels and re-runs with that input -- so this run does not pass
+        # quietly on a verdict that is not in the slot.
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         # ONE attempt. The repeat stops at the guard, which is what leaves the
         # override in place.
         attempts = (calls / "patch-calls.txt").read_text(encoding="utf-8").splitlines()
@@ -10236,7 +10080,9 @@ class TestReviewLaneVerdictVisibility:
         stdout = result.stdout.decode()
         assert "accepted human override" in stdout
         assert "Updated existing" not in stdout
-        assert "::error::" not in stdout
+        # The shared function itself never annotates this arm as an error; the
+        # fail-closed lane's one annotation comes from its own tail.
+        assert stdout.count("::error::") == (1 if _missed_slot_rc(lane) else 0), stdout
 
     @pytest.mark.parametrize("lane", _GUARDED_LANE_PARAMS)
     def test_an_unreadable_target_stops_the_repeat(self, lane: dict, tmp_path: Path) -> None:
@@ -10250,7 +10096,7 @@ class TestReviewLaneVerdictVisibility:
             extra_env={"STUB_PATCH_FAIL": "1", "STUB_TARGET_BODY": ""},
         )
 
-        assert result.returncode == 0, result.stderr.decode()
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         attempts = (calls / "patch-calls.txt").read_text(encoding="utf-8").splitlines()
         assert len(attempts) == 1, attempts
         assert not (calls / "patched-body.md").exists()
@@ -10305,7 +10151,7 @@ class TestReviewLaneVerdictVisibility:
             extra_env={"STUB_PATCH_FAIL": "1", "STUB_PR_HEAD_AFTER": "1:"},
         )
 
-        assert result.returncode == 0, result.stderr.decode()
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         attempts = (calls / "patch-calls.txt").read_text(encoding="utf-8").splitlines()
         assert len(attempts) == 1, attempts
         assert not (calls / "patched-body.md").exists()
@@ -10365,7 +10211,7 @@ class TestReviewLaneVerdictVisibility:
 
         # Green, with an error annotation, for the same reason: the lane must
         # not manufacture a blocking verdict out of a failed write.
-        assert result.returncode == 0, result.stderr.decode()
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         attempts = (calls / "create-calls.txt").read_text(encoding="utf-8").splitlines()
         assert len(attempts) == 6, attempts
         assert not (calls / "created-body.md").exists()
@@ -10672,7 +10518,7 @@ class TestReviewLaneVerdictVisibility:
             extra_env={"STUB_COMMENT_FAIL_FIRST": "6"},
         )
 
-        assert result.returncode == 0, result.stderr.decode()
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         stdout = result.stdout.decode()
         # NOTHING was written: no create, not one attempt, and no PATCH either.
         # One comment answers for this lane, so every alternative loses something
@@ -10716,7 +10562,7 @@ class TestReviewLaneVerdictVisibility:
         # infrastructure fault. The annotation is what reports the loss, and
         # kirocrew-prepare-pr's marker evaluation is what refuses a PR whose head has no
         # verdict; the required status itself reads only conclusions.
-        assert result.returncode == 0, result.stderr.decode()
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         stdout = result.stdout.decode()
         # NOTHING was written: no create, not one attempt, and no PATCH either.
         # The occupant names a SUPERSEDED head, the slot's steady state
@@ -10757,7 +10603,7 @@ class TestReviewLaneVerdictVisibility:
             extra_env={"STUB_COMMENT_FAIL_FIRST": "6", "STUB_CREATE_FAIL": "1"},
         )
 
-        assert result.returncode == 0, result.stderr.decode()
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         stdout = result.stdout.decode()
         assert not (calls / "create-calls.txt").exists(), stdout
         assert not (calls / "patched-body.md").exists(), stdout
@@ -10797,7 +10643,7 @@ class TestReviewLaneVerdictVisibility:
         # Green, with an error annotation: an unpublishable verdict is an
         # infrastructure fault, and an advisory lane that fails on one is turned
         # into a BLOCK verdict nobody judged.
-        assert result.returncode == 0, result.stderr.decode()
+        assert result.returncode == _missed_slot_rc(lane), result.stderr.decode()
         stdout = result.stdout.decode()
         assert not (calls / "create-calls.txt").exists(), stdout
         assert "did land" not in stdout
@@ -10855,9 +10701,9 @@ class TestReviewLaneVerdictVisibility:
                     # the other -- an older head's comment occupies the slot, and
                     # every body carries the lane marker whatever head it is for.
                     # Head-scoped, either named inline or carried in the
-                    # lane's own head_needle. The two lanes that use the
-                    # variable do so because their body's authoritative marker
-                    # depends on how the body was produced: a review carries
+                    # lane's own head_needle. The Opus lane uses the variable
+                    # because its body's authoritative marker depends on how
+                    # the body was produced: a review carries
                     # [<LANE>-REVIEWED], a human override carries
                     # [<LANE>-OVERRIDE], and the needle has to name whichever
                     # one this run is actually writing.
@@ -10875,15 +10721,15 @@ class TestReviewLaneVerdictVisibility:
                     assert 'retry_comment_write "" "" ""' in stripped, (workflow, stripped)
                 else:
                     raise AssertionError(f"unclassified write: {workflow} {stripped}")
-        # Ten guarded lanes with three sites each, claude with two, codex with
-        # three. A drop in this number means a site stopped being measured.
+        # Eleven guarded lanes with three sites each, claude with two. A drop
+        # in this number means a site stopped being measured.
         assert seen == 35, seen
         # Where the needle is a variable, its definition is the contract: the
-        # lane's stamp by default, the head alone for an accepted override.
-        for workflow, stamp in (
-            ("claude-review.yml", "[OPUS-REVIEWED] $HEAD"),
-            ("codex-review.yml", "[GPT-REVIEWED] $HEAD"),
-        ):
+        # lane's stamp by default, the override marker for an accepted override.
+        # Only the Opus lane still spells its needle as a variable; the GPT lane
+        # names the stamp at each of its two guarded_comment_upsert call sites,
+        # which TestGptVerdictVisibility pins.
+        for workflow, stamp in (("claude-review.yml", "[OPUS-REVIEWED] $HEAD"),):
             body = _workflow(workflow)
             assert f'head_needle="{stamp}"' in body, workflow
             assert 'if [ "$kind" = "override" ]; then' in body, workflow
@@ -11213,11 +11059,16 @@ class TestGptRefusalTerminalState:
         assert 'kind="refused"' in comment_step
         assert "GPT-REFUSED" not in comment_step
         # Visibility invariant: a refusal has no verdict, so like an
-        # incomplete run it must never bury an existing [GPT-REVIEWED] body —
-        # it prepends a notice instead, and that notice must not advise the
-        # re-run the incomplete notice advises.
-        assert '{ [ "$kind" = "incomplete" ] || [ "$kind" = "refused" ]; }' in comment_step
-        assert "very unlikely to produce a fresh verdict" in comment_step
+        # incomplete run it must never bury an existing [GPT-REVIEWED] body.
+        # Both kinds reach the shared guard with a body carrying no
+        # `[GPT-REVIEWED] $HEAD` stamp, which is exactly the arm that leaves
+        # an existing comment untouched (TestReviewLaneVerdictVisibility runs
+        # it for this lane); the refusal's own wording is what the comment
+        # says when the slot is empty, and it must not advise the re-run the
+        # incomplete notice advises.
+        assert 'guarded_comment_upsert "$MARKER" "[GPT-REVIEWED]"' in comment_step
+        assert "a re-run is very unlikely to produce a verdict" in comment_step
+        assert "re-runs have not been observed to clear this class of refusal" in comment_step
 
 
 # The three design/premise/UX lanes on a fork, whose verdict lands as a
@@ -13244,7 +13095,6 @@ class TestTheGuardedUpsertRecordsWhatReachedTheSlot:
         _, result = harness._run_step(
             lane, tmp_path, existing_body=body, kind="completed", extra_env=extra
         )
-        assert result.returncode == 0, result.stderr.decode()
         out = tmp_path / "github-output.txt"
         records = [
             line.partition("=")[2]
@@ -13252,6 +13102,11 @@ class TestTheGuardedUpsertRecordsWhatReachedTheSlot:
             if line.startswith("publication=")
         ]
         assert len(records) == 1, records
+        # The record is the function's; what the STEP does with it is the
+        # lane's. Advisory lanes exit 0 whatever it says; the fail-closed GPT
+        # lane reads `not_published` back and exits on it.
+        expected_rc = _missed_slot_rc(lane) if records[0] == "not_published" else 0
+        assert result.returncode == expected_rc, result.stderr.decode()
         return records[0]
 
     @pytest.mark.parametrize("lane", _GUARDED_LANE_PARAMS)
@@ -13325,7 +13180,11 @@ class TestTheGuardedUpsertRecordsWhatReachedTheSlot:
 
 
 class TestForkLanePublishesTheOverrideNote:
-    """The note replaces a BLOCK the head already shows, through the lane's slot."""
+    """The note replaces a BLOCK the head already shows, through the lane's slot.
+
+    Every lane whose override note goes through the guarded upsert is driven
+    here, the same-repo GPT lane included.
+    """
 
     HEAD = TestReviewLaneVerdictVisibility.HEAD
     LANES = [
@@ -13369,7 +13228,13 @@ class TestForkLanePublishesTheOverrideNote:
         assert f"{lane['stamp']} " not in patched, patched
         assert "[BLOCK-MERGE]" not in patched and "Verdict: BLOCK" not in patched
         assert not (calls / "created-body.md").exists()
-        assert "verdict=OVERRIDE" in (tmp_path / "github-output.txt").read_text(encoding="utf-8")
+        # A fork lane's finalize reads the override off this step's own output.
+        # The same-repo GPT lane's gate reads it off the human_override step
+        # instead, so this step writes no verdict output there.
+        if lane["id"].startswith("fork-"):
+            assert "verdict=OVERRIDE" in (tmp_path / "github-output.txt").read_text(
+                encoding="utf-8"
+            )
 
     @pytest.mark.parametrize("lane", LANES)
     def test_an_empty_slot_gets_the_note(self, lane: dict, tmp_path: Path):

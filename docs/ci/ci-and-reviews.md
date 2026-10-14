@@ -2372,7 +2372,7 @@ undetectable afterwards: a failed run's "review incomplete" body once replaced
 a posted verdict and a `[BLOCK-MERGE]` finding vanished from every surface a
 reader or tool checks (#8292).
 
-Ten of the twelve lanes that upsert a verdict comment let exactly one kind of
+Eleven of the twelve lanes that upsert a verdict comment let exactly one kind of
 run claim that slot — a **completed verdict for the PR's current head**. The two
 other kinds each lose a live verdict, so each leaves an existing comment
 untouched (#8344):
@@ -2411,17 +2411,28 @@ preconditions: only on a head confirmed current and a slot read that answered.
 When either read stays unreadable after six attempts the notice is withheld and
 the job emits a `::warning::` saying so and asking for a re-run. A completed
 verdict whose slot read stays unreadable is likewise not posted, because a
-second comment in the slot does not come back out without a human. The ten
+second comment in the slot does not come back out without a human. The eleven
 guarded lanes
 define the guard as a `guarded_comment_upsert` bash function that
 `test_ai_review_workflows.py` pins byte-identical across every lane, so the
 invariant cannot drift lane by lane.
 
-Two lanes stay outside that function, and both exclusions are deliberate:
+`codex-review.yml` joined them in #8462. It used to carry #8342's own inline
+preserve-and-prepend shape — the one site left with a read-modify-write window
+on the slot, and a position-blind notice strip under which a bare quoted
+begin marker inside preserved review prose deleted up to three lines of a
+verdict. Its posting step now defines the same function and calls it with
+`[GPT-REVIEWED]`, or `[GPT-OVERRIDE]` for an accepted human override. What
+stays lane-specific is the exit: the GPT lane is fail-closed and its gate reads
+the captured review text rather than the PR, so after the function returns the
+step reads its `publication` output back and exits non-zero when a body stamped
+for this head reached neither `published` nor `superseded`. A body with no stamp
+for this head — an incomplete or refused run — leaves an existing comment
+untouched, as in every other guarded lane, and the gate fails it closed on its
+own evidence; it no longer prepends a staleness notice to the standing verdict.
 
-- **`codex-review.yml`** carries #8342's own inline preserve-and-prepend shape,
-  pinned byte-for-byte by its own tests — it is the one site left with a
-  read-modify-write window on the slot.
+One lane stays outside that function, and the exclusion is deliberate:
+
 - **`claude-review.yml`** keeps a plain lookup-then-PATCH. Its incomplete path
   posts **nothing at all**, so the #8292 class — a failure notice burying a
   verdict — cannot reach it. What remains is only the superseded-completed
@@ -3538,8 +3549,10 @@ retried write stopped at, or a missing record (the post step failed or never ran
 completes the check-run `failure` titled `verdict not published`, and re-running the
 lane publishes it. An accepted override for this head still passes, through the
 finalize step's own override input. The same-repo lanes already fail their post step
-on a lost write, a taken slot and an earlier run's sample. The advisory lanes record
-the output too and ignore it.
+on a lost write, a taken slot and an earlier run's sample: `codex-review.yml` by
+reading this same `publication` output back after the shared function returns,
+`claude-review.yml` through its own inline arms. The advisory lanes record the
+output too and ignore it.
 
 Nothing the fork controls can influence these reviews:
 
