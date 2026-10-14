@@ -233,8 +233,8 @@ source. Your messages are saved exactly as typed." Keep extra details under
 ### 3 · Suspicious links: blocked, but visible
 
 Keep a suspicious URL visible as a **Link blocked** chip, but never make it
-an anchor. Show the site name and path immediately, and the length of the
-query. *See link* opens a details card that explains why the link was blocked
+an anchor. Show the site name immediately, and nothing else (see the chip
+rule below). *See link* opens a details card that explains why the link was blocked
 and shows the full URL as text, with *Open once* and *Copy link* beside it.
 That card is the confirmation: nothing opens until the reader has the whole
 destination in front of them and clicks *Open once*, which opens it in a new
@@ -268,12 +268,23 @@ in the saved conversation instead of being destroyed, and anyone who can read
 that conversation can read the link.
 
 What is shown on the chip itself, before anyone asks, follows a stricter rule:
-**the chip shows only what the removers themselves would pass.** It would be
-wrong to assume the query is the dangerous part and the path is safe — a link
-can carry smuggled data in its path just as easily — so the path appears on
-the chip only when it passes the same checks that blocked the link; otherwise
-the chip shows the site name and the length of the query. The full address is
-shown only inside the details card, after the reader asks for it. There is one
+**the chip shows only what is proven about that chip, which is the site
+name.** The saved placeholder names the site and nothing else, so nothing ties
+a chip to one kept record. A placeholder can have no record of its own (a
+presigned link split at its query leaves a placeholder the removers never
+recorded), and the rendered text can hold more chips than the saved text has
+placeholders (an entity-encoded or backslash-escaped bracket renders to
+placeholder text), so neither a record count nor a single record proves which
+record a chip stands for. The chip therefore never shows a path or a query
+length, even when the host has exactly one record. The details card explains
+each record of the host with its reason and actions; when the host has several
+records it lists each under its own address, and a kept full address is shown
+only there, after the reader asks for it. Pairing placeholders with records is
+not a goal: proving that order cannot be made sound on the production
+redaction pipeline. The path a record carries (kept only when it passes the
+same checks that blocked the link, since a link can carry smuggled data in its
+path as easily as in its query) therefore appears only in that list of several
+records, where no entry is presented as the link clicked. There is one
 precedent for keeping a URL in meta: the consent link for a connected server
 (`oauth_url`) is preserved only when it passes two checks. Anything kept is
 still text an agent wrote, so the chip escapes it and never makes it an

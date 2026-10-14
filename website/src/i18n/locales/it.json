@@ -9757,7 +9757,6 @@
       "link_open_confirm_title": "Aprire {{host}} una sola volta?",
       "link_open_once": "Apri una volta",
       "link_opened": "Aperto in una nuova scheda — questo link resta bloccato qui",
-      "link_query": "⋯ query {{chars}} caratteri",
       "link_reason_credential": "Motivo: l'indirizzo sembrava contenere un segreto.",
       "link_reason_encoding": "Motivo: l'indirizzo contiene una lunga sequenza di caratteri di escape, che possono nascondere dati. Un titolo scritto in un alfabeto non latino può apparire uguale.",
       "link_reason_generic": "Motivo: corrispondeva a una regola per i link che possono inviare all'esterno i dati della conversazione.",

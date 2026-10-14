@@ -9617,7 +9617,6 @@
       "link_open_confirm_title": "{{host}} einmal öffnen?",
       "link_open_once": "Einmal öffnen",
       "link_opened": "In einem neuen Tab geöffnet — dieser Link bleibt hier blockiert",
-      "link_query": "⋯ Abfrage {{chars}} Zeichen",
       "link_reason_credential": "Grund: die Adresse sah aus, als würde sie ein Geheimnis enthalten.",
       "link_reason_encoding": "Grund: die Adresse enthält eine lange Folge maskierter Zeichen, die Daten verbergen können. Ein Titel in einer nicht-lateinischen Schrift kann genauso aussehen.",
       "link_reason_generic": "Grund: sie entsprach einer Regel für Links, die Unterhaltungsdaten nach außen senden können.",

@@ -9477,7 +9477,6 @@
       "link_open_confirm_title": "{{host}}을(를) 한 번 여시겠습니까?",
       "link_open_once": "한 번 열기",
       "link_opened": "새 탭에서 열었습니다 — 이 링크는 여기서 계속 차단됩니다",
-      "link_query": "⋯ 쿼리 {{chars}}자",
       "link_reason_credential": "사유: 주소가 비밀 정보를 담고 있는 것처럼 보였습니다.",
       "link_reason_encoding": "사유: 주소에 이스케이프된 문자가 길게 이어져 있어 데이터를 숨길 수 있습니다. 비라틴 문자로 쓰인 제목도 같아 보일 수 있습니다.",
       "link_reason_generic": "사유: 대화 데이터를 외부로 보낼 수 있는 링크 규칙과 일치했습니다.",

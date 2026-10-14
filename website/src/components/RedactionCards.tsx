@@ -1188,6 +1188,13 @@ function linkReason(record: BlockedLink): string {
 /**
  * The Blocked link chip standing where a suspicious URL was removed.
  *
+ * The chip names the host and nothing else. The saved placeholder names only
+ * the host, a placeholder can have no record of its own, and the rendered
+ * text can hold more chips than the saved text has placeholders, so neither a
+ * record count nor a single record proves which record a chip stands for. The
+ * card explains each record of the host; with several it lists each under its
+ * own address.
+ *
  * `block` names the top-level block holding it, so the card opens under that
  * block alone. Chips of one host in one block share its card.
  * `rehypeRedactionMarkers` is the only producer and always sets it.
@@ -1201,7 +1208,6 @@ export function BlockedLinkChip({ domain, placeholder, block }: {
   const { blockedLinks, openId, toggle } = useRedactionUi()
   const group = blockedLinksForDomain(blockedLinks, domain)
   if (group.length === 0) return <>{placeholder}</>
-  const single = group.length === 1 ? group[0] : null
   const id = blockedLinkCardId(domain, block)
   return (
     <span
@@ -1212,12 +1218,7 @@ export function BlockedLinkChip({ domain, placeholder, block }: {
     >
       <Link2Off size={12} aria-hidden="true" className="shrink-0" />
       <span className="text-[10px] font-bold tracking-[.04em] text-warn [text-box:trim-both_cap_alphabetic]">{i18nT('components.redaction.link_tag')}</span>
-      <span className="break-all font-mono text-[12px] text-card-fg [text-box:trim-both_cap_alphabetic]" data-testid="blocked-link-target">
-        {single?.path != null ? `${domain}${escapeInvisibleChars(single.path)}` : domain}
-      </span>
-      {single && single.query_chars > 0 && (
-        <span className="text-muted [text-box:trim-both_cap_alphabetic]" data-testid="blocked-link-query">{i18nT('components.redaction.link_query', { chars: single.query_chars })}</span>
-      )}
+      <span className="break-all font-mono text-[12px] text-card-fg [text-box:trim-both_cap_alphabetic]" data-testid="blocked-link-target">{domain}</span>
       <button
         type="button"
         aria-expanded={openId === id}

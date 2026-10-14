@@ -5865,7 +5865,6 @@
       "link_open_confirm_title": "Open {{host}} one time?",
       "link_open_once": "Open once",
       "link_opened": "Opened in a new tab — this link stays blocked here",
-      "link_query": "⋯ query {{chars}} chars",
       "link_reason_credential": "Reason: the address looked like it carried a secret.",
       "link_reason_encoding": "Reason: the address holds a long run of escaped characters, which can hide data. A title written in a non-Latin script can look the same.",
       "link_reason_generic": "Reason: it matched a rule for links that can send conversation data out.",

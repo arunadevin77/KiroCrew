@@ -58,15 +58,21 @@ afterEach(() => {
 })
 
 describe('Blocked link chip', () => {
-  it('matches the prototype: label, host and path, query length, Inspect', () => {
-    const { getByTestId } = render(<MarkdownRenderer content={`The page: ${PH('reviews.corp.example')}`} blockedLinks={[link()]} slotKey="s1" />)
+  it('shows the label, the host alone and Inspect, never the record path or query length', () => {
+    const { getByTestId, queryByTestId } = render(<MarkdownRenderer content={`The page: ${PH('reviews.corp.example')}`} blockedLinks={[link()]} slotKey="s1" />)
     const chip = getByTestId('blocked-link-chip')
     expect(chip.textContent).toContain('Blocked link')
-    expect(getByTestId('blocked-link-target').textContent).toBe('reviews.corp.example/reviews')
-    expect(getByTestId('blocked-link-query').textContent).toBe('⋯ query 290 chars')
+    // The host is the only thing the chip can prove about its own link: the
+    // one record on the host does not prove it is this chip's.
+    expect(getByTestId('blocked-link-target').textContent).toBe('reviews.corp.example')
+    expect(queryByTestId('blocked-link-query')).toBeNull()
+    expect(chip.textContent).not.toContain('/reviews')
+    expect(chip.textContent).not.toContain('290')
     expect(getByTestId('blocked-link-inspect').textContent).toBe('Inspect')
     expect(chip.closest('a')).toBeNull()
   })
+
+
 
   it('Inspect opens the card after the paragraph with the prototype sections', () => {
     const { getByTestId, container } = render(<MarkdownRenderer content={PH('reviews.corp.example')} blockedLinks={[link()]} slotKey="s1" />)
@@ -385,12 +391,12 @@ describe('Blocked link chip', () => {
       expect(blockBefore(cards[0])).toMatch(/^Link 4: /)
     })
 
-    it('labels the chip with the address when one kept address is recorded twice', () => {
+    it('labels the chip with the host alone when one kept address is recorded twice', () => {
       const same = link({ path: '/same', url: `https://${host}/same?q=${'x'.repeat(250)}` })
       const body = `First ${PH(host)} and again ${PH(host)}.`
-      const { getAllByTestId } = render(<MarkdownRenderer content={body} blockedLinks={[same, { ...same }]} slotKey="s1" />)
-      for (const t of getAllByTestId('blocked-link-target')) expect(t.textContent).toBe(`${host}/same`)
-      expect(getAllByTestId('blocked-link-query')).toHaveLength(2)
+      const { getAllByTestId, queryAllByTestId } = render(<MarkdownRenderer content={body} blockedLinks={[same, { ...same }]} slotKey="s1" />)
+      for (const t of getAllByTestId('blocked-link-target')) expect(t.textContent).toBe(host)
+      expect(queryAllByTestId('blocked-link-query')).toEqual([])
     })
 
     it('labels the chip with the host alone when two records differ', () => {
@@ -404,8 +410,7 @@ describe('Blocked link chip', () => {
       const twin = link({ path: '/same', url: null, url_withheld: 'credential', query_chars: 26 })
       const body = `First ${PH(host)} and second ${PH(host)}.`
       const { getAllByTestId, getByTestId } = render(<MarkdownRenderer content={body} blockedLinks={[twin, { ...twin }]} slotKey="s1" />)
-      // Every field the chip shows is true of either record, so it keeps them.
-      for (const t of getAllByTestId('blocked-link-target')) expect(t.textContent).toBe(`${host}/same`)
+      for (const t of getAllByTestId('blocked-link-target')) expect(t.textContent).toBe(host)
       fireEvent.click(getAllByTestId('blocked-link-inspect')[1])
       const card = getByTestId('blocked-link-card')
       expect(within(card).getAllByTestId('blocked-link-entry')).toHaveLength(1)

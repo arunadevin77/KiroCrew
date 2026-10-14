@@ -9757,7 +9757,6 @@
       "link_open_confirm_title": "Ouvrir {{host}} une seule fois ?",
       "link_open_once": "Ouvrir une fois",
       "link_opened": "Ouvert dans un nouvel onglet — ce lien reste bloqué ici",
-      "link_query": "⋯ requête {{chars}} caractères",
       "link_reason_credential": "Raison : l’adresse semblait contenir un secret.",
       "link_reason_encoding": "Raison : l’adresse contient une longue suite de caractères échappés, ce qui peut dissimuler des données. Un titre écrit dans une écriture non latine peut avoir la même apparence.",
       "link_reason_generic": "Raison : elle correspond à une règle visant les liens susceptibles d’envoyer des données de conversation à l’extérieur.",

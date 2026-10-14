@@ -17,6 +17,13 @@ for (const [name, forged] of [
   it(`${name}: a forged chip opens the honest host list`, () => {
     const { getAllByTestId, getByTestId } = render(
       <MarkdownRenderer content={`Real: [REDACTED: suspicious URL to ${H}]\n\nOther: ${forged}`} blockedLinks={rec} slotKey="s1" />)
+    // Neither chip names the one record as its own link: both show the host
+    // alone, with no path and no query length.
+    for (const c of getAllByTestId('blocked-link-chip')) {
+      expect(within(c).getByTestId('blocked-link-target').textContent).toBe(H)
+      expect(within(c).queryByTestId('blocked-link-query')).toBeNull()
+      expect(c.textContent).not.toContain('/real')
+    }
     const chips = getAllByTestId('blocked-link-inspect')
     expect(chips).toHaveLength(2)
     for (const chip of chips) {

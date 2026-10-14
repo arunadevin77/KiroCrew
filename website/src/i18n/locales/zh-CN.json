@@ -9477,7 +9477,6 @@
       "link_open_confirm_title": "打开 {{host}} 一次？",
       "link_open_once": "打开一次",
       "link_opened": "已在新标签页中打开 — 此链接在这里仍保持拦截",
-      "link_query": "⋯ 查询 {{chars}} 字符",
       "link_reason_credential": "原因：该地址看起来携带了密钥。",
       "link_reason_encoding": "原因：该地址包含一长串转义字符，可能借此隐藏数据。以非拉丁文字书写的标题看起来也可能如此。",
       "link_reason_generic": "原因：它匹配了一条针对可能把对话数据发送出去的链接的规则。",
