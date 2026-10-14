@@ -381,6 +381,8 @@ class TerminalCoordinator(ManagerComponent):
             except Exception:
                 logger.debug("queue-depth re-emit failed after terminal", exc_info=True)
         if not self._manager._on_done:
+            # No parent consumer is wired: nothing will ever deliver it here.
+            info._report_delivered = True
             return True
         if info.id in getattr(self._manager, "_teardown_cancelled_ids", ()):
             # The parent this would report to has been retired. ``_on_done``
@@ -418,6 +420,8 @@ class TerminalCoordinator(ManagerComponent):
             # from depending on its age backstop in the ordinary case -- an id is retained
             # until the run's delivery is actually suppressed rather than for a fixed span.
             self._manager._teardown_cancelled_ids.discard(info.id)
+            # Owed only to the parent that ended, so this skip settles it.
+            info._report_delivered = True
             return True
         try:
             await asyncio.wait_for(self._manager._on_done(info), timeout=_ON_DONE_TIMEOUT)

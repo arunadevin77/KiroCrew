@@ -38,6 +38,7 @@ from kiro_crew.config.schema import requires_restart
 from kiro_crew.subagent import SubagentManager
 from kiro_crew.subagent_manager.admission import SpawnAdmissionCoordinator, taskq_bridge
 from kiro_crew.subagent_wait_reasons import QUEUED_WAIT_EXPIRED_TEXT
+from kiro_crew.testing.wait import async_wait_until
 
 pytestmark = pytest.mark.usefixtures("healthy_host_memory")
 
@@ -80,7 +81,9 @@ class _Harness:
             self.done.append((info.id, dict(extra)))
 
     async def on_done(self, info: Any) -> None:
+        # A gateway that delivered says so, as every real delivering route does.
         self.delivered.append(info)
+        info._report_delivered = True
 
     def state(self, agent_id: str) -> str:
         rec = self.mgr._taskq.get(agent_id)
@@ -690,6 +693,33 @@ class TestAnExpiryOutlivesItsProcess:
                 assert [r.id for r in later.owed_reports(taskq.KIND_SUBAGENT)] == [info.id]
             finally:
                 later.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    async def test_a_report_parked_without_an_acknowledgement_stays_owed(self, monkeypatch) -> None:
+        # A gateway route that parks or swallows the report and returns normally,
+        # setting none of the parked or failed flags, has not delivered it. Only
+        # the route's positive acknowledgement clears the owed mark.
+        async with _harness(monkeypatch) as h:
+            await _reload_bound(h, 60)
+            info = await h.spawn()
+            parked: list[Any] = []
+
+            async def parks_silently(record: Any) -> None:
+                parked.append(record)
+
+            h.mgr._on_done = parks_silently
+            await _recheck(h, 2)
+            await async_wait_until(
+                lambda: parked and not [t for t in h.mgr._report_tasks if not t.done()],
+                describe=lambda: f"parked={len(parked)} reports={len(h.mgr._report_tasks)}",
+            )
+            await h.settle()
+            assert [r.id for r in parked] == [info.id]
+            assert parked[0]._digest_held is False
+            assert parked[0]._delivery_queued is False
+            assert parked[0]._report_undelivered is False
+            assert _owed_ids(h) == [info.id]
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(60)

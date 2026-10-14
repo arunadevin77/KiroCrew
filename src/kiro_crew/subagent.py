@@ -3016,13 +3016,20 @@ class SubagentInfo:
     # owes until it reaches the parent (``finish(..., report_owed=True)``). The
     # gateway reads it to carry that debt with a digest or a queued announce
     # (``SubagentDelivery.report_owed``); the report's done-callback clears the
-    # store mark itself only when neither parked it.
+    # store mark itself only on ``_report_delivered``.
     _report_owed: bool = False
+    # True once the route ``_on_done`` took has positively delivered this report:
+    # the parent's turn consumed the injection, the blocking tool collected it
+    # inline, or the route has no conversation and its notification is the whole
+    # delivery. A route that parks the report (a digest hold, a queued announce)
+    # or gives up on it leaves this unset, and so does any route added later that
+    # does not say so; a memory-wait expiry's owed mark is cleared only on it.
+    _report_delivered: bool = False
     # True once an injection of this report was given up on: every attempt the
     # gateway made failed, so at most a failure notice was queued for the
     # parent's next turn (``notify_injection_failed``). ``_on_done`` still
-    # returns, so this is the only sign the parent was never told, and a
-    # memory-wait expiry's owed mark is not cleared while it is set.
+    # returns, so this is the only sign the parent was never told, and the run
+    # loop writes no ``delivered`` tombstone while it is set.
     _report_undelivered: bool = False
     # True when the gateway QUEUED this completion's injection because the
     # parent's slot was busy. Delivery is not consumption: the announce sits in
@@ -3563,9 +3570,13 @@ DELIVERY_ROUTING_FIELDS: "dict[str, str]" = {
     # A memory-wait expiry's report is owed in the store. It says who clears that mark,
     # not where the outcome is: the parked states above say that.
     "_report_owed": NOT_DELIVERY_STATE,
+    # The route positively delivered the report. Set inside ``_on_done``, before
+    # ``_reported_to_parent``, it decides only whether a memory-wait expiry's
+    # owed mark may be cleared; the teardown gate reads the states above.
+    "_report_delivered": NOT_DELIVERY_STATE,
     # An injection was given up on. Nothing in this process delivers the report
     # again, so there is no parked delivery for a teardown to stop; it decides
-    # only whether a memory-wait expiry's owed mark may be cleared.
+    # only whether the run's ``delivered`` tombstone is written.
     "_report_undelivered": NOT_DELIVERY_STATE,
     # Run bookkeeping these modules also write. None of them says where an outcome is.
     "_finalized": NOT_DELIVERY_STATE,

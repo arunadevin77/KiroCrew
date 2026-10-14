@@ -506,8 +506,8 @@ class WaveDigestCoordinator(ManagerComponent):
         *delivered*.
 
         A delivered expiry is owed no report any more. One whose carrier the
-        gateway gave up on (``_report_undelivered``) keeps its mark, so the next
-        start replays it. Either way it has no run folder, so it is left out of
+        gateway did not acknowledge (``_report_delivered`` unset) keeps its
+        mark, so the next start replays it. Either way it has no run folder, so it is left out of
         the tombstones; the rest are returned for them.
         """
         owed = [delivery.agent_id for delivery in deliveries if delivery.report_owed]
@@ -600,8 +600,9 @@ class WaveDigestCoordinator(ManagerComponent):
         deliveries, info._digest_settle_deliveries = info._digest_settle_deliveries, []
         # ``_on_done`` also returns normally when the gateway gave up on the
         # digest's channel or cron injection, so the held expiries it carried
-        # stay owed for the replay.
-        deliveries = self._settle_owed_reports(deliveries, delivered=not info._report_undelivered)
+        # are cleared only on the carrier's positive acknowledgement
+        # (``_report_delivered``) and otherwise stay owed for the replay.
+        deliveries = self._settle_owed_reports(deliveries, delivered=info._report_delivered)
         if not deliveries:
             return
         try:

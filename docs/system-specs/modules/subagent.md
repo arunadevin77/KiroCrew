@@ -2935,13 +2935,18 @@ Specified in [taskq.md](taskq.md); this section is the manager's side of it.
   transaction; once the report has reached the parent the mark is cleared
   (`taskq_clear_owed_reports` posts `TaskStore.mark_reported`). For a report
   the gateway delivered directly that is when the report task has returned
-  True; one that returned False (the injection timed out, or `_on_done`
+  True AND the route acknowledged delivery: `_report_delivered`, set where the
+  report lands (`_inject_with_retry` once the parent's turn consumed it, a
+  blocking tool's inline collection, a route with no conversation whose
+  notification is its whole delivery, the reporter's own no-consumer and
+  retired-parent skips). `taskq_clear_owed_report_if_delivered` clears on that
+  acknowledgement and on nothing else, so a route that parks or swallows the
+  report without saying so (including one added later) leaves it owed for the
+  replay. One that returned False (the injection timed out, or `_on_done`
   raised), raised or was cancelled stays owed. So does one whose task returned
   True although the gateway gave up on the injection: a channel or cron
-  parent's failed attempts are swallowed inside `_on_done`, so
-  `notify_injection_failed` (and the cron arm that swallows a failure without
-  a notice) marks the record `_report_undelivered`, and
-  `taskq_clear_owed_report_if_delivered` leaves the mark. A report it PARKED is not
+  parent's failed attempts are swallowed inside `_on_done` and never
+  acknowledge. A report it PARKED is not
   delivered when its task returns: a wave member held for its digest
   (`_digest_held`), an announce queued behind a busy slot
   (`_delivery_queued`) or one handed to an idle slot's turn is then only in
@@ -2951,10 +2956,11 @@ Specified in [taskq.md](taskq.md); this section is the manager's side of it.
   or the announce's ledger entry, and the settle that delivers it
   (`_settle_digest_holds`, `settle_queued_delivery`) clears the mark instead of
   writing a `delivered` tombstone (the row has no run folder). The digest settle
-  clears it only on delivery: it runs whenever `_on_done` returns, so when the
-  gateway gave up on the digest's channel or cron injection (the flusher, the
-  last member or the reaper's forced flush, carries `_report_undelivered`) it
-  detaches the held expiries without clearing them, and they stay owed. A
+  clears it only on the flusher's acknowledgement: it runs whenever `_on_done`
+  returns, so when the gateway gave up on the digest's channel or cron
+  injection (the flusher, the last member or the reaper's forced flush, never
+  sets `_report_delivered`) it detaches the held expiries without clearing
+  them, and they stay owed. A
   digest whose flusher reports to a parent a teardown retired clears the held
   expiry's mark, since its parent is gone. A process lost in between, or a report the
   shutdown drain cancelled, leaves the row owed, and the next start reports it:

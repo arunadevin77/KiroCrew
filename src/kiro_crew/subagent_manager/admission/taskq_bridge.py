@@ -946,10 +946,10 @@ class _TaskqBridgeMixin(ManagerComponent):
         restart in between leaves it owed for the replay. A report that did not
         reach the parent stays owed too: one that returned False (the injection
         timed out, or ``_on_done`` raised), raised, or was cancelled with its
-        process, and one whose task returned True although the gateway gave up
-        on the injection (``_report_undelivered``: a channel or cron parent's
-        attempts all failed, and the gateway swallowed that). The next start
-        replays it.
+        process, and one whose task returned True without the gateway
+        acknowledging delivery (``_report_delivered`` unset: a channel or cron
+        parent's attempts all failed and the gateway swallowed that, or a route
+        parked it). The next start replays it.
         """
         info = self._manager._report_owners.get(report) if report is not None else None
 
@@ -971,13 +971,16 @@ class _TaskqBridgeMixin(ManagerComponent):
     def taskq_clear_owed_report_if_delivered(self, info: Any) -> None:
         """Clear *info*'s owed report if the report task that just returned True delivered it.
 
-        Not when the gateway parked it (``_digest_held``, ``_delivery_queued``),
-        whose settle clears it on delivery, nor when it gave up on the injection
-        (``_report_undelivered``). A record that owes nothing is left alone.
+        Only on the positive acknowledgement the delivering route sets where the
+        report lands (``_report_delivered``), never on the absence of a parked
+        or failed flag: a route that parks the report (a digest hold, a queued
+        announce, whose settle clears it on delivery), gives up on it, or is
+        added later without acknowledging it leaves the mark owed for the
+        replay. A record that owes nothing is left alone.
         """
         if not info._report_owed:
             return
-        if info._digest_held or info._delivery_queued or info._report_undelivered:
+        if not info._report_delivered:
             return
         self.taskq_clear_owed_reports([info.id])
 
