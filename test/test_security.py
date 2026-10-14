@@ -7836,6 +7836,55 @@ class TestEnvDumpGrepAwsNarrowing:
         # A hyphenated token beside a real selector does not excuse the selector.
         "env | grep -e aws-vault -e AWS_SECRET",
         "printenv | grep -E 'aws-cli|AWS_SESSION_TOKEN'",
+        # Inside a BRACKET EXPRESSION the ``-`` is a RANGE, not a literal hyphen, so
+        # ``[AWS-x]`` selects every variable holding a character in ``S``..``x`` --
+        # the credentials among them -- even though its text reads like the exempt
+        # hyphenated-token shape. A bracket operand is a regex selector, so the
+        # word boundary applies and the dump is refused on every grep spelling,
+        # flag, quote and fd form.
+        "env | grep '[AWS-x]'",
+        'env | grep "[AWS-x]"',
+        "env|grep '[AWS-x]'",
+        "env | grep -E '[AWS-x]'",
+        "env | grep -P '[AWS-x]'",
+        "env | egrep '[AWS-x]'",
+        "printenv | grep '[AWS-z]'",
+        "env | grep '[0-9AWS-z]'",
+        "env 2>&1 | grep '[AWS-z]'",
+        "set | grep '[AWS-s]'",
+        # A leading ``]`` right after ``[`` (or after a negating ``^``) is a LITERAL
+        # class member, not the class terminator, so the range still selects the
+        # credential variables and the dump stays refused.
+        "env | grep '[]AWS-x]'",
+        "env | grep '[^AWS-x]'",
+        "env | grep '[^]AWS-x]'",
+        # A POSIX bracket SUBEXPRESSION -- a character class ``[:digit:]``, an
+        # equivalence class ``[=a=]`` or a collating symbol ``[.ch.]`` -- carries an
+        # inner ``]`` that does NOT close the enclosing class, so the ``AWS-`` range
+        # after it still selects the credential variables and the dump stays refused.
+        "env | grep '[[:digit:]AWS-x]'",
+        "env | grep '[[:alpha:]AWS-x]'",
+        "env | grep -E '[[:digit:]AWS-z]'",
+        "printenv | grep '[[:space:]AWS-z]'",
+        "env | grep '[0-9[:punct:]AWS-z]'",
+        "env | grep '[^[:space:]AWS-x]'",
+        "env | grep '[[:digit:][:alpha:]AWS-x]'",
+        "env | grep '[[=a=]AWS-x]'",
+        "env | grep '[[.ch.]AWS-x]'",
+        # The selector is a BLANKET one: a bracket expression in grep's own operand
+        # that carries the ``AWS`` prefix is refused whatever its internal shape, so
+        # a regex prefix before the ``[`` (an anchor), any number of stacked POSIX
+        # subexpressions, or other class content ahead of the range does not get a
+        # dump past it.
+        "env | grep '^[AWS-x]'",
+        "env | grep '[[:digit:][:space:][:alpha:][:punct:]AWS-x]'",
+        "env | grep '[.*AWS-x]'",
+        "env | grep '[0-9[:alnum:][:punct:][:space:]AWS-z]'",
+        # The gaps are ordered existence across the WHOLE text and cross line
+        # breaks, so a grep -E pattern that puts the selector on a second line
+        # (grep treats the newline as a pattern separator) is still refused.
+        "env | grep -E 'nevermatch\nAWS_SECRET_ACCESS_KEY'",
+        "env | grep -E 'nomatch\n[AWS-x]'",
         # The selecting stage is not the first stage after the dump.
         "env | grep -v PATH | grep AWS_SECRET",
         "env | tr ' ' '\\n' | grep AWS_SECRET",
@@ -7963,6 +8012,27 @@ class TestEnvDumpGrepAwsNarrowing:
         "printenv | zgrep 'aws-account-id='",
         "printenv | grep aws-cli",
         "env | grep AWS-1",
+        # A bracket expression that does NOT span the AWS prefix is not this rule's
+        # selector, and a plain hyphenated token stays a literal even when a bracket
+        # operand sits elsewhere in the pipeline: the range boundary is scoped to an
+        # ``AWS-`` that an open bracket actually reaches.
+        "env | grep '[0-9]' | grep aws-vault",
+        "env | grep '[a-z]'",
+        # A ``[`` that is NOT grep's own operand -- a shell ``[``/``[[`` test, a jq or
+        # Terraform ``["key"]`` index, a ``[tag]`` in echo text -- is not a grep range
+        # over the dump, so an ordinary command that only happens to carry such a
+        # bracket (often beside a hyphenated ``aws-`` token or a non-secret
+        # ``AWS_PROFILE``) is allowed.
+        "env | grep -q KIROCREW_ && [ -x /usr/local/bin/aws-vault ]",
+        "env | grep -q '^AWS_VAULT=' && [ -x \"$(command -v aws-vault)\" ]",
+        'printenv | grep -q AWS_PROFILE || [ -f "$HOME/.config/aws-sso-util/config" ]',
+        "env | grep -c KIRO; [[ -d ~/aws-cdk-app ]] && cd ~/aws-cdk-app",
+        'env | grep -q CI && [ "$GITHUB_REF" = refs/heads/aws-migration ]',
+        'env | grep -q KIROCREW_HOME && echo "[aws-vault] profile ready"',
+        "env | grep TF_VAR_ && terraform state show 'module.vpc[\"aws-east\"]'",
+        "env | grep -q CI && jq '.profiles[\"aws-dev\"]' profiles.json",
+        'printenv | grep -i kirocrew && [ -n "$(docker ps -q -f name=aws-local)" ]',
+        'env | grep.exe KIROCREW_ && [ -x "/c/Program Files/aws-vault/aws-vault.exe" ]',
         # No filter at all.
         "env | cut -d= -f1 | sort",
         "docker exec kirocrew printenv KIROCREW_PORT",

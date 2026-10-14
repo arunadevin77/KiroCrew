@@ -312,7 +312,14 @@ def _url_payload_command(n: int) -> str:
 #: ``launcher.terminate``. Ten lines, of which four are the comprehension and six the
 #: reason every entry in that list carries. No matching rule, no threshold and no pass
 #: moved -- a target was added to a list the gate already walks.
-_PACKAGE_LINE_BUDGET = 29_175
+#:
+#: Raised for the grep bracket-range selector: a ``[...]`` operand reads ``-`` as
+#: a range, so ``[AWS-x]`` selects the AWS credentials while its text looks like
+#: the exempt hyphenated-token shape. Adds a blanket fail-closed bracket selector
+#: — a single operand scan to a ``[`` in grep's own pattern with the ``AWS``
+#: prefix after it, refused whatever the bracket's internal shape — with its
+#: explaining comment, and widens the literal-selector gap to cross line breaks.
+_PACKAGE_LINE_BUDGET = 29_215
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

@@ -114,19 +114,48 @@ _AWS_VAR_SELECTOR = (
     rf"|_{_AWS_SECRET_VAR_NAMES}"
     rf"|_(?:{_AWS_SECRET_WORD_PREFIXES})(?![A-Za-z0-9_]))"
 )
-# grep reads its operand as a plain regex, so ``AWS-`` before a name character is
-# a literal, which no secret-bearing name or credential value contains
-# (``aws-account-id=``); its selector lets that shape pass, while any other hyphen
-# can take a quantifier (``AWS-?``) and still ends the prefix. Only grep gets this.
-# Where grep ignores that text instead (a PCRE comment, an optional group, a
-# bracket), the rest of the pattern is judged as main judges it with a plain word.
+# grep reads a PLAIN LITERAL operand as text, so ``AWS-`` before a name character
+# is a literal there, which no secret-bearing name or credential value contains
+# (``aws-account-id=``, ``aws-vault``); the grep selector lets that one shape pass,
+# while any other hyphen can take a quantifier (``AWS-?``) and still ends the prefix.
+# Only grep gets even this much, and only for a literal: ``-`` is literal in grep's
+# regex EXCEPT inside a bracket expression ``[...]``, where it is a RANGE operator.
 # awk EVALUATES ``AWS-x`` as code on the variable ``AWS``, and sed lets ANY
 # character delimit a regex address or an ``s`` command (``\-AWS-p`` is the regex
-# ``AWS``), so a ``-`` in sed text cannot be read as a literal; both keep the
-# boundary above.
+# ``AWS``), so a ``-`` in awk or sed text cannot be read as a literal; both keep the
+# bare-prefix boundary above.
 _AWS_TEXT_VAR_SELECTOR = _AWS_VAR_SELECTOR.replace(
     r"AWS(?:(?![A-Za-z0-9_])", r"AWS(?:(?![A-Za-z0-9_]|-[A-Za-z0-9_])", 1
 )
+# The hyphen exemption above is sound ONLY for a plain literal operand. Inside a
+# grep bracket expression ``[...]`` the ``-`` is a RANGE operator, so ``[AWS-x]``
+# selects every variable whose name holds a character in ``S``..``x`` -- the AWS
+# credentials among them -- even though its literal text reads like the exempt
+# hyphenated-token shape. A bracket expression is a regex selector, not a literal,
+# so the word boundary does not excuse it. This rides beside the literal selector
+# in the grep rule only; awk and sed already keep the bare boundary, so their
+# bracket forms are refused by their own selector.
+#
+# The check is a BLANKET fail-closed one, NOT a parse of the bracket's grammar.
+# Parsing it precisely -- which ``]`` closes the class, whether a leading ``^`` or
+# ``]`` is a member, how many POSIX subexpressions (``[:digit:]``, ``[=a=]``,
+# ``[.ch.]``) nest inside, what regex prefix (an anchor, another class) sits ahead
+# of it -- is a surface a crafted operand can always walk around one shape at a
+# time. Instead: if grep's OWN operand contains a bracket expression and the
+# ``AWS`` prefix appears after that ``[`` in the same operand, the operand is a
+# character-class/range selector that can reach the AWS credential variables,
+# whatever its internal shape, and the dump is refused.
+#
+# A SINGLE scan reaches the ``[``: ``[^|&;]`` crosses grep's flags, the whitespace
+# before the operand, the opening quote and any regex prefix (an anchor, a
+# wildcard) but stops at a pipeline/statement separator (``|``, ``&``, ``;``), so
+# the ``[`` it finds is grep's own pattern and a ``[`` in a later stage or command
+# -- a shell ``[``/``[[`` test, a jq or Terraform ``["key"]`` index, a ``[tag]`` in
+# echo text past a ``&&`` -- is out of reach. One scan to the ``[`` rather than a
+# flags scan OVERLAPPING an operand scan is what keeps the match linear in the
+# input length (overlapping greedy classes make it quadratic per grep position).
+# ``[^\s'"|&;]`` then bounds the bracket content to the one operand.
+_AWS_BRACKET_RANGE_SELECTOR = r"[^|&;]*\[[^\s'\"|&;]*AWS"
 
 # Spellings that DUMP the environment. ``environ`` is one because
 # ``/proc/<pid>/environ`` IS the process environment under a path, and ``typeset``
@@ -183,8 +212,7 @@ _ENV_DUMP_GREP_AWS_PATTERN = (
     rf"(?<![\w-]){_ENV_DUMP_VERBS}(?!\w)"
     + r".*\|.*"
     + r"(?<![\w-])[a-z0-9]{0,5}grep(?!\w)"
-    + r".*"
-    + _AWS_TEXT_VAR_SELECTOR
+    + rf"(?:(?s:.*){_AWS_TEXT_VAR_SELECTOR}|{_AWS_BRACKET_RANGE_SELECTOR})"
 )
 _ENV_DUMP_AWK_SED_AWS_PATTERN = (
     rf"(?<![\w-]){_ENV_DUMP_VERBS}(?!\w)"
@@ -480,8 +508,10 @@ BUILTIN_DENIED_RULES: list[DeniedCommandRule] = [
             "Blocks piping an environment dump (`env`, `printenv`, `set`, `export -p`, "
             "`typeset`, `/proc/<pid>/environ`) through grep for the bare "
             "`AWS`/`AWS_` prefix, a secret-bearing AWS variable, or a truncation of one "
-            "such as `AWS_S`, which leaks any credentials stored there. Selecting a named "
-            "non-secret variable such as `AWS_REGION` or `AWS_SDK_LOAD_CONFIG` is allowed."
+            "such as `AWS_S`, which leaks any credentials stored there. A bracket-expression "
+            "operand whose range covers the AWS prefix (`[AWS-x]`) is a selector too, so it "
+            "is refused; selecting a named non-secret variable such as `AWS_REGION` or "
+            "`AWS_SDK_LOAD_CONFIG`, or a plain hyphenated token such as `aws-vault`, is allowed."
         ),
     ),
     DeniedCommandRule(

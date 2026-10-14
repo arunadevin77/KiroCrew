@@ -1415,6 +1415,23 @@ class TestIsDeniedReDoSResistance:
         assert self._elapsed("aws " + ("-x " * 5000)) < self._BUDGET_SECONDS
         assert self._elapsed("aws " + ("--foo=bar " * 5000)) < self._BUDGET_SECONDS
 
+    def test_env_grep_bracket_operand_scan_stays_fast(self):
+        # The env-grep bracket selector reaches its operand with ONE scan, not a
+        # flags scan overlapping an operand scan: two overlapping greedy classes
+        # over a long run make the per-grep-position cost quadratic, and the
+        # ``env | grep …`` prefix supplies many grep positions, so the product is
+        # a multi-second stall of a tier that applies no length cap. A single scan
+        # to the ``[`` keeps it linear.
+        pathological = "env | " + ("grep " * 400) + ("x" * 8000)
+        assert self._elapsed(pathological) < self._BUDGET_SECONDS
+        # The always-on keystone tier applies no length cap, so pin it there too.
+        from kiro_crew.security import _check_env_credential_access
+
+        assert (
+            self._cpu_cost(lambda: _check_env_credential_access(pathological))
+            < self._BUDGET_SECONDS
+        )
+
     def test_mid_dotstar_chain_spam_stays_linear(self, monkeypatch):
         """``python.*boto3.*get_credentials`` is polynomial per pattern under a single
         ``re.search``; fragment-splitting on the top-level ``.*`` gaps keeps it linear even
