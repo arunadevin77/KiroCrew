@@ -1225,6 +1225,7 @@ class TaskRunner:
                 status="planned",
                 task_id=task_id,
                 work_dir=str(task_dir),
+                owns_task_dir=owns_task_dir,
                 name=workflow_name or auto_name(spec_content or original_input, spec_path),
                 workflow_id=workflow_id,
                 workflow_slug=workflow_slug,
@@ -1475,6 +1476,12 @@ class TaskRunner:
             _override = _resolve_workspace_dir(workspace_dir)
             if _override and run.status == "planned":
                 run.work_dir = _override
+                # The dir is now user-supplied, not runner-created scratch, even
+                # if plan() set owns_task_dir=True for a plan made with no
+                # override. Clear it so init_workspace never git-inits the user's
+                # own folder (and never redirects execution into an empty
+                # worktree that excludes the folder's existing files).
+                run.owns_task_dir = False
 
             # Guard: limit concurrent running tasks — check BEFORE mutating state.
             # With the task queue attached the cap is the lane's: excess steps
@@ -2996,6 +3003,8 @@ class TaskRunner:
                         "worktree_path": run.worktree_path,
                         "repo_root": run.repo_root,
                         "git_enabled": run.git_enabled,
+                        "owns_task_dir": run.owns_task_dir,
+                        "git_in_place": run.git_in_place,
                         "commit_hashes": run.commit_hashes,
                         # Produced once by `_extract_lesson` during the run and
                         # NOT recomputable: the lesson text is separately
@@ -3035,6 +3044,7 @@ class TaskRunner:
                                 # possibly-executed step.
                                 "resume_hint": t.resume_hint or "",
                                 "verification": t.verification,
+                                "diff_reviewed": t.diff_reviewed,
                             }
                             for t in run.tasks
                         ],
@@ -3221,6 +3231,7 @@ class TaskRunner:
                         result=t.get("result", ""),
                         resume_hint=t.get("resume_hint", ""),
                         verification=str(t.get("verification", "")),
+                        diff_reviewed=bool(t.get("diff_reviewed", False)),
                         attempts=t.get("attempts", 1),
                         depends_on=t.get("depends_on", []),
                         requires_approval=t.get("requires_approval", False),
@@ -3256,6 +3267,8 @@ class TaskRunner:
                     # coordination" behaviour instead of committing into a path
                     # that is not identified.
                     git_enabled=bool(item.get("git_enabled", bool(_worktree_path))),
+                    owns_task_dir=bool(item.get("owns_task_dir", False)),
+                    git_in_place=bool(item.get("git_in_place", False)),
                     commit_hashes=list(item.get("commit_hashes", [])),
                     lessons_learned=list(item.get("lessons_learned", [])),
                     original_input=item.get("original_input", ""),
