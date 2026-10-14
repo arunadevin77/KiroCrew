@@ -7,6 +7,7 @@
  * The router is real and the URL is read back, because the bug this pins was a
  * URL that kept asking for the preview after the page had been kept.
  */
+import { Suspense } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -33,6 +34,26 @@ vi.mock('../hooks/useSandboxDoc', () => ({
     return { url, pending: false, failed: false, stalled: false, retry: vi.fn() }
   },
 }))
+
+/** The router's navigation, held. React Router 7 commits a navigation inside
+ *  `startTransition`, so the tab's own note (an ordinary update) can be on screen
+ *  while the URL still asks for the preview. `hold` keeps that navigation pending,
+ *  which is what a loaded runner does to it, until the test releases it. */
+const nav = vi.hoisted(() => ({ hold: null as null | { promise: Promise<void>; release: () => void } }))
+
+function holdNavigation() {
+  let release = () => {}
+  const promise = new Promise<void>((resolve) => { release = () => { nav.hold = null; resolve() } })
+  nav.hold = { promise, release }
+  return () => release()
+}
+
+/** Suspends the render that leaves the preview while the navigation is held. */
+function NavigationGate() {
+  const { search } = useLocation()
+  if (nav.hold && !search.includes('dashboard=preview')) throw nav.hold.promise
+  return null
+}
 
 const LAZY = { timeout: 5000 }
 const MANIFEST = { id: 'project-report', version: 1, title: 'Project report', fields: [] } as unknown as DashboardManifest
@@ -68,6 +89,7 @@ function Host() {
   return (
     <>
       <span data-testid="url">{location.search}</span>
+      <NavigationGate />
       {/* A later preview link, as MembersPage's opener writes it. */}
       <button type="button" data-testid="reopen" onClick={() => setParams({ member: 'Atlas', dashboard: 'preview' }, { replace: true })}>reopen</button>
       <CrewDashboardTab
@@ -88,7 +110,9 @@ function renderHost() {
       <Provider store={createTestStore()}>
         <ThemeProvider>
           <MemoryRouter initialEntries={['/members?member=Atlas&dashboard=preview']}>
-            <Host />
+            <Suspense fallback={null}>
+              <Host />
+            </Suspense>
           </MemoryRouter>
         </ThemeProvider>
       </Provider>
@@ -106,6 +130,7 @@ describe('CrewDashboardTab on a preview link', () => {
     vi.restoreAllMocks()
     mint.hold = false
     mint.last = null
+    nav.hold = null
   })
 
   it('Keep names the page the frame has MOUNTED, never a newer read still being minted', async () => {
@@ -287,7 +312,35 @@ describe('CrewDashboardTab on a preview link', () => {
     fireEvent.click(discardButton)
     await waitFor(() => expect(discard).toHaveBeenCalledWith('atlas', 'Atlas', STAGED_MS))
     expect(await screen.findByTestId('dashboard-preview-outcome', undefined, LAZY)).toHaveAttribute('data-outcome', 'discarded')
-    expect(screen.getByTestId('url').textContent).toBe('?member=Atlas')
+    await waitFor(() => expect(screen.getByTestId('url').textContent).toBe('?member=Atlas'))
+  })
+
+  it('Discard leaves the preview URL when the navigation commits after the note', async () => {
+    let dropped = false
+    vi.spyOn(api, 'memberDashboard').mockImplementation(async (_s, _m, _l, preview) => {
+      if (preview) {
+        if (dropped) throw NO_PREVIEW()
+        return body('staged', { preview: true, staged_ms: STAGED_MS })
+      }
+      return body('kept')
+    })
+    vi.spyOn(api, 'memberDashboardPreviewDiscard').mockImplementation(async () => {
+      dropped = true
+      return { ok: true }
+    })
+    renderHost()
+    const discardButton = await screen.findByTestId('dashboard-preview-discard', undefined, LAZY)
+    await waitFor(async () => { await drawFrame(); expect(discardButton).not.toBeDisabled() }, LAZY)
+    const release = holdNavigation()
+    fireEvent.click(discardButton)
+    // The note is an ordinary update and lands first; the URL is the router's
+    // transition and is still the preview link, so reading it now proves nothing.
+    expect(await screen.findByTestId('dashboard-preview-outcome', undefined, LAZY)).toHaveAttribute('data-outcome', 'discarded')
+    expect(screen.getByTestId('url').textContent).toBe('?member=Atlas&dashboard=preview')
+    release()
+    await waitFor(() => expect(screen.getByTestId('url').textContent).toBe('?member=Atlas'))
+    expect(screen.getByTestId('dashboard-preview-outcome')).toHaveAttribute('data-outcome', 'discarded')
+    expect(screen.queryByTestId('dashboard-preview-discard')).toBeNull()
   })
 })
 
