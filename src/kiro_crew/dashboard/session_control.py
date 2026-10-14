@@ -66,6 +66,7 @@ from kiro_crew.config.loader import (
     resolve_agent_bindings,
 )
 from kiro_crew.config.resolution import DEGRADED_WHOLE_CONFIG
+from kiro_crew.context_assembly.markers import _apply_marker_spans, _marker_spans
 from kiro_crew.crew_log import emit as crew_log_emit
 from kiro_crew.crew_log.session_tree_projection import projection
 from kiro_crew.dashboard.chat_delivery import sanitize_outbound
@@ -7948,22 +7949,34 @@ MAX_SEND_MESSAGE_CHARS = MAX_LONG_STRING
 #: so it can weigh the instruction as coming from a peer session, not its user.
 _SEND_PROVENANCE = "[sent by session {caller} via {via}]\n\n"
 
-#: A provenance-shaped opener inside a caller's body. The envelope is a trust label
-#: the target model weighs, and the body is caller-controlled, so a body carrying
-#: its own ``[sent by session <other> via …]`` line could pose as a different peer.
-#: Tolerates case, spacing, invisible format chars and a fullwidth bracket.
-_GAP = r"[\s\u00ad\u200b-\u200f\u2060-\u2064\ufeff]*"
-_FORGED_PROVENANCE_RE = re.compile(rf"[\[\uff3b]{_GAP}sent{_GAP}by{_GAP}session\b", re.IGNORECASE)
+#: A provenance-shaped opener inside a caller's body. The envelope tells the
+#: target which peer sent the message, and the body is caller-controlled, so a
+#: body line of the same shape must not read as a second envelope.
+#:
+#: Matched on a normalized view (see ``context_assembly.markers._marker_spans``:
+#: NFKC, every ``Cf`` char dropped, dashes folded) rather than by listing
+#: spellings, so bidi controls, zero-width chars, soft hyphens and compatibility
+#: forms all fold away before the match. Any ``Ps`` opening bracket counts; every
+#: ``Ps`` code point sits in the BMP, and scanning only the BMP keeps import cheap.
+_PS_OPENERS = "".join(chr(cp) for cp in range(0x10000) if unicodedata.category(chr(cp)) == "Ps")
+_FORGED_PROVENANCE_RE = re.compile(
+    rf"[{re.escape(_PS_OPENERS)}]\s*sent\s*by\s*session\b", re.IGNORECASE
+)
+_QUOTED_PROVENANCE = "[quoted: sent by session"
 
 
 def _neutralize_send_provenance(body: str) -> str:
     """Defang any provenance-shaped opener in a peer-sent *body*.
 
-    Substitution rather than deletion, so a reader still sees that the sender
-    wrote something envelope-shaped. Only the genuine envelope, prepended by
-    this module, opens with ``[sent by session``.
+    Only the matched span in the ORIGINAL text is rewritten, so the rest of the
+    body stays byte-exact. Substitution rather than deletion, so a reader still
+    sees that the sender wrote something envelope-shaped. Only the genuine
+    envelope, prepended by this module, opens with ``[sent by session``.
     """
-    return _FORGED_PROVENANCE_RE.sub("[quoted: sent by session", body)
+    # Case is folded by the pattern's IGNORECASE (Unicode simple case folding),
+    # which keeps the normalized view length-stable for the span map back.
+    spans = _marker_spans(body, (_FORGED_PROVENANCE_RE,))
+    return _apply_marker_spans(body, spans, _QUOTED_PROVENANCE)
 
 
 #: What the envelope names for a broadcast. The verb is part of the message's

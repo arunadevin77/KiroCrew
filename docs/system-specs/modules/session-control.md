@@ -427,7 +427,12 @@ window and replaces it with a narrower one: the steer RPC suspends on
   aimed at it alone -- the same sentence means different things in those two
   cases. This is the
   property the composer's own gate protects by keeping app-authenticated sends
-  off the steer path; here an explicit envelope answers it.
+  off the steer path; here an explicit envelope answers it. A body opener
+  shaped like the envelope (matched after NFKC with every `Cf` char dropped,
+  behind any `Ps` bracket) is rewritten to `[quoted: sent by session`, so only
+  the real envelope opens with the marker
+  (`test_send_body_cannot_forge_a_second_provenance_envelope`,
+  `test_neutralize_send_provenance_folds_invisible_chars_and_any_opening_bracket`).
 
   It reaches one level further down. `directive_user_origin` exempts a queue entry
   from the drain's LINKED drop because "the author typed into the session's own
