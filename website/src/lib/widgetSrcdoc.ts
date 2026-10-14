@@ -192,6 +192,9 @@ const HEIGHT_REPORTER_BODY = `(function(){
   // The document's own inline overflow-y, restored whenever the frame scrolls.
   var authoredOverflowY = root.style.overflowY;
   var clipped = false;
+  // Set when the grace window hands the scroll back; holds until the viewport
+  // changes height.
+  var released = false;
   var fitTimer = null;
   var viewH = root.clientHeight;
   function send(h){
@@ -231,7 +234,12 @@ const HEIGHT_REPORTER_BODY = `(function(){
   function fit(h){
     if (fits(h)){
       if (fitTimer){ clearTimeout(fitTimer); fitTimer = null; }
-      setClipped(true);
+      // Once the scroll is back, a fit while the scrollbar shows is not a fit
+      // at full width: content that keeps its aspect ratio gets shorter when
+      // the scrollbar narrows it, and clipping again would widen it past the
+      // viewport and toggle the scrollbar forever. Only a viewport resize
+      // (see the resize handler) clears the latch.
+      if (!released) setClipped(true);
       return;
     }
     if (!clipped || fitTimer) return;
@@ -239,7 +247,7 @@ const HEIGHT_REPORTER_BODY = `(function(){
     // scroll back only if the viewport has not resized by the time this fires.
     fitTimer = setTimeout(function(){
       fitTimer = null;
-      if (!fits(measure())) setClipped(false);
+      if (!fits(measure())){ released = true; setClipped(false); }
     }, FIT_GRACE_MS);
   }
   function evaluate(){
@@ -294,6 +302,7 @@ const HEIGHT_REPORTER_BODY = `(function(){
     var h = root.clientHeight;
     if (h !== viewH){
       viewH = h;
+      released = false;
       if (fitTimer){ clearTimeout(fitTimer); fitTimer = null; }
     }
     schedule();

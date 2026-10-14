@@ -259,6 +259,29 @@ describe('height reporter vertical overflow', () => {
     expect(seen).toEqual(['hidden'])
   })
 
+  it('keeps the scroll once given back while the viewport holds its height', () => {
+    // Content that keeps its aspect ratio (a full-width image or chart) gets
+    // SHORTER when a classic scrollbar narrows it. Just over the viewport at
+    // full width and inside it once narrowed, it fits only while the scrollbar
+    // shows, so re-clipping on that fit would toggle the scrollbar forever.
+    const rootStyle = { overflowY: '' }
+    const seen: string[] = []
+    const style = {
+      get overflowY() { return rootStyle.overflowY },
+      set overflowY(v: string) { rootStyle.overflowY = v; seen.push(v) },
+    }
+    const scrollbar = () => rootStyle.overflowY !== 'hidden'
+    const content = () => (scrollbar() ? 590 : 610)
+    const r = runReporter(content, { clientHeight: () => 600, rootStyle: style })
+    let laidOut = scrollbar()
+    for (let tick = 0; tick < 300; tick++) {
+      r.flushRaf()
+      vi.advanceTimersByTime(16)
+      if (scrollbar() !== laidOut) { laidOut = scrollbar(); r.resize() }
+    }
+    expect(seen).toEqual(['hidden', ''])
+  })
+
   it('hides the overflow again when the frame grows to fit', () => {
     // Collapsing an expanded view returns the frame to the content's height.
     let viewport = 600
