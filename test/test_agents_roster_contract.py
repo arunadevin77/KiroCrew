@@ -291,7 +291,12 @@ class TestUnshowableValuesAreMasked:
     """The read half: nothing that cannot be shown verbatim leaves as content."""
 
     PROBE = "AKIAIOSFODNN7EXAMPLE"
-    UNCOERCED_BY_LOADER = ("kiro_agent", "workspace", "memory_store", "description", "source")
+    # The five declared-``str`` record fields a roster row ships besides the
+    # ones with their own inline guard. The loader now pins all of them to
+    # their default on a non-string (``_safe_str``), so the mask below is
+    # defence in depth for a record built some other way, which is why the
+    # test plants the object with ``object.__setattr__`` rather than a load.
+    MASKED_STR_FIELDS = ("kiro_agent", "workspace", "memory_store", "description", "source")
     # ``avatar`` is the ONE structured value a row ships, so the uniform
     # string sweeps below do not apply to it: it is shape-allowlisted by
     # ``_safe_avatar`` with masking confined to user-authored ``traits``
@@ -326,9 +331,9 @@ class TestUnshowableValuesAreMasked:
             assert _carries_mask(row[field]), f"{field} should be the sentinel"
 
     @pytest.mark.parametrize("redact", [False, True])
-    @pytest.mark.parametrize("field", UNCOERCED_BY_LOADER)
+    @pytest.mark.parametrize("field", MASKED_STR_FIELDS)
     def test_a_non_string_is_masked_not_emptied(self, field: str, redact: bool) -> None:
-        """The loader lets an object through five declared-`str` fields.
+        """A non-string that reaches a row is masked, whatever put it there.
 
         Masking rather than coercing to `""` is what lets the write-side rule
         PRESERVE it: an echoed `""` would read as a genuine edit and overwrite the

@@ -1521,9 +1521,15 @@ def _handle_agent(args: argparse.Namespace) -> None:
         )
         for name, agent in cfg.agents.items():
             marker = " *" if name == default else ""
+            # The loader keeps a malformed ``memory_store`` binding as written
+            # (pinning it to the default would attach the member to the shared
+            # store), so show the defect here instead of failing the listing.
+            memory_store = agent.memory_store
+            if not isinstance(memory_store, str):
+                memory_store = f"(invalid: {type(memory_store).__name__})"
             print(
                 f"{name + marker:<20} {agent.kiro_agent:<20} "
-                f"{agent.workspace:<15} {agent.memory_store:<15} "
+                f"{agent.workspace:<15} {memory_store:<15} "
                 f"{getattr(agent, 'source', 'kirocrew'):<12} "
                 f"{_agent_list_label(agent.display_name)}".rstrip()
             )

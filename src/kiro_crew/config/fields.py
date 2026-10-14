@@ -104,6 +104,22 @@ def _safe_bool(value: object, default: bool) -> bool:
     return value if isinstance(value, bool) else default
 
 
+def _safe_str(value: object, default: str) -> str:
+    """Return *value* only when it is a real ``str``, else *default*.
+
+    The load-boundary guard for a field declared ``str`` on a DTO built from
+    hand- or agent-writable ``config.json``: a ``null``, number, list or object
+    stored under a string key reads as the field's declared default, so a
+    wrong-typed key behaves exactly like an absent one and every reader can
+    trust the declared type (``kirocrew agent list`` width-formats four agent
+    fields, where ``None`` or a container raises ``TypeError`` from
+    ``__format__``). No stringification on purpose: ``str({"k": "v"})`` is
+    not content the operator wrote, and the ``model`` / ``triggers`` guards this
+    joins already collapse to the default rather than coerce.
+    """
+    return value if isinstance(value, str) else default
+
+
 def _coerce_bool(value: object, default: bool) -> bool:
     """As :func:`_safe_bool`, but reading the spellings a hand edit produces.
 

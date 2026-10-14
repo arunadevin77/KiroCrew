@@ -21,9 +21,11 @@ def _roster_mask(value: object) -> str:
     string. A value the redactors would alter -- credential- or
     exfiltration-URL-shaped text -- is therefore replaced WHOLESALE by
     ``_SENSITIVE_MASK``, the sentinel ``_masked_config_dict`` already uses for
-    the same job on ``GET /api/config/kirocrew``. A non-string (the loader lets
-    an object through five declared-``str`` fields) is masked too: it is not
-    renderable, so there is nothing to show. Benign content is byte-identical.
+    the same job on ``GET /api/config/kirocrew``. A non-string is masked too:
+    it is not renderable, so there is nothing to show. The loader pins every
+    declared-``str`` agent field except ``memory_store`` and ``member_id`` to its
+    default, so for the rest this branch is defence in depth, not the only guard. Benign content
+    is byte-identical.
 
     **A fixed sentinel rather than redacting in place, and that is the whole
     design.** An in-place scrub makes the browser's view a FUNCTION of the

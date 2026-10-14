@@ -71,7 +71,7 @@ from kiro_crew.config import sections as _sections
 # Section DTOs and their field-level coercion live in a one-way sibling module.
 # Re-export every historical loader name so existing imports keep working while
 # KiroCrewConfig remains the compatibility facade and owns read/merge/save.
-from kiro_crew.config.fields import _coerce_bool
+from kiro_crew.config.fields import _coerce_bool, _safe_str
 
 # Historical loader names no builder reads any more (a section's defaults are its
 # DTO fields'), kept bound from their owners for the facade.
@@ -5847,10 +5847,29 @@ def build_config(
                 # roster surface, so a non-string collapses to "" (show the
                 # name) rather than reaching the wire.
                 raw_display_name = crew.get("display_name")
+                # Every other declared-``str`` field except the two identity
+                # fields joins the same guard family through ``_safe_str``: a
+                # null, number, list or object stored under a string key reads
+                # as the field's declared default, so a wrong-typed key behaves
+                # like an absent one. ``kirocrew agent list`` width-formats
+                # ``kiro_agent`` / ``workspace`` / ``source``, and a stored
+                # null or container reaching that f-string raises TypeError
+                # from ``__format__``. The roster and config views still mask
+                # a non-string on their own side as defence in depth.
+                #
+                # ``memory_store`` and ``member_id`` are deliberately NOT
+                # pinned. The ``memory_store`` default names the shared store,
+                # so collapsing a malformed binding would silently attach this
+                # member to it. The ``member_id`` default ``""`` reads as "no
+                # identity yet", which would switch off two fail-closed checks
+                # in ``memory_stores.py`` (``require_member_memory_store`` and
+                # the legacy upgrade) and let the upgrade mint a new identity.
+                # Both stay as written and the resolvers refuse them;
+                # ``agent list`` renders a malformed ``memory_store``.
                 agents[name] = KiroCrewAgentConfig(
                     member_id=crew.get("member_id"),
-                    kiro_agent=crew.get("kiro_agent"),
-                    workspace=crew.get("workspace"),
+                    kiro_agent=crew.read("kiro_agent", _safe_str),
+                    workspace=crew.read("workspace", _safe_str),
                     memory_store=crew.get("memory_store"),
                     model=raw_model if isinstance(raw_model, str) else crew.default("model"),
                     # Same hand-editable-config guard: an unknown level must
@@ -5863,11 +5882,11 @@ def build_config(
                         if isinstance(raw_display_name, str)
                         else crew.default("display_name")
                     ),
-                    description=crew.get("description"),
+                    description=crew.read("description", _safe_str),
                     triggers=(
                         raw_triggers if isinstance(raw_triggers, str) else crew.default("triggers")
                     ),
-                    source=crew.get("source"),
+                    source=crew.read("source", _safe_str),
                     # Hand-editable config: a quoted "true" or a stray int
                     # must not become a truthy star, so only a real bool
                     # is honoured and anything else reads as un-starred.
@@ -5884,7 +5903,7 @@ def build_config(
                         "watchdog_tool_stall_hard_cap_secs", _safe_float, lo=0.0
                     ),
                     autocompact_pct=_crew_autocompact_pct(crew),
-                    telegram_account=crew.get("telegram_account"),
+                    telegram_account=crew.read("telegram_account", _safe_str),
                     session_color=_safe_color(crew.get("session_color")),
                     # Module-qualified on purpose: the facade's `from
                     # sections import` list is a frozen pre-split snapshot

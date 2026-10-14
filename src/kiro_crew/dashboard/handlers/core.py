@@ -201,8 +201,9 @@ def _mask_agent_free_text(value: object) -> object:
     Same rule the roster endpoint's rows need: a value the
     redactors would alter — credential- or exfiltration-URL-shaped text — is
     replaced WHOLESALE by ``_SENSITIVE_MASK``; a non-string is masked too (it
-    is not renderable content, and ``description`` has no load-time type guard,
-    so one can genuinely arrive here). Benign content passes through
+    is not renderable content; the loader pins every declared-``str`` agent
+    field except ``memory_store`` and ``member_id`` to its default, so for the
+    rest this branch is defence in depth, not the only guard). Benign content passes through
     byte-identical, so an ordinary stored value renders exactly as written.
     ``GET /api/agents`` ships these fields verbatim — that half of the class is
     not this endpoint's.

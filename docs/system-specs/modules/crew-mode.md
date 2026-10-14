@@ -1428,7 +1428,16 @@ follows the global default through these resolvers.
 
 The loader is defensive about hand-edited config: a non-string `model` or
 `triggers` collapses to `""`, an unknown `reasoning_effort` collapses to inherit,
-and a junk watchdog override collapses to `0`.
+and a junk watchdog override collapses to `0`. Every other field declared `str`
+on the agent record (`kiro_agent`, `workspace`, `description`, `source`,
+`telegram_account`) collapses to its declared default on a non-string value, so a
+wrong-typed key reads exactly like an absent one. Two identity fields are the
+exception. `memory_store` defaults to the shared store, and `member_id` defaults
+to `""`, which reads as "no identity yet". Collapsing either would switch off a
+fail-closed check in `memory_stores.py`, so both load as written and the
+resolvers refuse them; `kirocrew agent list` shows a malformed `memory_store` as
+`(invalid: <type>)`. The roster and config views still mask a non-string on their
+own side as defence in depth.
 
 ### Crewmate conversation layout: switcher, Profile, Dashboard, Files
 
