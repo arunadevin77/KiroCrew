@@ -6771,6 +6771,7 @@
       "file_only": "파일만",
       "diff_unavailable_turn_snapshot_budget": "이번 턴의 변경이 너무 커서 모든 파일의 차이를 보관하지 못했습니다(합계 {{limit}}자 초과).",
       "diff_unavailable_older_turn": "이 턴은 오래되어 차이가 보관되지 않습니다. 차이는 이 채팅에서 파일을 변경한 최근 턴에만 보관됩니다.",
+      "diff_unavailable_unverified_write": "차이를 표시할 수 없습니다. 쓰기에 실패했고 그 이전의 파일을 알 수 없습니다.",
       "turn_snapshot_budget_open_hint": "파일 이름을 클릭하면 열립니다.",
       "omitted_files_notice_other": "이번 턴에서 변경된 파일 {{files}}개는 목록에 없습니다.",
       "file_other": "파일 {{count}}개",

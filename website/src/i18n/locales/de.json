@@ -6887,6 +6887,7 @@
       "file_only": "Nur Datei",
       "diff_unavailable_turn_snapshot_budget": "Die Änderungen dieser Runde waren zu groß, um den Diff jeder Datei zu behalten (insgesamt mehr als {{limit}} Zeichen).",
       "diff_unavailable_older_turn": "Diese Runde ist zu alt, um ihre Diffs zu behalten. Nur die letzten Runden dieses Chats mit Dateiänderungen behalten sie.",
+      "diff_unavailable_unverified_write": "Diff nicht verfügbar: Das Schreiben ist fehlgeschlagen, und die Datei davor ist unbekannt.",
       "turn_snapshot_budget_open_hint": "Klicke auf einen Dateinamen, um die Datei zu öffnen.",
       "omitted_files_notice_one": "{{files}} weitere geänderte Datei aus dieser Runde ist nicht aufgeführt.",
       "omitted_files_notice_other": "{{files}} weitere geänderte Dateien aus dieser Runde sind nicht aufgeführt.",

@@ -7003,6 +7003,7 @@
       "file_only": "Apenas arquivo",
       "diff_unavailable_turn_snapshot_budget": "As alterações deste turno foram grandes demais para manter o diff de cada arquivo (mais de {{limit}} caracteres no total).",
       "diff_unavailable_older_turn": "Este turno é antigo demais para manter seus diffs. Só os turnos mais recentes do chat que alteraram arquivos os mantêm.",
+      "diff_unavailable_unverified_write": "Diff indisponível: a gravação falhou e o arquivo anterior é desconhecido.",
       "turn_snapshot_budget_open_hint": "Clique no nome de um arquivo para abri-lo.",
       "omitted_files_notice_one": "Mais {{files}} arquivo alterado neste turno não está na lista.",
       "omitted_files_notice_many": "Mais {{files}} arquivos alterados neste turno não estão na lista.",

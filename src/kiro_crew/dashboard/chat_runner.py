@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib  # noqa: F401
 import functools  # noqa: F401
 import hashlib
 import inspect
@@ -196,9 +197,13 @@ from kiro_crew.dashboard.chat_turn.file_changes import (  # noqa: F401
     _MAX_RECONSTRUCT_BYTES,
     _PATH_TRUNCATION_MARKER,
     _apply_turn_snapshot_budget,
+    _budgeted_opcodes,
     _classify_str_replace_before,
+    _disk_digest,
     _excerpt_pair,
+    _failed_write_entries,
     _flush_file_changes,
+    _forget_entries,
     _line_change_input,
     _note_reply_row,
     _pending_str_replace_payload,
@@ -207,6 +212,7 @@ from kiro_crew.dashboard.chat_turn.file_changes import (  # noqa: F401
     _resolve_pending_str_replace,
     _safe_read_file_text,
     _safe_read_snapshot,
+    _settle_failed_write,
     _Snapshot,
     _snapshot_write_target,
     _truncate_snapshot,
@@ -7525,6 +7531,8 @@ async def _run_chat(
     # keeps what is retained at 16 characters however long the id was.
     _tcid_first_source: dict[str, str] = {}
     _tcid_collapsed: set[str] = set()
+    # Identified failed calls only: bounded by the turn's first-source map.
+    _failed_write_calls: set[str] = set()
     # tool_call_id -> canonical directive-tool name (forgery gate). Written
     # ONLY at EVENT_TOOL_CALL, ONLY from the out-of-band _meta.kiro identity
     # (event.tool_name + event.mcp_server_name), never from the title. This is
@@ -11084,6 +11092,16 @@ async def _run_chat(
                             _file_snapshot_upd,
                             _tcid_identity_key(getattr(event, "tool_call_id", None)),
                         )
+                        # A refinement can follow its failed result, even as the
+                        # call's first snapshot: claim no diff, while the id still
+                        # names one call.
+                        _refined_writer = _tcid_identity_key(event.tool_call_id)
+                        if (
+                            _refined_writer in _failed_write_calls
+                            and _refined_writer not in _tcid_collapsed
+                        ):
+                            for _held in _failed_write_entries(slot, _refined_writer):
+                                _held["unverified_write"] = True
                     # Refresh the toolLog entry (sseToolActivity merges by id).
                     state.broadcast_ws(
                         "tool_call",
@@ -11247,6 +11265,18 @@ async def _run_chat(
                 # stream actually reported. `stop_reason` on this event describes
                 # the turn, not the tool, so it is not used here.
                 _tool_terminal = event.tool_final or (event.tool_status in TERMINAL_TOOL_STATUSES)
+                _not_written = []
+                if (
+                    _tool_terminal
+                    and _tcid_identifies
+                    and (event.refusal or event.tool_status in ("failed", "refused"))
+                ):
+                    _failed_write_calls.add(_tcid_row_key)
+                    _not_written = _failed_write_entries(slot, _tcid_row_key)
+                    # Cancellation at any await must leave only paths until a
+                    # completed content check proves what the call changed.
+                    for _held in _not_written:
+                        _held["unverified_write"] = True
                 _loop_notice = _repeat_loop.note_result(
                     event.tool_call_id,
                     status=event.tool_status,
@@ -11294,6 +11324,14 @@ async def _run_chat(
                         result_digest=event.tool_output_digest,
                         result_bytes=event.tool_output_bytes,
                     )
+                    _digest_backed = [held for held in _not_written if held.get("pre_call_digest")]
+                    if _digest_backed:
+                        _same, _changed = await asyncio.to_thread(
+                            _settle_failed_write, _digest_backed
+                        )
+                        _forget_entries(slot, _same)
+                        for _held in _changed:
+                            _held.pop("unverified_write", None)
                 # MCP Apps (flag-independent on this side): if gatewayd spooled a
                 # UI payload it injected an opaque marker into the result text.
                 # Load it, push an mcp_app_render event to this slot, and strip

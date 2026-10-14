@@ -7003,6 +7003,7 @@
       "file_only": "Fichier seul",
       "diff_unavailable_turn_snapshot_budget": "Les modifications de ce tour étaient trop volumineuses pour conserver le diff de chaque fichier (plus de {{limit}} caractères au total).",
       "diff_unavailable_older_turn": "Ce tour est trop ancien pour garder ses diffs. Seuls les tours les plus récents de la discussion qui ont modifié des fichiers les gardent.",
+      "diff_unavailable_unverified_write": "Diff indisponible : l'écriture a échoué et le fichier d'avant est inconnu.",
       "turn_snapshot_budget_open_hint": "Clique sur le nom d’un fichier pour l’ouvrir.",
       "omitted_files_notice_one": "{{files}} autre fichier modifié dans ce tour n’apparaît pas dans la liste.",
       "omitted_files_notice_many": "{{files}} autres fichiers modifiés dans ce tour n’apparaissent pas dans la liste.",

@@ -6771,6 +6771,7 @@
       "file_only": "仅文件",
       "diff_unavailable_turn_snapshot_budget": "本轮改动太大，未能保留每个文件的差异（合计超过 {{limit}} 个字符）。",
       "diff_unavailable_older_turn": "此轮次过旧，未保留其差异。只有此聊天中最近几轮更改了文件的轮次会保留差异。",
+      "diff_unavailable_unverified_write": "无法显示差异：写入失败，之前的文件未知。",
       "turn_snapshot_budget_open_hint": "点击文件名即可打开。",
       "omitted_files_notice_other": "本轮还有 {{files}} 个已更改的文件未列出。",
       "file_other": "{{count}} 个文件",
