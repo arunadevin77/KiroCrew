@@ -15,14 +15,30 @@ const HOSTS = {
   ChatEmbed: read('../app-sdk/ChatEmbed.tsx'),
 }
 
+/** What the "nothing of its own" pins read: ChatPane with the owner modules its
+ *  code lives in, the other hosts as they are. */
+const OWN_CODE: Record<keyof typeof HOSTS, string> = {
+  ...HOSTS,
+  ChatPane: [HOSTS.ChatPane, ...[
+    'ChatPanePickerMenus.tsx',
+    'ChatPaneProps.ts',
+    'ChatPaneTranscript.tsx',
+    'useChatPaneDraft.ts',
+    'useChatPanePickers.ts',
+    'useChatPaneSend.ts',
+    'useChatPaneTurnControl.ts',
+    'useChatPaneUploads.ts',
+  ].map(f => read(`../components/${f}`))].join('\n'),
+}
+
 describe('chat-core transcript contract', () => {
   it('every non-page host mounts ChatMessageList with the transcript wiring instead of its own scroller', () => {
     // The hook the hosts used to wear is gone with its last consumer.
     expect(existsSync(resolve(__dirname, '../app-sdk/useChatScrollFollow.ts'))).toBe(false)
     for (const [name, src] of Object.entries(HOSTS)) {
       expect(src, `${name} mounts the transcript`).toContain('transcript={{')
-      expect(src, `${name} has no follow hook of its own`).not.toContain('useChatScrollFollow')
-      expect(src, `${name} has no transcript scroll div of its own`).not.toMatch(/className="[^"]*overflow-y-auto[^"]*"[^>]*>\s*\n?\s*<div ref=\{follow\.contentRef\}/)
+      expect(OWN_CODE[name as keyof typeof HOSTS], `${name} has no follow hook of its own`).not.toContain('useChatScrollFollow')
+      expect(OWN_CODE[name as keyof typeof HOSTS], `${name} has no transcript scroll div of its own`).not.toMatch(/className="[^"]*overflow-y-auto[^"]*"[^>]*>\s*\n?\s*<div ref=\{follow\.contentRef\}/)
     }
   })
 

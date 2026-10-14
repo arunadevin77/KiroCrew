@@ -90,6 +90,7 @@ describe('Windows gateway paths show their file name (#14581)', () => {
   // when `\` separates. (composerDrop.ts, the Mochi drop site, is PR #10952's.)
   it.each([
     'components/MarkdownPanel.tsx',
+    'components/useMarkdownPanelFileState.ts',
     'components/FileRenderers.tsx',
     'components/chat-input/FilePreviewStrip.tsx',
     'pages/chat/ToolCallLine.tsx',
@@ -102,6 +103,22 @@ describe('Windows gateway paths show their file name (#14581)', () => {
   ])('%s derives file names through pathBasename only', (rel) => {
     const src = readFileSync(resolve(__dirname, '..', rel), 'utf8')
     expect(src).toMatch(/import \{[^}]*\bpathBasename\b[^}]*\} from '[./]+\/utils\/pathBasename'/)
+    expect(src).not.toMatch(/\.split\('\/'\)\.pop\(\)/)
+    expect(src).not.toMatch(/\.lastIndexOf\('\/'\) \+ 1\)/)
+  })
+
+  // MarkdownPanel's code lives in the facade and its owner modules; none of them
+  // may bring the `/`-only shapes back, whether or not it derives a name at all.
+  it.each([
+    'components/MarkdownPanel.tsx',
+    'components/MarkdownPanelBody.tsx',
+    'components/MarkdownPanelHeader.tsx',
+    'components/markdownPanelSourcePos.ts',
+    'components/useMarkdownPanelDisk.ts',
+    'components/useMarkdownPanelFileState.ts',
+    'components/useMarkdownPanelFind.ts',
+  ])('%s has no `/`-only file-name split', (rel) => {
+    const src = readFileSync(resolve(__dirname, '..', rel), 'utf8')
     expect(src).not.toMatch(/\.split\('\/'\)\.pop\(\)/)
     expect(src).not.toMatch(/\.lastIndexOf\('\/'\) \+ 1\)/)
   })

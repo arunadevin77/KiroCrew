@@ -24,9 +24,21 @@ describe('a rejected answer submission', () => {
   it('is what both rejected-submit fallbacks post', async () => {
     const pane = (await import('../components/ChatPane.tsx?raw')).default as string
     const busy = (await import('../pages/chat/page/busyTurnControls.ts?raw')).default as string
-    for (const src of [pane, busy]) {
+    // The pane's code also lives in its owner modules; the old notice shape may
+    // come back in none of them.
+    const paneOwners = (await Promise.all([
+      import('../components/ChatPanePickerMenus.tsx?raw'),
+      import('../components/ChatPaneProps.ts?raw'),
+      import('../components/ChatPaneTranscript.tsx?raw'),
+      import('../components/useChatPaneDraft.ts?raw'),
+      import('../components/useChatPanePickers.ts?raw'),
+      import('../components/useChatPaneSend.ts?raw'),
+      import('../components/useChatPaneTurnControl.ts?raw'),
+      import('../components/useChatPaneUploads.ts?raw'),
+    ])).map(m => m.default as string)
+    for (const [src, own] of [[pane, [pane, ...paneOwners].join('\n')], [busy, busy]]) {
       expect(src).toContain('answerRejectedMessage(questions)')
-      expect(src).not.toMatch(/role: 'notice', content: '\\u26A0\\uFE0F ' \+ answerRestoredNotice/)
+      expect(own).not.toMatch(/role: 'notice', content: '\\u26A0\\uFE0F ' \+ answerRestoredNotice/)
     }
   })
 })

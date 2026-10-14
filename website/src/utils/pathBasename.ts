@@ -4,7 +4,7 @@
  *  `\\host\share\a.ts`), so splitting on `/` alone shows the whole path where a
  *  file name belongs. Splitting on `\` everywhere is wrong too: on POSIX a
  *  backslash is a legal file-name character, so `/tmp/we\ird.md` is ONE name.
- *  The rule here is the one `breadcrumbSegments` (MarkdownPanel.tsx) uses: `\`
+ *  The rule here is the one `breadcrumbSegments` (MarkdownPanelHeader.tsx) uses: `\`
  *  is a separator only when the path itself is Windows-shaped -- drive-rooted
  *  (`C:\`, `C:/`) or a backslash UNC path (`\\host\`).
  *

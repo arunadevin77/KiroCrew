@@ -455,9 +455,6 @@
 2208 website/src/apps/issue-radar/api.ts
 2592 website/src/apps/md-notebook/MdNotebookPage.tsx
 2567 website/src/apps/mochi/src/renderer/ChatPanel.tsx
-2516 website/src/components/ChatPane.tsx
-3021 website/src/components/MarkdownPanel.tsx
-2456 website/src/components/WebPreviewPanel.tsx
 4155 website/src/guide/GuideLayer.test.tsx
 4065 website/src/index.css
 2125 website/src/pages/AppDetailPage.tsx

@@ -116,7 +116,7 @@ describe('dropdown filter inputs follow the Font Family setting', () => {
   it('does not pin ChatPane\u2019s shared dropdown filter class to font-mono', () => {
     // Both of ChatPane's dropdowns read one `ddInputCls` constant, so the class
     // string is asserted where it is declared rather than where it is applied.
-    const src = readFileSync(join(SRC, 'components/ChatPane.tsx'), 'utf8')
+    const src = readFileSync(join(SRC, 'components/ChatPanePickerMenus.tsx'), 'utf8')
     const decl = src.split('\n').find(l => l.includes('ddInputCls ='))
     expect(decl).toBeDefined()
     expect(decl).not.toContain('font-mono')

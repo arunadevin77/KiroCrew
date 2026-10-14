@@ -183,13 +183,25 @@ describe('AgentDropdownList hosts own the scroll (#6375)', () => {
   // unbounded with no failing test.
   // vitest's cwd is website/ (the vitest config root), and import.meta.url is
   // not file-scheme under its transform, so resolve from cwd instead.
+  // ChatPane's picker menus live in its owner modules, so its host text is the
+  // facade joined with them.
+  const chatPaneSource = () => ['ChatPane.tsx',
+    'ChatPanePickerMenus.tsx',
+    'ChatPaneProps.ts',
+    'ChatPaneTranscript.tsx',
+    'useChatPaneDraft.ts',
+    'useChatPanePickers.ts',
+    'useChatPaneSend.ts',
+    'useChatPaneTurnControl.ts',
+    'useChatPaneUploads.ts',
+  ].map(f => readFileSync(join(process.cwd(), 'src', 'components', f), 'utf8')).join('\n')
   const hosts = [
-    ['ChatPage', join(process.cwd(), 'src', 'pages', 'ChatPage.tsx')],
-    ['ChatPane', join(process.cwd(), 'src', 'components', 'ChatPane.tsx')],
+    ['ChatPage', () => readFileSync(join(process.cwd(), 'src', 'pages', 'ChatPage.tsx'), 'utf8')],
+    ['ChatPane', chatPaneSource],
   ] as const
 
-  it.each(hosts)('%s wraps the list in a scroll-owning listbox', (_name, file) => {
-    const src = readFileSync(file, 'utf8')
+  it.each(hosts)('%s wraps the list in a scroll-owning listbox', (_name, read) => {
+    const src = read()
     const sites = [...src.matchAll(/<AgentDropdownList[\s>]/g)]
     expect(sites.length).toBeGreaterThan(0)
     for (const site of sites) {

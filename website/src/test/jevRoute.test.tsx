@@ -129,7 +129,7 @@ describe('a picker with no live slot', () => {
     const consent = { permits: true }
     expect(jevRouteOffered(cfg, consent, false)).toBe(false)
     expect(jevRouteOffered(cfg, consent, true)).toBe(true)
-    for (const rel of ['../pages/ChatPage.tsx', '../components/ChatPane.tsx']) {
+    for (const rel of ['../pages/ChatPage.tsx', '../components/useChatPanePickers.ts']) {
       const source = readFileSync(join(__dirname, rel), 'utf-8')
       const line = source.split('\n').find(l => l.includes('jevRouteOffered('))
       expect(line, `${rel} offers Auto (Jev) without asking for a slot`).toMatch(/Slot\)/)

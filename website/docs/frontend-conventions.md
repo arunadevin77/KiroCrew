@@ -231,6 +231,48 @@ set against the backend converter), `import '../utils/hljs'`
 (`hljsCoreOnly.test.ts`), and the two lines the i18n added-line gate counts, in
 `MdAnchor` and `stripStrayToolUseTags`.
 
+### The file panel, the chat pane and the browser panel
+
+`components/MarkdownPanel.tsx` (a side-panel file tab), `components/ChatPane.tsx`
+(one chat session in split view or a crewmate's chat) and
+`components/WebPreviewPanel.tsx` (the Browser tab) are facades over sibling owners
+in `components/`. Each facade keeps its module id, its default export and every
+named export: hosts import it, and the specs that mount a host mock it by that id,
+so a consumer never imports an owner. Imports run one way, from the facade to its
+owners. Each owner hook is called once per render at a fixed place in its facade,
+so the panel's effects keep one order.
+
+| Owner | Holds |
+|---|---|
+| `MarkdownPanel.tsx` | `Props`, the panel and its two layouts (side panel, full screen), the edit, save, close and navigate guards, comment drafts and their anchor highlight, the line reveal |
+| `MarkdownPanelHeader.tsx` | the header's controls: the breadcrumb, the artifact and knowledge toggles, the ⋯ menu |
+| `useMarkdownPanelFileState.ts` | the file's knowledge-library and artifact-library state |
+| `MarkdownPanelBody.tsx` | the body's blocks: comment hint, missing-file banner, empty-diff notice, diff view, comment overlay, find bar |
+| `markdownPanelSourcePos.ts` | where a selection sits in the source (`resolveSourcePos`, `findCoords`) |
+| `useMarkdownPanelFind.ts` | the CSS Custom Highlight registry and preview find (Cmd+F) |
+| `useMarkdownPanelDisk.ts` | the disk truth (the panel's reads, the catch-up latch, the watch, the missing-file retry, the last-copy rescue) and the working-tree diff against HEAD |
+| `ChatPane.tsx` | the pane's layout and dock, its store reads, the follow-up chips, the queue-card actions, and the transcript mount (`transcript={{ … }}`) |
+| `ChatPaneProps.ts` | the props interface and `PaneLeading` |
+| `useChatPaneDraft.ts` | the pane-local composer draft, parked and restored per slot |
+| `useChatPaneUploads.ts` | uploads, drops, and their per-slot notices |
+| `useChatPanePickers.ts`, `ChatPanePickerMenus.tsx` | the agent and model pickers' data and actions, and their two portaled menus |
+| `useChatPaneSend.ts` | send, steer, the slash commands the pane intercepts, the message quote, the question card's one-click answer (its 404 fallback, `onFallbackSend`, stays in `ChatPane.tsx`) |
+| `useChatPaneTurnControl.ts` | the Stop press protocol and the run-state reconciliation |
+| `ChatPaneTranscript.tsx` | the transcript row set and the rows above the first message |
+| `WebPreviewPanel.tsx` | the panel: address bar, frame, device presets, liveness probe, launcher, the CLI browser view |
+| `webPreviewPanelUrl.ts` | what a target may be: URL coercion, the loopback and embed rules, the self-origin check, the session feed (`setSessionPreviewUrl`, `setSessionPreviewPending`) |
+| `useWebPreviewPanelAnnotate.ts` | Annotate: per-slot notes on picks in the native page |
+| `WebPreviewPanelNativeSurface.tsx` | the native browse surface |
+
+New work for a responsibility in the table goes to its owner, and work that
+belongs to none of them starts in the facade. Two kinds of line stay in a
+facade's own text: the ones the i18n added-line gate counts (the comment-highlight
+paint rules in `MarkdownPanel.tsx`; `DEVICE_PRESETS` and `RELOAD_PARAM` in
+`WebPreviewPanel.tsx`), and the constructs a source-reading spec pins there (in
+`ChatPane.tsx` the transcript and dock wiring and the question card's
+`onFallbackSend` with `answerRejectedMessage`; in `MarkdownPanel.tsx` the reveal
+effect, the header's `onToggleDiffSplit` call site and the `pathBasename` use).
+
 ### Which switcher
 
 Three components render the same pill, because a user should see one control for
