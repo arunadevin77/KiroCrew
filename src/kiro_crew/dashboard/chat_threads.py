@@ -27,7 +27,7 @@ from typing import Any
 
 from aiohttp import web
 
-from kiro_crew.acp_backends import ACP_BACKENDS_SIDE_READONLY
+from kiro_crew.acp_backends import ACP_BACKEND_GOOSE, ACP_BACKENDS_SIDE_READONLY
 from kiro_crew.agent_discovery import warm_project_agent_names
 from kiro_crew.agent_sdk.backend_identity import is_claude_backend_name
 from kiro_crew.agent_sdk.drivers.acp import claude_adapter_honours_session_options
@@ -120,6 +120,19 @@ THREAD_BOUNDARY_PROMPT_NO_SHELL = (
     "refused here, even when the user asks for them. Never claim that a tool is "
     "unconfigured or suggest enabling it. If the user wants a change made, tell "
     "them to ask in the main chat."
+)
+
+#: The read-only boundary for a thread session that can list folders and view
+#: images but has no shell and no tool that reads a file's text (goose).
+THREAD_BOUNDARY_PROMPT_LISTING = (
+    "This thread is read-only: lookups work here, but changes don't. Listing "
+    "folders and viewing images run without asking, so use them when a reply "
+    "needs them. There is no shell here and no tool that reads a file's text, "
+    "so answer questions about file contents from the chat. Writing or editing "
+    "files, running commands, and MCP tools are refused here, even when the "
+    "user asks for them. Never claim that a tool is unconfigured or suggest "
+    "enabling it. If the user wants a change made, tell them to ask in the "
+    "main chat."
 )
 
 THREAD_BOUNDARY_PROMPT_NO_TOOLS = (
@@ -332,6 +345,7 @@ def build_thread_message(
     *,
     tools_available: bool,
     shell_available: bool = True,
+    file_reads_available: bool = True,
 ) -> str:
     """The whole envelope, every time: a thread turn always cold-starts its
     session, so nothing carries over between replies."""
@@ -367,7 +381,12 @@ def build_thread_message(
     if not tools_available:
         parts.append(THREAD_BOUNDARY_PROMPT_NO_TOOLS)
     else:
-        parts.append(THREAD_BOUNDARY_PROMPT if shell_available else THREAD_BOUNDARY_PROMPT_NO_SHELL)
+        if shell_available:
+            parts.append(THREAD_BOUNDARY_PROMPT)
+        elif file_reads_available:
+            parts.append(THREAD_BOUNDARY_PROMPT_NO_SHELL)
+        else:
+            parts.append(THREAD_BOUNDARY_PROMPT_LISTING)
     parts.append(f"User: {text}")
     return "\n\n".join(parts)
 
@@ -950,13 +969,15 @@ async def _run_thread_turn(
             )
         tools_available = backend is not None and backend in ACP_BACKENDS_SIDE_READONLY
         # The same confinement per harness as a Side Chat turn
-        # (dashboard/handlers/side.py): claude through the session options its
-        # client sends for ``side_read_only``, kiro-cli through the derived spec.
+        # (dashboard/handlers/side.py): claude and goose through the session
+        # shape their client starts for ``side_read_only``, kiro-cli through the
+        # derived spec.
         claude_thread = tools_available and is_claude_backend_name(backend)
         if claude_thread and not await asyncio.to_thread(claude_adapter_honours_session_options):
             tools_available = claude_thread = False
+        goose_thread = tools_available and backend == ACP_BACKEND_GOOSE
         session_kwargs: dict[str, Any] = {}
-        if claude_thread:
+        if claude_thread or goose_thread:
             agent: str | None = kiro_agent or slot_agent
             approval_policy = ToolApprovalPolicy.READ_ONLY
             session_kwargs["side_read_only"] = True
@@ -989,7 +1010,8 @@ async def _run_thread_turn(
             threads.get(mid, []),
             text,
             tools_available=tools_available,
-            shell_available=not claude_thread,
+            shell_available=not (claude_thread or goose_thread),
+            file_reads_available=not goose_thread,
         )
         try:
             response_text = redact(

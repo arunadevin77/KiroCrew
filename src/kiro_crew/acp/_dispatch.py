@@ -28,6 +28,7 @@ from typing import Any, NamedTuple, cast
 from kiro_crew import mcp_apps_render, session_directive
 from kiro_crew.acp.harness_tool_names import (
     CLAUDE_READ_ONLY_BUILTINS,
+    GOOSE_READ_ONLY_BUILTINS,
     MAX_HARNESS_TOOL_NAME_LEN,
     qualified_harness_tool_id,
 )
@@ -69,7 +70,12 @@ from kiro_crew.acp.types import (
     JsonRpcMessage,
     RefusalInfo,
 )
-from kiro_crew.acp_backends import ACP_BACKEND_CLAUDE, ACP_BACKEND_PI, ACP_BACKENDS_META_IDENTITY
+from kiro_crew.acp_backends import (
+    ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_GOOSE,
+    ACP_BACKEND_PI,
+    ACP_BACKENDS_META_IDENTITY,
+)
 from kiro_crew.agent_files import kas_wire_agent_id
 from kiro_crew.mcp_gateway.tool_surface import mcp_identity_name, mcp_identity_unreadable
 from kiro_crew.metrics.tool_calls import note_tool_call_started, record_tool_call_finished
@@ -2072,10 +2078,11 @@ def build_permission_event(
     and ``harness_backend`` give a backend that states no ``_meta.kiro.toolId`` a
     ``harness_tool_id`` anyway: the tool name its preceding ``tool_call`` frame
     stated, qualified by the backend (``goose#shell``). Only a backend with a name
-    table (:mod:`kiro_crew.acp.harness_tool_names`) gets one. On a claude Side Chat
-    session (``side_read_only``) the same cache gives ``harness_builtin_tool``
-    instead: the kiro-cli read built-in the call stands for
-    (:data:`~kiro_crew.acp.harness_tool_names.CLAUDE_READ_ONLY_BUILTINS`). Every
+    table (:mod:`kiro_crew.acp.harness_tool_names`) gets one. On a claude or goose
+    Side Chat session (``side_read_only``) the same cache gives
+    ``harness_builtin_tool`` instead: the kiro-cli read built-in the call stands
+    for (:data:`~kiro_crew.acp.harness_tool_names.CLAUDE_READ_ONLY_BUILTINS`,
+    :data:`~kiro_crew.acp.harness_tool_names.GOOSE_READ_ONLY_BUILTINS`). Every
     other session's event is built exactly as before.
     ``harness_mcp_servers`` are the server names
     Crew placed on the session, so an opencode MCP tool's fused name is split.
@@ -2486,6 +2493,31 @@ def build_permission_event(
         _harness_builtin_tool = CLAUDE_READ_ONLY_BUILTINS.get(
             harness_tool_name_cache.get(_ck, ""), ""
         )
+    # goose states its tool on the tool_call frame as an (extension, tool) pair.
+    # The pair is read as goose wrote it: the extension from the trusted identity
+    # cache and the tool name before any prefix is stripped, so a server named
+    # ``developer`` serving ``tree`` (stated ``developer__tree``) is not the
+    # builtin. A matched pair is the harness's own extension, not an MCP server,
+    # so it carries no server -- as the builtin shell pair already does -- and the
+    # READ_ONLY gate proves it from ``harness_builtin_tool``. Side Chat only.
+    elif (
+        side_read_only
+        and harness_backend == ACP_BACKEND_GOOSE
+        and harness_tool_name_cache is not None
+        and tool_call_id
+        and _mcp_identity_trusted
+    ):
+        _harness_builtin_tool = GOOSE_READ_ONLY_BUILTINS.get(
+            (_mcp_server_name, harness_tool_name_cache.get(_ck, "")), ""
+        )
+        if _harness_builtin_tool:
+            _mcp_server_name = ""
+            # goose states no ACP kind for its own tools, and its permission
+            # request fills the gap with ``other`` (captured live). The proven
+            # pair is the read, so that placeholder is read as ``read``; any kind
+            # goose does state is kept, and a non-read one still refuses the call.
+            if tool_kind in ("", "other"):
+                tool_kind = "read"
 
     # The agent's stated reason for the call, shown beside the approval. The
     # same agent-authored display text a tool_call frame carries, read the same

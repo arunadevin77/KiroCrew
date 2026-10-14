@@ -111,12 +111,13 @@ def build_side_message(
     is_first_turn: bool,
     tools_available: bool = True,
     shell_available: bool = True,
+    file_reads_available: bool = True,
     cfg: KiroCrewConfig | None = None,
 ) -> str:
     """First turn: full envelope (instructions + format + parent + side history + question).
     Subsequent turns: bare question (kiro-cli session retains framing).
 
-    ``tools_available`` and ``shell_available`` pick the boundary prompt for the
+    ``tools_available``, ``shell_available`` and ``file_reads_available`` pick the boundary prompt for the
     harness the turn runs on (:func:`side_prompts.side_boundary_prompt`).
 
     ``cfg`` feeds the reply-style block of the format contract
@@ -131,10 +132,16 @@ def build_side_message(
     if not is_first_turn:
         return question
     boundary = side_boundary_prompt(
-        tools_available=tools_available, shell_available=shell_available
+        tools_available=tools_available,
+        shell_available=shell_available,
+        file_reads_available=file_reads_available,
     )
     parts: list[str] = [
-        build_side_system_prompt(tools_available=tools_available, shell_available=shell_available),
+        build_side_system_prompt(
+            tools_available=tools_available,
+            shell_available=shell_available,
+            file_reads_available=file_reads_available,
+        ),
         # The rendering contract sits with the instructions, ahead of the
         # parent snapshot: it describes how THIS surface draws a reply, which
         # is framing, not history.

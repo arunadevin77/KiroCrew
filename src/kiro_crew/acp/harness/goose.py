@@ -8,16 +8,29 @@ Crew's servers, and where its permission route comes from -- goose resolves
 seeded on the session's environment here and read back off the very response that
 opens or restores the session (``AcpClient._verify_goose_routing``), not by a
 read-back child of its own.
+
+A Side Chat session (``side_read_only``) also gets a goose home of its own
+(:func:`build_side_goose_root`), so goose's own ``permission.yaml`` cannot run a
+tool without asking Crew first.
 """
 
 from __future__ import annotations
 
+import os
+import shutil
+from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
+from typing import Any
+
+import yaml  # type: ignore[import-untyped]
+
 from kiro_crew import acp_tool_gate
 from kiro_crew.acp import launch as launch_mod
 from kiro_crew.acp.harness.base import ProcessAdapter, SpawnContext, SpawnPlan
+from kiro_crew.acp.transport_errors import AcpError
 from kiro_crew.agent_sdk.backends import ACP_BACKEND_GOOSE
 
-__all__ = ["GooseLaunch"]
+__all__ = ["GooseLaunch", "build_side_goose_root", "goose_config_dir"]
 
 # The channel Crew's permission routing travels down on this harness: goose resolves
 # its mode from a PLAIN ENVIRONMENT VARIABLE, above its own config file, so the seed
@@ -37,11 +50,98 @@ _GOOSE_BUILTIN_DEVELOPER = "developer"
 # mode has no path onto the wire by construction. ``session/set_mode`` would accept
 # it, which is why no constant for it exists to be passed.
 
+# goose roots its config, data and state directories at this variable when it is an
+# absolute path (``Paths::path_root``), above the XDG directories.
+_ENV_GOOSE_PATH_ROOT = "GOOSE_PATH_ROOT"
+# The Side Chat home's directory name inside the session's own scratch window.
+_SIDE_ROOT_DIRNAME = "goose-side-root"
+# Config-directory entries a Side Chat home does not link. ``permission.yaml`` is
+# goose's per-tool pre-approval store: in its ``approve`` mode a tool listed under
+# ``user.always_allow`` runs without a permission request, so Crew's gate never sees
+# it (measured on goose 1.50.1). ``config.yaml`` is written instead, without its
+# ``extensions`` block, so no user extension starts in a side session.
+_SIDE_ROOT_UNLINKED = frozenset(
+    {"permission.yaml", "permission.yaml.lock", "config.yaml", "config.yaml.lock"}
+)
+_SIDE_CONFIG_DROPPED_KEYS = ("extensions",)
+
+
+def goose_config_dir(env: Mapping[str, str]) -> Path:
+    """The config directory goose resolves under *env* (``Paths::config_dir``).
+
+    ``GOOSE_PATH_ROOT`` first, when absolute; otherwise etcetera's app strategy
+    for app ``goose`` by ``Block``: ``%APPDATA%\\Block\\goose\\config`` on Windows,
+    else ``$XDG_CONFIG_HOME/goose`` when that is absolute, else ``~/.config/goose``.
+    """
+    root = env.get(_ENV_GOOSE_PATH_ROOT, "")
+    if root and os.path.isabs(root):
+        return Path(root) / "config"
+    if os.name == "nt":
+        appdata = env.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        return Path(appdata) / "Block" / "goose" / "config"
+    xdg = env.get("XDG_CONFIG_HOME", "")
+    if xdg and os.path.isabs(xdg):
+        return Path(xdg) / "goose"
+    return Path(env.get("HOME") or str(Path.home())) / ".config" / "goose"
+
+
+def build_side_goose_root(source_config_dir: Path, parent: Path) -> Path:
+    """Build a fresh goose home for one Side Chat session under *parent*.
+
+    The new ``config`` directory links every entry of the user's own config
+    directory (provider secrets, OAuth tokens, custom providers) except
+    ``permission.yaml``, and carries a copy of ``config.yaml`` without its
+    ``extensions`` block. ``data`` and ``state`` start empty. Any earlier home at
+    the same path is removed first, so one spawn never inherits another's grants.
+
+    Raises :class:`AcpError` when ``config.yaml`` cannot be read as a mapping: the
+    session is then refused rather than started with an unknown configuration.
+    Blocking; run it off the loop.
+    """
+    root = parent / _SIDE_ROOT_DIRNAME
+    if root.is_symlink() or root.is_file():
+        root.unlink()
+    elif root.exists():
+        shutil.rmtree(root)
+    config_dir = root / "config"
+    config_dir.mkdir(parents=True, mode=0o700)
+    if source_config_dir.is_dir():
+        for entry in sorted(source_config_dir.iterdir()):
+            if entry.name in _SIDE_ROOT_UNLINKED:
+                continue
+            os.symlink(entry, config_dir / entry.name)
+    source_config = source_config_dir / "config.yaml"
+    if source_config.is_file():
+        try:
+            data = yaml.safe_load(source_config.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+            raise AcpError(
+                f"goose's config.yaml could not be read for a Side Chat session ({exc}); "
+                "the side turn runs no tools until it parses."
+            ) from None
+        if data is None:
+            data = {}
+        if not isinstance(data, dict):
+            raise AcpError(
+                "goose's config.yaml is not a mapping, so a Side Chat session cannot be "
+                "given a copy of it; the side turn runs no tools until it is."
+            )
+        for key in _SIDE_CONFIG_DROPPED_KEYS:
+            data.pop(key, None)
+        fd = os.open(config_dir / "config.yaml", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(data, handle, sort_keys=False)
+    return root
+
 
 class GooseLaunch(ProcessAdapter):
     """goose: a self-served binary whose mode is seeded on the session's environment."""
 
     backend = ACP_BACKEND_GOOSE
+
+    def __init__(self) -> None:
+        # Set by resolve_spawn; read by prepare_spawn_env for the same spawn.
+        self._side_scratch: Callable[[], Path | None] | None = None
 
     async def resolve_spawn(self, ctx: SpawnContext) -> SpawnPlan:
         """Resolve the binary, warm the session's MCP array, then mask and seed."""
@@ -81,12 +181,41 @@ class GooseLaunch(ProcessAdapter):
             **session._extra_env,
             _ENV_GOOSE_MODE: acp_tool_gate.permission_setting_for(self.backend)[1],
         }
+        if getattr(session, "_side_read_only", False):
+            # The session's scratch window is allocated after this plan, so the
+            # home is built in prepare_spawn_env; this reads the window then.
+            self._side_scratch = lambda: getattr(session, "_scratch_dir", None)
         return SpawnPlan(
             argv=argv,
             spawn_label=spawn_label,
             stderr_label=stderr_label,
             extra_hidden_dirs=hidden,
         )
+
+    async def prepare_spawn_env(
+        self,
+        env: dict[str, str],
+        *,
+        to_thread: Callable[..., Awaitable[Any]],
+    ) -> None:
+        """On a Side Chat session, point goose at a home of its own.
+
+        Built inside the session's private scratch window, from the config
+        directory goose would otherwise read under this same environment. FAIL
+        CLOSED: a side session with no scratch window is refused, never started on
+        the user's own home, where ``permission.yaml`` can pre-approve a tool.
+        """
+        self.apply_spawn_env(env)
+        if self._side_scratch is None:
+            return
+        scratch = self._side_scratch()
+        if scratch is None:
+            raise AcpError(
+                "a goose Side Chat session needs its own scratch directory for a "
+                "separate goose home, and none was allocated; the side turn is refused."
+            )
+        root = await to_thread(build_side_goose_root, goose_config_dir(env), Path(scratch))
+        env[_ENV_GOOSE_PATH_ROOT] = str(root)
 
     def apply_spawn_env(self, env: dict[str, str], *, spawned_binary: str | None = None) -> None:
         """Nothing beyond the seed, which reaches the child through the session's overlay."""

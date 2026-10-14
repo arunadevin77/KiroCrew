@@ -1500,7 +1500,7 @@ def test_the_owners_depend_on_each_other_one_way() -> None:
         (the_launch, framing),
         (deepseek_harness.__name__, pi_harness.__name__),
         *((host.__name__, the_launch) for host in hosts),
-        *((host.__name__, errors) for host in hosts - {goose_harness}),
+        *((host.__name__, errors) for host in hosts),
     }
     assert edges == expected
 

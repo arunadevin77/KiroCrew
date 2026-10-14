@@ -279,7 +279,11 @@ Four prompt constants, two lifted from the upstream protocol:
   `ACP_BACKENDS_SIDE_READONLY`, saying tools are unavailable.
 - `SIDE_BOUNDARY_PROMPT_NO_SHELL` — the same read-only boundary for a session
   with no shell tool (claude), naming no shell command.
-  `side_boundary_prompt(tools_available=, shell_available=)` picks one of the three.
+- `SIDE_BOUNDARY_PROMPT_LISTING` — the read-only boundary for a session that
+  can list folders and view images but has no shell and no tool that reads a
+  file's text (goose).
+  `side_boundary_prompt(tools_available=, shell_available=, file_reads_available=)`
+  picks one of the four.
 - `SIDE_DEVELOPER_INSTRUCTIONS` — marks the main-thread/side-thread boundary.
 - `build_side_system_prompt(tools_available=...)` — concatenates the developer
   instructions and the matching boundary prompt into the first-turn envelope;
@@ -420,13 +424,13 @@ with `base_spec_missing` before a session exists.
 **The allowance is a harness capability, granted by positive membership.**
 Whether a side turn may execute read-only tools at all is
 `ACP_BACKENDS_SIDE_READONLY` (`agent_sdk/backends.py`, harness-parity H6):
-kiro-cli, KAS and claude. A harness has its own pre-approval surface
+kiro-cli, KAS, claude and goose. A harness has its own pre-approval surface
 (claude-agent-acp `permissions.allow` / `bypassPermissions`, KAS `permissions`
-rules from its own store) that the host gate cannot see: a call it pre-approves
+rules from its own store, goose's `permission.yaml`) that the host gate cannot see: a call it pre-approves
 would run with no READ_ONLY decision and no SEL row. A member therefore starts
 the side session in a shape where that surface cannot reach a write — kiro-cli
 through the derived spec above, KAS through the same spec taken over the wire,
-claude through the session shape below. KAS receives `<agent>--readonly` as a
+claude and goose through the session shapes below. KAS receives `<agent>--readonly` as a
 projected custom agent (`acp/kas_agents` puts it in `customAgents`), and the
 derivation empties its `permissions` block with the other grants, so every KAS
 tool call raises `session/request_permission` (measured on kiro-cli 2.29.0,
@@ -524,6 +528,47 @@ below the floor it says tools are unavailable, as the turn's prompt does. The
 same answer's `claude_adapter_outdated` names the old adapter as the reason, and
 the footer then says to update claude-agent-acp
 (`pages.chat.sideChat.context_only_claude_adapter_outdated`).
+
+**On goose the confinement is a goose home of its own.** goose reads no kiro
+agent spec either, and its pre-approval store is `permission.yaml` in its
+config directory: in the `approve` mode Crew seeds, goose runs a tool listed
+under `user.always_allow` without a permission request, so the gate never sees
+it (measured on goose 1.50.1: with `shell` listed, a `touch` ran unasked).
+`_run_side_turn` (and `_run_thread_turn`) request the base agent's session with
+`side_read_only`, and the goose launch (`acp/harness/goose.GooseLaunch`) then:
+
+- builds a fresh goose home inside the session's private scratch window and
+  points `GOOSE_PATH_ROOT` at it (`build_side_goose_root`). Its `config`
+  directory links every entry of the user's own config directory
+  (`goose_config_dir`, resolved as goose resolves it) except `permission.yaml`,
+  so provider secrets, OAuth tokens and custom providers still work; it holds a
+  copy of `config.yaml` without its `extensions` block, so no user extension
+  starts; `data` and `state` start empty. Each spawn removes the previous home
+  first. A side session with no scratch window, or a `config.yaml` that does
+  not parse as a mapping, is refused rather than started on the user's home.
+- places no MCP server on the session array (`_goose_session_mcp_servers`), as
+  on claude. A server named `developer` would also replace goose's builtin
+  read tools.
+
+On that home every tool goose served asked first, the builtins and the platform
+extensions alike, even with the user's `permission.yaml` listing them. A call is
+proven read-only by the (extension, tool) pair goose stamps on its `tool_call`
+frame (`_meta.goose.toolCall`), read as goose wrote it, before any prefix is
+stripped: `("developer", "tree")` and `("developer", "read_image")`
+(`acp/harness_tool_names.GOOSE_READ_ONLY_BUILTINS`) map to `fs_read` as
+`harness_builtin_tool`. goose names any other extension's tool
+`<extension>__<tool>`, so a server called `developer` serving `tree` arrives as
+`developer__tree` and is refused. A matched pair is goose's own extension, so
+the event carries no server, as goose's builtin shell already does, and the
+`other` kind goose's permission request fills in is read as `read`; any other
+kind goose states still narrows. `analyze` is not listed: goose serves it from an
+extension named `analyze`, which the identity-drift refusal turns down on every
+goose session. goose has no tool that returns a file's text apart from its shell,
+and the shell stays refused, so a goose side turn lists folders and views images;
+its prompt is `SIDE_BOUNDARY_PROMPT_LISTING` and its binding records
+`goose_read_only`. The sensitive-path deny runs on the call's own `path`, so a
+`read_image` of `~/.ssh` or of the side home's linked `secrets.yaml` is refused
+(`test_side_readonly_goose.py`).
 
 **One session per sidecar generation, rebound not trusted.** The side session
 key is `side:<slot>:<gen>`, `gen` being the sidecar's own generation
@@ -780,6 +825,7 @@ Backend invariants are covered by `test/test_side.py`:
 | claude side turns run read-only on a confined session | `test_side_turn_on_claude_runs_read_only_on_a_confined_session`, `test_side_turn_on_claude_with_an_unverified_adapter_runs_no_tools`, `test_dashboard_bound_profile_governs_a_claude_side_read`, `test_side_tools_answers_what_a_side_turn_runs`, `test_side_tools_is_false_when_the_config_does_not_load` (`test/test_side.py`); `test_a_side_read_only_session_starts_confined_and_pinned`, `test_a_side_read_only_session_keeps_the_exclusions_restrictions`, `test_a_handshake_below_the_floor_stops_a_side_read_only_session` (`test/test_acp_session_mcp.py`); `test_skips_pool_for_a_side_read_only_session` (`test/test_session_pool.py`) |
 | An inherited allow rule cannot open a sensitive path to a claude side read | `test_an_inherited_read_allow_does_not_open_a_sensitive_path`, `test_a_side_session_without_its_deny_rules_never_starts`, `test_a_target_is_written_as_a_root_anchored_rule` (`test/test_acp_session_mcp.py`) |
 | A claude read tool is proven by its adapter stamp | `test_read_only_policy_approves_a_claude_read_tool`, `test_read_only_policy_rejects_a_claude_search_kind`, `test_read_only_policy_rejects_a_claude_builtin_name_with_a_server`, `test_read_only_policy_denies_a_claude_web_tool_an_operator_denied` (`test/test_llm_helpers_tool_gate.py`); `test_a_claude_permission_event_names_the_read_builtin_its_frame_stamped`, `test_a_claude_frame_without_its_stamp_is_not_named_by_its_title`, `test_a_main_chat_claude_permission_event_names_no_builtin` (`test/test_harness_tool_names.py`); `test_only_a_side_read_only_session_names_a_claude_read_builtin` (`test/test_acp_session_mcp.py`) |
+| goose side turns run on their own goose home and prove only the builtin pair | `test_side_readonly_goose.py`; `test_side_turn_on_goose_runs_read_only_on_its_own_goose_home`, `test_side_tools_answers_what_a_side_turn_runs` (`test/test_side.py`); `test_a_goose_turn_runs_read_only_on_its_own_goose_home` (`test/test_chat_threads.py`) |
 
 Busy-send invariants live in `test/test_side_steer_queue.py`:
 

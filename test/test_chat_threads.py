@@ -1506,6 +1506,26 @@ async def test_a_claude_turn_runs_read_only_on_a_confined_session(tmp_path, monk
 
 
 @pytest.mark.asyncio
+async def test_a_goose_turn_runs_read_only_on_its_own_goose_home(tmp_path, monkeypatch):
+    """On goose the thread gets the Side Chat's goose shape: the base agent's
+    session requested with ``side_read_only``, READ_ONLY, and a boundary that
+    names neither a shell nor a file-text read."""
+    state = _make_state(tmp_path)
+    slot, mid = _member_slot(state)
+    calls = _arm_turn(state, monkeypatch, answer="ok", backend="goose")
+    assert _seed_reply(state, slot, mid, "user", "hi") == "ok"
+    await _run_thread_turn(
+        state, slot, mid, "run-1", "hi", _parent(), [], f"{slot.key}:{mid}", _identity(state, slot)
+    )
+    acquired = next(c for c in calls if "key" in c)
+    streamed = next(c for c in calls if "message" in c)
+    assert acquired["agent"] == "kirocrew"
+    assert acquired["side_read_only"] is True
+    assert streamed["approval_policy"] == chat_threads.ToolApprovalPolicy.READ_ONLY
+    assert chat_threads.THREAD_BOUNDARY_PROMPT_LISTING in streamed["message"]
+
+
+@pytest.mark.asyncio
 async def test_a_claude_turn_on_an_unverified_adapter_runs_no_tools(tmp_path, monkeypatch):
     state = _make_state(tmp_path)
     slot, mid = _member_slot(state)

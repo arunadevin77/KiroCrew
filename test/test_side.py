@@ -1548,6 +1548,34 @@ async def test_side_turn_on_claude_runs_read_only_on_a_confined_session(
 
 
 @pytest.mark.asyncio
+async def test_side_turn_on_goose_runs_read_only_on_its_own_goose_home(
+    tmp_path, monkeypatch, _published_readonly_spec
+):
+    """On goose the confinement is the separate goose home its launch builds for
+    ``side_read_only``: nothing is derived, the turn streams READ_ONLY, and the
+    prompt names neither a shell nor a file-text read, because there is neither."""
+    from kiro_crew.acp_backends import ACP_BACKEND_GOOSE
+    from kiro_crew.dashboard.side_prompts import SIDE_BOUNDARY_PROMPT_LISTING
+    from kiro_crew.llm_helpers import ToolApprovalPolicy
+
+    _configure_backend(monkeypatch, ACP_BACKEND_GOOSE)
+    state, parent, _events, created = _side_turn_fixture(tmp_path, "run-goose")
+    stream_mock = AsyncMock(return_value=_SIDE_ANSWER)
+    monkeypatch.setattr("kiro_crew.dashboard.handlers.side.stream_and_collect", stream_mock)
+
+    await _run_side_turn(state, parent, "run-goose", _SIDE_QUESTION, is_first_turn=True)
+
+    assert _published_readonly_spec == [], "goose reads no kiro agent spec"
+    assert created[0]["side_read_only"] is True
+    assert not (created[0]["agent"] or "").endswith("--readonly")
+    assert stream_mock.await_args.kwargs["approval_policy"] is ToolApprovalPolicy.READ_ONLY
+    prompt = stream_mock.await_args.args[1]
+    assert SIDE_BOUNDARY_PROMPT_LISTING in prompt
+    assert "git status" not in prompt
+    assert parent._side.binding == (created[0]["agent"] or "", "", "goose_read_only")
+
+
+@pytest.mark.asyncio
 async def test_side_turn_on_claude_with_an_unverified_adapter_runs_no_tools(
     tmp_path, monkeypatch, _published_readonly_spec
 ):
@@ -1579,6 +1607,7 @@ async def test_side_turn_on_claude_with_an_unverified_adapter_runs_no_tools(
         ("claude", True, True, False),
         ("claude", False, False, True),
         ("opencode", True, False, False),
+        ("goose", False, True, False),
     ],
 )
 async def test_side_tools_answers_what_a_side_turn_runs(
@@ -1587,10 +1616,16 @@ async def test_side_tools_answers_what_a_side_turn_runs(
     """The footer reads this, so it must give the turn's answer, adapter floor
     included: an old claude adapter must not show a footer that promises lookups,
     and is named as the reason so the footer can say to update it."""
-    from kiro_crew.acp_backends import ACP_BACKEND_CLAUDE, ACP_BACKEND_KIRO, ACP_BACKEND_OPENCODE
+    from kiro_crew.acp_backends import (
+        ACP_BACKEND_CLAUDE,
+        ACP_BACKEND_GOOSE,
+        ACP_BACKEND_KIRO,
+        ACP_BACKEND_OPENCODE,
+    )
     from kiro_crew.dashboard.handlers import side as side_mod
 
     backends = {
+        "goose": ACP_BACKEND_GOOSE,
         "kiro": ACP_BACKEND_KIRO,
         "claude": ACP_BACKEND_CLAUDE,
         "opencode": ACP_BACKEND_OPENCODE,

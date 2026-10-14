@@ -2440,6 +2440,15 @@ ACP_BACKENDS_MCP_CONFIG_HOT_RELOAD = frozenset({ACP_BACKEND_KIRO})
 #   (``AcpClient._claude_session_meta``, ``_pin_claude_starting_mode``). No write
 #   tool exists there for an allow rule to pre-approve, and no allow rule reaches
 #   a sensitive path.
+# * goose: its pre-approval store is ``permission.yaml`` in its config directory,
+#   which in ``approve`` mode runs a ``user.always_allow`` tool without asking.
+#   The side session is started with a goose home of its own under its scratch
+#   window (``GOOSE_PATH_ROOT``, ``acp.harness.goose.build_side_goose_root``):
+#   the user's config entries linked in except ``permission.yaml``,
+#   ``config.yaml`` copied without ``extensions``, and no MCP server on the
+#   array. A read is proved from the (extension, tool) pair goose stamps, as
+#   written: ``("developer", "tree")`` and ``("developer", "read_image")`` only
+#   (``acp.harness_tool_names.GOOSE_READ_ONLY_BUILTINS``).
 #
 # Off this set the side turn runs ``REJECT_ALL``, the pre-allowance posture, and
 # its footer says tools are unavailable there.
@@ -2467,6 +2476,18 @@ ACP_BACKENDS_MCP_CONFIG_HOT_RELOAD = frozenset({ACP_BACKEND_KIRO})
 # no kiro agent spec at all. A side turn on it therefore runs ``REJECT_ALL`` until a
 # read-only posture is expressed in the harness's own permission vocabulary.
 #
+# goose is a member on measurement, on goose 1.50.1. With the user's own
+# ``permission.yaml`` listing ``shell``, ``tree``, ``analyze`` and ``read_image``
+# under ``always_allow``, a session on the separate home raised
+# ``session/request_permission`` for every tool the model called (``tree``,
+# ``read_image``, ``analyze``, ``shell``, ``write``, ``todo__todo_write``,
+# ``apps__create_app``, ``load``, ``delegate``, ``extensionmanager__manage_extensions``),
+# and a rejected ``shell`` write left no file; on the user's own home the same
+# ``shell`` call ran without asking. A server or config extension named
+# ``developer`` that serves ``tree`` is stated ``developer__tree``, so it is not
+# proven. goose has no tool that returns a file's text apart from its shell, and the
+# shell stays refused, so a goose side turn lists folders and views images.
+#
 # pi is NOT a member either. Every one of its tool calls does reach
 # ``session/request_permission``, but through Crew's gate extension rather than the
 # derived spec, and the extension expresses no read-only posture -- it asks about
@@ -2477,7 +2498,9 @@ ACP_BACKENDS_MCP_CONFIG_HOT_RELOAD = frozenset({ACP_BACKEND_KIRO})
 # see: that posture is enforced by the harness's own sandbox, which denies rather
 # than asks, so no call reaches the host gate and no SEL row is written. A side turn
 # on it runs ``REJECT_ALL``.
-ACP_BACKENDS_SIDE_READONLY = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS, ACP_BACKEND_CLAUDE})
+ACP_BACKENDS_SIDE_READONLY = frozenset(
+    {ACP_BACKEND_KIRO, ACP_BACKEND_KAS, ACP_BACKEND_CLAUDE, ACP_BACKEND_GOOSE}
+)
 
 # Backends whose process answers ``session/new``, ``session/load`` and
 # ``session/set_mode`` one at a time, so a session start sent while one of those is

@@ -3523,6 +3523,11 @@ class AcpClient:
         greppable fact a degraded session leaves behind until the broker-side mount
         check exists. A count is not a mount -- it says what was offered, not what took.
         """
+        if getattr(self, "_side_read_only", False):
+            # A Side Chat session mounts no MCP server, as on claude: READ_ONLY
+            # refuses every MCP call, and a server named after goose's builtin
+            # extension would replace its read tools.
+            return []
         servers = self._session_mcp_servers()
         logger.info(
             "goose session MCP: %d server(s) placed on the session array; this harness "

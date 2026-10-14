@@ -19,7 +19,7 @@ from typing import Any
 from aiohttp import web
 
 from kiro_crew.acp.client import AcpAuthRequired
-from kiro_crew.acp_backends import ACP_BACKENDS_SIDE_READONLY
+from kiro_crew.acp_backends import ACP_BACKEND_GOOSE, ACP_BACKENDS_SIDE_READONLY
 from kiro_crew.agent_discovery import warm_project_agent_names
 from kiro_crew.agent_sdk.backend_identity import is_claude_backend_name
 from kiro_crew.agent_sdk.drivers.acp import claude_adapter_honours_session_options
@@ -522,20 +522,31 @@ async def _run_side_turn(
         # cannot see, so each member confines its side session so that surface
         # cannot reach a write: kiro-cli through the derived agent spec below,
         # claude-agent-acp through the session options its client sends for
-        # ``side_read_only``. Off the set — or with the harness unknown because
+        # ``side_read_only``, goose through the separate goose home its launch
+        # builds for ``side_read_only``. Off the set — or with the harness unknown because
         # the config never loaded — the turn runs the pre-allowance posture: the
         # base agent under REJECT_ALL, and the prompt and fallback say tools are
         # unavailable here.
         tools_available = await _side_read_only_tools(side_backend)
         claude_side = tools_available and is_claude_backend_name(side_backend)
+        goose_side = tools_available and side_backend == ACP_BACKEND_GOOSE
         side_session_kwargs: dict[str, Any] = {}
-        if claude_side:
+        if goose_side:
+            # goose reads no kiro agent spec either. Its launch starts the side
+            # session on a goose home of its own, where no permission.yaml can
+            # pre-approve a tool and no MCP server is mounted, so every call
+            # reaches the READ_ONLY gate below.
+            side_agent: str | None = kiro_agent or slot_agent
+            approval_policy = ToolApprovalPolicy.READ_ONLY
+            binding = (side_agent or "", project or "", "goose_read_only")
+            side_session_kwargs["side_read_only"] = True
+        elif claude_side:
             # claude reads no kiro agent spec. Its client starts the session with
             # only the read built-ins and no MCP server and pins the asking mode,
             # so every web call reaches the READ_ONLY gate below. Read, Grep and
             # Glob inside the work dir run natively, which is a read, and the
             # session's deny rules keep them off the host's sensitive paths.
-            side_agent: str | None = kiro_agent or slot_agent
+            side_agent = kiro_agent or slot_agent
             approval_policy = ToolApprovalPolicy.READ_ONLY
             binding = (side_agent or "", project or "", "claude_read_only")
             side_session_kwargs["side_read_only"] = True
@@ -651,7 +662,8 @@ async def _run_side_turn(
             question,
             is_first_turn=is_first_turn or (is_new and not resumed),
             tools_available=tools_available,
-            shell_available=not claude_side,
+            shell_available=not (claude_side or goose_side),
+            file_reads_available=not goose_side,
             cfg=cfg,
         )
         try:
