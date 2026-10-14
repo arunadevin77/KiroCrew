@@ -7609,6 +7609,109 @@ class TestParentEndCancelsItsChildren:
         assert mgr._sessions["dashboard:chat-9"].retire_on_identity_change is True
         await mgr.close_all()
 
+    @staticmethod
+    async def _identity_sweep_spares(mgr, cb, key: str, snapshotted, seen) -> None:
+        """Run the spare-children sweep over the idle *key* and assert it deferred.
+
+        A deferred parent keeps its session and its children's completion path:
+        no teardown snapshot (the step that gates a child's report away from the
+        parent), no cancel, the fence released, and the sweep incomplete and
+        waiting on the parent's sub-agents.
+        """
+        with patch(
+            "kiro_crew.session._provider_uses_kiro_identity_store",
+            return_value=True,
+        ):
+            retired, complete = await mgr.retire_kiro_identity_sessions(spare_children=True)
+
+        assert retired == []
+        assert snapshotted == []
+        assert seen == []
+        assert cb.fence_released == [key]  # type: ignore[attr-defined]
+        assert complete is False
+        assert f"{key} (subagents)" in mgr.identity_sweep_waiting_on
+        assert mgr.has_session(key)
+        assert mgr._sessions[key].retire_on_identity_change is True
+
+    @pytest.mark.asyncio
+    async def test_identity_retire_spares_a_parent_whose_child_report_is_delivering(self, cfg):
+        """A finished child whose run task is gone but whose terminal report is
+        still delivering keeps its parent through the spare-children sweep.
+
+        The child is neither live nor queued, so the sparable-child read sees
+        nothing; only the manager's unfinished-report reading does. Retiring the
+        parent here would take the teardown snapshot that drops the report before
+        it reaches the parent.
+        """
+        key = "dashboard:chat-9"
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        snapshotted, seen, cb = self._recorder({key: ()}, unfinished_reports={key: True})
+        mgr.set_child_teardown_handler(cb)
+        await mgr.get_or_create(key)
+        mgr.release(key)
+
+        await self._identity_sweep_spares(mgr, cb, key, snapshotted, seen)
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_identity_retire_spares_a_parent_with_an_unregistered_finished_child(self, cfg):
+        """A finished child whose report is not registered yet keeps its parent.
+
+        The span before the report lands in the manager's report registry is the
+        pending-work signal's (``has_pending_work_for_async``); the sweep asks it
+        off the loop alongside the sparable-child read.
+        """
+        key = "dashboard:chat-9"
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        snapshotted, seen, cb = self._recorder({key: ()}, pending_work={key: True})
+        mgr.set_child_teardown_handler(cb)
+        await mgr.get_or_create(key)
+        mgr.release(key)
+
+        await self._identity_sweep_spares(mgr, cb, key, snapshotted, seen)
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_identity_retire_spares_a_parent_whose_report_starts_during_the_read(self, cfg):
+        """A report that begins delivering while the off-loop read is suspended is
+        caught by the commit recheck under the registry lock."""
+        key = "dashboard:chat-9"
+        reporting: dict[str, bool] = {}
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        snapshotted, seen, cb = self._recorder(
+            {key: ()},
+            unfinished_reports=reporting,
+            on_store_probe=lambda k: reporting.__setitem__(k, True),
+        )
+        mgr.set_child_teardown_handler(cb)
+        await mgr.get_or_create(key)
+        mgr.release(key)
+
+        await self._identity_sweep_spares(mgr, cb, key, snapshotted, seen)
+        assert key in cb.store_probed  # type: ignore[attr-defined]
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_identity_retire_spares_a_parent_whose_pending_work_starts_during_the_read(
+        self, cfg
+    ):
+        """In-memory pending work that appears during the off-loop read keeps the
+        parent at the commit recheck, the same as for the unclaimed removal."""
+        key = "dashboard:chat-9"
+        owed: dict[str, bool] = {}
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        snapshotted, seen, cb = self._recorder(
+            {key: ()},
+            pending_work=owed,
+            on_store_probe=lambda k: owed.__setitem__(k, True),
+        )
+        mgr.set_child_teardown_handler(cb)
+        await mgr.get_or_create(key)
+        mgr.release(key)
+
+        await self._identity_sweep_spares(mgr, cb, key, snapshotted, seen)
+        await mgr.close_all()
+
     @pytest.mark.asyncio
     async def test_identity_retire_defers_on_a_child_admitted_during_the_teardown(self, cfg):
         """A child admitted through /api/spawn while the retire decision runs is

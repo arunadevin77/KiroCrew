@@ -1788,6 +1788,45 @@ class SessionLifecycleService:
         # record because they were accepted before it opened. Raises on failure.
         return await handler.has_pending_store_children(key)
 
+    async def _parent_owes_child_work(self, key: str) -> bool:
+        """Whether retiring *key* would drop sub-agent work it is still owed, read
+        off the loop under the fence opened by :meth:`_open_teardown_fence`.
+
+        Three readings, each covering a span the others miss: a registered report
+        still delivering after its run's task ended (``has_unfinished_report_for``),
+        the manager's pending-work signal (``has_pending_work_for_async``: a
+        finished child whose report is not registered yet, a live follow-up
+        watcher, a queued row), and :meth:`_parent_has_sparable_child` (a child the
+        teardown would cancel). The pending-work signal stops seeing a run once its
+        task ends, which is why the report reading is asked separately. A failed
+        read raises, and the caller keeps the parent.
+        """
+        handler = self._child_teardown
+        if handler is None or not key:
+            return False
+        return (
+            handler.has_unfinished_report_for(key)
+            or await handler.has_pending_work_for_async(key)
+            or await self._parent_has_sparable_child(key)
+        )
+
+    def _parent_owes_child_work_now(self, key: str) -> bool:
+        """The in-memory half of :meth:`_parent_owes_child_work`, asked again at the
+        commit under the registry lock.
+
+        No await, so the answer still holds when the commit pops the session: work
+        that appeared while the off-loop read was suspended keeps the parent. The
+        store half is the fence's to catch, through ``commit_identity_sweep_retire``.
+        """
+        handler = self._child_teardown
+        if handler is None or not key:
+            return False
+        return (
+            handler.has_live_or_queued_children(key)
+            or handler.has_in_memory_pending_work_for(key)
+            or handler.has_unfinished_report_for(key)
+        )
+
     def _snapshot_parent_children(self, key: str) -> tuple[str, ...]:
         """The runs *key* owns, read synchronously so the answer cannot drift.
 
@@ -2279,16 +2318,19 @@ class SessionLifecycleService:
                     # Resolve the deferred spare_children candidates HERE, still inside
                     # the permit barrier (no successor can register a sid) but off the
                     # registry lock, so the store read runs on the writer thread. For
-                    # each, ask whether a child the retirement would cancel still
-                    # exists -- live or queued in memory, held only by the store, or
-                    # admitted into the fence since it opened under the lock above.
+                    # each, ask whether the retirement would drop sub-agent work the
+                    # parent is still owed -- a child live or queued in memory, held
+                    # only by the store, or admitted into the fence since it opened
+                    # under the lock above, a finished child whose report is not
+                    # registered yet, or a report still delivering after its run's
+                    # task ended (``_parent_owes_child_work``).
                     #
-                    #   * A child exists (or the store read FAILS): DEFER. Flag the
+                    #   * Work is owed (or the store read FAILS): DEFER. Flag the
                     #     session for retirement on its next turn, cancel nothing, drop
                     #     the fence, and leave the sweep incomplete so the next sweep
                     #     re-checks. Nothing irreversible happened for this key under
                     #     the lock, so a defer is simply not retiring -- no rollback.
-                    #   * No child: COMMIT the retirement now. Re-take the registry lock
+                    #   * Nothing owed: COMMIT the retirement now. Re-take the registry lock
                     #     to unregister (a successor that registered under the key while
                     #     the store read ran is left alone -- the pop is guarded on the
                     #     session identity), then shut the provider down and run the
@@ -2305,7 +2347,7 @@ class SessionLifecycleService:
                     try:
                         for key, sess, fence in maybe_spare:
                             try:
-                                has_child = await self._parent_has_sparable_child(key)
+                                has_child = await self._parent_owes_child_work(key)
                             except Exception:
                                 self._deps.logger.warning(
                                     "Identity sweep: reading the children of %s failed; "
@@ -2352,8 +2394,10 @@ class SessionLifecycleService:
                                     skipped = True
                                     waiting_on.append(f"{key} (busy)")
                                     continue
-                                # An in-memory child that appeared during the read defers.
-                                if handler is not None and handler.has_live_or_queued_children(key):
+                                # In-memory work that appeared during the read defers:
+                                # a child, a pending-work term, or a report that began
+                                # delivering while the read was suspended.
+                                if handler is not None and self._parent_owes_child_work_now(key):
                                     sess.retire_on_identity_change = True
                                     handler.release_teardown_fence(key, fence)
                                     unresolved_fences.pop(key, None)
@@ -2790,11 +2834,7 @@ class SessionLifecycleService:
         try:
             if handler is not None:
                 try:
-                    if (
-                        handler.has_unfinished_report_for(key)
-                        or await handler.has_pending_work_for_async(key)
-                        or await self._parent_has_sparable_child(key)
-                    ):
+                    if await self._parent_owes_child_work(key):
                         return False
                 except Exception:
                     self._deps.logger.warning(
@@ -2812,11 +2852,7 @@ class SessionLifecycleService:
                 ):
                     return False
                 if handler is not None:
-                    if (
-                        handler.has_live_or_queued_children(key)
-                        or handler.has_in_memory_pending_work_for(key)
-                        or handler.has_unfinished_report_for(key)
-                    ):
+                    if self._parent_owes_child_work_now(key):
                         return False
                     if fence is not None and not handler.commit_identity_sweep_retire(key, fence):
                         return False
