@@ -5134,7 +5134,7 @@ pytest-timeout has no `SIGALRM` on Windows, so a test that blocks past `--timeou
 failed in place: the whole xdist worker is killed (`node down: Not properly terminated`),
 and with `--max-worker-restart=0` — which the Windows job needs, see `ci.yml` — the run
 **aborts** with every test that worker had not reached still uncollected. MEASURED: one
-test that could wait forever (`test_acp_runtime::test_concurrent_prompt_on_same_handle_rejected`,
+test that could wait forever (`test_acp_runtime_session_handle::test_concurrent_prompt_on_same_handle_rejected`,
 a second `prompt()` awaiting a completion the test never feeds, `timeout=None` resolving to
 the multi-hour dashboard ceiling) ended 2 of 5 full runs at ~3,000 of 62,000 tests. The
 report showed 6 failures; the other 59,000 results simply did not exist.

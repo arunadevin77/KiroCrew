@@ -832,7 +832,7 @@ class TestDisabledServerIsNeverMounted:
 
     Scope worth stating, since these parametrize over backends: they pin the CLIENT
     path, which is opencode's. The other composer is pinned beside its own code, in
-    ``test_acp_runtime.py::TestRuntimeMemberDispatchDisabled`` -- both of
+    ``test_acp_runtime_load_session.py::TestRuntimeMemberDispatchDisabled`` -- both of
     ``AcpRuntime``'s paths, create and resume.
     """
 

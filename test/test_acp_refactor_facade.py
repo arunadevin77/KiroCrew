@@ -1764,7 +1764,7 @@ _UNRESOLVED_FACADE_PATCHES: dict[tuple[str, str], int] = {
     (_THIS_FILE, "test_a_monkeypatch_through_the_facade_lands_on_the_owner_and_is_undone"): 1,
     (_THIS_FILE, "test_mock_patch_by_object_and_by_dotted_name_round_trip"): 2,
     (_THIS_FILE, "test_monkeypatch_and_mock_nest_either_way_through_the_facade"): 4,
-    ("test/test_acp_runtime.py", "_track_untracks"): 1,
+    ("test/test_acp_runtime_death.py", "_track_untracks"): 1,
     ("test/test_agent_spec_preflight.py", "TestGatewayInstallVerification._run_init_services"): 1,
     ("test/test_channel_session_trust_parity.py", "_run_turn"): 1,
     (

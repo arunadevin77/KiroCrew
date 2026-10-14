@@ -3273,7 +3273,7 @@ exit, both leave `<not reaped>` standing, which is then true.
 Pinned on every platform rather than on the Windows shards alone
 (`test_the_windows_branch_amends_the_summary_too`,
 `test_an_unconfirmed_windows_drain_leaves_the_placeholder` in
-`test/test_acp_runtime.py`, which force the branch through
+`test/test_acp_runtime_death.py`, which force the branch through
 `platform_compat.IS_WINDOWS`): a branch one CI lane reaches is a branch whose loss
 is invisible in every other lane. The shared kill test double drains the Windows
 tree by awaiting `process.wait()` for the same reason the real
@@ -3344,7 +3344,7 @@ and still running, and its own `kiro_pids.txt` line is what the sweep reaps it
 by. Pinned by `test_observed_exit_retires_registry_entries_once_reaped`,
 `test_observed_exit_keeps_tracking_while_the_root_still_runs` and
 `test_eof_inside_an_oversize_line_retires_the_same_way` in
-`test/test_acp_runtime.py`, and by the `_untrack_root_by_identity` cases in
+`test/test_acp_runtime_death.py`, and by the `_untrack_root_by_identity` cases in
 `test/test_pid_lifecycle.py`.
 
 **Every writer of a root's registry lines is bound to the identity read at
@@ -3387,7 +3387,7 @@ until the reap has settled, so being cancelled twice cannot skip it. Pinned by t
 `test/test_pid_lifecycle.py` and `test/test_pid_lifecycle_tracking_integrity.py`,
 `test_reset_state_retires_by_identity_when_a_spawn_token_is_held` in
 `test/test_pid_lifecycle_teardown.py`, `TestAcpRuntimePidTracking` in
-`test/test_acp_runtime.py`, and `TestRuntimeRootTrackingOffLoop` in
+`test/test_acp_runtime_death.py`, and `TestRuntimeRootTrackingOffLoop` in
 `test/test_acp_spawn_offload.py`.
 
 ### Codex MCP result envelopes
