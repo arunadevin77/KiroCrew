@@ -4161,6 +4161,21 @@ runtimes are gone, and a gateway restart starts a fresh one. Siblings from OTHER
 per-tree boundary, and this widens the window to the tree, never lifts the
 mask. Pinned by `test/test_subagent_shared_scratch.py`.
 
+Host runs of the shared window, with what each one did and did not show (the
+check: stage a file under the parent's `$KIROCREW_SCRATCH`, spawn a dedicated
+sub-agent, read the file back from it):
+
+| Host | What the run showed | Not verified |
+|---|---|---|
+| Linux, namespace sandbox | The shared window is mounted and the sub-agent reads the parent's staged file (the path #12782 was built and tested on). | — |
+| macOS 26.7.1, arm64 | The sub-agent got the same `$KIROCREW_SCRATCH` path, read the parent's staged file, and wrote a new file there. | Which sandbox layer the sub-agent ran in. The helper ran under kiro-cli's agent server and no Kiro Crew sandbox was seen above it, which fits the delegated path leaving private windows out. The Seatbelt profile carve-out is pinned at profile-text level by tests only; no `sandbox-exec` run has shown it. |
+| Windows | The sub-agent got the same `$KIROCREW_SCRATCH` value and read a staged marker back by that path. | The sandbox layer the spawn got (not surfaced in the run's output). Isolation differs on Windows (#19601). |
+
+So on all three hosts a dedicated sub-agent reached the parent's staged file.
+Only on Linux is the sandbox layer known. On macOS and Windows the runs do not
+show the sub-agent was sandboxed at all, so they say the path works, not that
+it works inside a Kiro Crew sandbox; that question is tracked in #19601.
+
 ### Parent end ends the children, on every backend
 
 Reaping the companion runtime ends the children of a harness that multiplexes
