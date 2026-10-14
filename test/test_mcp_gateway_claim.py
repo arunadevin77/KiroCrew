@@ -36,6 +36,7 @@ from kiro_crew.mcp_gateway import gatewayd as gw
 from kiro_crew.mcp_gateway import socketsec
 from kiro_crew.mcp_gateway import stub as stub_mod
 from kiro_crew.mcp_gateway import transport
+from kiro_crew.testing.wait import await_until, default_timeout
 
 pytestmark = pytest.mark.xdist_group("mcp_gateway")
 
@@ -224,7 +225,7 @@ async def _handle(reader: Any, writer: Any) -> None:
             reader, writer, pool=_FakePool(), resolver=object(),
             socket_path=Path("/tmp/cp.sock"), hot_keys=None,
         ),
-        timeout=5.0,
+        timeout=default_timeout(),
     )
 
 
@@ -241,7 +242,7 @@ async def test_claim_retargets_live_connection(monkeypatch: pytest.MonkeyPatch) 
     reader.feed(_register(""))
     reader.feed(_CALL)
     task = asyncio.create_task(_handle(reader, _RecordingWriter()))
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
     assert fb.callers == [None]
 
     ack = await gw._apply_claim(_claim(_WRAPPER_PID, "dashboard:chat-CP-1"))
@@ -249,7 +250,7 @@ async def test_claim_retargets_live_connection(monkeypatch: pytest.MonkeyPatch) 
 
     fb.forwarded.clear()
     reader.feed(_CALL)
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
     reader.feed({"type": "unregister"})
     await task
 
@@ -289,7 +290,7 @@ async def test_claim_matches_host_pid_for_pidns_stub(monkeypatch: pytest.MonkeyP
     reader.feed(_register("", ancestor_pids=ns_pids))
     reader.feed(_CALL)
     task = asyncio.create_task(_handle(reader, _RecordingWriter()))
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
     assert fb.callers == [None]
     # The connection must be claim-indexed under BOTH pid sets.
     for pid in host_chain + ns_pids:
@@ -301,7 +302,7 @@ async def test_claim_matches_host_pid_for_pidns_stub(monkeypatch: pytest.MonkeyP
 
     fb.forwarded.clear()
     reader.feed(_CALL)
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
     reader.feed({"type": "unregister"})
     await task
 
@@ -331,7 +332,7 @@ async def test_register_resolves_identity_from_peer_ancestry(
     reader.feed(_register("", ancestor_pids=[43, 2]))
     reader.feed(_CALL)
     task = asyncio.create_task(_handle(reader, _RecordingWriter()))
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
     reader.feed({"type": "unregister"})
     await task
 
@@ -365,7 +366,7 @@ async def test_no_host_indexing_when_peer_pid_unavailable(
     reader.feed(_register("", ancestor_pids=[43, 2]))
     reader.feed(_CALL)
     task = asyncio.create_task(_handle(reader, _RecordingWriter()))
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
 
     assert resolve_calls == []  # never resolved without a kernel-attested pid
     assert 9100 not in gw._CONN_INDEX and 9020 not in gw._CONN_INDEX
@@ -647,14 +648,14 @@ async def test_claim_replaces_existing_identity(monkeypatch: pytest.MonkeyPatch)
     reader.feed(_register("dashboard:old-session"))
     reader.feed(_CALL)
     task = asyncio.create_task(_handle(reader, _RecordingWriter()))
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
 
     ack = await gw._apply_claim(_claim(_PID, "dashboard:new-session"))
     assert ack["updated"] == 1
 
     fb.forwarded.clear()
     reader.feed(_CALL)
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
     reader.feed({"type": "unregister"})
     await task
 
@@ -673,7 +674,7 @@ async def test_claim_idempotent_same_key(monkeypatch: pytest.MonkeyPatch) -> Non
     reader.feed(_register("dashboard:same-1"))
     reader.feed(_CALL)
     task = asyncio.create_task(_handle(reader, _RecordingWriter()))
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
 
     ack = await gw._apply_claim(_claim(_PID, "dashboard:same-1"))
     assert ack["type"] == "claimed" and ack["updated"] == 0 and ack["connections"] == 1
@@ -865,7 +866,7 @@ async def test_register_records_start_tokens_and_claim_verifies(
     reader.feed(_register(""))
     reader.feed(_CALL)
     task = asyncio.create_task(_handle(reader, _RecordingWriter()))
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
     (conn,) = gw._CONN_INDEX[_PID]
     assert conn.pid_start_ids == {p: "111" for p in _ANCESTORS}
 
@@ -874,7 +875,7 @@ async def test_register_records_start_tokens_and_claim_verifies(
 
     fb.forwarded.clear()
     reader.feed(_CALL)
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
     reader.feed({"type": "unregister"})
     await task
     assert fb.callers == [None, None]  # identity never misattributed
@@ -906,7 +907,7 @@ async def test_conn_index_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     reader.feed(_register(""))
     reader.feed(_CALL)
     task = asyncio.create_task(_handle(reader, _RecordingWriter()))
-    await asyncio.wait_for(fb.forwarded.wait(), timeout=5.0)
+    await await_until(fb.forwarded, what="the forwarded call")
     for pid in _ANCESTORS:
         assert pid in gw._CONN_INDEX and len(gw._CONN_INDEX[pid]) == 1
     reader.eof()
