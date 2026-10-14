@@ -113,6 +113,21 @@ const HEIGHT_REPORT_EPSILON_PX = 2
  * between a low and high value keeps cancelling this timer, so the shrink
  * never fires and the reporter goes quiet on the high value. */
 const HEIGHT_REPORT_SHRINK_MS = 200
+/** How long the document may stay taller than the frame's viewport, with the
+ * viewport height unchanged, before the reporter gives the frame back its own
+ * vertical scroll. A self-sizing host grows the frame to a reported height
+ * within a frame or two, and every viewport resize restarts this window, so
+ * only a frame held at a fixed height (expanded view, popout, thumbnail)
+ * outlasts it. */
+const HEIGHT_REPORT_FIT_GRACE_MS = 300
+/** How far (px) the rounded-up content height may exceed the frame's viewport
+ * and still count as fitting. A frame's CSS height is a whole pixel, but its
+ * viewport can come out up to a pixel shorter once the engine snaps it to
+ * device pixels at a fractional display scale, and clientHeight rounds that
+ * value either way. Without this slack a self-sizing frame sized to its exact
+ * report reads as too short, gets its scrollbar back, and the loop the
+ * overflow handling exists to break resumes. */
+const HEIGHT_REPORT_FIT_SLACK_PX = 1
 
 /** How long the loading indicator waits before uncovering the widget anyway.
  * This is a HANG backstop, not a compile budget: the indicator normally clears
@@ -137,7 +152,7 @@ const TW_ERROR_INLINE_HANDLER =
   `window.__mcTwError=1;window.dispatchEvent(new Event('${TW_ERROR_EVENT}'))`
 
 /** Body of the height-reporter script. Defined as a string literal — the only
- * interpolation is the two numeric tuning constants above (never LLM/user
+ * interpolation is the numeric tuning constants above (never LLM/user
  * content; the LLM `html` never reaches here). Set as a script element via
  * textContent below; the iframe re-parses and executes it via the standard
  * <script> mechanism.
@@ -150,31 +165,87 @@ const TW_ERROR_INLINE_HANDLER =
  * to the parent. The one deliberate exception is the window `load` re-report
  * below: quietness must never extend across a load event the parent can
  * observe, because parent surfaces treat post-load silence as the frame no
- * longer showing this document. */
+ * longer showing this document.
+ *
+ * It also hides the frame's own vertical scrollbar while the frame holds the
+ * whole document. A classic (space-taking) scrollbar is the one thing that
+ * feeds the frame's size back into the content's height: a frame that is a
+ * fraction of a pixel short of its content shows a scrollbar, the narrower
+ * viewport re-wraps the text taller, the frame grows, the scrollbar goes, the
+ * text re-wraps shorter, the frame shrinks, and the cycle repeats every half
+ * second. With the vertical overflow hidden while everything fits, the width
+ * the content lays out at does not depend on the frame's height, so the
+ * height settles. Once the document stays taller than a viewport that is not
+ * resizing (see HEIGHT_REPORT_FIT_GRACE_MS) the scroll comes back, so a
+ * fixed-height frame keeps scrolling its content. */
 const HEIGHT_REPORTER_BODY = `(function(){
   var EPS = ${HEIGHT_REPORT_EPSILON_PX};
   var SHRINK_MS = ${HEIGHT_REPORT_SHRINK_MS};
+  var FIT_GRACE_MS = ${HEIGHT_REPORT_FIT_GRACE_MS};
+  var FIT_SLACK = ${HEIGHT_REPORT_FIT_SLACK_PX};
   var lastSent = -1;      // last height actually posted to the parent
   var shrinkTimer = null;
   var rafId = 0;
   var raf = window.requestAnimationFrame || function(cb){ return setTimeout(cb, 16); };
   var unraf = window.cancelAnimationFrame || clearTimeout;
+  var root = document.documentElement;
+  // The document's own inline overflow-y, restored whenever the frame scrolls.
+  var authoredOverflowY = root.style.overflowY;
+  var clipped = false;
+  var fitTimer = null;
+  var viewH = root.clientHeight;
   function send(h){
     lastSent = h;
     parent.postMessage({type:'mc-widget-height', height:h}, '*');
   }
   function measure(){
-    // Use body.scrollHeight (content height) — NOT max(body, documentElement).
-    // documentElement.scrollHeight is at least the iframe's own viewport
-    // height, so once the iframe grows it can never report smaller, ratcheting
-    // the frame taller and taller (capped at MAX_HEIGHT) and never shrinking
-    // back to the actual content. body is content-sized (margin:0, no height),
-    // so its scrollHeight tracks the real content and can shrink.
-    return document.body.scrollHeight;
+    // The bottom of body's margin box, from the top of the document, rounded
+    // UP to a whole pixel. A frame sized to a rounded-down height is short of
+    // its content by a fraction of a pixel, which is enough to overflow.
+    //
+    // Measured on body, NOT documentElement: documentElement.scrollHeight is at
+    // least the iframe's own viewport height, so once the iframe grows it can
+    // never report smaller, ratcheting the frame taller and taller (capped at
+    // MAX_HEIGHT) and never shrinking back to the actual content. body is
+    // content-sized (no height), so its box tracks the real content and can
+    // shrink. The larger of its box and its scrollHeight covers content that
+    // overflows the box (absolutely positioned children, a fixed body height);
+    // its top offset covers its own margin, a child margin collapsed through
+    // its top edge, and any padding on html.
+    var b = document.body;
+    var r = b.getBoundingClientRect();
+    var top = r.top + (window.scrollY || 0);
+    var marginBottom = parseFloat(window.getComputedStyle(b).marginBottom) || 0;
+    return Math.ceil(top + Math.max(r.height, b.scrollHeight) + marginBottom);
+  }
+  function setClipped(on){
+    if (on === clipped) return;
+    clipped = on;
+    root.style.overflowY = on ? 'hidden' : authoredOverflowY;
+  }
+  function fits(h){
+    // clientHeight on the root element is the viewport height less any
+    // scrollbar, so a horizontal scrollbar never counts as room.
+    return h <= root.clientHeight + FIT_SLACK;
+  }
+  function fit(h){
+    if (fits(h)){
+      if (fitTimer){ clearTimeout(fitTimer); fitTimer = null; }
+      setClipped(true);
+      return;
+    }
+    if (!clipped || fitTimer) return;
+    // Taller than the frame. A self-sizing host is about to grow it; give the
+    // scroll back only if the viewport has not resized by the time this fires.
+    fitTimer = setTimeout(function(){
+      fitTimer = null;
+      if (!fits(measure())) setClipped(false);
+    }, FIT_GRACE_MS);
   }
   function evaluate(){
     rafId = 0;
     var h = measure();
+    fit(h);
     if (lastSent < 0){ send(h); return; }            // first measurement
     if (Math.abs(h - lastSent) <= EPS){              // within deadband — ignore jitter
       if (shrinkTimer){ clearTimeout(shrinkTimer); shrinkTimer = null; }
@@ -215,6 +286,18 @@ const HEIGHT_REPORTER_BODY = `(function(){
     rafId = raf(evaluate);
   }
   new ResizeObserver(schedule).observe(document.body);
+  window.addEventListener('resize', function(){
+    // A frame that changes height is being sized by its host: restart the
+    // grace window so a frame catching up with a growth never gets its
+    // scrollbar back. A height-only resize leaves body's box unchanged, so the
+    // ResizeObserver above does not see it; re-measure here to re-check fit.
+    var h = root.clientHeight;
+    if (h !== viewH){
+      viewH = h;
+      if (fitTimer){ clearTimeout(fitTimer); fitTimer = null; }
+    }
+    schedule();
+  });
   window.addEventListener('load', function(){
     // Re-report UNCONDITIONALLY after load, bypassing the deadband. The parent
     // surface re-arms its silence window on EVERY iframe load event (an engine
@@ -230,6 +313,9 @@ const HEIGHT_REPORTER_BODY = `(function(){
     // the parent can observe is followed by a report.
     setTimeout(function(){ lastSent = -1; schedule(); }, 100);
   });
+  // Start without a vertical scrollbar, so a frame still growing to its first
+  // report never flashes one; fit() hands the scroll back if it stays short.
+  setClipped(true);
   schedule();
   document.addEventListener('click', function(e){
  // NOTE: this isTrusted check runs INSIDE the sandboxed iframe
