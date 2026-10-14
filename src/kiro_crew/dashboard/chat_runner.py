@@ -8325,6 +8325,8 @@ def _notify_autonudge_turn_end(
     tool_identities: tuple = (),
     reply_text: str = "",
     reply_flushed: bool = False,
+    turn_started_at: float = 0.0,
+    successful_tool_completed_at: float = 0.0,
     nudge_turn: bool = False,
 ) -> None:
     """(Re)arm the slot's AutoNudge idle timer; runs on every turn exit.
@@ -8340,6 +8342,17 @@ def _notify_autonudge_turn_end(
 
         _autonudge = _autonudge_get()
         if _autonudge is not None:
+            approval_pending: bool | None = None
+            held_loop = _autonudge.get_by_slot(slot.key)
+            if (
+                successful_tool_completed_at > 0
+                and held_loop is not None
+                and held_loop.approval_stalled
+            ):
+                try:
+                    approval_pending = bool(slot.to_dict()["pending_approval"])
+                except Exception:
+                    logger.debug("could not read the slot's pending approval state", exc_info=True)
             _autonudge.notify_turn_complete(
                 slot.key,
                 tool_calls=tool_calls,
@@ -8347,6 +8360,9 @@ def _notify_autonudge_turn_end(
                 reply_text=reply_text,
                 reply_flushed=reply_flushed,
                 nudge_turn=nudge_turn,
+                turn_started_at=turn_started_at,
+                successful_tool_completed_at=successful_tool_completed_at,
+                approval_pending=approval_pending,
             )
     except Exception:
         logger.debug("autonudge.notify_turn_complete failed", exc_info=True)
@@ -8900,6 +8916,7 @@ async def _run_chat(
     # the body's single entry cannot miss them, and overwritten with their real
     # values further down; the seam then always reads a bound name.
     _turn_t0 = time.monotonic()
+    _turn_started_at = time.time()
     _stop_reason = ""
     slot_ctx_blocks: dict[str, int] = {}
     slot_ctx_phase = ""
@@ -10161,6 +10178,7 @@ async def _run_chat(
     # model/agent-influenced ACP tool_kind remains telemetry only.
     _turn_tool_identities: list[tuple[str, str, str, bool]] = []
     _turn_successful_tool_call_ids: set[str] = set()
+    _turn_latest_successful_tool_at = 0.0
     # Snapshot of slot._stop_generation at turn start. `_stop_state` snaps back
     # to "idle" once a Stop resolves, so a Stop pressed AND resolved during the
     # turn is invisible to a point-in-time state check at completion. This
@@ -13548,6 +13566,7 @@ async def _run_chat(
             elif event.kind == EVENT_TOOL_RESULT:
                 if event.tool_final and event.tool_call_id:
                     _turn_successful_tool_call_ids.add(event.tool_call_id)
+                    _turn_latest_successful_tool_at = time.time()
                     # An auto-approved coding tool reaches its completed frame
                     # without ever passing through a permission decision, so
                     # _wt_note_approved never emitted a cadence beat for it and
@@ -20445,6 +20464,8 @@ async def _run_chat(
                 "reply_text": assistant_text if isinstance(assistant_text, str) else "",
                 "reply_flushed": _turn_flushed_visible_text,
                 "nudge_turn": _directive_self_wake and _turn_landed,
+                "turn_started_at": _turn_started_at,
+                "successful_tool_completed_at": _turn_latest_successful_tool_at,
             },
         )
         # The turn's crew log closers, in the one order a reader can trust: every

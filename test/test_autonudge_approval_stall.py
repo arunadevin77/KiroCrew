@@ -298,6 +298,137 @@ async def test_release_rearms_and_the_next_cycle_fires(svc, _nosleep):
 
 
 @pytest.mark.asyncio
+async def test_completed_tool_after_stall_releases_hold_and_fires_next_cycle(svc, _nosleep):
+    """A completed tool result proves recovered execution without a prompt answer."""
+    fired: list[NudgeLoop] = []
+
+    async def on_fire(loop):
+        fired.append(loop)
+        return True
+
+    loop = await _armed(svc)
+    svc._on_fire = on_fire
+    await _stall(svc)
+    svc._cancel_timer(loop.id)
+    await svc._timer(loop)
+    assert fired == []
+
+    svc.notify_turn_complete(
+        loop.slot_key,
+        turn_started_at=loop.approval_stalled_at + 0.5,
+        successful_tool_completed_at=loop.approval_stalled_at + 1,
+        approval_pending=False,
+    )
+    await asyncio.gather(*list(svc._inflight_adds))
+    await svc._timers[loop.id]
+
+    assert len(fired) == 1
+    assert loop.approval_stalled is False
+    assert loop.approval_stalled_at == 0.0
+    await _stop_and_drain(svc)
+
+
+@pytest.mark.asyncio
+async def test_completed_tool_keeps_hold_while_an_approval_is_pending(svc, _nosleep):
+    """A completed call cannot clear a different prompt awaiting a decision."""
+    loop = await _armed(svc)
+    await _stall(svc)
+    held_at = loop.approval_stalled_at
+
+    svc.notify_turn_complete(
+        loop.slot_key,
+        turn_started_at=held_at + 0.5,
+        successful_tool_completed_at=held_at + 1,
+        approval_pending=True,
+    )
+    await svc._timers[loop.id]
+
+    assert loop.approval_stalled is True
+    assert loop.approval_stalled_at == held_at
+    await _stop_and_drain(svc)
+
+
+@pytest.mark.asyncio
+async def test_turn_started_before_stall_cannot_clear_its_own_later_hold(svc, _nosleep):
+    """The turn that timed out cannot use a later success to clear its own hold."""
+    loop = await _armed(svc)
+    await _stall(svc)
+    held_at = loop.approval_stalled_at
+
+    svc.notify_turn_complete(
+        loop.slot_key,
+        turn_started_at=held_at - 1,
+        successful_tool_completed_at=held_at + 1,
+        approval_pending=False,
+    )
+    await asyncio.gather(*list(svc._inflight_adds))
+    await svc._timers[loop.id]
+
+    assert loop.approval_stalled is True
+    assert loop.approval_stalled_at == held_at
+    await _stop_and_drain(svc)
+
+
+@pytest.mark.asyncio
+async def test_completed_tool_release_stops_runtime_credit_at_clear(svc, _nosleep):
+    """Recovery credits only the finished hold, then the runtime clock runs again."""
+    loop = await _armed(svc, max_runtime_secs=60)
+    await _stall(svc)
+    now = _an.time.time()
+    loop.created_ts = now - 130
+    loop.approval_stalled_at = now - 120
+    created_before = loop.created_ts
+
+    svc.notify_turn_complete(
+        loop.slot_key,
+        turn_started_at=now - 1,
+        successful_tool_completed_at=now,
+        approval_pending=False,
+    )
+    await asyncio.gather(*list(svc._inflight_adds))
+    await svc._timers[loop.id]
+
+    assert loop.approval_stalled is False
+    assert loop.approval_stalled_at == 0.0
+    assert loop.created_ts >= created_before + 120
+    assert not _an.runtime_budget_exceeded(loop)
+    await _stop_and_drain(svc)
+
+
+@pytest.mark.asyncio
+async def test_completed_tool_keeps_normal_rearm_if_release_already_landed(
+    svc, _nosleep, monkeypatch
+):
+    """A concurrent unarmed release cannot strand the completed turn."""
+    fired: list[NudgeLoop] = []
+
+    async def on_fire(loop):
+        fired.append(loop)
+        return True
+
+    loop = await _armed(svc)
+    svc._on_fire = on_fire
+    await _stall(svc)
+    held_at = loop.approval_stalled_at
+
+    def release_without_arm(_svc, _slot_key, **_kwargs):
+        loop.approval_stalled = False
+        loop.approval_stalled_at = 0.0
+
+    monkeypatch.setattr(_an._timers, "_schedule_release", release_without_arm)
+    svc.notify_turn_complete(
+        loop.slot_key,
+        turn_started_at=held_at + 0.5,
+        successful_tool_completed_at=held_at + 1,
+        approval_pending=False,
+    )
+    await svc._timers[loop.id]
+
+    assert len(fired) == 1
+    await _stop_and_drain(svc)
+
+
+@pytest.mark.asyncio
 async def test_release_is_inert_without_a_hold(svc, _nosleep):
     """No hold, no loop, or an inactive loop: nothing changes, nothing is armed."""
     assert await svc.release_approval_hold("chat-nope-000", why="test") is False
