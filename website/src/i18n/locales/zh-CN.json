@@ -11035,7 +11035,13 @@
         "open_capabilities": "打开 Customize",
         "fresh_session": "开始新会话",
         "fresh_session_hint": "这个聊天和其中的截图仍留在屏幕上；助手会从文字摘要继续，而不是重新读取图片。",
-        "fresh_session_done": "已就绪。请在下方输入下一条消息；助手会从本次聊天的文字摘要继续。"
+        "fresh_session_done": "已就绪。请在下方输入下一条消息；助手会从本次聊天的文字摘要继续。",
+        "session_start_repeat_restart_hint": "重启网关（运行所有对话的后台服务）即可解决；不重启而直接重试会以同样的方式失败。重启会中断网关上正在运行的所有内容，包括你的其他对话。对话记录会保留，被重启中断的回复之后可以继续。",
+        "restart_gateway_restarting": "正在重启网关。网关恢复后此页面会重新加载，届时请在下方重新发送消息。",
+        "restart_gateway_failed": "网关未能重启。",
+        "restart_gateway_refused_hint": "请让运行此网关的人重启它。他们可以在终端运行 {{command}}。",
+        "restart_gateway_retry_hint": "再次点击“{{button}}”，或在终端运行 {{command}}。",
+        "restart_gateway_refused_title": "此账号无法重启网关。"
       },
       "folderPanel": {
         "clear_search": "清除搜索",

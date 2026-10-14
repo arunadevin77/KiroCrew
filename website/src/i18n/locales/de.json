@@ -11196,7 +11196,13 @@
         "open_capabilities": "Customize öffnen",
         "fresh_session": "Neue Sitzung starten",
         "fresh_session_hint": "Behält diesen Chat und seine Screenshots auf dem Bildschirm; der Assistent macht mit einer Textzusammenfassung weiter, statt die Bilder erneut zu lesen.",
-        "fresh_session_done": "Bereit. Gib unten deine nächste Nachricht ein; der Assistent macht mit einer Textzusammenfassung dieses Chats weiter."
+        "fresh_session_done": "Bereit. Gib unten deine nächste Nachricht ein; der Assistent macht mit einer Textzusammenfassung dieses Chats weiter.",
+        "session_start_repeat_restart_hint": "Starte das Gateway (den Hintergrunddienst, der alle Chats ausführt) neu, um das zu beheben; ein erneuter Versuch ohne Neustart würde genauso scheitern. Ein Neustart unterbricht alles, was auf dem Gateway läuft, auch deine anderen Chats. Der Chatverlauf bleibt erhalten, und eine vom Neustart unterbrochene Antwort kannst du danach fortsetzen.",
+        "restart_gateway_restarting": "Das Gateway wird neu gestartet. Diese Seite lädt neu, sobald es zurück ist; sende deine Nachricht dann unten erneut.",
+        "restart_gateway_failed": "Das Gateway wurde nicht neu gestartet.",
+        "restart_gateway_refused_hint": "Bitte die Person, die dieses Gateway betreibt, es neu zu starten. Sie kann {{command}} in einem Terminal ausführen.",
+        "restart_gateway_retry_hint": "Drücke erneut „{{button}}“ oder führe {{command}} in einem Terminal aus.",
+        "restart_gateway_refused_title": "Dieses Konto kann das Gateway nicht neu starten."
       },
       "folderPanel": {
         "clear_search": "Suche löschen",

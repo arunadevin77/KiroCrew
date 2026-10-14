@@ -4238,7 +4238,48 @@ only, at the same count, `transcriptRenderers` withholds `onContinue` and sets
 plus one hint line (`pages.chat.errorCard.session_start_repeat_hint`) at body
 weight with the command as a `<code>` chip — it is the card's only remaining
 next step, so it is not a muted footnote; an older start-failure row is settled
-history and renders as plain prose. Pinned by `test_chat_slot_continue.py::TestSessionStartFailureStreak` /
+history and renders as plain prose. On the chat page (not an embed or popout,
+which cannot drive the gateway) the host also passes `onRestartGateway`, and the
+card swaps that hint for `session_start_repeat_restart_hint` (which says what
+the gateway is and that a restart interrupts everything running on it, other
+chats included, with no count: a dashboard slot count would miss crons, tasks
+and subagents) and the shared
+`RestartGatewayButton` (`pages/settings/AboutPanelUpdateFlow.tsx`, the same
+two-step armed control Settings → About and the speech settings render)
+(#13791). The second press runs a `useMutation` over `api.restartGateway()`
+(`POST /api/restart`, owner-gated on the server), so an offline browser leaves
+it paused and pending. Only the server's 200 means the restart was accepted —
+the endpoint replies before it restarts — and the card then shows a restarting
+line with the button gone ("This page reloads when it is back; then send your
+message again below."). A real restart always pushes a `restarting` progress
+step, which arms the update reload latch (`hooks/websocket/bundleReload.ts`),
+so the page reloads on reconnect and that reload ends the flow; the card keeps
+no state across it, as Settings → About does. The endpoint runs the restart's
+pre-drain refusals (`_resolve_restart_target` in `dashboard/handlers/updates.py`:
+an invalid launcher or interpreter path) BEFORE its 200 and answers them as a
+409 with the same sentence and a `code` (`restart_launcher_invalid`,
+`restart_interpreter_missing`), so every restart control (this card, Settings →
+About, the speech settings) sees them as an ordinary failure on the request
+instead of a progress step it never reads; `_restart_gateway` re-checks when it
+commits. Only an exception past that point still arrives as a progress step
+alone. Any rejection
+is a failure, shown through `ErrorNotice` with a plain-words title
+(`restart_gateway_failed`, or `restart_gateway_refused_title` "This account
+can't restart the gateway." for a refusal), the server's sentence below it,
+and NO agent hand-off (`noHandoffReason`: an Ask-the-agent chat would need the
+same failing session start). The owner gate's 403 drops the button, since that
+viewer can never pass it, and shows ONE line addressed to whoever runs the
+gateway, with the command for them (`restart_gateway_refused_hint`). The
+endpoint's cannot-run refusal (one of its two 409 codes, read with
+`apiErrorCode`) drops it too, since pressing again meets the same refusal, and
+shows the terminal hint (`session_start_repeat_hint`). A lapsed
+cookie's 403 (`ApiError.authRequired`, refreshed in the background) and any
+other failure keep the button, with the cost line still in view (a retry is
+the same disruptive restart) and one next step beside it
+(`restart_gateway_retry_hint`: "Press Restart gateway again, or run
+`kirocrew restart` in a terminal."), never the plain terminal hint, which would read as "the button is
+pointless". Wherever a command chip renders, it carries the shared
+`settingRef/CopyCommandButton`. Pinned by `test_chat_slot_continue.py::TestSessionStartFailureStreak` /
 `::TestChatSlotContinueAfterRepeatedStartFailures`,
 `test_chat_runner_coverage.py::TestSessionStartFailureRowKind`, and the
 frontend `ErrorCard.test.tsx` / `transcriptRenderers.test.tsx` suites. Not done

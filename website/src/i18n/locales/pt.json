@@ -11357,7 +11357,13 @@
         "open_capabilities": "Abrir Customize",
         "fresh_session": "Iniciar uma nova sessão",
         "fresh_session_hint": "Mantém este chat e suas capturas de tela na tela; o assistente segue a partir de um resumo em texto em vez de reler as imagens.",
-        "fresh_session_done": "Pronto. Digite sua próxima mensagem abaixo; o assistente segue a partir de um resumo em texto deste chat."
+        "fresh_session_done": "Pronto. Digite sua próxima mensagem abaixo; o assistente segue a partir de um resumo em texto deste chat.",
+        "session_start_repeat_restart_hint": "Reinicie o gateway (o serviço em segundo plano que executa todos os chats) para resolver; tentar de novo sem reiniciar falharia do mesmo jeito. Reiniciar interrompe tudo o que roda no gateway, inclusive seus outros chats. O histórico dos chats é mantido, e depois você pode retomar uma resposta que o reinício cortou.",
+        "restart_gateway_restarting": "Reiniciando o gateway. Esta página é recarregada quando ele voltar; depois, envie sua mensagem novamente abaixo.",
+        "restart_gateway_failed": "O gateway não reiniciou.",
+        "restart_gateway_refused_hint": "Peça a quem administra este gateway para reiniciá-lo. Essa pessoa pode executar {{command}} em um terminal.",
+        "restart_gateway_retry_hint": "Pressione “{{button}}” de novo ou execute {{command}} em um terminal.",
+        "restart_gateway_refused_title": "Esta conta não pode reiniciar o gateway."
       },
       "folderPanel": {
         "clear_search": "Limpar pesquisa",

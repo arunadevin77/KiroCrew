@@ -707,3 +707,62 @@ class TestRestartEndpoint:
         first, second = asyncio.run(_run())
         assert first.status == 200
         assert second.status == 200
+
+    @staticmethod
+    def _refused(**patches: object) -> tuple[web.Response, MagicMock]:
+        """POST /api/restart with the pre-drain checks patched.
+
+        Returns the state as the handler leaves it: whether a restart task was
+        recorded is settled when the handler returns, so no sleep is needed.
+        """
+
+        async def _no_restart(_state: object) -> None:
+            raise AssertionError("a refused restart reached _restart_gateway")
+
+        async def _run() -> tuple[web.Response, MagicMock]:
+            req = _request({})
+            req.app["state"]._background_tasks = set()
+            with (
+                patch.object(updates, "_restart_gateway", _no_restart),
+                patch.multiple(updates, **patches),
+            ):
+                resp = await updates.api_gateway_restart(req)
+            return resp, req.app["state"]
+
+        return asyncio.run(_run())
+
+    def test_a_broken_launcher_is_refused_before_the_200(self):
+        """A refusal after the 200 would reach a restart control only as a
+        progress step it never reads, so the endpoint answers it on the request."""
+
+        def _broken() -> str:
+            raise ValueError("launcher is not executable")
+
+        resp, state = self._refused(resolve_restart_launcher=_broken)
+        assert resp.status == 409
+        body = json.loads(resp.body)
+        assert body["error"] == "Cannot restart: invalid gateway launcher path"
+        assert body["code"] == "restart_launcher_invalid"
+        assert state._gateway_restart_task is None, "a refused restart still recorded a task"
+        assert not state._background_tasks
+
+    def test_a_missing_interpreter_is_refused_before_the_200(self):
+        platform_compat = MagicMock()
+        platform_compat.execv_target_available.return_value = False
+        with (
+            patch("kiro_crew.platform.wheel_engine.respawn_executable", lambda: "/gone/python"),
+            patch.object(updates.update_ownership, "clear_restart_deferral") as cleared,
+        ):
+            resp, state = self._refused(
+                resolve_restart_launcher=lambda: None, platform_compat=platform_compat
+            )
+        assert resp.status == 409
+        body = json.loads(resp.body)
+        assert body["error"] == "Cannot restart: invalid Python executable path"
+        assert body["code"] == "restart_interpreter_missing"
+        platform_compat.execv_target_available.assert_called_once_with("/gone/python")
+        # The same refusal `_restart_gateway` makes, with the same release of a
+        # deferred restart whose bundle went with the pruned tree.
+        cleared.assert_called_once_with()
+        assert state._gateway_restart_task is None
+        assert not state._background_tasks

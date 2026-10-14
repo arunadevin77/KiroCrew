@@ -447,6 +447,22 @@ describe('a session start that failed twice in a row swaps Resume for the restar
     expect(el.props.onContinue).toBeUndefined()
   })
 
+  it('hands the restart action to the repeat row only (#13791)', () => {
+    const onRestartGateway = () => Promise.resolve()
+    const opts = { ...recoverable, onRestartGateway }
+    const rows = [msg('user', { content: 'hi' }), failed(), resumed(), failed()]
+    const repeat = render(rows[3], opts, { index: 3, messages: rows }) as ReactElement
+    expect(repeat.props.onRestartGateway).toBe(onRestartGateway)
+    // The older row is settled, and a single failure still has Resume: neither
+    // may offer a restart that stops every running chat.
+    const older = render(rows[1], opts, { index: 1, messages: rows }) as ReactElement
+    expect(older.props.onRestartGateway).toBeUndefined()
+    const first = [msg('user', { content: 'hi' }), failed()]
+    const single = render(first[1], opts, { index: 1, messages: first }) as ReactElement
+    expect(single.props.onRestartGateway).toBeUndefined()
+  })
+
+
   describe('sessionStartRepeatIsNewest — the composer stands down with the card', () => {
     it('is true exactly when the newest card withholds Resume', () => {
       expect(sessionStartRepeatIsNewest([msg('user', { content: 'hi' }), failed()])).toBe(false)

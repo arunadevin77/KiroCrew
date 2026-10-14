@@ -11357,7 +11357,13 @@
         "open_capabilities": "Apri Customize",
         "fresh_session": "Avvia una nuova sessione",
         "fresh_session_hint": "Mantiene questa chat e i suoi screenshot sullo schermo; l’assistente continua da un riepilogo testuale invece di rileggere le immagini.",
-        "fresh_session_done": "Pronto. Scrivi qui sotto il tuo prossimo messaggio; l’assistente continua da un riepilogo testuale di questa chat."
+        "fresh_session_done": "Pronto. Scrivi qui sotto il tuo prossimo messaggio; l’assistente continua da un riepilogo testuale di questa chat.",
+        "session_start_repeat_restart_hint": "Riavvia il gateway (il servizio in background che esegue tutte le chat) per risolvere; riprovare senza riavviare fallirebbe allo stesso modo. Un riavvio interrompe tutto ciò che è in esecuzione sul gateway, comprese le tue altre chat. La cronologia delle chat resta, e dopo puoi riprendere una risposta interrotta dal riavvio.",
+        "restart_gateway_restarting": "Riavvio del gateway in corso. Questa pagina si ricarica quando torna disponibile; poi invia di nuovo il messaggio qui sotto.",
+        "restart_gateway_failed": "Il gateway non si è riavviato.",
+        "restart_gateway_refused_hint": "Chiedi a chi gestisce questo gateway di riavviarlo. Può eseguire {{command}} in un terminale.",
+        "restart_gateway_retry_hint": "Premi di nuovo «{{button}}» oppure esegui {{command}} in un terminale.",
+        "restart_gateway_refused_title": "Questo account non può riavviare il gateway."
       },
       "folderPanel": {
         "clear_search": "Cancella ricerca",

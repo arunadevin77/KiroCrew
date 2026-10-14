@@ -123,6 +123,10 @@ interface TranscriptRenderingOptions {
  *
  * Called from ChatPage at the position its statements held, so React registers its effects in the same order.
  */
+/** The repeat-session-start card's restart (#13791). Module scope so the
+ *  transcript renderers' memo never sees a new identity. */
+const restartGatewayFromError = (): Promise<unknown> => api.restartGateway()
+
 export function useTranscriptRendering({
   embedded, mode, popout, filteredSlots, connected, activeSlot, voiceRecoverySlot, appToolCallIds, mcpAppPanel, messages, messagesRef, slotRunning, toolDisclosure, setToolDisclosureFor, slotState,
   activityOpen, slotHasMore, slotOldestIndex, cursorIsForActiveSlot, loadingOlder, chatConfig, activeSlotRemoteBound, automationId, setAutomationOpen, handleArtifactOpen, handleFileOpen,
@@ -371,6 +375,9 @@ export function useTranscriptRendering({
       onOpenDefaultModel: embedded || popout ? undefined : openDefaultModelSetting,
       onOpenSignIn: embedded || popout ? undefined : openKiroSignIn,
       onOpenTurnLimit: embedded || popout ? undefined : openTurnLimitSetting,
+      // The repeat-start remedy (#13791). The restart itself is owner-gated on
+      // the server; a refusal comes back as an ApiError the card shows.
+      onRestartGateway: embedded || popout ? undefined : restartGatewayFromError,
       onOpenCapabilities: embedded || popout ? undefined : openMemberCapabilities,
       onFreshSession: handleFreshSession,
       freshSession,

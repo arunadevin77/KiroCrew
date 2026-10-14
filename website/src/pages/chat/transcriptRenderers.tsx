@@ -163,6 +163,11 @@ export interface TranscriptRendererOptions {
   /** Fix affordance for a `turn_timeout` row: deep-link to the Turn Time Limit
    *  setting. Omitted on a surface with no settings route. */
   onOpenTurnLimit?: () => void
+  /** Fix affordance for the newest `session_start_failed` row once the same
+   *  start failed twice in a row: restart the gateway after a confirmation.
+   *  Omitted on a surface that cannot drive the gateway (embed, popout, a
+   *  pane); the card then keeps its terminal hint with a copyable command. */
+  onRestartGateway?: () => Promise<unknown>
   /** Fix affordance for the newest `context_overflow` row: reset this slot's
    *  native conversation so the next message starts fresh from a text recap.
    *  Omitted on a surface that cannot reset a session. */
@@ -633,6 +638,7 @@ export function createTranscriptRenderers(
                 : undefined
             }
             sessionStartRepeat={sessionStartRepeat}
+            onRestartGateway={sessionStartRepeat ? o.onRestartGateway : undefined}
             continuing={o.continuing}
             onPickModel={unentitled ? o.onPickModel : undefined}
             onOpenDefaultModel={unentitled ? o.onOpenDefaultModel : undefined}

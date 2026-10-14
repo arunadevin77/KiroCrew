@@ -1727,6 +1727,63 @@ async def _venv_pip_install(proj: str, state: DashboardState) -> bool:
     return rc == 0
 
 
+async def _resolve_restart_target(
+    resolver: Callable[[], str] | None = None,
+) -> tuple[str | None, str | None, tuple[str, str] | None]:
+    """Return ``(launcher, exe, refusal)``: what a restart would exec, or why it cannot.
+
+    ``refusal`` is ``(code, sentence)``: a machine-readable code and the
+    sentence the progress push and the 409 body carry.
+
+    The refusals a restart makes BEFORE its drain, in one place, so
+    ``POST /api/restart`` can answer them before its 200 (every restart
+    control then shows them as a failure) and ``_restart_gateway`` still
+    re-checks at the moment it commits.
+    """
+    # Resolve off-loop. An explicit broken launcher must not fall back to the
+    # running bundle's interpreter and import path.
+    try:
+        launcher = await asyncio.to_thread(resolve_restart_launcher)
+    except (ValueError, OSError) as exc:
+        logger.warning("Gateway launcher unavailable: %s", exc)
+        return (
+            None,
+            None,
+            ("restart_launcher_invalid", "Cannot restart: invalid gateway launcher path"),
+        )
+    if launcher is not None:
+        return launcher, None, None
+    # Applying callers load this resolver before the install can replace
+    # their import tree. A plain restart has no apply, so load it here.
+    if resolver is None:
+        from kiro_crew.platform.wheel_engine import respawn_executable
+
+        resolver = respawn_executable
+    exe = await asyncio.to_thread(resolver)
+    # ONE hop for both syscalls, the contract this helper's docstring
+    # states: the pathname can be a stalled mount, and this function is
+    # on the event loop -- the await above proves it -- so a bare stat
+    # here would hold every session while the restart decides.
+    if not await asyncio.to_thread(platform_compat.execv_target_available, exe):
+        # The interpreter this process ran under is gone, which is what an
+        # apply that prunes the previous versioned tree leaves behind.
+        # REFUSE HERE, while this process is still serving: the drain is the
+        # point of no return, and main reached its exec only after
+        # ``close_all()``, where the failure left the gateway alive with
+        # admission shut and nothing able to reopen it. Refusing before the
+        # drain keeps every session answerable and leaves the operator a
+        # repair-then-relaunch they can actually perform. The pruned tree
+        # took the bundle too, so a deferred restart into an applied update
+        # does not hold the watchdog's exit.
+        update_ownership.clear_restart_deferral()
+        return (
+            None,
+            exe,
+            ("restart_interpreter_missing", "Cannot restart: invalid Python executable path"),
+        )
+    return None, exe, None
+
+
 @update_ownership.owning(update_ownership.Step.RESTART)
 async def _restart_gateway(
     state: DashboardState, *, resolver: Callable[[], str] | None = None
@@ -1750,43 +1807,10 @@ async def _restart_gateway(
     state._gateway_restart_in_progress = True
     try:
         state.push_update_progress("restarting", "Restarting server…")
-        # Resolve off-loop and before saving/draining. An explicit broken launcher
-        # must not fall back to the running bundle's interpreter and import path.
-        try:
-            launcher = await asyncio.to_thread(resolve_restart_launcher)
-        except (ValueError, OSError) as exc:
-            logger.warning("Gateway launcher unavailable: %s", exc)
-            state.push_update_progress("error", "Cannot restart: invalid gateway launcher path")
+        launcher, exe, refusal = await _resolve_restart_target(resolver)
+        if refusal is not None:
+            state.push_update_progress("error", refusal[1])
             return False
-        exe = None
-        if launcher is None:
-            # Applying callers load this resolver before the install can replace
-            # their import tree. A plain restart has no apply, so load it here.
-            if resolver is None:
-                from kiro_crew.platform.wheel_engine import respawn_executable
-
-                resolver = respawn_executable
-            exe = await asyncio.to_thread(resolver)
-            # ONE hop for both syscalls, the contract this helper's docstring
-            # states: the pathname can be a stalled mount, and this function is
-            # on the event loop -- the await above proves it -- so a bare stat
-            # here would hold every session while the restart decides.
-            if not await asyncio.to_thread(platform_compat.execv_target_available, exe):
-                # The interpreter this process ran under is gone, which is what an
-                # apply that prunes the previous versioned tree leaves behind.
-                # REFUSE HERE, while this process is still serving: the drain
-                # below is the point of no return, and main reached its exec only
-                # after ``close_all()``, where the failure left the gateway alive
-                # with admission shut and nothing able to reopen it. Refusing
-                # before the drain keeps every session answerable and leaves the
-                # operator a repair-then-relaunch they can actually perform.
-                # The pruned tree took the bundle too, so a deferred restart
-                # into an applied update does not hold the watchdog's exit.
-                update_ownership.clear_restart_deferral()
-                state.push_update_progress(
-                    "error", "Cannot restart: invalid Python executable path"
-                )
-                return False
         # circular import: kiro_crew.dashboard.chat imports from
         # kiro_crew.dashboard.handlers (which re-exports this module), so this
         # must stay inline to avoid an import cycle at module load.
@@ -2865,6 +2889,16 @@ async def api_gateway_restart(request: web.Request) -> web.Response:
     if owner_denied is not None:
         return owner_denied
     state: DashboardState = request.app["state"]
+
+    # Refuse a restart that cannot run BEFORE the 200, while the client still
+    # holds the request: after it, a refusal reaches the user only as a
+    # progress step, which a restart control waiting for the reload never
+    # reads. ``_restart_gateway`` re-checks when it commits. Before the latch
+    # below, so no await separates its check from the task it records.
+    _launcher, _exe, refusal = await _resolve_restart_target()
+    if refusal is not None:
+        code, sentence = refusal
+        return web.json_response({"ok": False, "error": sentence, "code": code}, status=409)
 
     # Coalesce repeat clicks/requests BEFORE the response-flush sleep below.
     # Without this latch, every POST creates a restart task and they all reach

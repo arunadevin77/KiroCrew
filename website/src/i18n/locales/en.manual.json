@@ -5301,7 +5301,13 @@
         "open_capabilities": "Open Customize",
         "fresh_session": "Start a fresh session",
         "fresh_session_hint": "Keeps this chat and its screenshots on screen; the assistant continues from a text summary instead of re-reading the images.",
-        "fresh_session_done": "Ready. Type your next message below; the assistant continues from a text summary of this chat."
+        "fresh_session_done": "Ready. Type your next message below; the assistant continues from a text summary of this chat.",
+        "session_start_repeat_restart_hint": "Restart the gateway (the background service that runs every chat) to fix this; trying again without a restart would fail the same way. A restart interrupts everything running on the gateway, including your other chats. Chat history is kept, and a reply the restart cuts off can be resumed afterwards.",
+        "restart_gateway_restarting": "Restarting the gateway. This page reloads when it is back; then send your message again below.",
+        "restart_gateway_failed": "The gateway did not restart.",
+        "restart_gateway_refused_hint": "Ask whoever runs this gateway to restart it. They can run {{command}} in a terminal.",
+        "restart_gateway_retry_hint": "Press {{button}} again, or run {{command}} in a terminal.",
+        "restart_gateway_refused_title": "This account can't restart the gateway."
       },
       "crewLog": {
         "section_status": "Status",

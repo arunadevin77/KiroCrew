@@ -1,6 +1,13 @@
-import { memo, type ReactNode } from 'react'
+import { memo, useState, type ReactNode } from 'react'
+import { useMutation } from '@tanstack/react-query'
 import { ExternalLink, KeyRound, Loader2, MessageSquarePlus, RotateCw, Settings, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 
+import { ApiError, apiErrorCode } from '../../api/apiError'
+import ErrorNotice from '../../components/ErrorNotice'
+// The shared two-step restart control. Its module holds only the About panel's
+// update actions (shared components and the api client), not the Settings page.
+import { RestartGatewayButton } from '../settings/AboutPanelUpdateFlow'
+import { CopyCommandButton } from '../../components/settingRef/CopyCommandButton'
 import { i18nT } from '../../i18n/t'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
 import { chatErrorDisplayText } from '../../lib/chatErrorRecovery'
@@ -232,6 +239,17 @@ export interface ErrorCardProps {
    */
   sessionStartRepeat?: boolean
   /**
+   * The in-product remedy for a `sessionStartRepeat` row: restart the gateway
+   * (`POST /api/restart`) through the shared two-step `RestartGatewayButton`.
+   * Omitted on a surface that cannot drive the gateway (embed, popout); the
+   * card then keeps the terminal hint, with a copy control on its command chip.
+   *
+   * Only the server's 200 means the restart was accepted: any rejection (the
+   * endpoint's own refusal of a restart that cannot run, or a gateway that
+   * never answered) is shown as a failure, never as a restart under way.
+   */
+  onRestartGateway?: () => Promise<unknown>
+  /**
    * The non-inference exit for a `usage_limit` row in a slot the header's
    * "Request a Feature" action created (#13342): the repo's feature-request
    * issue form. That action is an agent turn by design, so a spent allowance
@@ -292,9 +310,23 @@ const ACTION_BTN =
  *  translation put `{{command}}`; a catalog that dropped the placeholder
  *  renders the sentence unchanged rather than nothing. The two `i18nT` calls
  *  are the only place the command text lives in this module. */
-function restartHint(): ReactNode {
-  const text = i18nT('pages.chat.errorCard.session_start_repeat_hint', { command: 'kirocrew restart' })
-  const marked = i18nT('pages.chat.errorCard.session_start_repeat_hint', { command: '\u0000' })
+// Literal keys so `check-i18n-keys.mjs` resolves them statically: the terminal
+// hint for whoever reads the card; the refused variant, addressed to the
+// person who runs the gateway (a refused viewer cannot run the command); and
+// the retry variant beside a button that can still work.
+const RESTART_HINT_KEYS = {
+  terminal: 'pages.chat.errorCard.session_start_repeat_hint',
+  refused: 'pages.chat.errorCard.restart_gateway_refused_hint',
+  retry: 'pages.chat.errorCard.restart_gateway_retry_hint',
+} as const
+
+function restartHint(variant: keyof typeof RESTART_HINT_KEYS = 'terminal'): ReactNode {
+  const key = RESTART_HINT_KEYS[variant]
+  // The retry line quotes the button by its own catalog label, so the words
+  // always match what the shared RestartGatewayButton actually shows.
+  const button = i18nT('pages.settings.aboutPanel.restart_gateway')
+  const text = i18nT(key, { command: 'kirocrew restart', button })
+  const marked = i18nT(key, { command: '\u0000', button })
   const at = marked.indexOf('\u0000')
   if (at < 0) return text
   const tail = marked.length - at - 1
@@ -306,8 +338,151 @@ function restartHint(): ReactNode {
       <code className="font-mono text-[12px] px-1 py-0.5 rounded bg-bg-elevated ring-1 ring-inset ring-border" data-testid="error-card-restart-command">
         {command}
       </code>
+      {/* The shared command copy control (SettingRef's): it paints a tick only
+          when the clipboard took the text, and a cross when it did not. */}
+      <span className="inline-flex align-middle ml-1" data-testid="error-card-restart-command-copy">
+        <CopyCommandButton text={command} />
+      </span>
       {text.slice(text.length - tail)}
     </>
+  )
+}
+
+/**
+ * The repeat-start card on a surface that can drive the gateway. The restart
+ * is the shared `RestartGatewayButton` (Settings → About and the speech
+ * settings use the same one), so the press is the same two-step arm
+ * everywhere: a restart interrupts everything running on the gateway, so one
+ * stray click must not do it.
+ *
+ * Phases: offered → restarting (button gone, so a second press cannot queue a
+ * second restart); or failed. A real restart always pushes a `restarting`
+ * progress step, which arms the update reload latch, so the page reloads on
+ * reconnect and that reload ends the flow, as it does for Settings → About.
+ *
+ * A `useMutation`: while the browser is offline the mutation waits paused
+ * instead of failing, so the card never claims a restart it has not sent.
+ * Only the server's 200 counts as accepted: the endpoint refuses a restart
+ * that cannot run (a broken launcher or interpreter) before it answers, so
+ * any rejection is a failure, shown through `ErrorNotice` with no agent
+ * hand-off.
+ */
+/** `POST /api/restart`'s refusal codes for a restart that cannot run on this
+ *  install (`_resolve_restart_target`): pressing again meets the same refusal. */
+const CANNOT_RUN_CODES: ReadonlySet<string> = new Set(['restart_launcher_invalid', 'restart_interpreter_missing'])
+
+function RestartGatewayCard({ displayText, onRestartGateway }: {
+  displayText: string
+  onRestartGateway: () => Promise<unknown>
+}) {
+  const [restarting, setRestarting] = useState(false)
+  // The failure, and the one next step it leaves. `owner`: the owner gate
+  // refused this viewer, so only whoever runs the gateway can act. `terminal`:
+  // the endpoint refused a restart that cannot run here (its 409 codes for a
+  // broken launcher or interpreter), so pressing again fails the same way. Both drop
+  // the button. `retry`: anything else, where a second press can work.
+  const [failure, setFailure] = useState<{ title: string; detail: string; next: 'owner' | 'terminal' | 'retry' } | null>(null)
+  const restart = useMutation({
+    mutationFn: onRestartGateway,
+    onMutate: () => setFailure(null),
+    onSuccess: () => setRestarting(true),
+    onError: (e: unknown) => {
+      // The owner gate's 403 only. A lapsed dashboard cookie also answers 403
+      // (`authRequired`), but the client refreshes that in the background, so
+      // the next press can pass and the button must stay.
+      const refused = e instanceof ApiError && e.status === 403 && !e.authRequired
+      const cannotRun = CANNOT_RUN_CODES.has(apiErrorCode(e))
+      setFailure({
+        title: refused ? i18nT('pages.chat.errorCard.restart_gateway_refused_title') : i18nT('pages.chat.errorCard.restart_gateway_failed'),
+        detail: e instanceof ApiError ? e.message : '',
+        next: refused ? 'owner' : cannotRun ? 'terminal' : 'retry',
+      })
+    },
+  })
+  const button = (
+    <div className="flex flex-wrap items-center gap-2">
+      <RestartGatewayButton
+        primary
+        pending={restart.isPending}
+        restarting={false}
+        onConfirm={() => restart.mutate()}
+        testId="error-card-restart-gateway"
+      />
+    </div>
+  )
+  let body: ReactNode
+  if (restarting) {
+    body = (
+      <div className="text-[13px] leading-5 text-text flex items-center gap-1.5" role="status" data-testid="error-card-restarting">
+        <Loader2 size={12} className="lucide-inline shrink-0 animate-spin" aria-hidden="true" />
+        {i18nT('pages.chat.errorCard.restart_gateway_restarting')}
+      </div>
+    )
+  } else if (failure) {
+    // The plain-words title leads; the server's own sentence (the diagnostic)
+    // follows below it. One next step under it, never two that disagree: a
+    // refused viewer gets the line for whoever runs the gateway, a restart
+    // that cannot run here gets the terminal, anyone else gets "try again, or
+    // use a terminal" beside the button. With no server
+    // sentence (a network error) the title alone is the message, said once.
+    const hasDetail = Boolean(failure.detail) && failure.detail !== failure.title
+    body = (
+      <>
+        <ErrorNotice
+          title={hasDetail ? failure.title : undefined}
+          message={hasDetail ? failure.detail : failure.title}
+          messagePlacement="below"
+          variant="inline"
+          noHandoffReason="This card exists because this chat's agent session cannot start; an Ask-the-agent chat would need the same start and fail the same way."
+          testId="error-card-restart-failed"
+        />
+        {failure.next === 'owner' ? (
+          <div className="text-[13px] leading-5 text-text" data-testid="error-card-restart-refused-hint">
+            {restartHint('refused')}
+          </div>
+        ) : failure.next === 'terminal' ? (
+          <div className="text-[13px] leading-5 text-text" data-testid="error-card-session-start-repeat-hint">
+            {restartHint('terminal')}
+          </div>
+        ) : (
+          <>
+            {/* The cost line stays wherever the button does: a retry is the
+                same disruptive restart, so it must be decided with the same
+                warning in view. */}
+            <div className="text-[13px] leading-5 text-text" data-testid="error-card-session-start-restart-hint">
+              {i18nT('pages.chat.errorCard.session_start_repeat_restart_hint')}
+            </div>
+            <div className="text-[13px] leading-5 text-text" data-testid="error-card-restart-retry-hint">
+              {restartHint('retry')}
+            </div>
+            {button}
+          </>
+        )}
+      </>
+    )
+  } else {
+    body = (
+      <>
+        <div className="text-[13px] leading-5 text-text" data-testid="error-card-session-start-restart-hint">
+          {i18nT('pages.chat.errorCard.session_start_repeat_restart_hint')}
+        </div>
+        {button}
+      </>
+    )
+  }
+  return (
+    <div
+      className="bg-danger-subtle ring-1 ring-inset forced-colors:border ring-danger/20 rounded-md self-center w-full max-w-full min-w-0 px-3 py-2 flex flex-col gap-2 animate-scale-in"
+      data-testid="error-card"
+      data-session-start-repeat="true"
+    >
+      {/* Muted once the restart is accepted: the failure it reports is being
+          fixed, and red text above the restarting line reads as still broken. */}
+      <div className={`${restarting ? 'text-muted' : 'text-danger'} text-[13px] leading-5 min-w-0`} style={{ overflowWrap: 'anywhere' }} data-testid="error-card-session-start-prose">
+        {withOriginLink(displayText)}
+      </div>
+      {body}
+    </div>
   )
 }
 /**
@@ -338,6 +513,7 @@ export const ErrorCard = memo(function ErrorCard({
   unentitledElsewhere,
   featureRequestFormUrl,
   sessionStartRepeat,
+  onRestartGateway,
   onOpenCapabilities,
   onOpenTurnLimit,
   turnLimitSlot,
@@ -602,6 +778,17 @@ export const ErrorCard = memo(function ErrorCard({
       </div>
     )
   }
+  if (sessionStartRepeat && onRestartGateway && !onContinue) {
+    // The same start failed twice and this surface can drive the gateway: the
+    // remedy is a press on the card, not a trip to a terminal. The backend's
+    // own sentence (with its diagnostic) stays first.
+    return (
+      <RestartGatewayCard
+        displayText={displayText}
+        onRestartGateway={onRestartGateway}
+      />
+    )
+  }
   if (!onContinue) {
     return (
       <div
@@ -620,8 +807,9 @@ export const ErrorCard = memo(function ErrorCard({
           // same way, so the button is gone and this line is the card's ONLY
           // remaining next step. It therefore renders at body weight in the
           // card's own colour, not as a muted footnote, and the command is a
-          // code chip so it reads as a thing to copy. The dashboard has no
-          // restart control on this surface, so the terminal is the next step.
+          // code chip with a copy control. This branch is the fallback for a
+          // surface with no restart action (embed, popout): the terminal is
+          // the next step there.
           <div className="text-[13px] leading-5 mt-1" data-testid="error-card-session-start-repeat-hint">
             {restartHint()}
           </div>

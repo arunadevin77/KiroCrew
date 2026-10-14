@@ -11357,7 +11357,13 @@
         "open_capabilities": "Ouvrir Customize",
         "fresh_session": "Démarrer une nouvelle session",
         "fresh_session_hint": "Garde ce chat et ses captures d’écran à l’écran ; l’assistant reprend à partir d’un résumé texte au lieu de relire les images.",
-        "fresh_session_done": "Prêt. Tape ton prochain message ci-dessous ; l’assistant reprend à partir d’un résumé texte de ce chat."
+        "fresh_session_done": "Prêt. Tape ton prochain message ci-dessous ; l’assistant reprend à partir d’un résumé texte de ce chat.",
+        "session_start_repeat_restart_hint": "Redémarre la passerelle (le service en arrière-plan qui exécute toutes les discussions) pour régler le problème ; réessayer sans redémarrage échouerait de la même façon. Un redémarrage interrompt tout ce qui tourne sur la passerelle, y compris tes autres discussions. L’historique des discussions est conservé, et tu peux reprendre ensuite une réponse coupée par le redémarrage.",
+        "restart_gateway_restarting": "Redémarrage de la passerelle. Cette page se rechargera quand elle sera revenue ; renvoie ensuite ton message ci-dessous.",
+        "restart_gateway_failed": "La passerelle n’a pas redémarré.",
+        "restart_gateway_refused_hint": "Demande à la personne qui gère cette passerelle de la redémarrer. Elle peut lancer {{command}} dans un terminal.",
+        "restart_gateway_retry_hint": "Appuie à nouveau sur « {{button}} », ou lance {{command}} dans un terminal.",
+        "restart_gateway_refused_title": "Ce compte ne peut pas redémarrer la passerelle."
       },
       "folderPanel": {
         "clear_search": "Effacer la recherche",

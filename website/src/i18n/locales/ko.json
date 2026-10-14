@@ -11035,7 +11035,13 @@
         "open_capabilities": "Customize 열기",
         "fresh_session": "새 세션 시작",
         "fresh_session_hint": "이 채팅과 스크린샷은 화면에 그대로 남습니다. 어시스턴트는 이미지를 다시 읽지 않고 텍스트 요약에서 이어갑니다.",
-        "fresh_session_done": "준비되었습니다. 아래에 다음 메시지를 입력하세요. 어시스턴트는 이 채팅의 텍스트 요약에서 이어갑니다."
+        "fresh_session_done": "준비되었습니다. 아래에 다음 메시지를 입력하세요. 어시스턴트는 이 채팅의 텍스트 요약에서 이어갑니다.",
+        "session_start_repeat_restart_hint": "게이트웨이(모든 채팅을 실행하는 백그라운드 서비스)를 재시작하면 해결됩니다. 재시작 없이 다시 시도하면 같은 방식으로 실패합니다. 재시작하면 내 다른 채팅을 포함해 게이트웨이에서 실행 중인 모든 것이 중단됩니다. 채팅 기록은 유지되며, 재시작으로 중단된 답변은 나중에 이어서 진행할 수 있습니다.",
+        "restart_gateway_restarting": "게이트웨이를 재시작하는 중입니다. 돌아오면 이 페이지가 다시 로드되니, 그다음 아래에서 메시지를 다시 보내세요.",
+        "restart_gateway_failed": "게이트웨이가 재시작되지 않았습니다.",
+        "restart_gateway_refused_hint": "이 게이트웨이를 운영하는 사람에게 재시작을 요청하세요. 그 사람은 터미널에서 {{command}} 를 실행할 수 있습니다.",
+        "restart_gateway_retry_hint": "‘{{button}}’ 버튼을 다시 누르거나 터미널에서 {{command}} 를 실행하세요.",
+        "restart_gateway_refused_title": "이 계정으로는 게이트웨이를 재시작할 수 없습니다."
       },
       "folderPanel": {
         "clear_search": "검색 지우기",
