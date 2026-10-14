@@ -73,7 +73,9 @@ def test_transient_errno_set_covers_resource_exhaustion():
 
 
 def test_probe_success_clears_failure_detail(monkeypatch):
-    monkeypatch.setattr(sb, "sys", types.SimpleNamespace(platform="linux"))  # hermetic: gate precedes the mocked probe
+    monkeypatch.setattr(
+        sb, "sys", types.SimpleNamespace(platform="linux")
+    )  # hermetic: gate precedes the mocked probe
     monkeypatch.setattr(sb, "_probe_unshare_once", lambda: (True, False, "ok", ""))
     sb._last_unshare_failure = (True, "stale detail from a previous probe", "")
     assert sb._probe_unshare() is True
@@ -81,7 +83,9 @@ def test_probe_success_clears_failure_detail(monkeypatch):
 
 
 def test_probe_transient_failure_retries_once(monkeypatch):
-    monkeypatch.setattr(sb, "sys", types.SimpleNamespace(platform="linux"))  # hermetic: gate precedes the mocked probe
+    monkeypatch.setattr(
+        sb, "sys", types.SimpleNamespace(platform="linux")
+    )  # hermetic: gate precedes the mocked probe
     calls: list[int] = []
 
     def fake_once():
@@ -95,7 +99,9 @@ def test_probe_transient_failure_retries_once(monkeypatch):
 
 
 def test_probe_permanent_failure_does_not_retry(monkeypatch):
-    monkeypatch.setattr(sb, "sys", types.SimpleNamespace(platform="linux"))  # hermetic: gate precedes the mocked probe
+    monkeypatch.setattr(
+        sb, "sys", types.SimpleNamespace(platform="linux")
+    )  # hermetic: gate precedes the mocked probe
     calls: list[int] = []
 
     def fake_once():
@@ -109,7 +115,9 @@ def test_probe_permanent_failure_does_not_retry(monkeypatch):
 
 
 def test_probe_transient_then_success_recovers(monkeypatch):
-    monkeypatch.setattr(sb, "sys", types.SimpleNamespace(platform="linux"))  # hermetic: gate precedes the mocked probe
+    monkeypatch.setattr(
+        sb, "sys", types.SimpleNamespace(platform="linux")
+    )  # hermetic: gate precedes the mocked probe
     results = [(False, True, _EAGAIN_REASON, ""), (True, False, "ok", "")]
     monkeypatch.setattr(sb, "_probe_unshare_once", lambda: results.pop(0))
     assert sb._probe_unshare() is True
@@ -125,9 +133,7 @@ def test_probe_non_linux_is_permanent(monkeypatch):
 # ── detect_backend cache policy ──
 
 
-def _install_probe(
-    monkeypatch, outcomes: list[tuple[bool, bool, str, str]]
-) -> list[int]:
+def _install_probe(monkeypatch, outcomes: list[tuple[bool, bool, str, str]]) -> list[int]:
     """Install a fake _probe_unshare fed by *outcomes*; returns the call log."""
     calls: list[int] = []
 
@@ -272,15 +278,21 @@ def test_probe_child_killed_by_signal_is_transient(monkeypatch):
 
 def test_on_loop_cold_cache_returns_none_without_probing(monkeypatch):
     """On event loop + cold cache: returns False immediately, does NOT call _probe_unshare_once."""
-    monkeypatch.setattr(sb, "sys", types.SimpleNamespace(platform="linux"))  # hermetic: gate precedes the mocked probe
+    monkeypatch.setattr(
+        sb, "sys", types.SimpleNamespace(platform="linux")
+    )  # hermetic: gate precedes the mocked probe
     # Monkeypatch _probe_unshare_once to raise if called — proves loop never probes
     monkeypatch.setattr(
-        sb, "_probe_unshare_once", lambda: (_ for _ in ()).throw(AssertionError("probe called on loop!"))
+        sb,
+        "_probe_unshare_once",
+        lambda: (_ for _ in ()).throw(AssertionError("probe called on loop!")),
     )
     # Prevent actual thread from starting (would call _probe_unshare_once)
-    monkeypatch.setattr(sb.threading, "Thread", lambda **kw: types.SimpleNamespace(
-        start=lambda: None, is_alive=lambda: True, name="fake"
-    ))
+    monkeypatch.setattr(
+        sb.threading,
+        "Thread",
+        lambda **kw: types.SimpleNamespace(start=lambda: None, is_alive=lambda: True, name="fake"),
+    )
 
     async def _run():
         return sb._probe_unshare()
@@ -297,7 +309,9 @@ def test_on_loop_cold_cache_returns_none_without_probing(monkeypatch):
 
 def test_on_loop_kicks_background_warm_that_populates_cache(monkeypatch):
     """On-loop call fires background thread that fills cache off-loop."""
-    monkeypatch.setattr(sb, "sys", types.SimpleNamespace(platform="linux"))  # hermetic: gate precedes the mocked probe
+    monkeypatch.setattr(
+        sb, "sys", types.SimpleNamespace(platform="linux")
+    )  # hermetic: gate precedes the mocked probe
     probe_thread_names: list[str] = []
 
     def recording_probe():
@@ -486,7 +500,9 @@ def test_warm_backend_is_a_noop_off_linux(monkeypatch):
 
 def test_off_loop_transient_retry_sleeps(monkeypatch):
     """When no event loop is running, time.sleep IS called for the retry."""
-    monkeypatch.setattr(sb, "sys", types.SimpleNamespace(platform="linux"))  # hermetic: gate precedes the mocked probe
+    monkeypatch.setattr(
+        sb, "sys", types.SimpleNamespace(platform="linux")
+    )  # hermetic: gate precedes the mocked probe
     sleep_calls: list[float] = []
     monkeypatch.setattr(sb.time, "sleep", lambda s: sleep_calls.append(s))
     monkeypatch.setattr(sb, "_probe_unshare_once", lambda: (False, True, "EAGAIN", ""))
@@ -514,15 +530,21 @@ def test_probe_unshare_fast_path_on_loop_when_backend_set(monkeypatch):
     bypassing the warm cache and deferring on-loop, returning False even
     though the host is known-good.
     """
-    monkeypatch.setattr(sb, "sys", types.SimpleNamespace(platform="linux"))  # hermetic: gate precedes the mocked probe
+    monkeypatch.setattr(
+        sb, "sys", types.SimpleNamespace(platform="linux")
+    )  # hermetic: gate precedes the mocked probe
     import asyncio
 
     # Preset cache to "namespace" (simulates successful prewarm)
     monkeypatch.setattr(sb, "_backend", "namespace")
     # If _probe_unshare_once is called, the test MUST fail
-    monkeypatch.setattr(sb, "_probe_unshare_once", lambda: (_ for _ in ()).throw(
-        AssertionError("_probe_unshare_once must NOT be called when cache is warm")
-    ))
+    monkeypatch.setattr(
+        sb,
+        "_probe_unshare_once",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("_probe_unshare_once must NOT be called when cache is warm")
+        ),
+    )
 
     async def _check():
         # We're on a running event loop, so the probe runs inline rather than deferring
@@ -580,9 +602,7 @@ class TestNoBackendGuidanceNamesTheRightRemedy:
         assert "=0" not in msg.replace("apparmor_restrict_unprivileged_userns=1", "")
 
     @pytest.mark.parametrize("appimage", ["/home/user/Apps/kirocrew.AppImage", None])
-    def test_still_names_the_opt_out_but_only_after_the_real_fix(
-        self, monkeypatch, appimage
-    ):
+    def test_still_names_the_opt_out_but_only_after_the_real_fix(self, monkeypatch, appimage):
         """Regression guard.
 
         Withholding ``sandbox_allow_unsandboxed_exec`` to stop people reaching for
@@ -640,9 +660,7 @@ class TestNoBackendGuidanceNamesTheRightRemedy:
         # And the quoting must survive a round trip through a shell parser.
         assert shlex.split(f"cmd --path {quoted}")[-1] == hostile
 
-    def test_the_remedy_names_a_cli_the_appimage_user_actually_has(
-        self, monkeypatch, tmp_path
-    ):
+    def test_the_remedy_names_a_cli_the_appimage_user_actually_has(self, monkeypatch, tmp_path):
         """The AppImage mechanism's no-backend guidance is self-contained.
 
         The AppImage is documented as needing "no Python, pip, npm, or Node", so
@@ -661,9 +679,7 @@ class TestNoBackendGuidanceNamesTheRightRemedy:
         assert str(bundled) in msg
         assert "while Kiro Crew is open" in msg, "must say the path is live-only"
 
-    def test_which_is_not_trusted_as_evidence_the_user_has_the_cli(
-        self, monkeypatch, tmp_path
-    ):
+    def test_which_is_not_trusted_as_evidence_the_user_has_the_cli(self, monkeypatch, tmp_path):
         """The gateway's PATH is not the user's PATH.
 
         This text is generated inside a process that inherited the AppImage's own
@@ -683,9 +699,7 @@ class TestNoBackendGuidanceNamesTheRightRemedy:
         assert str(bundled) in msg
 
     @pytest.mark.parametrize("argv", [[], [""], ["-c"], ["/usr/bin/python3"]])
-    def test_falls_back_to_the_bare_name_rather_than_inventing_a_path(
-        self, monkeypatch, argv
-    ):
+    def test_falls_back_to_the_bare_name_rather_than_inventing_a_path(self, monkeypatch, argv):
         """Better a short command than a confidently wrong absolute path."""
         self._apparmor_host(monkeypatch)
         monkeypatch.setenv("APPIMAGE", "/home/user/Apps/kirocrew.AppImage")
@@ -714,3 +728,81 @@ class TestNoBackendGuidanceNamesTheRightRemedy:
     def test_the_sysctl_reader_never_raises(self, monkeypatch):
         """A missing knob (Debian 13, older kernels) is a normal answer."""
         assert sb._apparmor_userns_restricted() in (True, False)
+
+
+# ── macOS Seatbelt probe: a timeout is transient, not a settled "no backend" ──
+#
+# A cold Seatbelt subsystem on a loaded Mac can run the sandbox-exec probe past
+# its deadline without the sandbox being broken. If detect_backend cached that
+# as a settled "none", credential_mask_state would report "absent" and the
+# agent-readable standing auto-approve alias would be honoured on an inconclusive
+# probe — the macOS counterpart of the Linux transient-unshare fail-open. These
+# pin that a Seatbelt TimeoutExpired (and a transient launch errno) is recorded
+# transient, so the result is never cached and reads "indeterminate".
+
+
+def _darwin_probe_env(monkeypatch):
+    """Put _probe_sandbox_exec on the darwin path with its syscalls stubbed."""
+    monkeypatch.setattr(sb.sys, "platform", "darwin")
+    monkeypatch.setattr(sb.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(sb.tempfile, "mkstemp", lambda **_k: (0, "/tmp/kirocrew_probe_x.sb"))
+    monkeypatch.setattr(sb.os, "write", lambda *_a: None)
+    monkeypatch.setattr(sb.os, "close", lambda *_a: None)
+    monkeypatch.setattr(sb.os, "unlink", lambda *_a: None)
+    monkeypatch.setattr(sb, "_macos_sandbox_state", lambda: False)
+
+
+def test_sandbox_exec_probe_timeout_is_classified_transient(monkeypatch):
+    _darwin_probe_env(monkeypatch)
+    monkeypatch.setattr(
+        sb.subprocess,
+        "run",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            sb.subprocess.TimeoutExpired(cmd="sandbox-exec", timeout=5)
+        ),
+    )
+    assert sb._probe_sandbox_exec() is False
+    transient, reason, _remedy = sb._last_unshare_failure
+    assert transient is True
+    assert "timed out" in reason
+
+
+def test_sandbox_exec_probe_transient_launch_errno_is_classified_transient(monkeypatch):
+    _darwin_probe_env(monkeypatch)
+    monkeypatch.setattr(
+        sb.subprocess,
+        "run",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError(errno.EAGAIN, "fork failed")),
+    )
+    assert sb._probe_sandbox_exec() is False
+    transient, _reason, _remedy = sb._last_unshare_failure
+    assert transient is True
+
+
+def test_sandbox_exec_timeout_is_not_cached_by_detect_backend(monkeypatch):
+    """The incident scenario on macOS: a probe timeout must NOT cache "none"."""
+    monkeypatch.setattr(sb, "userns_available", lambda: False)
+
+    def timing_out_probe():
+        # Record transient the way the real probe does on TimeoutExpired.
+        sb._record_probe_failure(True, "sandbox-exec probe timed out")
+        return False
+
+    monkeypatch.setattr(sb, "_probe_sandbox_exec", timing_out_probe)
+    assert sb.detect_backend(config_mode="auto") == "none"
+    assert sb._backend is None  # transient "none" must not be cached
+    assert sb.detect_backend(config_mode="auto") == "none"  # re-probes, not stuck
+
+
+def test_sandbox_exec_timeout_reads_indeterminate_not_absent(monkeypatch):
+    """credential_mask_state must fail SAFE on an inconclusive Seatbelt probe."""
+    monkeypatch.setattr(sb, "userns_available", lambda: False)
+    monkeypatch.setattr(sb, "_governance_sandbox_floor", lambda: None)
+    monkeypatch.setattr(sb, "_inside_kirocrew_sandbox", lambda: False)
+
+    def timing_out_probe():
+        sb._record_probe_failure(True, "sandbox-exec probe timed out")
+        return False
+
+    monkeypatch.setattr(sb, "_probe_sandbox_exec", timing_out_probe)
+    assert sb.credential_mask_state("auto") == "indeterminate"

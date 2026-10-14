@@ -201,6 +201,12 @@ _CREW_HOME_PREFIXES: tuple[str, ...] = (".kiro/crew", ".kirocrew")
 #: rather than imported from ``service.live_target`` to keep this low-level module free of
 #: that import chain; ``test_sandbox_dev_fleet_live_target.py`` pins the spellings equal.
 _LIVE_TARGET_LEAF: str = "live_target.json"
+#: The operator's standing auto-approve keystone: a DIRECTORY holding ``grant.json``.
+#: Spelled here rather than imported from ``config.loader`` for the reason
+#: ``_LIVE_TARGET_LEAF`` is -- this low-level module stays free of the config-loader
+#: import chain -- and ``test_standing_approval_keystone.py`` pins the two spellings
+#: equal, so the mask and the reader cannot come to name different directories.
+_STANDING_APPROVAL_LEAF: str = "standing-approval"
 #: The masked DIRECTORY the pointer's absent-equivalent stub is staged in before it is
 #: linked into place. Staging beside the target — in the data-home root — would put the
 #: temp at a name every sandbox can see: a concurrent namespace could ``link(2)`` it and
@@ -432,6 +438,40 @@ _CREW_HIDDEN_LEAVES: tuple[str, ...] = (
     "agentcore-inbound",
     "routing",
     "webhooks",
+    # The operator's STANDING auto-approve declaration
+    # (``standing-approval/grant.json``): skip every tool approval, in every future
+    # session, with no expiry. The widest authorization the product grants, so the
+    # population it governs must not be able to author it -- and MASKED rather than
+    # sealed read-only, which is the whole point of the leaf existing.
+    #
+    # The switch is deliberately NOT ``agent.dangerously_skip_permissions`` in
+    # ``config.json``. That document is sealed read-only above but stays READABLE
+    # in-sandbox, because in-sandbox readers resolve the subagent cap, the quarantine
+    # threshold and the browser preference from it per call. A readable document is a
+    # ``link(2)`` source: the agent runs as the operator's uid and so OWNS the inode,
+    # ``link(2)`` needs no write permission on the file it names, and a bind seals a
+    # MOUNT and not an inode -- the same fact ``_require_sealable_ceiling`` states
+    # when it refuses a ceiling with ``st_nlink > 1``. So a second name in the
+    # writable data-home root, a write through it, and an unlink leave the next
+    # startup reading a poisoned document under a lone link, which no point-in-time
+    # ``st_nlink`` check can see.
+    #
+    # A DIRECTORY, and that is load-bearing twice over rather than a layout
+    # preference. Linux refuses ``link(2)`` on a directory outright, so the alias
+    # shape has no source here even in principle; and a directory bind covers every
+    # child name, so it escapes the inode-staleness a single-file bind carries. No
+    # in-sandbox reader exists -- ``standing_approval.is_declared`` is called from the
+    # GATEWAY's startup paths -- so HIDDEN rather than READONLY, and hiding it lands
+    # in the safe direction for the reason the READONLY note gives: this is a GRANT,
+    # so an empty bind reads as no standing authority and the session prompts.
+    # Listed in ``_CREW_PRECREATE_HIDDEN_DIR_LEAVES`` too: an operator who has never
+    # declared the grant has no directory for the isdir-guarded mask loop to bind
+    # over, and the data-home root is writable in every sandbox.
+    #
+    # A DIRECTORY bind masks every child name present and future, so any sibling the
+    # reader keeps beside ``grant.json`` inherits this mask, this ``link(2)`` refusal
+    # and this precreation with no separate registration.
+    _STANDING_APPROVAL_LEAF,
     # The live-target pointer: it names the checkout the gateway ``execve``s into at
     # startup, so a sandboxed process that could write it would choose the code the
     # whole host runs next. Masked from Dev Fleet's OWN backend as well — that spawn's
@@ -1945,6 +1985,17 @@ _CREW_PRECREATE_HIDDEN_DIR_LEAVES: tuple[str, ...] = (
     "mcp-apps",
     "whatsapp",
     "backup",
+    # The standing auto-approve keystone, and the skip lands exactly where it hurts:
+    # an operator who has never declared the grant -- the default on every install --
+    # has no directory for the isdir-guarded mask loop to bind over. The data-home
+    # root is writable in every sandbox, so with the name absent a sandboxed process
+    # can simply CREATE the directory and write the grant document the gateway reads
+    # back at the next startup as the operator's own standing authority. Materialising
+    # it empty at 0700 gives the bind a name to cover before anything can write one.
+    # An empty directory is the reader's absent-equivalent by construction:
+    # ``standing_approval._read_all`` maps a missing ``grant.json`` and an unreadable
+    # one alike to ``{}``, and ``is_declared`` answers False for both.
+    _STANDING_APPROVAL_LEAF,
 )
 
 #: The masked md-notebook leaves materialised before a namespace spawn, and what each
@@ -5120,6 +5171,24 @@ def _relocated_crew_targets(leaves: tuple[str, ...]) -> list[str]:
     return out
 
 
+def _crew_hidden_sandbox_targets() -> set[str]:
+    """Absolute paths of the crew-home leaves the sandbox masks, both spellings.
+
+    The seatbelt profile needs to tell these apart from the other hidden entries: they
+    take a write deny as well as a read deny, while ``.aws`` must not (a tool refreshing
+    a cached token rewrites it legitimately). On Linux the distinction does not arise --
+    a bind mount blocks both directions in one rule.
+
+    The standing-approval keystone's mask predicate also reads this set to decide
+    whether its leaf sits inside a masked target, so a leaf the sandbox does not mask
+    cannot be trusted to carry the standing grant.
+    """
+    home = str(Path.home())
+    targets = {os.path.join(home, rel) for rel in _CREW_HIDDEN_DIRS}
+    targets.update(_relocated_crew_targets(_CREW_HIDDEN_LEAVES))
+    return targets
+
+
 #: Tier leaves NOT re-anchored under a pod child's remapped home, because they ARE
 #: the pod's own MCP OAuth grant store: the child WRITES its grants under this tree
 #: and ``mcp_grant`` stats them there, so bind-masking it empty would discard every
@@ -7627,6 +7696,37 @@ def _probe_sandbox_exec() -> bool:
                     detail,
                 )
         return r.returncode == 0
+    except subprocess.TimeoutExpired as exc:
+        # A probe that TIMED OUT did not conclude: a cold Seatbelt subsystem on a
+        # loaded Mac can run past the probe deadline without the sandbox being
+        # broken. Record it as TRANSIENT so detect_backend returns "none" WITHOUT
+        # caching it -- the next spawn re-probes -- and credential_mask_state reads
+        # "indeterminate" rather than the settled "absent". Treating it as settled
+        # would let a mask-dependent refusal (the agent-readable standing
+        # auto-approve alias) fail OPEN on an inconclusive probe, the macOS
+        # counterpart of the Linux transient-unshare handling.
+        _record_probe_failure(
+            True,
+            "sandbox-exec probe timed out; the Seatbelt subsystem did not answer in "
+            f"{_SANDBOX_BACKEND_PROBE_TIMEOUT_SECS}s — retrying re-probes",
+        )
+        logger.warning("sandbox-exec probe timed out: %s", exc)
+        return False
+    except OSError as exc:
+        # A transient OS resource failure launching the probe (fork pressure:
+        # EAGAIN/EMFILE/ENOMEM) is likewise inconclusive, not a settled "no
+        # backend". Mirror the Linux probe's transient classification so the
+        # result is not cached. Any other OSError is a settled failure.
+        if exc.errno in (errno.EAGAIN, errno.EMFILE, errno.ENFILE, errno.ENOMEM):
+            _record_probe_failure(
+                True,
+                f"sandbox-exec probe could not launch ({errno.errorcode.get(exc.errno, exc.errno)}); "
+                "a transient resource failure — retrying re-probes",
+            )
+            logger.warning("sandbox-exec probe transient launch failure: %s", exc)
+            return False
+        logger.debug("sandbox-exec probe failed: %s", exc)
+        return False
     except Exception as exc:
         logger.debug("sandbox-exec probe failed: %s", exc)
         return False
@@ -10303,30 +10403,35 @@ def reset_backend() -> None:
 _SANDBOX_MODE_ALIASES = {"auto": "standard"}
 
 
-def credential_mask_applies(mode: str) -> bool:
-    """Whether :func:`wrap_argv` would actually APPLY ``extra_hidden_dirs`` for *mode*.
+def credential_mask_state(mode: str) -> str:
+    """Three-state answer to :func:`credential_mask_applies`'s question for *mode*.
 
-    Exactly two outcomes hand back an UNWRAPPED child, dropping the mask: the ``off``
-    tier, and a host with no backend where unsandboxed exec is opted in and no
-    governance floor mandates a sandbox (the ``return argv, None`` after
-    ``_warn_no_isolation``). Every other path either wraps the argv -- ``namespace``
-    and ``sandbox-exec`` both thread ``extra_hidden_dirs`` through -- or REFUSES the
-    spawn outright with :class:`SandboxUnavailableError`, and a refusal needs no guard
-    because nothing starts.
+    Returns one of:
 
-    Note this predicate is STRICTER than that inventory on one path: with no
-    backend it never consults the unsandboxed-exec opt-in, so the opted-in host
-    answers False rather than tracking that mutable value. See the branch below.
+    * ``"applies"`` -- :func:`wrap_argv` would thread ``extra_hidden_dirs`` through the
+      backend it selects (or refuse the spawn outright, which also needs no guard).
+    * ``"absent"`` -- a DEFINITE no: the ``off`` tier, a process already inside a Crew
+      sandbox, or a successful probe that found no backend. The host genuinely carries
+      no mask and a caller may rely on that being settled.
+    * ``"indeterminate"`` -- the backend probe could not conclude (a transient or
+      deferred failure: :func:`detect_backend` returned ``"none"`` WITHOUT caching it,
+      so the next spawn re-probes). We cannot yet tell ``applies`` from ``absent``.
 
-    This lives here, beside those branches, so a caller whose security argument
-    depends on the mask cannot drift from them: a future branch that skips the mask
-    is a change to this function, not a silent hole in some other module's copy of
-    the reasoning.
+    The split exists because the two negatives are not equivalent to a security caller:
+    collapsing ``indeterminate`` into "the mask does not apply" lets a refusal that
+    depends on the mask fail OPEN during ordinary startup probe pressure. A caller whose
+    safety rests on the mask refuses on ``indeterminate`` (fail-safe); only ``applies``
+    and ``absent`` are settled answers. :func:`credential_mask_applies` keeps its old
+    two-valued contract by mapping both negatives to ``False``, so no existing caller
+    changes.
+
+    No caching, no re-check machinery: this reads the same preflight signals
+    :func:`credential_mask_applies` already reads and classifies them.
     """
     floor = _governance_sandbox_floor()
     effective = _clamp_sandbox_mode_to_floor(mode, floor)
     if effective == "off":
-        return False
+        return "absent"
     # Already inside a Kiro Crew sandbox: a nested re-wrap is impossible by design,
     # wrap_argv passes the argv through (at most an env scrub) and never reaches a
     # backend that could apply the mask. The OUTER sandbox confines the child, but it
@@ -10334,10 +10439,22 @@ def credential_mask_applies(mode: str) -> bool:
     # ~/.ssh and ~/.kube readable for kiro-cli's sake -- so it is NOT a substitute for
     # an adapter-specific credential mask.
     if _inside_kirocrew_sandbox() and _macos_sandbox_state() is not False:
-        return False
+        return "absent"
     if detect_backend(config_mode=effective) != "none":
-        return True
-    # backend == "none": FAIL CLOSED, reading NO policy value to decide it.
+        return "applies"
+    # backend == "none": either a DEFINITE no, or a probe that could not conclude.
+    #
+    # detect_backend returns "none" in two distinct cases. A successful probe that
+    # found no backend CACHES ``_backend = "none"`` -- that is a settled ``absent``.
+    # A TRANSIENT or deferred probe failure (on the event loop, or two failed
+    # off-loop attempts) returns "none" WITHOUT caching, recording the transient
+    # token in ``_last_unshare_failure`` so the next spawn re-probes -- that is
+    # ``indeterminate``, and a mask-dependent refusal must NOT treat it as settled.
+    if _backend != "none":
+        transient, _reason, _remedy = _last_unshare_failure or (False, "", "")
+        if transient:
+            return "indeterminate"
+    # Settled no backend: FAIL CLOSED, reading NO policy value to decide it.
     #
     # Nothing on a host without a backend can carry ``extra_hidden_dirs``, so the
     # only question was whether the spawn would be refused instead -- and every
@@ -10355,7 +10472,31 @@ def credential_mask_applies(mode: str) -> bool:
     # raises -- so this changes which layer reports it, not whether it works. Only an
     # ENFORCED adapter reaches here at all: ``enforce_sandbox_floor`` returns early
     # for every harness this core does not enforce, so no first-class path changes.
-    return False
+    return "absent"
+
+
+def credential_mask_applies(mode: str) -> bool:
+    """Whether :func:`wrap_argv` would actually APPLY ``extra_hidden_dirs`` for *mode*.
+
+    Exactly two outcomes hand back an UNWRAPPED child, dropping the mask: the ``off``
+    tier, and a host with no backend where unsandboxed exec is opted in and no
+    governance floor mandates a sandbox (the ``return argv, None`` after
+    ``_warn_no_isolation``). Every other path either wraps the argv -- ``namespace``
+    and ``sandbox-exec`` both thread ``extra_hidden_dirs`` through -- or REFUSES the
+    spawn outright with :class:`SandboxUnavailableError`, and a refusal needs no guard
+    because nothing starts.
+
+    Note this predicate is STRICTER than that inventory on one path: with no
+    backend it never consults the unsandboxed-exec opt-in, so the opted-in host
+    answers False rather than tracking that mutable value.
+
+    Two-valued by contract, over the three-valued :func:`credential_mask_state`: both
+    the settled ``absent`` and the unsettled ``indeterminate`` map to ``False`` here,
+    exactly as this returned before the split, so every existing caller is unchanged. A
+    caller that must fail SAFE on an inconclusive probe reads
+    :func:`credential_mask_state` directly and refuses on ``indeterminate``.
+    """
+    return credential_mask_state(mode) == "applies"
 
 
 def spawn_delegates_masking() -> bool:

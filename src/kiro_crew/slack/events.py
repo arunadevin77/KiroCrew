@@ -41,7 +41,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.socket_mode.websockets import SocketModeClient as WSSocketModeClient
 from slack_sdk.web.async_client import AsyncWebClient
 
-from kiro_crew import __version__
+from kiro_crew import __version__, standing_approval
 from kiro_crew.agent_discovery import agent_spec_stems
 from kiro_crew.agent_spec_format import (
     is_markdown_spec,
@@ -1065,9 +1065,73 @@ async def init_socket_mode(orch: GatewayOrchestrator, seen: SeenCache) -> None:
     set_tracking_channels(orch._tracking_channels)
     set_open_channels(orch._open_channels)
     set_owner_id(orch._owner_id)
-    if orch._cfg.agent.dangerously_skip_permissions:
-        # grant_declared_yolo walks the profiles dir — blocking, so off-loop.
+    # The STANDING grant is read from the operator-owned keystone, never from
+    # config.json: a standing skip of every approval must not be declarable by the
+    # population it governs, and config.json stays agent-READABLE by design, which
+    # leaves the inode behind its read-only seal a link(2) source. The config key is a
+    # deprecated alias that still grants, and says so once, rather than being honoured
+    # silently.
+    #
+    # Off-loop like the two calls below it: is_declared opens a file and establishes
+    # the sandbox mask, and this function runs ON the event loop by necessity (see the
+    # docstring), so a data home whose storage stalls must not be able to hold the loop.
+    #
+    # Resolve the sandbox mode from the config in force NOW, immediately before this
+    # activation -- never the orchestrator's boot copy. The keystone grant is honoured
+    # only where Kiro Crew's own sandbox masks the leaf away from the agent; if the
+    # operator flipped sandbox OFF (or down to an unmasked tier) between boot and this
+    # init, the cached ``orch._cfg.agent.sandbox`` would still read "masked" and
+    # activate a grant the live host does not protect. ``live.current`` (off-loop,
+    # it may reload from disk) returns the watcher snapshot else the boot copy, so a
+    # mid-flight unmask leaves the grant suspended rather than activated under a stale
+    # mode.
+    from kiro_crew.config import live as _live
+
+    sandbox_mode = (
+        await asyncio.to_thread(_live.current, orch._cfg, log_prefix="slack")
+    ).agent.sandbox
+    if await asyncio.to_thread(standing_approval.is_declared, sandbox_mode):
+        # The keystone -- the SECURE path. grant_declared_yolo walks the profiles dir —
+        # blocking, so off-loop.
         await asyncio.to_thread(set_yolo_mode, True)
+    elif orch._cfg.agent.dangerously_skip_permissions:
+        # Deprecated alias. config.json is agent-READABLE, so an agent can give its inode
+        # a second name in the writable data home and write the standing grant through it
+        # -- the very link(2) route the keystone exists to close. The alias is therefore
+        # refused wherever any Crew-masked spawn is reachable (deprecated_alias_is_refused):
+        # masked Linux and non-delegated macOS, where the keystone is the replacement; and
+        # delegated macOS, where the kiro-cli spawn is delegated but a KAS/MCP/cron spawn
+        # keeps Crew's mask. On delegated macOS the keystone is not honoured either, so
+        # that host refuses BOTH sources and the standing grant is unavailable there (the
+        # notice names the ad-hoc grant). Only a host that genuinely CANNOT mask the leaf
+        # -- native Windows, or a confirmed no-backend host -- leaves the alias granting;
+        # a requested sandbox: off on a host that CAN mask is refused, because that value
+        # lives in this same agent-writable config.json and cannot be trusted to prove the
+        # host is unmaskable. Off-loop for the same reason
+        # as the call above: migration_notice / deprecated_alias_is_refused establish the
+        # sandbox mask to decide the remedy wording, which reads the data home and probes
+        # the backend.
+        refused = await asyncio.to_thread(
+            standing_approval.deprecated_alias_is_refused, sandbox_mode
+        )
+        notice = await asyncio.to_thread(standing_approval.migration_notice, sandbox_mode)
+        if refused:
+            logger.warning(
+                "agent.dangerously_skip_permissions in config.json is a DEPRECATED "
+                "standing auto-approve switch and is refused on this host: the "
+                "key is agent-reachable, so honouring it would let a sandboxed process "
+                "grant itself a standing skip of every approval. Move the grant to the "
+                "keystone, which is available here. %s",
+                notice,
+            )
+        else:
+            logger.warning(
+                "agent.dangerously_skip_permissions in config.json is DEPRECATED as a "
+                "standing auto-approve switch and will stop granting in a future release. "
+                "It still grants for now. %s",
+                notice,
+            )
+            await asyncio.to_thread(set_yolo_mode, True)
     set_orch_cfg(orch._cfg)
     if orch.dashboard_state:
         set_dashboard_state(orch.dashboard_state)

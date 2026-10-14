@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         grant_declared_yolo,
         logger,
         safety_override,
+        standing_approval,
         take_dropped_grant,
     )
 
@@ -46,19 +47,37 @@ def _take_prior_dropped_grant() -> Any:
 def _apply_startup_yolo(state: DashboardState, cfg: Any) -> None:
     """Enable the safety override at startup if the operator declared it.
 
-    ``agent.dangerouslySkipPermissions`` is a STANDING operator instruction, so the grant it creates
-    does not expire — a lapse after 24h would silently drop the user back to
-    prompt-for-everything, which breaks flows driven from Slack/Discord and from
-    cron where nobody is watching the dashboard to re-enable it.
+    The declaration is read from the operator-owned keystone
+    (``standing-approval/grant.json``), never from ``config.json``. A standing skip of
+    every tool approval is the widest authorization this product grants, and
+    ``config.json`` is a document a sandboxed process can reach: sealed read-only, but
+    readable, which leaves the inode behind the sealed name a ``link(2)`` source. The
+    keystone is bind-masked instead, so no sandboxed process can open it at all, and it
+    is a directory, which has no ``link(2)`` source even in principle.
 
-    State is in-memory, so the grant is re-established and re-audited on every
-    startup rather than persisted. An enterprise policy can forbid a
-    never-expiring grant (the ``yolo_duration`` governance scope), in which case
-    it falls back to the ad-hoc duration. Picking another approval mode still
-    clears it immediately.
+    The grant it creates does not expire -- a lapse after 24h would silently drop the
+    user back to prompt-for-everything, which breaks flows driven from Slack/Discord and
+    from cron where nobody is watching the dashboard to re-enable it.
 
-    Ad-hoc grants are untouched: Slack, the dashboard picker and the API all
-    expire on the single ``agent.yolo_duration`` value (default 6h).
+    State is in-memory, so the grant is re-established and re-audited on every startup
+    rather than persisted. An enterprise policy can forbid a never-expiring grant (the
+    ``yolo_duration`` governance scope), in which case it falls back to the ad-hoc
+    duration. Picking another approval mode still clears it immediately.
+
+    ``agent.dangerously_skip_permissions`` in ``config.json`` is a DEPRECATED ALIAS. It
+    still grants ONLY where no Crew-masked spawn is reachable -- native Windows and
+    ``sandbox: off`` -- so an operator there keeps the grant on upgrade. It is refused
+    wherever a Crew-masked spawn is reachable: masked Linux and non-delegated macOS, where
+    the key is agent-reachable so honouring it would reopen the ``link(2)`` route the
+    keystone closes and the keystone is available as the replacement; and delegated macOS,
+    where the kiro-cli spawn is delegated but a KAS/MCP/cron spawn keeps Crew's mask. On
+    delegated macOS the keystone is not honoured either, so that host refuses BOTH sources
+    and the no-expiry standing grant is unavailable there -- the operator uses the ad-hoc
+    grant instead. Either way the operator is told once, at WARNING, with the keystone or
+    the ad-hoc remedy named.
+
+    Ad-hoc grants are untouched: Slack, the dashboard picker and the API all expire on
+    the single ``agent.yolo_duration`` value (default 6h).
     """
     # Seed the ad-hoc TTL even when yolo is off, so a later dashboard/Slack
     # activation uses the configured duration rather than the built-in default.
@@ -67,18 +86,80 @@ def _apply_startup_yolo(state: DashboardState, cfg: Any) -> None:
     except Exception:
         logger.warning("Could not apply the configured YOLO duration", exc_info=True)
 
-    if not cfg.agent.dangerously_skip_permissions:
+    # Resolve the sandbox mode from the config in force NOW, immediately before
+    # activation -- never the boot copy. The keystone grant is honoured only where
+    # Kiro Crew's own sandbox masks the leaf away from the agent; if the operator
+    # flipped sandbox OFF (or down to an unmasked tier) between boot and this
+    # activation, the cached ``cfg.agent.sandbox`` would still read "masked" and
+    # activate a grant the live host does not protect. ``live.current`` returns the
+    # watcher snapshot (else a disk reload, else the boot copy) so a mid-flight unmask
+    # leaves the grant suspended rather than activated under a stale mode.
+    from kiro_crew.config import live
+
+    sandbox_mode = live.current(cfg, log_prefix="dashboard-yolo").agent.sandbox
+    # Two paths grant the standing override, in order of preference:
+    #   1. the keystone -- the SECURE path, honoured only where the sandbox masks the
+    #      leaf away from the agent (``is_declared``);
+    #   2. ``agent.dangerously_skip_permissions`` in config.json -- a DEPRECATED ALIAS,
+    #      honoured ONLY where no Crew-masked spawn is reachable (native Windows,
+    #      ``sandbox: off``). Where a Crew-masked spawn is reachable the key is refused: it
+    #      is agent-reachable, so honouring it there would reopen the ``link(2)`` route the
+    #      keystone closes. On masked Linux and non-delegated macOS the keystone is the
+    #      replacement; on delegated macOS the keystone is not honoured either, so that
+    #      host refuses both and the standing grant is unavailable there.
+    # The config key is the agent-writable surface the keystone exists to replace, so the
+    # deprecation warning tells the operator what works on this host -- migrate to the
+    # keystone where it is honoured, use the ad-hoc grant on delegated macOS, or nothing
+    # to change on native Windows / ``sandbox: off`` where the key still grants.
+    source_desc: str
+    if standing_approval.is_declared(sandbox_mode):
+        source_desc = "standing-approval keystone"
+    elif cfg.agent.dangerously_skip_permissions:
+        # Deprecated alias. The whole point of the keystone is that an agent can give the
+        # agent-READABLE ``config.json`` inode a second name in the writable data home and
+        # write the standing grant through it, so honouring this key hands the population
+        # the grant governs the very ``link(2)`` route the keystone exists to close. The
+        # alias is therefore refused wherever any Crew-masked spawn is reachable
+        # (``deprecated_alias_is_refused``): masked Linux and macOS, AND delegated macOS,
+        # where the kiro-cli spawn is delegated but a KAS/MCP/cron spawn keeps Crew's mask.
+        # On masked Linux and non-delegated macOS the keystone is available as the
+        # replacement, so the operator is told to move the grant there and nobody is left
+        # without a way to grant. On delegated macOS the keystone is NOT honoured either
+        # (the delegated kiro-cli spawn runs unmasked and could author the leaf), so that
+        # host refuses BOTH sources and the no-expiry standing grant is unavailable there;
+        # the notice names the ad-hoc grant instead. Only native Windows and ``sandbox:
+        # off`` leave the alias granting (no Crew backend masks any spawn), where the
+        # keystone can never be in force.
+        if standing_approval.deprecated_alias_is_refused(sandbox_mode):
+            logger.warning(
+                "agent.dangerously_skip_permissions in config.json is a DEPRECATED "
+                "standing auto-approve switch and is refused on this host: the "
+                "key is agent-reachable, so honouring it would let a sandboxed process "
+                "grant itself a standing skip of every approval. Move the grant to the "
+                "keystone, which is available here. %s",
+                standing_approval.migration_notice(sandbox_mode),
+            )
+            return
+        logger.warning(
+            "agent.dangerously_skip_permissions in config.json is DEPRECATED as a "
+            "standing auto-approve switch and will stop granting in a future release. "
+            "It still grants for now. %s",
+            standing_approval.migration_notice(sandbox_mode),
+        )
+        source_desc = "config.json agent.dangerously_skip_permissions (deprecated)"
+    else:
         return
     try:
         result = grant_declared_yolo()
     except Exception:
-        logger.error("Failed to activate safety override from config", exc_info=True)
+        logger.error("Failed to activate safety override at startup", exc_info=True)
         return
     if not result.active:
         logger.error("Safety override activation refused (SEL audit failure?)")
         return
     logger.info(
-        "Safety override enabled at startup (dangerouslySkipPermissions=true, %s)",
+        "Safety override enabled at startup (%s, %s)",
+        source_desc,
         "no expiry" if result.ttl == 0 else f"expires in {result.ttl}s per policy",
     )
 

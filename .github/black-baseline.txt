@@ -440,7 +440,6 @@ test/test_dashboard_themes_coverage.py
 test/test_dashboard_worktree_coverage.py
 test/test_dashboard_ws_offloop_fanout.py
 test/test_dashboard_ws_task_tracking.py
-test/test_dashboard_yolo_startup.py
 test/test_delete_message.py
 test/test_denied_commands_api.py
 test/test_denied_commands_authority.py
@@ -730,7 +729,6 @@ test/test_route_registry.py
 test/test_run_config_write.py
 test/test_safety_override.py
 test/test_sage_backend_routes_coverage.py
-test/test_sandbox_backend_cache.py
 test/test_sandbox_default_fix.py
 test/test_sandbox_first_party_exec.py
 test/test_sandbox_launcher_sweep.py
