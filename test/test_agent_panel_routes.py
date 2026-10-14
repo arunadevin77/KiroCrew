@@ -37,6 +37,7 @@ from kiro_crew.dashboard_templates.instance import preview_url as instance_previ
 
 # Bound at collection, before conftest's autouse ``gateway_posts`` swaps
 # ``mcp_core._post`` for its recorder in each test.
+from kiro_crew.mcp_core import _get as _real_mcp_get
 from kiro_crew.mcp_core import _post as _real_mcp_post
 
 pytestmark = pytest.mark.asyncio
@@ -2856,6 +2857,54 @@ async def test_clear_through_the_panel_server_empties_an_array_field(vetted, mon
 
     assert rows["needs_you"]["written"] is True, rows["needs_you"]
     assert rows["needs_you"]["value"] == [], rows["needs_you"]
+
+
+async def test_clear_through_the_panel_server_empties_an_object_field(vetted, monkeypatch):
+    """``dashboard_write`` ``clear: true`` empties an object field end to end.
+
+    Same path as the array case: drives the real entry point through a loopback POST.
+    ``goal-board.asks`` is an object field whose upkeep says to drop entries once
+    answered, so clearing it to ``{}`` is the documented final step.
+    """
+    from kiro_crew import mcp_core, mcp_panel
+
+    monkeypatch.setattr(mcp_panel, "_post", _real_mcp_post)
+    monkeypatch.setattr(mcp_panel, "_get", _real_mcp_get)
+
+    async with _client("goal-board") as c:
+        monkeypatch.setattr(mcp_core, "_API", f"http://127.0.0.1:{c.server.port}")
+        monkeypatch.setattr(mcp_core, "_API_UNIX_SOCKET", "")
+        monkeypatch.setattr(mcp_core, "_internal_secret", lambda: "unused-by-this-app")
+        monkeypatch.setattr(mcp_core, "_resolve_session_key_strict", lambda: "dashboard:chat-1")
+
+        seed = {"it_1": {"options": ["Yes, merge it"]}}
+        filled = await asyncio.wait_for(
+            asyncio.to_thread(
+                mcp_panel._call_tool, "dashboard_write", {"field": "asks", "value": seed}
+            ),
+            timeout=30,
+        )
+        assert filled.startswith("Wrote `asks` (object)"), filled
+
+        cleared = await asyncio.wait_for(
+            asyncio.to_thread(
+                mcp_panel._call_tool, "dashboard_write", {"field": "asks", "clear": True}
+            ),
+            timeout=30,
+        )
+        assert cleared.startswith("Wrote `asks` (object)"), cleared
+
+        crew_log_projection.forget_slot_folds()
+        listed = await c.get(FIELDS_PATH, headers={"X-Session-Key": "dashboard:chat-1"})
+        assert listed.status == 200, await listed.text()
+        rows = {row["field"]: row for row in (await listed.json())["fields"]}
+
+    assert rows["asks"]["written"] is True, rows["asks"]
+    assert rows["asks"]["value"] == {}, rows["asks"]
+    # A clear must not leave a wrong_type entry in the mistake book.
+    data = await listed.json()
+    mistakes = [m for m in (data.get("mistakes") or []) if m.get("field") == "asks"]
+    assert not any(m.get("code") == "wrong_type" for m in mistakes), mistakes
 
 
 async def test_an_unadopted_crewmate_is_refused_when_the_registry_ships_no_default(

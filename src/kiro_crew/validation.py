@@ -4883,24 +4883,26 @@ DASHBOARD_WRITE_SCHEMA = ToolSchema(
 #: reach this server, so ``value: []`` arrives as no value at all.
 DASHBOARD_WRITE_NO_VALUE = (
     "required -- nothing reached this tool to write. An empty list, an empty object "
-    "or null can be dropped by the MCP client before it arrives; to empty an array "
-    "field, call dashboard_write with clear: true and no value"
+    "or null can be dropped by the MCP client before it arrives; to empty an array or "
+    "object field, call dashboard_write with clear: true and no value"
 )
 
 
 def _validate_dashboard_write_tool(cleaned: dict[str, Any]) -> None:
     """``value`` is required unless ``clear`` is true, and the two do not mix.
 
-    ``clear: true`` stands for the empty list, so a ``value`` beside it is accepted
-    only when it says the same thing (``[]``). Any other value contradicts it, and
-    which of the two the caller meant is not this check's to guess.
+    ``clear: true`` stands for the field's empty value, so a ``value`` beside it is
+    accepted only when it says the same thing (``[]`` or ``{}``); the server then
+    writes the empty value of the field's declared type. Any other value contradicts
+    it, and which of the two the caller meant is not this check's to guess.
     """
     value = cleaned.get("value")
     if cleaned.get("clear") is True:
-        if value is not None and value != []:
-            # Reads as "clear: true writes an empty list, ..." once the field
-            # name is put in front of it.
-            raise ValidationError("clear", "true writes an empty list, so pass it without a value")
+        if value is not None and value != [] and value != {}:
+            # Reads as "clear: true writes ..." once the field name is put in front.
+            raise ValidationError(
+                "clear", "true writes the field's empty value, so pass it without a value"
+            )
         return
     if value is None:
         raise ValidationError("value", DASHBOARD_WRITE_NO_VALUE)
@@ -4913,10 +4915,10 @@ def _validate_dashboard_write_tool(cleaned: dict[str, Any]) -> None:
 
 #: ``dashboard_write`` as the MCP server accepts it. The gateway route validates its
 #: body with ``DASHBOARD_WRITE_SCHEMA``, where ``value`` is required: the server
-#: turns ``clear: true`` into ``value: []`` before it posts, so the route sees an
-#: ordinary write. ``clear`` exists because a boolean survives the MCP clients that
-#: drop an empty container from a tool call's arguments, and an array field has no
-#: other way to be emptied through them.
+#: turns ``clear: true`` into the field's empty value before it posts, so the route
+#: sees an ordinary write. ``clear`` exists because a boolean survives the MCP clients
+#: that drop an empty container from a tool call's arguments, and array and object
+#: fields have no other way to be emptied through them.
 DASHBOARD_WRITE_TOOL_SCHEMA = ToolSchema(
     tool_name="dashboard_write",
     fields=[

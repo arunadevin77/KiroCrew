@@ -182,9 +182,10 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 "learned rather than restating the whole dashboard. Every refusal "
                 "is recorded in your mistake book, which dashboard_fields hands "
                 "back -- so the same wrong guess next cycle is one you were "
-                "already told about. To EMPTY an array field, pass `clear: true` "
-                "and no `value`: an MCP client can drop `value: []` from the call "
-                "before it reaches this tool, while a boolean arrives intact."
+                "already told about. To EMPTY an array or object field, pass "
+                "`clear: true` and no `value`: an MCP client can drop `value: []` "
+                "or `value: {}` from the call before it reaches this tool, while a "
+                "boolean arrives intact."
             ),
             "inputSchema": {
                 "type": "object",
@@ -208,8 +209,9 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "clear": {
                         "type": "boolean",
                         "description": (
-                            "true empties an `array` field: it writes `[]`. Use it "
-                            "instead of `value: []`, and leave `value` out."
+                            "true empties the field: an `array` field gets `[]` and "
+                            "an `object` field gets `{}`. Use it instead of "
+                            "`value: []` or `value: {}`, and leave `value` out."
                         ),
                     },
                 },
@@ -515,19 +517,23 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if not isinstance(field, str) or not field.strip():
             return "Error: `field` must name the dashboard field to fill"
         to_write: Any
-        if args.get("clear") is True:
-            # The empty list is spelled HERE, not by the caller: an MCP client that
-            # drops an empty container from a call's arguments delivers a boolean
-            # intact. The gateway type-checks it like any other write, so a field
-            # that is not an array refuses it with the type it wants.
-            to_write = []
-        elif "value" not in args:
+        clear = args.get("clear") is True
+        if not clear and "value" not in args:
             return "Error: `value` is required -- there is nothing to write without it"
-        else:
-            to_write = args["value"]
         sk, err = _strict_session_key()
         if err:
             return err
+        if clear:
+            # The empty value is spelled HERE, not by the caller: an MCP client that
+            # drops an empty container from a call's arguments delivers a boolean
+            # intact. Which empty value depends on the field's declared type, read
+            # from the same list dashboard_fields shows; the gateway still
+            # type-checks the write like any other.
+            to_write, refusal = _empty_value_for(field, sk)
+            if refusal:
+                return refusal
+        else:
+            to_write = args["value"]
         d = _post(
             "/api/agent-panel/dashboard/write",
             {"field": field, "value": to_write},
@@ -1005,6 +1011,39 @@ def _render_fields(payload: dict[str, Any]) -> str:
             f"list and retry; after {budget} tries, ask the human."
         )
     return "\n".join(lines)
+
+
+def _empty_value_for(field: str, sk: str) -> "tuple[Any, str]":
+    """The value ``clear: true`` writes to *field*, or a refusal to return instead.
+
+    Returns the empty value of the field's declared type, from the field list the
+    ``dashboard_fields`` tool reads, so the type is the one the write route checks
+    against. A field the list does not name gets ``[]``, and the write route answers
+    it with its own unknown-field refusal, the same as any other write.
+    """
+    d = _get("/api/agent-panel/dashboard/fields", session_key=sk)
+    if d.get("error"):
+        return None, redact(f"Error: could not read your fields to clear `{field}`: {d['error']}")
+    rows = d.get("fields")
+    row = (
+        next(
+            (r for r in rows if isinstance(r, dict) and r.get("field") == field),
+            None,
+        )
+        if isinstance(rows, list)
+        else None
+    )
+    if row is None:
+        return [], ""
+    declared = row.get("type")
+    if declared == "array":
+        return [], ""
+    if declared == "object":
+        return {}, ""
+    return None, (
+        f"Error: clear: true empties an array or object field, and `{field}` is a "
+        f"{declared} field; write its new value instead"
+    )
 
 
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
