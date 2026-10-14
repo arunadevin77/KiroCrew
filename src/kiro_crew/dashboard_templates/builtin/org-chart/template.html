@@ -48,6 +48,20 @@
   .oc-chip.oc-is-lead { border-color: color-mix(in oklab, var(--oc-done) 46%, var(--oc-line));
     background: color-mix(in oklab, var(--oc-card) 88%, var(--oc-done) 12%); }
   .oc-chip.oc-is-sub { border-color: color-mix(in oklab, var(--oc-done) 32%, var(--oc-line)); }
+  /* Toggle button on the lead chip. Inherits nothing from <button> defaults; sits flush
+     inside the chip's flex row on the trailing edge. The chevron (▾) rotates 90 deg
+     when the group is collapsed so no separate icon set is needed. */
+  .oc-fold { all: unset; cursor: pointer; flex: 0 0 auto; display: inline-flex;
+    align-items: center; justify-content: center; width: 16px; height: 16px;
+    border-radius: 4px; font-size: 11px; line-height: 1;
+    color: color-mix(in oklab, var(--oc-done) 70%, transparent);
+    transition: transform 0.15s, color 0.1s; }
+  .oc-fold:hover, .oc-fold:focus-visible {
+    color: var(--oc-done);
+    background: color-mix(in oklab, var(--oc-done) 14%, transparent);
+    outline: 2px solid color-mix(in oklab, var(--oc-done) 55%, transparent);
+    outline-offset: 1px; }
+  .oc-fold[aria-expanded="false"] { transform: rotate(-90deg); }
   .oc-role { font-size: 8.5px; letter-spacing: .08em; text-transform: uppercase;
     font-weight: 700; padding: 1px 5px; border-radius: 3px; flex: 0 0 auto;
     background: color-mix(in oklab, var(--oc-line) 55%, transparent);
@@ -171,7 +185,8 @@
         scope_leads: ' lead(s) ', scope_subleads: ' sub-lead(s) ', scope_sessions: ' worker session(s)',
         foot_cut: ' task(s) were cut by the fold\u2019s per-board cap, so they are in neither the graph nor the cards.',
         foot_mute: ' session(s) have never reported. Their cards say so rather than showing a silence, which is a different fact.',
-        foot_alias: 'A card carries the board and item a host opens the session from. The fold aliases the session key itself, so no page here can name a worker\u2019s session.'
+        foot_alias: 'A card carries the board and item a host opens the session from. The fold aliases the session key itself, so no page here can name a worker\u2019s session.',
+        fold_toggle: 'Toggle group'
       },
       'zh-CN': {
         oc_title: '\u8c01\u6d3e\u53d1\u4e86\u8c01', oc_last_write: '\u8bb0\u5f55\u6700\u540e\u5199\u5165',
@@ -201,7 +216,8 @@
         scope_leads: ' \u4e2a\u7275\u5934 ', scope_subleads: ' \u4e2a\u6b21\u7ea7\u7275\u5934 ', scope_sessions: ' \u4e2a\u6267\u884c\u8005\u4f1a\u8bdd',
         foot_cut: ' \u4e2a\u4efb\u52a1\u88ab\u8bb0\u5f55\u7684\u5355\u770b\u677f\u4e0a\u9650\u622a\u65ad\uff0c\u56e0\u6b64\u5b83\u4eec\u65e2\u4e0d\u5728\u5173\u7cfb\u56fe\u4e2d\uff0c\u4e5f\u4e0d\u5728\u5361\u7247\u4e2d\u3002',
         foot_mute: ' \u4e2a\u4f1a\u8bdd\u4ece\u672a\u6c47\u62a5\u3002\u5b83\u4eec\u7684\u5361\u7247\u5982\u5b9e\u8bf4\u660e\uff0c\u800c\u975e\u663e\u793a\u4e00\u6bb5\u9759\u9ed8\uff0c\u8fd9\u662f\u4e0d\u540c\u7684\u4e8b\u5b9e\u3002',
-        foot_alias: '\u5361\u7247\u643a\u5e26\u4e3b\u673a\u636e\u4ee5\u6253\u5f00\u4f1a\u8bdd\u7684\u770b\u677f\u4e0e\u6761\u76ee\u3002\u8bb0\u5f55\u672c\u8eab\u4e3a\u4f1a\u8bdd\u5bc6\u94a5\u8bbe\u7f6e\u4e86\u522b\u540d\uff0c\u6240\u4ee5\u8fd9\u91cc\u6ca1\u6709\u9875\u9762\u80fd\u6307\u51fa\u6267\u884c\u8005\u7684\u4f1a\u8bdd\u3002'
+        foot_alias: '\u5361\u7247\u643a\u5e26\u4e3b\u673a\u636e\u4ee5\u6253\u5f00\u4f1a\u8bdd\u7684\u770b\u677f\u4e0e\u6761\u76ee\u3002\u8bb0\u5f55\u672c\u8eab\u4e3a\u4f1a\u8bdd\u5bc6\u94a5\u8bbe\u7f6e\u4e86\u522b\u540d\uff0c\u6240\u4ee5\u8fd9\u91cc\u6ca1\u6709\u9875\u9762\u80fd\u6307\u51fa\u6267\u884c\u8005\u7684\u4f1a\u8bdd\u3002',
+        fold_toggle: '\u5207\u6362\u5c55\u5f00\u72b6\u6001'
       }
     };
     function locale() {
@@ -467,16 +483,55 @@
 
     function drawNode(n, into, now) {
       var board = n.board;
+      var boardId = text(board.id) || '';
+      /* Fold state key: board.id is a per-render alias (e.g. board-1, board-2) that
+         stays stable across consecutive message events for the same set of boards.
+         Using it means state can briefly shift if the board list grows or reorders
+         between renders, but since this is in-memory only (resets on page reload),
+         that is an acceptable tradeoff over a key that could expose internal ids. */
+      if (!Object.prototype.hasOwnProperty.call(foldState, boardId)) {
+        foldState[boardId] = true; /* true = expanded (the default) */
+      }
+      var expanded = foldState[boardId];
+      /* Stable id for the kids container so aria-controls can point to it. The board
+         alias already has no whitespace; replace any non-word chars just in case. */
+      var kidsId = 'oc-kids-' + boardId.replace(/\W/g, '-');
+
       var wrap = el('div', 'oc-node');
-      wrap.appendChild(chip(
+      var leadChip = chip(
         i18n('role_lead'),
         text(board.goal) || i18n('no_goal_recorded'),
         boardFacts(board),
         'oc-is-lead',
         null
-      ));
+      );
+      /* The toggle button sits at the trailing end of the lead chip. It carries
+         aria-expanded and aria-controls so keyboard and screen-reader users have a
+         first-class way to operate the group. The chevron (▾) rotates via CSS when
+         aria-expanded is false. */
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'oc-fold';
+      btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      btn.setAttribute('aria-controls', kidsId);
+      btn.setAttribute('aria-label', i18n('fold_toggle'));
+      btn.textContent = '\u25be'; /* ▾ */
+      leadChip.appendChild(btn);
+
       var kids = el('div', 'oc-kids');
+      kids.id = kidsId;
+      if (!expanded) kids.hidden = true;
       drawKids(n, kids, now);
+
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var next = btn.getAttribute('aria-expanded') !== 'true';
+        btn.setAttribute('aria-expanded', next ? 'true' : 'false');
+        kids.hidden = !next;
+        foldState[boardId] = next;
+      });
+
+      wrap.appendChild(leadChip);
       wrap.appendChild(kids);
       into.appendChild(wrap);
     }
@@ -696,6 +751,10 @@
       }
       foot.appendChild(el('p', null, i18n('foot_alias')));
     }
+
+    /* In-memory map from board.id (alias) to expanded bool. Initialised on first
+       drawNode call; survives message-event re-renders; resets on full page reload. */
+    var foldState = {};
 
     render();
     window.addEventListener('load', render);

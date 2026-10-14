@@ -524,3 +524,137 @@ def test_a_summary_is_cleaned_to_one_line_and_says_when_it_was_cut(
     source = one.group(1)
     assert "replace(/\\s+/g, ' ')" in source, "whitespace is not collapsed"
     assert "\\u2026" in source, "a cut summary carries no ellipsis"
+
+
+# --------------------------------------------------------------------------- #
+# the lead chip's fold toggle
+# --------------------------------------------------------------------------- #
+
+
+def test_lead_chip_carries_a_fold_toggle_button(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: drawNode adds a type=button to each lead chip.
+
+    The button must be type='button' so it does not submit a form if one ever
+    wraps the page. aria-expanded and aria-controls make it a first-class
+    disclosure widget for keyboard and screen-reader users.
+    """
+    _, page = pages["org-chart"]
+    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
+    assert draw, "drawNode is gone"
+    source = draw.group(1)
+    assert "btn.type = 'button'" in source, "the fold button is missing type=button"
+    assert "aria-expanded" in source, "the fold button has no aria-expanded"
+    assert "aria-controls" in source, "the fold button has no aria-controls"
+    assert "aria-label" in source, "the fold button has no accessible label"
+    assert ".oc-fold" in source or "oc-fold" in source, "the fold button has no class name"
+
+
+def test_lead_groups_are_expanded_by_default(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: the initial state is expanded (aria-expanded='true').
+
+    A collapsed-by-default graph hides the work the reader opened the page to see.
+    The foldState entry for a new board must be true, and the button must reflect
+    that with aria-expanded='true'.
+    """
+    _, page = pages["org-chart"]
+    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
+    assert draw, "drawNode is gone"
+    source = draw.group(1)
+    assert (
+        "foldState[boardId] = true" in source
+    ), "a new board is not initialised to expanded in foldState"
+    assert "expanded ? 'true' : 'false'" in source, "aria-expanded does not read the expanded state"
+    # The group is only hidden when NOT expanded; the default (true) must show it.
+    assert (
+        "if (!expanded) kids.hidden" in source or "if (! expanded) kids.hidden" in source
+    ), "the kids container is not conditional on the expanded state"
+
+
+def test_click_handler_toggles_hidden_and_aria_expanded(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: the click handler flips aria-expanded and kids.hidden together.
+
+    A handler that updates one but not the other leaves the DOM and the ARIA state
+    out of sync: a screen reader would announce the wrong state, or the group would
+    vanish without the button registering the change.
+    """
+    _, page = pages["org-chart"]
+    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
+    assert draw, "drawNode is gone"
+    source = draw.group(1)
+    # The handler reads the current state and inverts it.
+    assert (
+        "btn.getAttribute('aria-expanded') !== 'true'" in source
+    ), "the click handler does not read aria-expanded to decide the next state"
+    # Both the ARIA attribute and the DOM visibility are updated.
+    assert "kids.hidden = !next" in source, "the click handler does not set kids.hidden"
+    assert (
+        "btn.setAttribute('aria-expanded', next ? 'true' : 'false')" in source
+    ), "the click handler does not update aria-expanded"
+    # And the in-memory map is kept in sync.
+    assert "foldState[boardId] = next" in source, "the click handler does not update foldState"
+
+
+def test_fold_state_is_declared_outside_render_so_it_survives_re_renders(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """MUTATION-SENSITIVE: foldState is at the IIFE scope, not inside render().
+
+    The host re-renders the page on every message event. A variable declared inside
+    render() resets on every data push, expanding every group the reader just folded.
+    """
+    _, page = pages["org-chart"]
+    assert "var foldState" in page, "foldState is not declared"
+    # The declaration must come before the render() call-site.
+    fold_pos = page.index("var foldState")
+    render_call = re.search(r"\n\s{4}render\(\);", page)
+    assert render_call, "render() call-site is gone"
+    assert (
+        fold_pos < render_call.start()
+    ), "foldState is declared after render() is invoked for the first time"
+    # drawNode must read from (not re-declare) foldState.
+    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
+    assert draw, "drawNode is gone"
+    assert "var foldState" not in draw.group(
+        1
+    ), "drawNode re-declares foldState locally, so the outer map is never updated"
+
+
+def test_fold_toggle_button_supports_keyboard_operation(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """A native <button> with type='button' is keyboard-operable without extra JS.
+
+    No keydown or keypress handler is needed: Enter and Space activate a button
+    natively. The button's focus-visible style confirms focus is visible to the user.
+    """
+    _, page = pages["org-chart"]
+    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
+    assert draw, "drawNode is gone"
+    source = draw.group(1)
+    assert (
+        "btn.type = 'button'" in source
+    ), "the fold button is not type=button -- Enter and Space may not activate it"
+    # CSS must make focus visible on the button.
+    assert (
+        ".oc-fold:focus-visible" in page
+    ), "the fold button has no :focus-visible style -- keyboard focus is invisible"
+
+
+def test_fold_toggle_uses_i18n_and_does_not_hardcode_english(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """The accessible label must go through i18n() so non-English locales work."""
+    _, page = pages["org-chart"]
+    # The key must exist in the English table.
+    assert "'fold_toggle'" in page, "fold_toggle is not declared in I18N"
+    draw = re.search(r"function drawNode\(n, into, now\) \{(.*?)\n    \}", page, re.S)
+    assert draw, "drawNode is gone"
+    source = draw.group(1)
+    # The label is set via i18n(), not a hard-coded string.
+    assert "i18n('fold_toggle')" in source, "the fold button's label is not fetched through i18n()"
