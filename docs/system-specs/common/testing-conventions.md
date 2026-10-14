@@ -454,6 +454,20 @@ that patches a store read and then inspects the index does it inside
 `_eager_folder_held()` (drain, then `eager.paused()`), the way the two unprovable-header
 tests in `test_issue_radar_crew_store.py` do.
 
+**Hold the crew-log writer for a burst the test counts.** `CrewLogWriter` claims a
+unit's whole bucket after its batching pause (`WriterLimits.batch_deadline_seconds`,
+20 ms) and the claim takes those entries OUT of the pending count, so blocking
+`CrewLog.append` holds the DISK, not the buffer: a burst that submits slower than the
+pause -- a loaded Windows xdist worker does -- is split across two claims, and a test
+that floods past `max_pending_count` sees fewer rejections than it counted on
+(`overflow_writes() == 2`, not 6). Give that writer a `batch_deadline_seconds` the
+burst cannot outlast, assert the exact buffered and overflow counts, and end the burst
+with `emit.drain_for_shutdown`, which wakes the writer and skips the pause (`flush`
+waits it out). The blocked append's gate must be opened in `finally`: the writer
+thread parked in it holds the log handle and with it the unit's write lease, which the
+file's autouse teardown reports as a lease that outlived its test and the next test
+on the worker inherits as an error (`test_crew_log_edge_exhaustion.py`).
+
 **A fixture that changes an input a worker thread reads publishes each value as a new
 file.** `os.replace` onto a file another thread holds open fails on Windows with
 `[WinError 5]`, and an `open` that races the rename fails too, which a lenient reader
