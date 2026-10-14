@@ -8295,6 +8295,7 @@
       "hidden_lines_other": "+{{count}} linhas",
       "interrupt_current_turn_and_send_this_now": "Interromper o turno atual e enviar agora",
       "queued": "na fila",
+      "read_only_waiting_to_send": "Somente leitura: aguardando envio. Para editar ou cancelar, abra esta sessão na página Chat.",
       "run_later": "Executar depois",
       "run_sooner": "Executar antes",
       "ready_processing_after_the_current_turn": "pronta — será processada após o turno atual",

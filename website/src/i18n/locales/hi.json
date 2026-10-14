@@ -8163,6 +8163,7 @@
       "hidden_lines_other": "+{{count}} पंक्तियाँ",
       "interrupt_current_turn_and_send_this_now": "वर्तमान टर्न रोककर इसे अभी भेजें",
       "queued": "कतार में",
+      "read_only_waiting_to_send": "केवल देखने के लिए: भेजे जाने की प्रतीक्षा में। इसे संपादित या रद्द करने के लिए यह सत्र चैट पेज पर खोलो।",
       "run_later": "बाद में चलाएँ",
       "run_sooner": "पहले चलाएँ",
       "ready_processing_after_the_current_turn": "तैयार — वर्तमान टर्न के बाद प्रोसेस होगा",

@@ -81,7 +81,7 @@ export function MemoryModeChip({ memoryMode, onSwitchMode }: MemoryModeChipProps
         {...uiLocation('chat.memory-mode', btnRef)}
         className={`inline-flex items-center gap-1.5 rounded-lg border border-transparent px-3 py-1 text-[12px] transition-colors cursor-pointer ${
           ephemeralActive
-            ? 'glass-warn text-warn'
+            ? 'glass-warn glass-warn-fg'
             : 'glass-hover text-muted hover:text-text'
         }`}
         onClick={() => {

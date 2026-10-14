@@ -8031,6 +8031,7 @@
       "hidden_lines_other": "+{{count}}줄",
       "interrupt_current_turn_and_send_this_now": "현재 턴을 중단하고 지금 보내기",
       "queued": "대기 중",
+      "read_only_waiting_to_send": "보기 전용: 전송 대기 중입니다. 편집하거나 취소하려면 채팅 페이지에서 이 세션을 여세요.",
       "run_later": "나중에 실행",
       "run_sooner": "먼저 실행",
       "ready_processing_after_the_current_turn": "준비 완료 — 현재 턴이 끝난 뒤 처리합니다",

@@ -3588,6 +3588,16 @@ body.mc-focus-mode.mc-focus-rail .focus-chrome-rail{
 .glass-danger { --glass-tint: color-mix(in srgb, var(--danger) 12%, var(--glass-tint-step)); --glass-band: color-mix(in srgb, var(--danger) 12%, var(--glass-band-plain)); }
 .glass-hover:hover { --glass-tint: color-mix(in srgb, var(--text) 8%, var(--glass-tint-step)); }
 
+/* Warn-hued text on a `glass-warn` pane (the queued-message card, the memory
+ * mode chip). Dark palettes keep the plain `--warn` hue. In light palettes
+ * `--warn` on its own `glass-warn` tint falls below the 4.5:1 text floor
+ * (1.9:1 in rosepine-light, 4.0:1 in `light`; issue #19920), so the text keeps
+ * 30% of the hue and takes the rest from `--text-strong`.
+ * glassWarnTextContrast.test.ts measures every light palette against this mix
+ * and refuses a `glass-warn` pane that paints plain `text-warn`. */
+.glass-warn-fg { color: var(--warn); }
+[data-mode="light"] .glass-warn-fg { color: color-mix(in srgb, var(--warn) 30%, var(--text-strong)); }
+
 /* The context shelf (agent, project, branch, model chips) sits BELOW the glass
  * pane, on the bare transcript, and the dock floats over content, so a chip
  * label read against whatever scrolled under it. The shelf stands on a scrim:
