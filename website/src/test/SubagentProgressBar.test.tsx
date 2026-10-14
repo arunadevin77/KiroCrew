@@ -487,3 +487,26 @@ describe('SubagentProgressBar — expand renders no empty body', () => {
     expect(screen.getAllByTestId('subagent-row')).toHaveLength(1)
   })
 })
+
+describe('SubagentProgressBar — elapsed figure (#19930)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it.each([
+    [4_000, '4s'],
+    [909_000, '15m 9s'],
+    [4_031_000, '1h 7m 11s'],
+  ])('renders %i ms of runtime as %s, not raw seconds', (runMs, shown) => {
+    const t0 = 1_700_000_000_000
+    const now = vi.spyOn(Date, 'now').mockReturnValue(t0)
+    try {
+      const store = makeStore(['a1'])
+      now.mockReturnValue(t0 + runMs)
+      renderBar(store)
+      const row = screen.getByTestId('subagent-row')
+      expect(row.textContent).toContain(shown)
+      if (runMs >= 60_000) expect(row.textContent).not.toContain(`${Math.round(runMs / 1000)}s`)
+    } finally {
+      now.mockRestore()
+    }
+  })
+})

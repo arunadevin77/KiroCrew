@@ -37,7 +37,7 @@ import SessionSummaryTab from './SessionSummaryTab'
 import { i18nT } from '../../i18n/t'
 import { queuedWaitText } from './subagentQueuedReason'
 import GitPanel from '../../components/GitPanel'
-import { fmtDateFields } from '../../i18n/format'
+import { fmtDateFields, fmtElapsed } from '../../i18n/format'
 import { isModelDowngrade } from './subagentCompletion'
 import { normalizeModelKey } from '../../lib/model'
 import { fmtCredits } from '../../i18n/format'
@@ -259,15 +259,13 @@ function SubagentPane({ a, slot, onClick, selected }: { a: SubagentActivity; slo
   }, [a.id])
 
   const displayElapsed = isRunning ? elapsed : Math.round(a.elapsed || 0)
-  const fmtElapsed = displayElapsed >= 60 ? `${Math.floor(displayElapsed / 60)}m ${displayElapsed % 60}s` : `${displayElapsed}s`
   // A running card whose start time was only ASSUMED has no elapsed figure to
   // show: the agent may have been running long before the frame that minted its
   // entry, so a number here would be wrong rather than merely imprecise. A
   // `subagent_done` or snapshot frame supplies real timing and this resolves.
-  // Withheld HERE rather than inside the line above so that line stays exactly
-  // as it was: its `m`/`s` concatenation is frozen i18n debt, and rewriting the
-  // line would move that debt onto a line this change wrote.
-  const shownElapsed = isRunning && a.startedAtAssumed ? '--' : fmtElapsed
+  // Whole seconds, matching the progress-bar row, so one run reads the same
+  // figure in both places (and `1h 9m 32s`, not `69m 32s`, past an hour).
+  const shownElapsed = isRunning && a.startedAtAssumed ? '--' : fmtElapsed(displayElapsed * 1000, { wholeSeconds: true })
   // What the header calls this agent. An entry recovered from an incremental
   // frame has no agent name, and showing nothing left two such cards reading as
   // the same "Running Tool" with no way to tell them apart -- the same complaint

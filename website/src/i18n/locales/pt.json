@@ -11569,7 +11569,6 @@
         "possibly_stalled_for_secs": "possivelmente travado — sem atividade há {{secs}}s",
         "possibly_stalled_no_activity": "possivelmente travado — sem atividade",
         "retry_failed_count": "Repetir falhas ({{count}})",
-        "s": "s",
         "stop": "Parar",
         "stop_all": "Parar todos",
         "stop_running_subagent": "Parar o subagente em execução",

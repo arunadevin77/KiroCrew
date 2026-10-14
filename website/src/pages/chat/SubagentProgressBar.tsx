@@ -10,6 +10,7 @@ import { Glass } from '../../components/Glass'
 import type { SubagentActivity } from '../../types'
 
 import { i18nT } from '../../i18n/t'
+import { fmtElapsed } from '../../i18n/format'
 import { queuedWaitText } from './subagentQueuedReason'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
 const EMPTY_SUBAGENTS: Record<string, SubagentActivity> = {}
@@ -403,7 +404,7 @@ const SubagentProgressBar = memo(function SubagentProgressBar({ slot }: { slot: 
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5">
                       <span className="min-w-0 flex-1 truncate text-text">{agentLabel}</span>
-                      <span className="shrink-0 font-mono tabular-nums text-muted/50">{elapsedShown ? `${elapsed}${i18nT('pages.chat.subagentProgressBar.s')}` : '--'}{typeof a.toolCount === 'number' && a.toolCount > 0 ? ` · ${i18nT('pages.chat.subagentProgressBar.tool', { count: a.toolCount })}` : ''}</span>
+                      <span className="shrink-0 font-mono tabular-nums text-muted/50">{elapsedShown ? fmtElapsed(elapsed * 1000, { wholeSeconds: true }) : '--'}{typeof a.toolCount === 'number' && a.toolCount > 0 ? ` · ${i18nT('pages.chat.subagentProgressBar.tool', { count: a.toolCount })}` : ''}</span>
                     </span>
                     {isAwaitingSpawnApproval(a) ? (
                       /* Checked BEFORE retrying/stalled: a parked run never

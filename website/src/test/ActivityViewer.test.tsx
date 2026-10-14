@@ -676,6 +676,44 @@ describe('ActivityViewer — Artifacts tab', () => {
     expect(cancel.className).toContain('whitespace-nowrap')
   })
 
+  // #19930: the card's hand-rolled `m`/`s` string had no hours band, so a run
+  // past an hour read `69m 32s`. It now routes through the shared fmtElapsed.
+  it.each([
+    ['running', 'tool' as const, 4_172_000, 0, '1h 9m 32s', '69m 32s'],
+    ['settled', 'done' as const, 4_031_000, 4031, '1h 7m 11s', '67m 11s'],
+  ])('renders a %s card past an hour with an hours band', (_label, status, runMs, elapsed, shown, old) => {
+    // Pin the clock so the live 1 Hz figure cannot tick past the asserted value.
+    const t0 = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockReturnValue(t0)
+    const timing = { status, startedAt: t0 - runMs, elapsed }
+    const store = configureStore({
+      reducer: { chat: chatReducer, dashboard: dashboardReducer, notifications: notificationsReducer },
+    })
+    store.dispatch(openActivityToTab('subagents'))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <Provider store={store}>
+        <QueryClientProvider client={qc}>
+          <ActivityViewer
+            toolLog={[]}
+            open
+            onToggle={vi.fn()}
+            slot="test-slot"
+            subagents={{
+              s1: { id: 's1', task: 'long run', agent: 'kirocrew', streaming: '', lastTool: 'read', ...timing },
+            }}
+          />
+        </QueryClientProvider>
+      </Provider>,
+    )
+    try {
+      expect(screen.getAllByText(shown).length).toBeGreaterThan(0)
+      expect(screen.queryByText(old)).toBeNull()
+    } finally {
+      vi.mocked(Date.now).mockRestore()
+    }
+  })
+
   it.each([0.25, 0, -1, Number.NaN, undefined])('shows credit summaries only for managed expanded cards (%s)', (credits) => {
     const store = configureStore({
       reducer: { chat: chatReducer, dashboard: dashboardReducer, notifications: notificationsReducer },

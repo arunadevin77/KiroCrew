@@ -1120,6 +1120,8 @@ describe('turn stats footer (elapsed time + credits)', () => {
     // never render the invalid "1m 60s".
     expect(fmtTurnElapsed(119_600)).toBe('2m 0s')
     expect(fmtTurnElapsed(179_600)).toBe('3m 0s')
+    // #19930: past an hour a turn reads the same as a subagent run.
+    expect(fmtTurnElapsed(4_031_000)).toBe('1h 7m 11s')
   })
 
   it('fmtCredits trims to 2 decimals under 10, 1 above', () => {

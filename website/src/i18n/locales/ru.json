@@ -11732,7 +11732,6 @@
         "possibly_stalled_for_secs": "возможно, застряло — нет активности {{secs}} с",
         "possibly_stalled_no_activity": "возможно, застряло — нет активности",
         "retry_failed_count": "Повторить неудачные ({{count}})",
-        "s": "s",
         "stop": "Остановить",
         "stop_all": "Остановить все",
         "stop_running_subagent": "Остановить запущенный субагент",

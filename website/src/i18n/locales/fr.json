@@ -11569,7 +11569,6 @@
         "possibly_stalled_for_secs": "peut-être bloqué — aucune activité depuis {{secs}}s",
         "possibly_stalled_no_activity": "peut-être bloqué — aucune activité",
         "retry_failed_count": "Réessayer les échecs ({{count}})",
-        "s": "s",
         "stop": "Arrêter",
         "stop_all": "Tout arrêter",
         "stop_running_subagent": "Arrêter le sous-agent en cours",

@@ -28,7 +28,7 @@ import type { PlanStepInput } from '../../api/client'
 import { extractSteeringAcks, parseOptions, stripPartialOptionMarker } from '../../app-sdk/protocol'
 import { i18nT } from '../../i18n/t'
 import { ROUTING_PREFIX_RE } from '../../providers/modelRegistry'
-import { fmtCredits, fmtCurrency, fmtDuration, fmtUnit } from '../../i18n/format'
+import { fmtCredits, fmtCurrency, fmtElapsed } from '../../i18n/format'
 import ErrorNotice from '../../components/ErrorNotice'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
 
@@ -47,16 +47,11 @@ export function fmtTurnModel(id: string): string {
   return id.replace(ROUTING_PREFIX_RE, '')
 }
 
-/** "8.4s" under 10s, "42s" under a minute, "2m 34s" beyond. */
+/** "8.4s" under 10s, "42s" under a minute, "2m 34s" under an hour, "1h 7m 11s"
+ *  beyond. The shared `fmtElapsed`, so a turn and a subagent run of the same
+ *  length read the same. */
 export function fmtTurnElapsed(ms: number): string {
-  const s = ms / 1000
-  if (s < 10) return fmtUnit(s, 'second', { maximumFractionDigits: 1, minimumFractionDigits: 1 })
-  if (s < 60) return fmtUnit(Math.round(s), 'second', { maximumFractionDigits: 0 })
-  // Round to whole seconds FIRST, then split into minutes + remainder so a value
-  // like 119.6s renders "2m 0s", never the invalid "1m 60s" (flooring minutes
-  // before rounding seconds can push the remainder to 60).
-  const total = Math.round(s)
-  return fmtDuration([[Math.floor(total / 60), 'minute'], [total % 60, 'second']])
+  return fmtElapsed(ms)
 }
 
 // A compact "Steered" chip rendered in place of the raw [STEERING …] marker.

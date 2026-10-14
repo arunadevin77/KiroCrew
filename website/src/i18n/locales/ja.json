@@ -11243,7 +11243,6 @@
         "possibly_stalled_for_secs": "停止している可能性があります — {{secs}}秒間アクティビティなし",
         "possibly_stalled_no_activity": "停止している可能性があります — アクティビティなし",
         "retry_failed_count": "再試行に失敗 ({{count}})",
-        "s": "秒",
         "stop": "停止",
         "stop_all": "すべて停止",
         "stop_running_subagent": "実行中のサブエージェントを停止",

@@ -11243,7 +11243,6 @@
         "possibly_stalled_for_secs": "可能已停滞 — 已无活动 {{secs}} 秒",
         "possibly_stalled_no_activity": "可能已停滞 — 无活动",
         "retry_failed_count": "重试失败项（{{count}}）",
-        "s": "s",
         "stop": "停止",
         "stop_all": "全部停止",
         "stop_running_subagent": "停止运行中的子代理",

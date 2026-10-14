@@ -11406,7 +11406,6 @@
         "possibly_stalled_for_secs": "möglicherweise blockiert — keine Aktivität seit {{secs}}s",
         "possibly_stalled_no_activity": "möglicherweise blockiert — keine Aktivität",
         "retry_failed_count": "Fehlgeschlagene wiederholen ({{count}})",
-        "s": "s",
         "stop": "Stoppen",
         "stop_all": "Alle stoppen",
         "stop_running_subagent": "Laufenden Subagenten stoppen",

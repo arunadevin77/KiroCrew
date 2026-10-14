@@ -11406,7 +11406,6 @@
         "possibly_stalled_for_secs": "संभवतः अटका हुआ — {{secs}}s से कोई गतिविधि नहीं",
         "possibly_stalled_no_activity": "संभवतः अटका हुआ — कोई गतिविधि नहीं",
         "retry_failed_count": "विफल को फिर से आज़माएँ ({{count}})",
-        "s": "s",
         "stop": "रोकें",
         "stop_all": "सभी रोकें",
         "stop_running_subagent": "चल रहा सब-एजेंट रोकें",

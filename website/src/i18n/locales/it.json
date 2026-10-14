@@ -11569,7 +11569,6 @@
         "possibly_stalled_for_secs": "potrebbe essere in stallo — nessuna attività da {{secs}}s",
         "possibly_stalled_no_activity": "potrebbe essere in stallo — nessuna attività",
         "retry_failed_count": "Riprova i non riusciti ({{count}})",
-        "s": "s",
         "stop": "Arresta",
         "stop_all": "Arresta tutti",
         "stop_running_subagent": "Arresta il subagente in esecuzione",
