@@ -555,7 +555,7 @@ def test_a_charge_with_no_opener_is_stated_not_assigned() -> None:
 
 
 def test_the_counts_answer_what_is_done_and_what_needs_me() -> None:
-    """``accepted``/``open`` come from the item's state, ``needs_you`` from its status."""
+    """``accepted``/``open`` come from the item's state, ``needs_you`` from an open one's status."""
     value = _fold(
         [
             _opened(CONDUCTOR),
@@ -575,6 +575,49 @@ def test_the_counts_answer_what_is_done_and_what_needs_me() -> None:
     # ``open`` is the state, so the accepted item is out and the other three in.
     assert board["open"] == 3
     assert _task(board, "asking")["summary"] == "which?"
+
+
+def test_a_closed_item_no_longer_needs_me() -> None:
+    """``needs_you`` counts an item only while it is OPEN.
+
+    A worker's last report outlives the conductor's close: an item whose worker asked
+    and which the conductor then accepted, rejected or abandoned still carries that
+    ``question`` or ``blocked``. Counted by status alone, every such item kept asking
+    the person about finished work, and the number only grew. A reopened item is open
+    again, so its standing question counts again.
+    """
+    entries = [_opened(CONDUCTOR), _work("goal", goal="closed asks", round=1)]
+    for state in ("accepted", "rejected", "abandoned"):
+        for status in ("question", "blocked"):
+            item_id = f"it_{state}_{status}"
+            entries += [
+                _work("create", item_id=item_id, title=f"{state} {status}", round=1),
+                _work("report", actor="worker", item_id=item_id, status=status, summary="?"),
+                _work("close", item_id=item_id, state=state),
+            ]
+    for status in ("question", "blocked", "progress"):
+        entries += [
+            _work("create", item_id=f"it_open_{status}", title=f"open {status}", round=1),
+            _work("report", actor="worker", item_id=f"it_open_{status}", status=status),
+        ]
+    entries += [
+        _work("create", item_id="it_reopened", title="reopened question", round=1),
+        _work("report", actor="worker", item_id="it_reopened", status="question"),
+        _work("close", item_id="it_reopened", state="accepted"),
+        _work("close", item_id="it_reopened", state="open"),
+    ]
+    board = _board(_fold(entries), "closed asks")
+    # The closed rows keep the worker's last word, which is what made them count.
+    closed = [t for t in board["tasks"] if t["state"] != "open"]
+    assert {(t["state"], t["status"]) for t in closed} == {
+        (state, status)
+        for state in ("accepted", "rejected", "abandoned")
+        for status in ("question", "blocked")
+    }
+    # The open question, the open blocker and the reopened question; not the
+    # open progress, and none of the six closed ones.
+    assert board["needs_you"] == 3
+    assert board["open"] == 4
 
 
 def test_an_item_moved_out_of_accepted_takes_its_hour_back() -> None:

@@ -1181,7 +1181,12 @@
     if (state === 'rejected' || state === 'abandoned') return 'shut';
     return txt(t.status) === 'done' ? 'await' : 'prog';
   }
+  //: OPEN items only, the rule the fold's own `needs_you` keeps. A worker's last word
+  //: outlives the conductor's close, so a closed task can still read `question` or
+  //: `blocked`; drawing it here would also raise the count, since `needsYou` lifts
+  //: the fold's number to the rows it draws.
   function needsMe(t) {
+    if (txt(t.state) !== 'open') return false;
     var st = txt(t.status);
     return st === 'question' || st === 'blocked';
   }

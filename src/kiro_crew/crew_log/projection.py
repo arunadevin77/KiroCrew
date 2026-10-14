@@ -7454,7 +7454,10 @@ def _workstreams_render(state: dict[str, Any]) -> dict[str, Any]:
             row = spend.get(worker) if isinstance(worker, str) and worker else None
             if item["state"] == "accepted":
                 accepted += 1
-            if item["status"] in ("question", "blocked"):
+            # OPEN items only. A worker's last report outlives the conductor's close,
+            # so a closed item can still carry the `question` or `blocked` it was
+            # closed over, and counting it asks the person about finished work.
+            if item["state"] == "open" and item["status"] in ("question", "blocked"):
                 needs_you += 1
             tasks.append(
                 {

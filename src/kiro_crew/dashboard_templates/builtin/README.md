@@ -74,8 +74,8 @@ an agentic field. The page marks it from `window.kirocrew.agentic` rather than f
 own belief, so a value the crewmate wrote never looks like one folded from the record.
 
 `project-report` declares three for the same reason. `for_you` is the lines the lead
-wants its reader to act on next: the record holds which items are blocked or asking a
-question, and the page folds those itself; what it cannot fold is the lead's own
+wants its reader to act on next: the record holds which open items are blocked or asking
+a question, and the page folds those itself; what it cannot fold is the lead's own
 judgment about what matters, so that half is written and marked as written. `verdict` is
 the lead's one-line read of where the work stands, with the one thing most in the way --
 the lead already knows which of six reds is the one that matters, and no fold ranks them.

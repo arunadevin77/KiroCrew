@@ -939,6 +939,53 @@ describe('project-report: the page the gateway ships', () => {
     })
   })
 
+  describe('what needs you counts open items only', () => {
+    // A worker's last word outlives the conductor's close: an item whose worker asked
+    // and which the conductor then accepted, rejected or abandoned still reads
+    // `question` or `blocked`. Counted by status alone, every such item stayed under
+    // Needs you and the number only grew. The fold's own `needs_you` counts open items
+    // only, and the page must too: it raises the fold's count to the rows it draws, so
+    // a page drawing the closed rows would put them back in the number.
+    const closed = ['accepted', 'rejected', 'abandoned'].flatMap((state) =>
+      ['question', 'blocked'].map((status) =>
+        task({ item_id: `${state}-${status}`, title: `${state} ${status}`, state, status }),
+      ),
+    )
+    const fields = () => ({
+      items: [
+        board(
+          [
+            task({ item_id: 'q', title: 'open question', status: 'question', summary: 'which?' }),
+            task({ item_id: 'b', title: 'open blocked', status: 'blocked', summary: 'no key' }),
+            task({ item_id: 'p', title: 'open progress', status: 'progress' }),
+            ...closed,
+          ],
+          // What the fold reports for this board: the two open items that wait.
+          { needs_you: 2, open: 3, accepted: 2 },
+        ),
+      ],
+      omitted: 0,
+      series: [],
+      for_you: [],
+      last_entry_at: iso(3),
+    })
+
+    it('draws a card for an open question and an open blocker, and nothing closed', () => {
+      mount(fields())
+      const titles = all('.pr-todo-i .pr-todo-x > b').map((n) => n.textContent)
+      expect(titles.sort()).toEqual(['open blocked', 'open question'])
+    })
+
+    it('counts the same two in the header and on the KPI card', () => {
+      mount(fields())
+      expect(text('#pr-sentence')).toContain('2 need you')
+      const card = all('.pr-kpi').find(
+        (n) => n.querySelector('.pr-kpi-label')?.textContent === 'Needs you',
+      )
+      expect(own(card?.querySelector('.pr-kpi-v'))).toBe('2')
+    })
+  })
+
   describe('a crewmate with no workstream', () => {
     // THE BUG the lead found on the pod: the header counted "1 needs you" while the
     // body under it said "No workstream yet. Nothing needs you". Two numbers from one
