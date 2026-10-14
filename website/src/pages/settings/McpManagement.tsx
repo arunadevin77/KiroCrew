@@ -1,81 +1,71 @@
-import { Fragment, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, ExternalLink, ListChecks, RefreshCw, Server as ServerIcon } from 'lucide-react'
+import { AlertTriangle, ExternalLink, ListChecks, RefreshCw, Server as ServerIcon, Share2 } from 'lucide-react'
 import {
   api,
   ApiError,
   type McpManagedServer,
   type McpMeasureProgress,
 } from '../../api/client'
-import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger, type TabItem } from '../../components/ui/tabs'
+import {
+  Tabs,
+  TabsContent,
+  TabsCount,
+  TabsList,
+  TabsTrigger,
+  type TabItem,
+} from '../../components/ui/tabs'
 import { TABS_RAIL_ROW_CLASS } from '../../components/ui/tabsPill'
 import { Btn } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '../../components/ui/dialog'
 import { splitOnPlaceholder } from '../../lib/splitOnPlaceholder'
 import { i18nT } from '../../i18n/t'
 import {
   DOCS_URL,
   type GatewayStatus,
   type LaunchPreview,
-  type BulkCandidate,
-  type BulkIssue,
-  pairLaunches,
-  launchIsApprovable,
-  stateLabelKey,
   stubErrorKey,
-  launchChangedSinceDisplay,
-  launchPreviewErrorKey,
   type McpView,
   rowState,
+  stateLabelKey,
   CONTRARY_STRENGTHS,
   sharedWithoutSupport,
   waitForMeasurePass,
 } from './mcpManagementModel'
-import { LaunchLines, LaunchReviewPanel, RefusalPanel } from './McpManagementLaunchReview'
+import {
+  offersShare,
+  LaunchList,
+  ShareLaunch,
+  ServerDetails,
+  SHARE_BUTTON_CLASS,
+  ShareAction,
+  shareHint,
+} from './McpManagementLaunchReview'
 import { AssessmentView } from './McpManagementAssessment'
 
 /**
- * MCP Management — two decisions, one per layer, and nothing else.
+ * MCP Management: one button per server, and what it buys.
  *
- * Per server (the table): interpose Kiro Crew's stub. That alone is what lets the
- * server render its own UI, and it leaves the backend private to each session —
- * the useful state for a server that holds per-session state.
+ * Every action is a real, labelled button. "Share this server" shares it: one
+ * request records the exact launch it runs and marks it shared, and turns the
+ * page-wide sharing switch on if it was off. A shared copy runs outside the
+ * chat sandbox, so the row shows the launch it approves above the button, and
+ * the approval covers that launch only: when the command, args or declared env
+ * later change, the row reads "Paused · command changed", shows the new
+ * command, and waits for "Use new command", which pins the launch it
+ * showed. "Stop sharing" turns it off. "Share all" lists every launch first and
+ * shares only on the button under that list.
  *
- * Global (the card): route those stubs to ONE shared backend process. Sharing is
- * the only thing this switch does, and it can only act on servers that already
- * have a stub, so the two layers never overlap.
+ * The servers that can never be shared (they give each chat its own
+ * credentials, or its own desktop) arrive with `share_blocked` set: they offer
+ * no share button and say why in one line.
  *
- * The words matter here: "stub" is the per-server layer and "routing to a shared
- * backend" is the global one. Naming the per-server switch "route" would claim the
- * global layer's job for it, which is exactly the confusion this page has to avoid.
+ * The hint under each row is a measured saving or nothing. `saves_bytes` is
+ * read from this host's process table by the gateway; when it is absent there
+ * is no hint. Never estimate one here.
  *
- * There is deliberately no per-server sharing control. The previous page had one,
- * which is how an operator could end up with sharing "on" while the allowlist it
- * acted on was empty — a switch with no observable effect.
- *
- * The second sub-view, "Sharing assessment", adds NO third decision. It is
- * read-only evidence: what the gateway managed to observe about each server, and
- * how that lines up with what the server is running as right now. It lives beside
- * the table rather than inside it because a verdict is not a control — folding it
- * into the stub column would read as a fifth switch — and it lives on this page
- * rather than under Connections because this is where the decision it informs is
- * made.
- *
- * Why the assessment is worth a screen even though it rarely says "share this":
- * a share recommendation requires the server to advertise the caller-identity
- * extension, which is a high bar almost nothing clears, so a column that only
- * showed "recommended / not recommended" would read as permanently broken. What
- * has content for every row is the REASON, plus the disagreement between the
- * verdict and the state the server is actually running in.
+ * The second sub-view, "Sharing assessment", is read-only evidence for anyone
+ * who wants to know why a server is or is not a good fit. It changes nothing.
  */
 
 function Switch({
@@ -109,9 +99,7 @@ function Switch({
       <span
         className={[
           // The knob rides ON the accent fill, so it needs the same light face in
-          // every theme; there is no token for that pairing (`--accent-fg` is for
-          // text) and the app-scoped switches paint theirs from CSS we cannot use
-          // from a settings page.
+          // every theme; there is no token for that pairing.
           'absolute h-[18px] w-[18px] rounded-full bg-white shadow transition-all',
           on ? 'left-[18px]' : 'left-[2px]',
         ].join(' ')}
@@ -122,24 +110,11 @@ function Switch({
 
 export function McpManagement() {
   const qc = useQueryClient()
-  const [confirmSharing, setConfirmSharing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [bulkReview, setBulkReview] = useState<BulkCandidate[] | null>(null)
-  const [bulkIssues, setBulkIssues] = useState<BulkIssue[]>([])
-  // Pending-effect information, kept separate from `error` so a stub change that
-  // needs a restart is not painted as a failure. Distinct from the enable-all
-  // `notice` below, which is that control's own inline hint rather than a
-  // page-level statement about the gateway.
+  // A change that waits for a restart is information, not a failure.
   const [restartNotice, setRestartNotice] = useState<string | null>(null)
-  // A third state rather than a reuse of either sibling above: `notice` reports a
-  // stub-set change and `restartNotice` reports a pending restart, and one banner
-  // shared by unrelated actions would let either overwrite the other's result.
   const [resolveNotice, setResolveNotice] = useState<string | null>(null)
-  // The failed-install outcomes of that same pass, kept apart from
-  // `resolveNotice` so a per-package install failure renders as an error (with
-  // the agent hand-off) while "already fresh" and "already running" stay plain
-  // status. One variable carrying both made every outcome look like a status.
   const [resolveError, setResolveError] = useState<string | null>(null)
 
   const statusQ = useQuery<GatewayStatus>({
@@ -152,31 +127,22 @@ export function McpManagement() {
   })
 
   const status = statusQ.data
-  // Memoized so the six derived sets below keep a stable dependency: the `?? []`
-  // built a fresh array on every render, which re-ran each `useMemo` every time
-  // and is what the exhaustive-deps warnings on this component were about.
   const servers = useMemo(() => serversQ.data?.servers ?? [], [serversQ.data])
   const stubCount = useMemo(() => servers.filter(s => s.stub).length, [servers])
-  const eligibleCount = useMemo(() => servers.filter(s => s.can_stub).length, [servers])
-  // The header counts what the STUB column SHOWS. A row waiting for re-approval
-  // keeps its opt-in in config while its switch reads off, so a count of `s.stub`
-  // claims a server the column beneath it denies, and the operator is left to work
-  // out which of the two numbers is real. The rows that are waiting are a clause of
-  // their own rather than a silent omission -- they are the ones with work to do.
+  // Marked servers the assessment argues against: they start the moment
+  // page-wide sharing turns on, so the page names them before that press.
+  const contraryMarked = useMemo(
+    () =>
+      servers
+        .filter(s => s.stub && s.recommendation && CONTRARY_STRENGTHS.has(s.recommendation.strength))
+        .map(s => s.name),
+    [servers],
+  )
+  // The header counts the rows whose chip reads "Shared": a row waiting for its
+  // new command, or one paused because sharing is off, is not counted.
   const switchedOnCount = useMemo(
     () =>
-      servers.filter(
-        s =>
-          s.stub
-          && rowState(s, !!status?.enabled, status?.launch_refused) !== 'needs_reapproval',
-      ).length,
-    [servers, status],
-  )
-  const waitingCount = useMemo(
-    () =>
-      servers.filter(
-        s => rowState(s, !!status?.enabled, status?.launch_refused) === 'needs_reapproval',
-      ).length,
+      servers.filter(s => rowState(s, !!status?.enabled, status?.launch_refused) === 'shared').length,
     [servers, status],
   )
   const supported = status?.supported ?? true
@@ -184,55 +150,36 @@ export function McpManagement() {
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['mcpGatewayStatus'] })
     void qc.invalidateQueries({ queryKey: ['mcpGatewayServers'] })
+    // A launch can change with any of these writes; never show a stale one beside a button.
+    void qc.invalidateQueries({ queryKey: ['mcpGatewayLaunchPreview'] })
   }
 
-  // Both endpoints persist to config.json BEFORE the in-process apply, so a 500
-  // means "saved but not live" — not "nothing happened". Claiming nothing was
-  // saved would leave the operator with a setting that quietly takes effect on
-  // the next restart, so the failure path refetches and says so.
-  const onApplyError = (key: string) => () => {
-    invalidate()
-    setError(i18nT(key))
-  }
-
-  // The server whose launch is open for review, and the launch itself. One at a
-  // time: two panels would put two commands on screen with two approve buttons,
-  // and the whole point is that the operator is deciding about ONE command.
-  const [review, setReview] = useState<LaunchPreview | null>(null)
-  // The approve button of each refused row's panel, by server name, so the row's
-  // switch can move the keyboard to the panel it already shows.
-  const approveButtons = useRef<Record<string, HTMLButtonElement | null>>({})
-  // Reading the launch is the first half of turning a stub ON. It writes nothing,
-  // so a failure here has to say that nothing was turned on -- see
-  // `launchPreviewErrorKey`, which is a separate table from the write's for
-  // exactly that reason.
-  const previewLaunch = useMutation({
-    mutationFn: (name: string) => api.mcpGatewayLaunchPreview(name),
-    onSuccess: preview => setReview(preview),
-    onError: (error, name) => {
-      setReview(null)
-      setError(i18nT(launchPreviewErrorKey(error), { name }))
+  const setSharing = useMutation({
+    mutationFn: (enabled: boolean) => api.mcpGatewayEnable(enabled),
+    // Enabling can persist and still leave sharing unreachable; `ping_ok` says so.
+    onSuccess: (res, enabled) => {
+      invalidate()
+      if (enabled && !res.ping_ok) setError(i18nT('pages.mcpManagement.sharing_not_live'))
+    },
+    onError: () => {
+      invalidate()
+      setError(i18nT('pages.mcpManagement.sharing_failed'))
     },
   })
 
+  // One press, one request. Sharing records the exact launch the server runs and
+  // marks it shared; the endpoint refuses the classes that can never be shared.
+  // Confirming a changed command pins the launch the opened Details showed, so a
+  // launch that moved again in between is refused rather than approved. A row
+  // shared while sharing is off turns sharing on too: the person asked for this
+  // server to be shared, and a second switch elsewhere would make that two steps.
   const setStub = useMutation({
     mutationFn: ({ name, stub, expectedLaunch }: { name: string; stub: boolean; expectedLaunch?: string }) =>
       api.mcpGatewaySetStub(name, stub, expectedLaunch),
-    // A 200 means the config was persisted, NOT that the broker reached the
-    // wanted state. A stub change is never applied in place -- the daemon's
-    // routing is built with the agent-spec rewrite at startup -- so the normal
-    // outcome is `restart_required`, which is pending information rather than a
-    // failure. `applied: false` with no restart hint is the real fault case:
-    // the gateway never wired the apply callback, so nothing was recorded.
     onSuccess: (res, vars) => {
       invalidate()
-      // The question the panel asked has been answered, so it has nothing left to
-      // show. Closed here rather than at the click: closing optimistically would
-      // hide the command while the write that names it can still be refused.
-      if (vars.stub) {
-        setReview(null)
-        setBulkIssues(issues => issues.filter(issue => issue.name !== vars.name))
-        setNotice(null)
+      if (vars.stub && supported && !status?.enabled && !setSharing.isPending) {
+        setSharing.mutate(true)
       }
       if (res && res.restart_required) {
         setRestartNotice(i18nT('pages.mcpManagement.stub_restart_required'))
@@ -240,54 +187,25 @@ export function McpManagement() {
         setError(i18nT('pages.mcpManagement.stub_not_live'))
       }
     },
-    onError: (error, vars) => {
+    onError: (err, vars) => {
       invalidate()
-      setError(i18nT(stubErrorKey(error), { name: vars.name }))
-      // The launch moved between the render and the click, so the panel is showing
-      // a command that no longer exists. Read the new one: leaving the old one up
-      // beside "check it before you approve" points at the wrong command.
-      if (vars.stub && review?.name === vars.name && launchChangedSinceDisplay(error)) {
-        previewLaunch.mutate(vars.name)
-      }
+      // A refusal can mean the launch moved since it was shown: read it again,
+      // so the row shows the current launch and the next press pins that one.
+      void qc.invalidateQueries({ queryKey: ['mcpGatewayLaunchPreview', vars.name] })
+      setError(i18nT(stubErrorKey(err), { name: vars.name }))
     },
   })
 
-  const setSharing = useMutation({
-    mutationFn: (enabled: boolean) => api.mcpGatewayEnable(enabled),
-    // Same asymmetry: enabling sharing can persist and still leave the broker
-    // unreachable, and `ping_ok` is the only thing that says so.
-    onSuccess: (res, enabled) => {
-      invalidate()
-      if (enabled && !res.ping_ok) {
-        setError(i18nT('pages.mcpManagement.sharing_not_live'))
-      }
-    },
-    onError: onApplyError('pages.mcpManagement.sharing_failed'),
-  })
-
-  // Pre-resolving an npm-launcher server lets its launch exec the installed
-  // tree, so session start does no dependency resolution. The timed pass keeps
-  // an unpinned spec current on its own; this is the operator asking to check
-  // upstream now, so it reports what the pass produced rather than only that it
-  // ran. A 409 means a pass is already in flight, which is information, not a
-  // failure to retry.
   const resolveRefresh = useMutation({
     mutationFn: () => api.mcpResolveRefresh(),
     onSuccess: res => {
       invalidate()
       if (!res.ok) {
-        // Not an error: the operator has nothing routed, which is the same class
-        // of fact the sharing card states as plain text rather than as an alarm.
         setResolveNotice(i18nT('pages.mcpManagement.resolve_no_targets'))
         return
       }
       const ready = res.ready?.length ?? 0
-      // `ready === 0` has two causes that must NOT read the same. Everything was
-      // already fresh (nothing to do), or every install failed -- a registry
-      // outage, a rejected token. Reporting the second as "nothing needed" tells
-      // someone who just pressed this button that launches now skip the network
-      // when not one of them does. The per-package outcome is already in the
-      // response; count it rather than inferring from `ready` alone.
+      // Every install failing must not read as "already up to date".
       const failed = Object.values(res.resolved ?? {}).filter(state => state === 'error').length
       if (failed > 0) {
         setResolveError(
@@ -308,10 +226,7 @@ export function McpManagement() {
     },
     onError: err => {
       invalidate()
-      // 409 is the endpoint reporting an in-flight pass, which it deliberately
-      // encodes as information rather than a failure to retry. Painting it as
-      // "could not pre-resolve" contradicts the state the response carries: the
-      // pass the second tab is being told about is running fine.
+      // 409 is a pass already running elsewhere: information, not a failure.
       if (err instanceof ApiError && err.status === 409) {
         setResolveNotice(i18nT('pages.mcpManagement.resolve_already_running'))
         return
@@ -320,42 +235,17 @@ export function McpManagement() {
     },
   })
 
-  const busy = setStub.isPending || setSharing.isPending || previewLaunch.isPending
-  // An unsupported platform must never TRAP an operator in a state they cannot
-  // leave: a config carried over from another machine can arrive with sharing on
-  // or servers stubbed, so turning things OFF stays available and only turning
-  // them ON is blocked. Enabling sharing over an empty stub set is blocked for
-  // the same reason it no longer exists as a state: it would do nothing.
-  // Shared by the tab badge, the confirm dialog and the assessment banner, so
-  // the three can never disagree about how many rows are flagged.
+  const busy = setStub.isPending || setSharing.isPending
+  // One count shared by the tab badge and the assessment banner.
   const unsupportedCount = useMemo(
     () =>
       servers.filter(s => sharedWithoutSupport(s, !!status?.enabled, status?.launch_refused)).length,
     [servers, status?.enabled, status?.launch_refused],
   )
-  // What turning sharing ON would put into that state, which is a different
-  // question from what is in it now: nothing is shared until the switch is on.
-  const wouldBeUnsupported = useMemo(
-    () => servers
-      .filter(s => s.stub && s.recommendation
-        && CONTRARY_STRENGTHS.has(s.recommendation.strength))
-      .map(s => s.name),
-    [servers],
-  )
-
   const canEnableSharing = supported && stubCount > 0
 
-  // How many rows the measurement pass would actually act on. A row with no
-  // ``recommendation`` at all counts too: an older gateway reached through Make
-  // Live sends no verdict field, and that row is exactly as unmeasured as one
-  // whose verdict says so.
-  //
-  // A row whose handshake did not reproduce counts as well, and this is load
-  // bearing rather than a nicety. The backend deliberately re-measures such a row
-  // every pass (a divergence is reported, never frozen), and the row's own text
-  // tells the operator that measuring again retests it. Leaving it out of this
-  // count disabled the only control that does so, which is an offered action with
-  // no path to it.
+  // Rows the measurement pass would act on, including an older gateway's row
+  // with no verdict and a handshake that did not reproduce (re-measured every pass).
   const unmeasuredCount = useMemo(
     () =>
       servers.filter(
@@ -367,195 +257,126 @@ export function McpManagement() {
     [servers],
   )
 
-  // One gesture for "stub everything the evidence allows", because the
-  // alternative on a 35-server install is 35 clicks and the operator reads the
-  // verdict column for each one — which is how a row the evidence argues against
-  // gets stubbed by hand anyway.
-  // The candidates the bulk action has read and is asking about live in
-  // `bulkReview`; `null` is "not asking" and an empty list never opens the dialog.
-  // The live pass, read from the same cache entry `MeasureControl` polls into and
-  // `waitForMeasurePass` writes to. Subscribing here rather than keeping a second
-  // copy in this component is what keeps the two lines on this page from
-  // disagreeing about how far one pass has got.
   const { data: measureProgress } = useQuery<McpMeasureProgress>({
     queryKey: ['mcp-measure-progress'],
     queryFn: () => api.mcpMeasureProgress(),
-    // No interval: the batch action's own poll writes into this key while it
-    // waits, and `MeasureControl` already polls on its own schedule when it is
-    // mounted. A third schedule would just add requests.
     enabled: false,
   })
-  // Deliberately NOT an eligibility test — only "is there anything worth asking
-  // about". Eligibility is the server's to decide, and a second copy of that rule
-  // here could disagree with it: too strict and the button is dead while servers
-  // do qualify, too loose and it promises work that gets skipped. Gating on
-  // stubbable-and-not-yet-stubbed keeps the control honest either way, because a
-  // press that finds nothing qualifying reports exactly that.
   const stubbableNames = useMemo(
-    () => servers.filter(s => s.can_stub && !s.stub).map(s => s.name),
+    () => servers.filter(s => s.can_stub && !s.stub && !s.share_blocked).map(s => s.name),
     [servers],
   )
 
-  const enableAll = useMutation({
-    mutationFn: async (): Promise<{ pending: boolean; review: BulkCandidate[] }> => {
-      // Measure the unmeasured FIRST. An unmeasured row is never eligible, so
-      // skipping this step would make the button quietly ignore exactly the
-      // servers just installed — the ones the operator is most likely to be
-      // here for. The pass is uncapped and can run for minutes; it reports
-      // progress, and if it is still going when the wait runs out nothing is
-      // stubbed and the operator is told to come back, which is better than
-      // acting on a half-measured fleet.
+  // "Share all": measure the unmeasured first, then read each candidate's launch
+  // and SHOW them all. Each share approves that exact launch to run outside the
+  // chat sandbox, so nothing is shared until the person presses the button
+  // under the list, and each share is pinned to the launch the list shows.
+  const [allPlan, setAllPlan] = useState<Array<{ name: string; preview: LaunchPreview; expected: string }> | null>(null)
+  const prepareAll = useMutation({
+    mutationFn: async () => {
       if (unmeasuredCount > 0) {
         await api.mcpMeasureStart()
-        if (!(await waitForMeasurePass(qc))) return { pending: true, review: [] }
+        if (!(await waitForMeasurePass(qc))) return { pending: true as const }
       }
-      // Rows are re-read rather than reused from the render this click came from,
-      // because the measurement pass above changes which servers are candidates at
-      // all. Called through `api` DIRECTLY, not `qc.fetchQuery`: this app's shared
-      // QueryClient sets `staleTime: Infinity` (freshness comes from WebSocket
-      // invalidation, not from age), so a cache-backed read would resolve from that
-      // very render and the re-read would be a decoration.
+      // Re-read directly: the shared QueryClient never treats its cache as stale.
       const fresh = await api.mcpGatewayServers()
-      const rows = fresh?.servers ?? []
-      const candidates = rows.filter(s => s.can_stub && !s.stub).map(s => s.name)
-      if (candidates.length === 0) return { pending: false, review: [] }
-      // Read what each candidate would run and show all of it before writing
-      // anything. Eligibility is still the server's to decide -- each write below
-      // requests that decision inside the lock hold that performs it -- but a list
-      // the operator is about to approve as a whole cannot be a list of names.
-      return {
-        pending: false,
-        review: await Promise.all(
-          candidates.map(async name => {
-            try {
-              return { name, preview: await api.mcpGatewayLaunchPreview(name) }
-            } catch (error) {
-              return { name, error }
-            }
-          }),
-        ),
+      const candidates = (fresh?.servers ?? [])
+        .filter(s => s.can_stub && !s.stub && !s.share_blocked)
+        .map(s => s.name)
+      const plan: Array<{ name: string; preview: LaunchPreview; expected: string }> = []
+      let unreadable = 0
+      const failed: string[] = []
+      for (const name of candidates) {
+        try {
+          const preview = await api.mcpGatewayLaunchPreview(name)
+          if (preview?.complete && preview.expected_launch) {
+            plan.push({ name, preview, expected: preview.expected_launch })
+          } else unreadable++
+        } catch {
+          // A failed read is an error, not "nothing to share".
+          failed.push(name)
+        }
       }
+      return { pending: false as const, plan, unreadable, failed }
     },
     onSuccess: r => {
-      invalidate()
       if (r.pending) {
         setNotice(i18nT('pages.mcpManagement.enable_all_still_measuring'))
         return
       }
-      if (r.review.length === 0) {
-        setNotice(i18nT('pages.mcpManagement.enable_all_review_nothing'))
+      if (r.failed.length > 0) {
+        setError(i18nT('pages.mcpManagement.enable_all_review_failed_names', { names: r.failed.join(', ') }))
+      }
+      if (r.plan.length === 0) {
+        if (r.failed.length === 0) setNotice(i18nT('pages.mcpManagement.enable_all_review_nothing'))
         return
       }
-      setBulkReview(r.review)
+      setAllPlan(r.plan)
+      if (r.unreadable > 0) {
+        setNotice(i18nT('pages.mcpManagement.enable_all_review_result_left', { count: r.unreadable }))
+      }
     },
-    onError: () => {
-      invalidate()
-      setError(i18nT('pages.mcpManagement.stub_failed'))
-    },
+    onError: () => setError(i18nT('pages.mcpManagement.stub_failed')),
   })
-
-  // The confirm half: one request per server, sent one after another.
-  //
-  // Not a batch, and not in parallel. Each write carries `expected_launch` -- the
-  // identity of the command that server showed in the list -- so one body cannot
-  // stand for the whole set, and the endpoint refuses a batch stub=true for that
-  // reason. Serial because these are config writes behind one lock: firing them
-  // together only queues them somewhere less visible.
-  //
-  // Three outcomes, counted apart, because they need different answers from the
-  // operator: written, left alone (nothing to approve, or the server declined it),
-  // and refused because the command moved after it was shown — the last is the one
-  // worth looking at again.
-  const enableAllApprove = useMutation({
-    mutationFn: async (items: BulkCandidate[]) => {
-      let enabled = 0
+  const enableAll = useMutation({
+    mutationFn: async (plan: Array<{ name: string; expected: string }>) => {
+      let shared = 0
       let skipped = 0
-      const changed: BulkIssue[] = []
-      const failed: BulkIssue[] = []
+      const failed: string[] = []
       let restart = false
-      for (const item of items) {
-        const preview = item.preview
-        if (!preview) {
-          if ('error' in item) {
-            failed.push({ name: item.name, error: item.error, kind: 'preview_failed' })
-          } else {
-            skipped++
-          }
-          continue
-        }
-        if (!launchIsApprovable(preview)) {
-          skipped++
-          continue
-        }
+      let notLive = false
+      // Sharing goes on BEFORE the writes, so each server is checked against the
+      // bar for a pooled copy, not the looser bar for a server left unpooled.
+      // Enabling can persist and still leave sharing unreachable; `ping_ok` says so.
+      if (supported && !status?.enabled) {
+        const on = await api.mcpGatewayEnable(true)
+        if (!on.ping_ok) notLive = true
+      }
+      const skippedNames: string[] = []
+      for (const { name, expected } of plan) {
         try {
-          const res = await api.mcpGatewaySetStub(
-            item.name,
-            true,
-            preview.expected_launch as string,
-            true,
-          )
-          if (res.stubbed?.includes(item.name)) {
-            enabled++
-          } else if (res.skipped?.some(entry => entry.name === item.name)) {
+          const res = await api.mcpGatewaySetStub(name, true, expected, true)
+          if (res.stubbed?.includes(name)) shared++
+          else {
             skipped++
-          } else {
-            failed.push({
-              name: item.name,
-              error: new Error('Stub eligibility response did not identify an outcome'),
-              kind: 'write_failed',
-            })
+            skippedNames.push(name)
           }
           if (res.restart_required) restart = true
-        } catch (error) {
-          if (launchChangedSinceDisplay(error)) {
-            changed.push({ name: item.name, error, kind: 'changed' })
-          } else {
-            failed.push({ name: item.name, error, kind: 'write_failed' })
-          }
+        } catch {
+          failed.push(name)
         }
       }
-      return { enabled, skipped, changed, failed, restart }
+      return { shared, skipped, skippedNames, failed, restart, notLive }
     },
     onSuccess: r => {
       invalidate()
-      setBulkReview(null)
-      setBulkIssues([...r.changed, ...r.failed])
+      setAllPlan(null)
       setNotice(
         [
-          i18nT('pages.mcpManagement.enable_all_review_result_shared', { count: r.enabled }),
+          i18nT('pages.mcpManagement.enable_all_review_result_shared', { count: r.shared }),
           ...(r.skipped > 0
-            ? [i18nT('pages.mcpManagement.enable_all_review_result_left', { count: r.skipped })]
-            : []),
-          ...(r.changed.length > 0
-            ? [i18nT('pages.mcpManagement.enable_all_review_result_changed', { count: r.changed.length })]
-            : []),
-          ...(r.failed.length > 0
-            ? [i18nT('pages.mcpManagement.enable_all_review_result_failed', { count: r.failed.length })]
+            ? [i18nT('pages.mcpManagement.enable_all_review_skipped_names', { names: r.skippedNames.join(', ') })]
             : []),
         ].join(' '),
       )
-      // A stub change is never applied in place, so `restart_required` is the
-      // normal answer and must not read as a fault.
-      if (r.restart) {
-        setRestartNotice(i18nT('pages.mcpManagement.stub_restart_required'))
-      }
+      // Failed requests and a sharing switch that did not come up are errors:
+      // they go through ErrorNotice, not the status line.
+      const errors = [
+        ...(r.notLive ? [i18nT('pages.mcpManagement.sharing_not_live')] : []),
+        ...(r.failed.length > 0
+          ? [i18nT('pages.mcpManagement.enable_all_review_failed_names', { names: r.failed.join(', ') })]
+          : []),
+      ]
+      if (errors.length > 0) setError(errors.join(' '))
+      if (r.restart) setRestartNotice(i18nT('pages.mcpManagement.stub_restart_required'))
     },
     onError: () => {
       invalidate()
-      setBulkReview(null)
       setError(i18nT('pages.mcpManagement.stub_failed'))
     },
   })
 
-  // Local state, not a URL param. The sibling in-pane tab rails in this repo
-  // (ConnectionsPage, knowledge) hold it the same way, this pane is already
-  // addressed by the Developer page's own `?tab=`, and a second param would need
-  // to coexist with it for a read-only view nobody deep-links to. The shared
-  // component is still what draws the rail, so the keyboard and aria behaviour
-  // come along for free.
   const [view, setView] = useState<McpView>('servers')
-  // A function, not a module constant, so the labels re-translate on a language
-  // switch instead of freezing at first import.
   const views: Array<TabItem<McpView>> = [
     {
       key: 'servers',
@@ -566,9 +387,6 @@ export function McpManagement() {
       key: 'assessment',
       label: i18nT('pages.mcpManagement.view_assessment'),
       icon: <ListChecks size={14} />,
-      // Zero renders nothing, so this appears only when there is something to
-      // find. Without it the page's one coloured signal sits on a tab the
-      // operator has no reason to open.
       count: unsupportedCount,
     },
   ]
@@ -592,9 +410,6 @@ export function McpManagement() {
         </TabsList>
       </div>
 
-      {/* `supported` defaults to true and `enabled` to off, so a failed status
-          read used to paint a healthy, switchable card over a state this tab
-          knows nothing about. Above both views because both derive from it. */}
       <ErrorNotice
         message={statusQ.isError ? i18nT('pages.mcpManagement.status_failed') : null}
         askAgent
@@ -612,44 +427,27 @@ export function McpManagement() {
           unmeasuredCount={unmeasuredCount}
         />
       </TabsContent>
-      {/* The servers view stacks a lede header, two inline banners and three
-          cards as SIBLINGS. The `space-y-4` on the <Tabs> root only gaps the tab
-          rail from the panel below it -- it cannot reach inside a panel -- so
-          without a gap class here the cards render flush against each other,
-          unlike the assessment view (which wraps its body in `space-y-4`) and
-          every other settings panel. Match that rhythm on the panel itself. */}
       <TabsContent value="servers" className="min-w-0 space-y-4">
-      {/* No <h2> here: the Developer tab header already names this surface, and a
-          second copy of the title read as two stacked headings. */}
-      <header>
-        <p className="max-w-[76ch] text-[13px] leading-relaxed text-[var(--muted)]">
-          {/*
-           * One key holds the whole sentence with a {{link}} placeholder, rather
-           * than joining a lede key and a link-label key side by side. Halves
-           * that each end mid-sentence cannot be reordered by a translator, and
-           * plenty of languages need the link somewhere other than the end.
-           */}
-          {splitOnPlaceholder(i18nT('pages.mcpManagement.lede'), 'link').map((part, i) =>
-            part === null ? (
-              <a
-                key="link"
-                href={DOCS_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline"
-              >
-                {i18nT('pages.mcpManagement.learn_more')}
-                <ExternalLink size={12} />
-              </a>
-            ) : (
-              <span key={i}>{part}</span>
-            ),
-          )}
-        </p>
-      </header>
+      <p className="max-w-[76ch] text-[13px] leading-relaxed text-[var(--muted)]">
+        {/* One key, one sentence, a {{link}} placeholder a translator can move. */}
+        {splitOnPlaceholder(i18nT('pages.mcpManagement.lede'), 'link').map((part, i) =>
+          part === null ? (
+            <a
+              key="link"
+              href={DOCS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline"
+            >
+              {i18nT('pages.mcpManagement.learn_more')}
+              <ExternalLink size={12} />
+            </a>
+          ) : (
+            <span key={i}>{part}</span>
+          ),
+        )}
+      </p>
 
-      {/* Hand-off is safe here: this page is switches only, every input is
-          already persisted before any of these errors can show. */}
       <ErrorNotice message={error} askAgent onDismiss={() => setError(null)} />
 
       {restartNotice && (
@@ -662,97 +460,233 @@ export function McpManagement() {
         </div>
       )}
 
-      {/* Global: route every stub to one shared backend. */}
-      <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-5 py-4">
-        <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-start md:gap-5">
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-[var(--text)]">
+      {/* Per server: one labelled button is the decision. */}
+      <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-[var(--border)] px-4 py-2.5">
+          <span className="text-[12.5px] text-[var(--muted)]">
+            {i18nT('pages.mcpManagement.stubbed_of_total', {
+              stubbed: switchedOnCount,
+              // Every row below, so the count and the list always agree.
+              total: servers.length,
+            })}
+          </span>
+          <Btn
+            type="button"
+            className={SHARE_BUTTON_CLASS}
+            onClick={() => {
+              setError(null)
+              setNotice(null)
+              setRestartNotice(null)
+              prepareAll.mutate()
+            }}
+            disabled={
+              busy
+              || prepareAll.isPending
+              || enableAll.isPending
+              || allPlan !== null
+              || serversQ.isLoading
+              || !supported
+              || (stubbableNames.length === 0 && unmeasuredCount === 0)
+            }
+          >
+            {i18nT('pages.mcpManagement.enable_all')}
+          </Btn>
+          {(prepareAll.isPending || enableAll.isPending || notice) && (
+            <span role="status" className="basis-full text-[12.5px] text-[var(--muted)]">
+              {prepareAll.isPending && (measureProgress?.running || unmeasuredCount > 0)
+                ? i18nT('pages.mcpManagement.assessment.measure_running', {
+                    done: measureProgress?.running ? measureProgress.done : 0,
+                    total: measureProgress?.running ? measureProgress.total : unmeasuredCount,
+                  })
+                : prepareAll.isPending
+                  ? i18nT('pages.mcpManagement.share_checking')
+                  : notice}
+            </span>
+          )}
+        </div>
+        {allPlan && (
+          <div
+            role="region"
+            aria-label={i18nT('pages.mcpManagement.share_all_list_aria')}
+            className="space-y-3 border-b border-[var(--border)] px-4 py-3 text-[12px] leading-relaxed text-[var(--muted)]"
+          >
+            <p className="font-medium text-[var(--text)]">{i18nT('pages.mcpManagement.share_all_runs')}</p>
+            <p>{i18nT('pages.mcpManagement.share_all_access')}</p>
+            <ul className="space-y-2.5">
+              {allPlan.map(item => (
+                <li key={item.name} className="space-y-1 rounded-lg border border-[var(--border)] px-3 py-2">
+                  <p className="font-mono text-[12.5px] text-[var(--text)]">{item.name}</p>
+                  <LaunchList preview={item.preview} />
+                </li>
+              ))}
+            </ul>
+            {!status?.enabled && servers.some(o => o.stub) && (
+              <p className="text-[var(--text)]">
+                {i18nT('pages.mcpManagement.share_also_starts', {
+                  names: servers.filter(o => o.stub).map(o => o.name).join(', '),
+                })}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Btn
+                type="button"
+                primary
+                className={SHARE_BUTTON_CLASS}
+                disabled={enableAll.isPending || busy}
+                onClick={() => enableAll.mutate(allPlan)}
+              >
+                <Share2 size={14} aria-hidden="true" />
+                {i18nT('pages.mcpManagement.share_all_confirm', { count: allPlan.length })}
+              </Btn>
+              <Btn
+                type="button"
+                className={SHARE_BUTTON_CLASS}
+                disabled={enableAll.isPending}
+                onClick={() => {
+                  setAllPlan(null)
+                  setNotice(null)
+                }}
+              >
+                {i18nT('pages.mcpManagement.share_all_cancel')}
+              </Btn>
+            </div>
+          </div>
+        )}
+        <ul className="divide-y divide-[var(--border)]">
+          {servers.map(s => {
+            const state = rowState(s, !!status?.enabled, status?.launch_refused)
+            const waiting = state === 'needs_reapproval'
+            const flagged = sharedWithoutSupport(s, !!status?.enabled, status?.launch_refused)
+            const hint = waiting
+              ? i18nT('pages.mcpManagement.command_changed_hint')
+              : state === 'direct_env'
+                ? i18nT('pages.mcpManagement.state_direct_env_reason')
+                : shareHint(s)
+            const hintId = `mcp-share-hint-${s.name}`
+            return (
+              <li key={s.name} className="px-4 py-3">
+                <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-start">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="min-w-0 break-words font-mono text-[13px] text-[var(--text)] [overflow-wrap:anywhere]">
+                        {s.name}
+                      </span>
+                      <span
+                        className={[
+                          'inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px]',
+                          flagged
+                            ? 'border border-[var(--danger)] text-[var(--danger)]'
+                            : state === 'shared'
+                              ? 'bg-[var(--accent-subtle,transparent)] text-[var(--accent)]'
+                              : 'text-[var(--muted)]',
+                        ].join(' ')}
+                      >
+                        {flagged && <AlertTriangle size={11} aria-hidden="true" />}
+                        {i18nT(stateLabelKey(state))}
+                      </span>
+                    </div>
+                    {hint && (
+                      <p id={hintId} className="mt-0.5 text-[12.5px] text-[var(--muted)]">
+                        {hint}
+                      </p>
+                    )}
+                    <ShareLaunch
+                      server={s}
+                      waiting={waiting}
+                      refusal={status?.launch_refused?.[s.name]}
+                      alsoStarts={
+                        status?.enabled || waiting
+                          ? []
+                          : servers.filter(o => o.stub && o.name !== s.name).map(o => o.name)
+                      }
+                    />
+                    <ServerDetails server={s} showLaunch={!offersShare(s, waiting)} />
+                  </div>
+                  <ShareAction
+                    server={s}
+                    waiting={waiting}
+                    busy={busy}
+                    supported={supported}
+                    describedBy={hint ? hintId : undefined}
+                    onShare={(stub, expectedLaunch) => {
+                      setError(null)
+                      setRestartNotice(null)
+                      setStub.mutate({ name: s.name, stub, expectedLaunch })
+                    }}
+                  />
+                </div>
+              </li>
+            )
+          })}
+          {serversQ.isError && (
+            <li className="px-4 py-4">
+              <ErrorNotice message={i18nT('pages.mcpManagement.servers_failed')} askAgent />
+            </li>
+          )}
+          {servers.length === 0 && !serversQ.isLoading && !serversQ.isError && (
+            <li className="px-4 py-6 text-center text-[13px] text-[var(--muted)]">
+              {i18nT('pages.mcpManagement.no_servers')}
+            </li>
+          )}
+        </ul>
+        <p className="border-t border-[var(--border)] px-4 py-2.5 text-[12.5px] text-[var(--muted)]">
+          {i18nT('pages.mcpManagement.open_sessions_note')}
+        </p>
+      </section>
+
+      {/* Page-wide: the main sharing switch. A row's switch turns it on by itself. */}
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[14px] font-medium text-[var(--text)]">
               {i18nT('pages.mcpManagement.sharing_label')}
             </div>
-            <p
-              id="mcp-sharing-desc"
-              className="mt-1.5 max-w-[64ch] break-words text-[13px] leading-relaxed text-[var(--muted)] [overflow-wrap:anywhere]"
-            >
-              {i18nT('pages.mcpManagement.sharing_description')}
+            <p id="mcp-sharing-desc" className="mt-0.5 text-[12.5px] text-[var(--muted)]">
+              {!supported
+                ? i18nT('pages.mcpManagement.unsupported_platform')
+                : !status?.enabled && stubCount === 0
+                  ? i18nT('pages.mcpManagement.sharing_needs_a_stub')
+                  : i18nT('pages.mcpManagement.sharing_description')}
             </p>
-            {!supported && (
-              <p className="mt-2 text-[12.5px] text-[var(--muted)]">
-                {i18nT('pages.mcpManagement.unsupported_platform')}
-              </p>
-            )}
-            {/* A disabled control has to say why. This is the page's headline
-                switch, so with nothing stubbed a first-time user's very first
-                click silently did nothing and only the lede's last clause
-                hinted at the gate. */}
-            {supported && !status?.enabled && stubCount === 0 && (
-              <p className="mt-2 text-[12.5px] text-[var(--muted)]">
-                {i18nT('pages.mcpManagement.sharing_needs_a_stub')}
-              </p>
-            )}
-            {/* Sharing left ON over an empty stub set is the exact "switch with
-                no observable effect" state this page exists to eliminate —
-                reachable by unstubbing the last server. Name it instead of
-                showing a live switch that governs nothing. */}
-            {supported && status?.enabled && stubCount === 0 && (
-              <p className="mt-2 text-[12.5px] text-[var(--muted)]">
-                {i18nT('pages.mcpManagement.sharing_on_but_nothing_stubbed')}
+            {/* The switch acts at once, so the assessment's verdict sits beside it
+                before the press: naming marked servers it argues against here is
+                what the old confirm dialog was for. */}
+            {!status?.enabled && contraryMarked.length > 0 && (
+              <p className="mt-1 flex items-start gap-1.5 text-[12.5px] text-[var(--danger)]">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
+                <span className="break-words [overflow-wrap:anywhere]">
+                  {i18nT('pages.mcpManagement.sharing_contrary', { names: contraryMarked.join(', ') })}
+                </span>
               </p>
             )}
           </div>
-          <div className="flex min-w-0 items-start justify-between gap-3 md:shrink-0 md:gap-5">
-            <span className="min-w-0 break-words font-mono text-[12px] text-[var(--muted)] [overflow-wrap:anywhere] md:whitespace-nowrap md:pt-1">
-              {i18nT('pages.mcpManagement.stubbed_of_total', {
-                stubbed: switchedOnCount,
-                total: eligibleCount,
-              })}
-              {waitingCount > 0
-                && ` · ${i18nT('pages.mcpManagement.stub_count_waiting', { count: waitingCount })}`}
-            </span>
-            <Switch
-              on={!!status?.enabled}
-              disabled={
-                busy || statusQ.isLoading || (!status?.enabled && !canEnableSharing)
-              }
-              label={i18nT('pages.mcpManagement.sharing_label')}
-              describedBy="mcp-sharing-desc"
-              onClick={() => {
-                setError(null)
-                // Turning sharing ON changes the topology of every stubbed server
-                // at once, so it asks first. Turning it OFF only ever narrows,
-                // and a confirm on the safe direction trains people to click
-                // through the dangerous one.
-                if (!status?.enabled) setConfirmSharing(true)
-                else setSharing.mutate(false)
-              }}
-            />
-          </div>
+          <Switch
+            on={!!status?.enabled}
+            disabled={busy || statusQ.isLoading || (!status?.enabled && !canEnableSharing)}
+            label={i18nT('pages.mcpManagement.sharing_label')}
+            describedBy="mcp-sharing-desc"
+            onClick={() => {
+              setError(null)
+              setSharing.mutate(!status?.enabled)
+            }}
+          />
         </div>
       </section>
 
-      {/* Global: pre-resolve npm-launcher servers so launches skip resolution. */}
-      <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-5 py-4">
-        <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-start md:gap-5">
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-[var(--text)]">
+      {/* Page-wide: install npm servers once so chats start without a download. */}
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[14px] font-medium text-[var(--text)]">
               {i18nT('pages.mcpManagement.resolve_label')}
             </div>
-            <p
-              id="mcp-resolve-desc"
-              className="mt-1.5 max-w-[64ch] break-words text-[13px] leading-relaxed text-[var(--muted)] [overflow-wrap:anywhere]"
-            >
-              {i18nT('pages.mcpManagement.resolve_description')}
+            <p id="mcp-resolve-desc" className="mt-0.5 text-[12.5px] text-[var(--muted)]">
+              {stubCount === 0
+                ? i18nT('pages.mcpManagement.resolve_needs_a_stub')
+                : i18nT('pages.mcpManagement.resolve_description')}
             </p>
-            {/* A control that can do nothing has to say so BEFORE it is pressed.
-                Pre-resolving acts on the routed set, and routing is what a stub
-                creates, so with nothing stubbed there is nothing to resolve --
-                the same gate the sharing card states in plain text above. */}
-            {stubCount === 0 && (
-              <p className="mt-2 text-[12.5px] text-[var(--muted)]">
-                {i18nT('pages.mcpManagement.resolve_needs_a_stub')}
-              </p>
-            )}
             {resolveNotice && (
-              <p className="mt-2 text-[12.5px] text-[var(--text)]" role="status">
+              <p role="status" className="mt-1 text-[12.5px] text-[var(--text)]">
                 {resolveNotice}
               </p>
             )}
@@ -768,7 +702,7 @@ export function McpManagement() {
               setResolveError(null)
               resolveRefresh.mutate()
             }}
-            className="self-start shrink-0 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[13px] text-[var(--text)] transition-colors hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60"
+            className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[13px] text-[var(--text)] transition-colors hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {resolveRefresh.isPending
               ? i18nT('pages.mcpManagement.resolve_updating')
@@ -776,566 +710,8 @@ export function McpManagement() {
           </button>
         </div>
       </section>
-
-      {/* Per server: interpose the stub. */}
-      <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
-        {/* Both switches on this page are next-chat scoped: the apply path
-            rebuilds the provider factory and drains the warm pool, but
-            deliberately does not touch live sessions — a running session has
-            already sent session/new and cannot be retrofitted. Say so, because
-            the row toggle is the control people use routinely and a silently
-            partial apply reads as a broken switch. */}
-        <p className="border-b border-[var(--border)] px-4 py-2.5 text-[12.5px] text-[var(--muted)]">
-          {i18nT('pages.mcpManagement.open_sessions_note')}
-        </p>
-        {/* Bulk action. Lives here rather than on the assessment view because
-            that view states it changes nothing — and this is the page that owns
-            the switches it drives. */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[var(--border)] px-4 py-2.5">
-          {/* The shared primitive, not a hand-styled button: it carries the
-              dashboard's focus, active and disabled behaviour, which a local
-              class string only approximates. */}
-          <Btn
-            type="button"
-            onClick={() => {
-              setError(null)
-              setNotice(null)
-              setBulkIssues([])
-              setRestartNotice(null)
-              enableAll.mutate()
-            }}
-            disabled={
-              busy
-              || enableAll.isPending
-              || enableAllApprove.isPending
-              || serversQ.isLoading
-              || (stubbableNames.length === 0 && unmeasuredCount === 0)
-            }
-          >
-            {i18nT('pages.mcpManagement.enable_all')}
-          </Btn>
-          <span className="text-[12.5px] text-[var(--muted)]">
-            {/* Acknowledge the press immediately and then track the pass. Gating
-                only on a live reading left the line showing the generic hint for
-                the first poll interval, so a click that starts a minutes-long
-                pass looked like it did nothing; gating only on the click and
-                hardcoding zero left it frozen for the whole pass. Take the real
-                numbers the moment a reading lands and the pending count until
-                then. */}
-            {enableAll.isPending && (measureProgress?.running || unmeasuredCount > 0)
-              ? i18nT('pages.mcpManagement.assessment.measure_running', {
-                  done: measureProgress?.running ? measureProgress.done : 0,
-                  total: measureProgress?.running ? measureProgress.total : unmeasuredCount,
-                })
-              : notice || i18nT('pages.mcpManagement.enable_all_hint')}
-          </span>
-          {bulkIssues.length > 0 && (
-            <div className="flex basis-full flex-col gap-2 pt-1">
-              {bulkIssues.some(issue => issue.kind === 'changed') && (
-                <p className="text-[12px] text-[var(--muted)]">
-                  {i18nT('pages.mcpManagement.enable_all_review_changed_names', {
-                    names: bulkIssues
-                      .filter(issue => issue.kind === 'changed')
-                      .map(issue => issue.name)
-                      .join(', '),
-                  })}
-                </p>
-              )}
-              {bulkIssues.some(issue => issue.kind !== 'changed') && (
-                <p className="text-[12px] text-[var(--muted)]">
-                  {i18nT('pages.mcpManagement.enable_all_review_failed_names', {
-                    names: bulkIssues
-                      .filter(issue => issue.kind !== 'changed')
-                      .map(issue => issue.name)
-                      .join(', '),
-                  })}
-                </p>
-              )}
-              {bulkIssues.map(issue => (
-                <div key={`${issue.kind}:${issue.name}`} className="flex flex-wrap items-center gap-2">
-                  {/* Every issue reads as an error, including a launch that
-                      changed between the review and the write: it is the reason
-                      nothing was approved for that server, and a muted line of
-                      body text is not how this dashboard says so. The two
-                      summary lines above index which rows are which; the notice
-                      here is the cause, per row. */}
-                  <ErrorNotice
-                    variant="inline"
-                    message={i18nT(
-                      issue.kind === 'preview_failed'
-                        ? launchPreviewErrorKey(issue.error)
-                        : stubErrorKey(issue.error),
-                      { name: issue.name },
-                    )}
-                    askAgent
-                  />
-                  <Btn
-                    type="button"
-                    disabled={previewLaunch.isPending}
-                    onClick={() => {
-                      setError(null)
-                      previewLaunch.mutate(issue.name)
-                    }}
-                  >
-                    {i18nT('pages.mcpManagement.enable_all_review_again', { name: issue.name })}
-                  </Btn>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <table className="block w-full border-collapse md:table">
-          <thead className="hidden md:table-header-group">
-            <tr>
-              <th className="w-[34%] px-4 pb-2.5 pt-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-                {i18nT('pages.mcpManagement.col_server')}
-              </th>
-              <th className="w-[34%] px-4 pb-2.5 pt-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-                {i18nT('pages.mcpManagement.col_used_by')}
-              </th>
-              {/* Column widths are unchanged from before this PR. An earlier
-                  revision widened STATE to hold a full cause sentence; that
-                  sentence now lives once, in the legend, so the table needs no
-                  extra room and no data-dependent reflow. */}
-              <th className="w-[16%] px-4 pb-2.5 pt-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-                {i18nT('pages.mcpManagement.col_state')}
-              </th>
-              <th className="w-[16%] px-4 pb-2.5 pt-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-                {i18nT('pages.mcpManagement.col_stub')}
-              </th>
-            </tr>
-          </thead>
-          <tbody className="block md:table-row-group">
-            {servers.map(s => {
-              // `rowState` is the ONE derivation of this row's state, and the
-              // colour and the reason line read its answer rather than recomputing
-              // it. Deriving them separately is what produced this defect -- the
-              // text can be corrected while the colour still says `shared`, and an
-              // operator scanning the column by colour reads the old answer every
-              // visit -- so a second spelling of "is shared" here would rebuild the
-              // divergence one state later.
-              const state = rowState(s, !!status?.enabled, status?.launch_refused)
-              const shared = state === 'shared'
-              const directEnv = state === 'direct_env'
-              const refusal = state === 'needs_reapproval' ? status?.launch_refused?.[s.name] : undefined
-              // The assessment view's warning sends the operator here, so the
-              // rows it counted have to be findable without memorising names.
-              const flagged = sharedWithoutSupport(s, !!status?.enabled, status?.launch_refused)
-              // One at a time, by name: the panel that reads a launch and the row
-              // that shows a refused one are the same width and the same place, so
-              // two open at once would read as one panel with two commands in it.
-              const reviewing = review && review.name === s.name ? review : undefined
-              const loadingReview = previewLaunch.isPending && previewLaunch.variables === s.name
-              return (
-                <Fragment key={s.name}>
-                <tr className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-3 border-t border-[var(--border)] px-3 py-3 md:table-row md:px-0 md:py-0">
-                  <td
-                    className={[
-                      'col-start-1 row-start-1 min-w-0 break-words p-0 font-mono text-[13px] [overflow-wrap:anywhere] md:table-cell md:px-4 md:py-3',
-                      s.stub ? 'text-[var(--text)]' : 'text-[var(--muted)]',
-                    ].join(' ')}
-                  >
-                    {s.name}
-                  </td>
-                  <td className="col-start-1 row-start-2 min-w-0 break-words p-0 text-[12.5px] text-[var(--muted)] [overflow-wrap:anywhere] md:table-cell md:px-4 md:py-3">
-                    <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)] md:hidden">
-                      {i18nT('pages.mcpManagement.col_used_by')}
-                    </span>
-                    {s.agents.join(', ')}
-                  </td>
-                  <td className="col-start-1 row-start-3 min-w-0 p-0 md:table-cell md:px-4 md:py-3">
-                    <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)] md:hidden">
-                      {i18nT('pages.mcpManagement.col_state')}
-                    </span>
-                    <span
-                      className={[
-                        // A state is a term, not a sentence: breaking `not shared
-                        // (env)` across two ragged lines reads as a broken badge
-                        // beside the single-line `shared` and `direct` pills, and
-                        // every shipped locale is longer than the English.
-                        'inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 font-mono text-[11px]',
-                        flagged || refusal?.reason === 'changed_needs_reapproval'
-                          ? 'border border-[var(--danger)] text-[var(--danger)]'
-                          : refusal
-                          ? 'border border-[var(--warn)] text-[var(--warn)]'
-                          : shared
-                          ? 'bg-[var(--accent-subtle,transparent)] text-[var(--accent)]'
-                          : 'border border-[var(--border)] text-[var(--muted)]',
-                      ].join(' ')}
-                    >
-                      {(flagged || refusal) && <AlertTriangle size={11} aria-hidden="true" />}
-                      {i18nT(stateLabelKey(state, refusal))}
-                    </span>
-                    {/* Only on a row the operator opted in, and it carries ONLY what
-                        the legend cannot: that the opt-in on the lit toggle beside it
-                        survives. The cause is defined once, in the legend -- keeping
-                        a copy of it here made the row and the legend two catalogs
-                        that must agree about one state in 13 locales, which is a
-                        drift surface for the very defect this change removes.
-                        What no legend can do is reach the operator BEFORE they
-                        resolve the contradiction themselves: STUB is lit, the state
-                        says no stub, and switching the toggle off throws away an
-                        opt-in that the rewriter will honour as soon as the env
-                        obstacle clears. On a row that was never opted in there is
-                        nothing to have been declined. */}
-                    {directEnv && (
-                      <span className="mt-1 block text-[11px] leading-snug text-[var(--muted)]">
-                        {i18nT('pages.mcpManagement.state_direct_env_reason')}
-                      </span>
-                    )}
-                  </td>
-                  <td className="col-start-2 row-start-1 p-0 text-right md:table-cell md:px-4 md:py-3">
-                    <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)] md:hidden">
-                      {i18nT('pages.mcpManagement.col_stub')}
-                    </span>
-                    <Switch
-                      on={state !== 'needs_reapproval' && s.stub}
-                      disabled={!s.can_stub || busy || (!s.stub && !supported)}
-                      label={i18nT('pages.mcpManagement.stub_aria', { name: s.name })}
-                      onClick={() => {
-                        setError(null)
-                        setRestartNotice(null)
-                        setReview(null)
-                        // OFF is one click: it only ever narrows what runs outside a
-                        // session. ON approves a command, so it reads that command
-                        // first and asks -- the write happens in the review panel,
-                        // carrying the identity of the launch shown there.
-                        //
-                        // A row waiting for approval is the exception: the panel it
-                        // already shows carries what was approved before beside what
-                        // would run now, which is the comparison this click is a
-                        // decision about. Reading the launch again swaps that panel
-                        // for the single-command review one and takes the before-state
-                        // away at the moment it is needed, so the switch moves the
-                        // keyboard to that panel's approve button instead of opening
-                        // anything.
-                        //
-                        // A row the panel cannot approve has no such button --
-                        // the launch arrived with no identity to write an
-                        // approval against, or its display was cut at the caps.
-                        // There the click is the operator's only control over the
-                        // opt-in, and sending them to a button that is not there
-                        // leaves a lit switch that cannot be moved either way.
-                        if (state === 'needs_reapproval') {
-                          const approve = approveButtons.current[s.name]
-                          if (approve) {
-                            approve.scrollIntoView?.({ block: 'nearest' })
-                            approve.focus()
-                            return
-                          }
-                          setStub.mutate({ name: s.name, stub: false })
-                          return
-                        }
-                        if (s.stub) {
-                          setStub.mutate({ name: s.name, stub: false })
-                          return
-                        }
-                        previewLaunch.mutate(s.name)
-                      }}
-                    />
-                  </td>
-                </tr>
-                {/* A full-width sub-row, not the STATE column. What goes here is a
-                    command, an environment and a decision — a 16% column renders a
-                    command one word per line, and the decision copy had to shrink
-                    to 11px muted to fit, which is the styling of a footnote about
-                    something already settled. The pill stays in STATE, because a
-                    state IS a column value. */}
-                {(loadingReview || reviewing || refusal) && (
-                  <tr className="block border-t border-[var(--border)] md:table-row md:border-0">
-                    <td colSpan={4} className="block px-3 pb-3.5 pt-0 md:table-cell md:px-4">
-                      {loadingReview && (
-                        <p role="status" className="text-[12.5px] text-[var(--muted)]">
-                          {i18nT('pages.mcpManagement.launch_review_loading', { name: s.name })}
-                        </p>
-                      )}
-                      {reviewing && (
-                        <LaunchReviewPanel
-                          preview={reviewing}
-                          busy={setStub.isPending}
-                          onApprove={() => {
-                            setError(null)
-                            setRestartNotice(null)
-                            setStub.mutate({
-                              name: s.name,
-                              stub: true,
-                              expectedLaunch: reviewing.expected_launch as string,
-                            })
-                          }}
-                          onCancel={() => setReview(null)}
-                        />
-                      )}
-                      {refusal && !reviewing && !loadingReview && (
-                        <RefusalPanel
-                          server={s}
-                          refusal={refusal}
-                          busy={busy}
-                          approveRef={node => {
-                            approveButtons.current[s.name] = node
-                          }}
-                          onApprove={() => {
-                            setError(null)
-                            setRestartNotice(null)
-                            setStub.mutate({
-                              name: s.name,
-                              stub: true,
-                              expectedLaunch: refusal.expected_launch as string,
-                            })
-                          }}
-                        />
-                      )}
-                    </td>
-                  </tr>
-                )}
-                </Fragment>
-              )
-            })}
-            {serversQ.isError && (
-              <tr className="block border-t border-[var(--border)] md:table-row">
-                <td colSpan={4} className="block px-4 py-4 md:table-cell">
-                  {/* Distinct from the empty state on purpose: a failed request
-                      knows nothing about the operator's servers, and saying
-                      "none are configured" would be a claim we cannot make. */}
-                  <ErrorNotice message={i18nT('pages.mcpManagement.servers_failed')} askAgent />
-                </td>
-              </tr>
-            )}
-            {servers.length === 0 && !serversQ.isLoading && !serversQ.isError && (
-              <tr className="block border-t border-[var(--border)] md:table-row">
-                <td colSpan={4} className="block px-4 py-6 text-center text-[13px] text-[var(--muted)] md:table-cell">
-                  {i18nT('pages.mcpManagement.no_servers')}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-        <div className="border-t border-[var(--border)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--muted)]">
-          {i18nT('pages.mcpManagement.legend')}
-        </div>
-        {/* Its OWN block, not a second string inside the paragraph above. Two
-            catalog values sharing one text run is a reordering defect in any
-            language whose clause order differs -- the repo's render gate calls it
-            `fragment/multi-unit` and AGENTS.md says merge, not join. Kept separate
-            rather than merged INTO the paragraph because that paragraph must stay
-            byte-identical to its base value in 13 locales; as its own block the new
-            term is also findable by scanning. */}
-        <div className="border-t border-[var(--border)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--muted)]">
-          {i18nT('pages.mcpManagement.state_direct_env_legend')}
-        </div>
-      </section>
       </TabsContent>
-
-      <ConfirmSharing
-        open={confirmSharing}
-        stubCount={stubCount}
-        unsupported={wouldBeUnsupported}
-        busy={setSharing.isPending}
-        onCancel={() => setConfirmSharing(false)}
-        onConfirm={() => {
-          setConfirmSharing(false)
-          setSharing.mutate(true)
-        }}
-      />
-
-      <ConfirmEnableAll
-        items={bulkReview ?? []}
-        busy={enableAllApprove.isPending}
-        onCancel={() => setBulkReview(null)}
-        onConfirm={() => enableAllApprove.mutate(bulkReview ?? [])}
-      />
     </Tabs>
-  )
-}
-
-function ConfirmSharing({
-  open,
-  stubCount,
-  unsupported,
-  busy,
-  onCancel,
-  onConfirm,
-}: {
-  open: boolean
-  stubCount: number
-  unsupported: string[]
-  busy: boolean
-  onCancel: () => void
-  onConfirm: () => void
-}) {
-  // Built on the repo's Radix Dialog rather than a bare `<div role="dialog">`:
-  // that primitive owns the focus trap, initial focus, Escape-to-dismiss and
-  // focus return. Hand-rolling the markup looked identical but let a keyboard
-  // user Tab into the page behind the overlay and gave them no way out.
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={next => {
-        if (!next && !busy) onCancel()
-      }}
-    >
-      <DialogContent maxWidth={520}>
-        <DialogHeader>
-          <DialogTitle>{i18nT('pages.mcpManagement.confirm_title')}</DialogTitle>
-        </DialogHeader>
-        <DialogBody>
-          <DialogDescription className="text-text">
-            {i18nT('pages.mcpManagement.confirm_lede', { count: stubCount })}
-          </DialogDescription>
-          {/* The verdict belongs at the decision point, not only after the fact:
-              an operator who never opens the assessment view would otherwise
-              reach the exact state this page exists to warn about. */}
-          {unsupported.length > 0 && (
-            <div className="mt-2 flex items-start gap-2 text-[13.5px] text-[var(--danger)]">
-              <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
-              <div>
-                <p>
-                  {i18nT('pages.mcpManagement.confirm_unsupported', { count: unsupported.length })}
-                </p>
-                {/* Naming them is the difference between a number the operator has
-                    to go hunting for and one they can act on here. Listed in full:
-                    the count is on the line above, so a cap would only raise the
-                    question of what it hid. Data, not prose, so no catalog entry. */}
-                <p className="mt-0.5 font-mono text-[12px]">{unsupported.join(', ')}</p>
-              </div>
-            </div>
-          )}
-          <ul className="mt-2.5 list-disc space-y-1.5 pl-5 text-[13.5px] leading-relaxed text-muted">
-            <li>{i18nT('pages.mcpManagement.confirm_stateful')}</li>
-            <li>{i18nT('pages.mcpManagement.confirm_restart')}</li>
-            <li>{i18nT('pages.mcpManagement.confirm_reversible')}</li>
-          </ul>
-        </DialogBody>
-        <DialogFooter className="justify-between">
-          <a
-            href={DOCS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-[13px] text-accent hover:underline"
-          >
-            {i18nT('pages.mcpManagement.learn_more_docs')}
-            <ExternalLink size={12} />
-          </a>
-          <div className="flex gap-2.5">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded-md border border-border px-3.5 py-2 text-[13.5px] text-text"
-            >
-              {i18nT('pages.mcpManagement.cancel')}
-            </button>
-            <button
-              type="button"
-              autoFocus
-              disabled={busy}
-              onClick={onConfirm}
-              className="rounded-md bg-accent px-3.5 py-2 text-[13.5px] font-medium text-accent-fg disabled:opacity-60"
-            >
-              {i18nT('pages.mcpManagement.confirm_turn_on')}
-            </button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-/**
- * The review the bulk action opens before it writes anything.
- *
- * "Stub every server the evidence allows" used to send one batch with stub=true,
- * which approved N commands the operator had never seen -- the exact thing the
- * per-row review exists to prevent, done N at a time. Every command is listed
- * here first, and one confirm then sends one request per server, because an
- * approval names the exact command shown for that server.
- *
- * A candidate whose command could not be read, or could not be shown in full,
- * stays in the list and says so. Approving skips it: the operator can only vouch
- * for what they were shown.
- */
-function ConfirmEnableAll({
-  items,
-  busy,
-  onCancel,
-  onConfirm,
-}: {
-  items: BulkCandidate[]
-  busy: boolean
-  onCancel: () => void
-  onConfirm: () => void
-}) {
-  const approvable = items.filter(item => item.preview && launchIsApprovable(item.preview))
-  return (
-    <Dialog
-      open={items.length > 0}
-      onOpenChange={next => {
-        if (!next && !busy) onCancel()
-      }}
-    >
-      <DialogContent maxWidth={640}>
-        <DialogHeader>
-          <DialogTitle>{i18nT('pages.mcpManagement.enable_all_review_title')}</DialogTitle>
-        </DialogHeader>
-        <DialogBody>
-          <DialogDescription>
-            {i18nT('pages.mcpManagement.enable_all_review_lede')}
-          </DialogDescription>
-          <ul className="mt-3 space-y-3">
-            {items.map(item => (
-              <li key={item.name}>
-                <p className="font-mono text-[12.5px] text-[var(--text)]">{item.name}</p>
-                {item.preview ? (
-                  <>
-                    <LaunchLines
-                      launches={pairLaunches(item.preview.commands, item.preview.envs)}
-                    />
-                    {!launchIsApprovable(item.preview) && (
-                      <p className="mt-1 text-[12.5px] leading-snug text-[var(--muted)]">
-                        {i18nT('pages.mcpManagement.approval_not_approvable_here')}
-                      </p>
-                    )}
-                  </>
-                ) : 'error' in item ? (
-                  <ErrorNotice
-                    variant="inline"
-                    className="mt-1"
-                    message={i18nT(launchPreviewErrorKey(item.error), { name: item.name })}
-                    askAgent
-                    onHandoff={onCancel}
-                  />
-                ) : (
-                  <p className="mt-1 text-[12.5px] leading-snug text-[var(--muted)]">
-                    {i18nT('pages.mcpManagement.enable_all_review_unreadable')}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </DialogBody>
-        <DialogFooter>
-          <div className="flex gap-2.5">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded-md border border-border px-3.5 py-2 text-[13.5px] text-text"
-            >
-              {i18nT('pages.mcpManagement.cancel')}
-            </button>
-            {/* Disabled when the list holds nothing approvable: the button would
-                otherwise report "shared 0" for a press that could never do
-                anything, and the per-row lines already say why. */}
-            <button
-              type="button"
-              autoFocus
-              disabled={busy || approvable.length === 0}
-              onClick={onConfirm}
-              className="rounded-md bg-accent px-3.5 py-2 text-[13.5px] font-medium text-accent-fg disabled:opacity-60"
-            >
-              {i18nT('pages.mcpManagement.enable_all_review_confirm')}
-            </button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }
 

@@ -111,6 +111,40 @@ _DECLARED_ENV_REFERENCE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 #: handlers, the gateway's post-rewrite save) runs in the gateway process.
 _STORE_LOCK = threading.Lock()
 
+#: Why a server can never be shared, as one stable code per class.
+SHARE_REFUSED_CREDENTIALS = "credential_vending"
+SHARE_REFUSED_TENANT_NONCE = "needs_tenant_nonce"
+SHARE_REFUSED_COMPUTER = "computer_use"
+
+
+def share_refusal(name: str) -> str | None:
+    """The code naming why *name* can never be shared, or ``None``.
+
+    These are the leakage classes: a shared copy of any of them would let one
+    chat see another chat's credentials or desktop. They are refused whatever
+    the operator approved, because no approval makes that safe. This is a
+    refusal on top of launch approval, never a replacement for it: a server
+    that passes here still runs outside the session sandbox only with the exact
+    launch the operator approved. Each class is read from the one list that
+    already owns it -- ``rewriter.UNPOOLABLE_SERVERS`` (today the credential
+    vendors), ``mcp_caller.POOLING_REQUIRES_TENANT_NONCE`` and the computer-use
+    server -- so there is no second denylist to drift.
+    """
+    # Deferred: ``mcp_caller`` imports half the gateway at module scope, and
+    # ``rewriter`` imports this module.
+    from kiro_crew.mcp_caller import POOLING_REQUIRES_TENANT_NONCE
+    from kiro_crew.mcp_gateway.rewriter import UNPOOLABLE_SERVERS
+    from kiro_crew.platform.governance import CU_MCP_SERVER
+
+    if name in UNPOOLABLE_SERVERS:
+        return SHARE_REFUSED_CREDENTIALS
+    if name == CU_MCP_SERVER:
+        return SHARE_REFUSED_COMPUTER
+    if name in POOLING_REQUIRES_TENANT_NONCE:
+        return SHARE_REFUSED_TENANT_NONCE
+    return None
+
+
 #: Why a launch was refused, as surfaced to the dashboard.
 REFUSED_UNAPPROVED = "added_outside_dashboard"
 REFUSED_CHANGED = "changed_needs_reapproval"

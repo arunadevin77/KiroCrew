@@ -38,8 +38,37 @@ land in a umask-default `0755` directory. Empty and absent forms both approve
 nothing. A refusal displays each command with its redacted,
 bounded declared environment. Every identity serialized into `expected_launch`
 has exactly one displayed command and one displayed environment, so the operator
-can approve only launch content that was rendered. Cached recommendation seeding
-can add a stub route, but it does not approve the launch behind that name.
+can approve only launch content that was rendered.
+
+The operator's per-server **Share this server** button IS the approval. Pressing
+it (`POST /api/mcp-gateway/servers/stub`, or the `mcp.share` change card, which
+posts the same request) resolves every launch the name runs right then and
+records exactly those fingerprints, then stubs the server, in one request.
+Every share is a compare-and-set on a complete launch display: the request must
+carry the `expected_launch` its caller read (`expected_launch_required`,
+`launch_display_incomplete`, `launch_changed_since_display`). The row's button
+reads it for its server and is disabled until it can; the row shows that launch
+above the button before the press, **Share all** lists every launch and shares
+only on a second press under that list, and the card shows it on the card.
+This is a widening and is
+treated as one: a shared backend runs in `gatewayd` outside every session
+sandbox, as the user, while the same command run per chat runs inside the
+sandbox. The approval therefore covers exactly the launch that existed at the
+press, never what an agent writes afterwards: a later change to the command,
+args or declared env text under an approved name (agent specs and
+`~/.kiro/crew/mcp.json` are agent-writable) is refused as
+`changed_needs_reapproval` and stays on the session's sandboxed path until the
+operator presses **Use new command**, which shows the new launch and pins
+it. Only a `${VAR}` expansion moving under unchanged declared text is
+re-recorded (the rebind), because its values come from the gateway environment.
+The record stays exact (command and environment digests), never a wildcard. A
+name that reached the roster without a press (cached recommendation seeding, a
+hand edit) is refused as `added_outside_dashboard`. The `mcp.share` card is rated
+`code_exec` when it shares. The leakage classes are refused outright, by the
+endpoint and by the card: credential vending (`creds-agent`,
+`local-creds-agent-mcp`), `POOLING_REQUIRES_TENANT_NONCE`, and
+`kirocrew-computer` (`launch_approval.share_refusal`). A launch set over the
+store's caps is refused as `launch_over_cap`.
 
 The generated `mcp-gateway/agents/` overlays and `mcp-gateway/stubs/` sidecars
 are not sealed: gatewayd checks the command and environment they carry against

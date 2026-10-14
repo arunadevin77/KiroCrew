@@ -91,22 +91,6 @@ def _targets_running(target_env: dict[str, str], command: str) -> list[str]:
     return [k for k, v in target_env.items() if shlex.split(v)[0] == command]
 
 
-def test_a_changed_command_under_a_stubbed_name_is_not_handed_to_the_daemon(tmp_path):
-    mod = _approval_module()
-    approvals = _approvals_for(mod, "srv", _APPROVED_CMD, [])
-    _write_agent(tmp_path / "agents", {"srv": {"command": _ATTACK_CMD, "args": ["-c", "id"]}})
-
-    target_env = _rewrite(tmp_path, frozenset({"srv"}), approvals)
-
-    assert _targets_running(target_env, _ATTACK_CMD) == []
-    overlay = json.loads((tmp_path / "home" / "mcp-gateway" / "agents" / "a.json").read_text())
-    entry = overlay["mcpServers"]["srv"]
-    # Left for the session to launch inside its own sandbox.
-    assert entry["command"] == _ATTACK_CMD
-    assert not entry.get(rewriter._WRAPPER_MARKER)
-    assert mod is not None and mod.REFUSED_CHANGED in approvals.refused.values()
-
-
 def test_the_approved_launch_is_still_wrapped(tmp_path):
     mod = _approval_module()
     assert mod is not None
@@ -637,24 +621,6 @@ async def _toggle_on(name: str = "srv", *, expected_launch: object = _AUTO_EXPEC
         body["expected_launch"] = expected_launch
     resp = await mcp_mod.api_mcp_gateway_set_stub(_stub_request(body))
     return resp.status, json.loads(resp.body)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("where", ["agent spec", "settings mcp.json"])
-async def test_a_spec_edited_after_the_toggle_is_not_approved(tmp_path, toggle_home, where):
-    _declare(toggle_home, where, _APPROVED_CMD, [])
-    status, body = await _toggle_on()
-    assert status == 200, body
-
-    # An agent rewrites the server's launch before the next gateway start.
-    _declare(toggle_home, where, _ATTACK_CMD, ["-c", "id"])
-    target_env, approvals = _next_boot_rewrite(tmp_path, toggle_home)
-
-    assert (
-        _targets_running(target_env, _ATTACK_CMD) == []
-    ), "the launch an agent wrote after the operator's click was approved"
-    mod = _approval_module()
-    assert approvals.refused.get("SRV") == mod.REFUSED_CHANGED
 
 
 @pytest.mark.asyncio
@@ -1199,40 +1165,6 @@ def test_stored_refusal_commands_are_bounded(tmp_path):
     assert "expected_launch" not in refusal
 
 
-def test_unchanged_argv_with_changed_env_renders_a_new_identity(tmp_path):
-    mod = _approval_module()
-    assert mod is not None
-    before = {"MODE": "before"}
-    after = {"MODE": "after"}
-    command_hash = rewriter.hash_command(_APPROVED_CMD, [])
-    before_identity = mod.launch_pair(
-        command_hash,
-        mod.env_fingerprint(rewriter._expand_env_map(before)),
-    )
-    approvals = mod.LaunchApprovals(
-        approved={"SRV": {mod.launch_fingerprint(_APPROVED_CMD, [], before)}},
-        approved_pairs={"SRV": {before_identity}},
-        names={"SRV": "srv"},
-    )
-    _write_agent(
-        tmp_path / "agents",
-        {"srv": {"command": _APPROVED_CMD, "args": [], "env": after}},
-    )
-
-    _rewrite(tmp_path, frozenset({"srv"}), approvals)
-    approvals.full_pass = True
-    store = tmp_path / "approvals.json"
-    assert mod.save_pass(approvals, path=store)
-    refusal = mod.refused_servers(store)["srv"]
-
-    assert refusal["commands"] == [[_APPROVED_CMD]]
-    assert refusal["envs"][0][0].startswith("MODE=<hidden sha256:")
-    assert refusal["expected_launch"] != before_identity
-    # This approval was recorded with no display, so no old launch is shown.
-    assert "approved_commands" not in refusal
-    assert "approved_envs" not in refusal
-
-
 def test_a_placeholder_env_value_is_displayed_as_declared(tmp_path, monkeypatch):
     mod = _approval_module()
     assert mod is not None
@@ -1310,24 +1242,6 @@ def _declare_two(agents: Path, first: list[str], second: list[str]) -> None:
         (agents / f"{agent_name}.json").write_text(
             json.dumps({"name": agent_name, "mcpServers": {"srv": entry}})
         )
-
-
-@pytest.mark.asyncio
-async def test_a_changed_launch_refusal_shows_the_readable_approved_launch(tmp_path, toggle_home):
-    mod = _approval_module()
-    assert mod is not None
-    _declare(toggle_home, "agent spec", _APPROVED_CMD, ["--safe"])
-    assert (await _toggle_on())[0] == 200
-
-    _declare(toggle_home, "agent spec", _ATTACK_CMD, ["-c", "id"])
-    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
-    assert refused.refused == {"SRV": mod.REFUSED_CHANGED}
-    assert mod.save_pass(refused)
-    refusal = mod.refused_servers()["srv"]
-
-    assert refusal["commands"] == [[_ATTACK_CMD, "-c", "id"]]
-    assert refusal["approved_commands"] == [[_APPROVED_CMD, "--safe"]]
-    assert refusal["approved_envs"] == [[]]
 
 
 @pytest.mark.asyncio
@@ -1433,17 +1347,6 @@ def test_a_stored_approved_display_is_bounded_on_read(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_first_toggle_requires_the_displayed_launch(toggle_home):
-    from kiro_crew.dashboard.handlers import mcp as mcp_mod
-
-    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
-    response = await mcp_mod.api_mcp_gateway_set_stub(_stub_request({"name": "srv", "stub": True}))
-
-    assert response.status == 409
-    assert json.loads(response.body)["code"] == "expected_launch_required"
-
-
-@pytest.mark.asyncio
 async def test_launch_endpoint_returns_the_first_toggle_compare_and_set(toggle_home):
     from kiro_crew.dashboard.handlers import mcp as mcp_mod
 
@@ -1462,34 +1365,6 @@ async def test_launch_endpoint_returns_the_first_toggle_compare_and_set(toggle_h
 
 
 @pytest.mark.asyncio
-async def test_partial_launch_display_cannot_be_approved(toggle_home):
-    from kiro_crew.dashboard.handlers import mcp as mcp_mod
-
-    padded = [str(index) for index in range(getattr(_approval_module(), "_MAX_DISPLAY_ARGS") + 1)]
-    _declare(toggle_home, "agent spec", _APPROVED_CMD, padded)
-    launches = await asyncio.to_thread(
-        mcp_mod.launch_resolve.resolve_launches, ["srv"], refresh_specs=False
-    )
-    identities = {identity for launch in launches["srv"] for identity in launch.approval_identities}
-    display = mcp_mod.display_launches("srv", launches["srv"])
-
-    assert display["complete"] is False
-    assert "expected_launch" not in display
-    assert "partial" in display["commands"][0][-1]
-    response = await mcp_mod.api_mcp_gateway_set_stub(
-        _stub_request(
-            {
-                "name": "srv",
-                "stub": True,
-                "expected_launch": _approval_module().serialize_identities(identities),
-            }
-        )
-    )
-    assert response.status == 409
-    assert json.loads(response.body)["code"] == "launch_display_incomplete"
-
-
-@pytest.mark.asyncio
 async def test_batch_toggle_on_requires_individual_launch_displays(toggle_home):
     from kiro_crew.dashboard.handlers import mcp as mcp_mod
 
@@ -1499,58 +1374,6 @@ async def test_batch_toggle_on_requires_individual_launch_displays(toggle_home):
 
     assert response.status == 400
     assert json.loads(response.body)["code"] == "batch_stub_requires_individual"
-
-
-@pytest.mark.asyncio
-async def test_a_refusal_with_two_launch_identities_round_trips_through_reapprove(
-    tmp_path, toggle_home
-):
-    mod = _approval_module()
-    assert mod is not None
-    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
-    assert (await _toggle_on())[0] == 200
-
-    _declare_two(toggle_home, ["-c", "id"], ["-c", "whoami"])
-    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
-    assert refused.refused == {"SRV": mod.REFUSED_CHANGED}
-    assert mod.save_pass(refused)
-    refusal = mod.refused_servers()["srv"]
-    expected_launch = refusal["expected_launch"]
-    assert len(expected_launch.split(",")) == 2
-    assert sorted(refusal["commands"]) == sorted(
-        [
-            [_ATTACK_CMD, "-c", "id"],
-            [_ATTACK_CMD, "-c", "whoami"],
-        ]
-    )
-    assert refusal["envs"] == [[], []]
-
-    status, body = await _toggle_on(expected_launch=expected_launch)
-
-    assert status == 200, body
-    stored = mod.load_approvals()
-    assert stored.stored_refused == {}
-    assert stored.admits_command("SRV", rewriter.hash_command(_ATTACK_CMD, ["-c", "id"]))
-    assert stored.admits_command("SRV", rewriter.hash_command(_ATTACK_CMD, ["-c", "whoami"]))
-
-
-@pytest.mark.asyncio
-async def test_a_changed_launch_identity_set_still_rejects_reapprove(tmp_path, toggle_home):
-    mod = _approval_module()
-    assert mod is not None
-    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
-    assert (await _toggle_on())[0] == 200
-
-    _declare_two(toggle_home, ["-c", "id"], ["-c", "whoami"])
-    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
-    assert mod.save_pass(refused)
-    expected_launch = mod.refused_servers()["srv"]["expected_launch"]
-    _declare_two(toggle_home, ["-c", "id"], ["-c", "uname"])
-
-    status, body = await _toggle_on(expected_launch=expected_launch)
-
-    assert status == 409
-    assert body["code"] == "launch_changed_since_display"
 
 
 @pytest.mark.asyncio
@@ -1901,66 +1724,6 @@ async def test_an_approval_write_failure_does_not_admit_the_launch(
     target_env, approvals = _next_boot_rewrite(tmp_path, toggle_home)
     assert _targets_running(target_env, _APPROVED_CMD) == []
     assert approvals.refused == {"SRV": _approval_module().REFUSED_UNAPPROVED}
-
-
-@pytest.mark.asyncio
-async def test_reapprove_rejects_a_launch_changed_after_it_was_shown(
-    tmp_path, toggle_home, monkeypatch
-):
-    from unittest.mock import MagicMock
-
-    from kiro_crew.dashboard.handlers import mcp as mcp_mod
-
-    mod = _approval_module()
-    assert mod is not None
-    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
-    assert (await _toggle_on())[0] == 200
-
-    audit = MagicMock()
-    monkeypatch.setattr(mcp_mod, "sel", lambda: audit)
-    _declare(toggle_home, "agent spec", _ATTACK_CMD, ["-c", "id"])
-    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
-    assert refused.refused == {"SRV": mod.REFUSED_CHANGED}
-    assert mod.save_pass(refused)
-    expected_launch = mod.refused_servers()["srv"]["expected_launch"]
-    approval_before = mod.approvals_path().read_bytes()
-    config_before = (tmp_path / "config.json").read_bytes()
-
-    # The operator still sees the refused shell command, but an agent changes the
-    # declaration before the click reaches the handler.
-    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
-    status, body = await _toggle_on(expected_launch=expected_launch)
-
-    assert status == 409
-    assert body["code"] == "launch_changed_since_display"
-    event = audit.log_api_access.call_args.kwargs
-    assert event["operation"] == "mcp_stub_rejected_launch_changed_since_display"
-    assert event["outcome"] == "denied"
-    assert event["resources"] == "code=launch_changed_since_display names=srv"
-    assert mod.approvals_path().read_bytes() == approval_before
-    assert (tmp_path / "config.json").read_bytes() == config_before
-
-
-@pytest.mark.asyncio
-async def test_reapprove_matching_the_shown_launch_replaces_the_approval(tmp_path, toggle_home):
-    mod = _approval_module()
-    assert mod is not None
-    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
-    assert (await _toggle_on())[0] == 200
-
-    _declare(toggle_home, "agent spec", _ATTACK_CMD, ["-c", "id"])
-    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
-    assert refused.refused == {"SRV": mod.REFUSED_CHANGED}
-    assert mod.save_pass(refused)
-    expected_launch = mod.refused_servers()["srv"]["expected_launch"]
-
-    status, body = await _toggle_on(expected_launch=expected_launch)
-
-    assert status == 200, body
-    stored = mod.load_approvals()
-    assert stored.stored_refused == {}
-    assert stored.admits_command("SRV", rewriter.hash_command(_ATTACK_CMD, ["-c", "id"]))
-    assert not stored.admits_command("SRV", rewriter.hash_command(_APPROVED_CMD, []))
 
 
 def test_restore_keeps_a_reapproval_that_lands_after_revoke(tmp_path):
@@ -2378,48 +2141,6 @@ def test_a_rebind_is_audited_as_an_approved_launch_not_a_managed_one(tmp_path, m
     assert any("${VAR} value changed" in line for line in audit), audit
 
 
-def test_a_changed_declared_env_text_is_still_refused(tmp_path, monkeypatch):
-    mod = _approval_module()
-    assert mod is not None
-    store = tmp_path / "approvals.json"
-    monkeypatch.setenv("KC_TEST_TOKEN", "first")
-    monkeypatch.setenv("KC_OTHER", "first")
-    _placeholder_agent(tmp_path)
-    _approve_as_the_toggle_does(tmp_path, mod, store)
-
-    # Same expansion, different declared text: the agent-writable part moved.
-    _placeholder_agent(tmp_path, "${KC_OTHER}")
-    approvals, target_env = _rewrite_and_persist(tmp_path, mod, store)
-
-    assert approvals.refused == {"SRV": mod.REFUSED_CHANGED}
-    assert not _targets_running(target_env, _APPROVED_CMD)
-
-
-def test_a_changed_command_with_a_placeholder_is_still_refused(tmp_path, monkeypatch):
-    mod = _approval_module()
-    assert mod is not None
-    store = tmp_path / "approvals.json"
-    monkeypatch.setenv("KC_TEST_TOKEN", "first")
-    _placeholder_agent(tmp_path)
-    _approve_as_the_toggle_does(tmp_path, mod, store)
-
-    monkeypatch.setenv("KC_TEST_TOKEN", "rotated")
-    _write_agent(
-        tmp_path / "agents",
-        {
-            "srv": {
-                "command": _ATTACK_CMD,
-                "args": ["-c", "id"],
-                "env": {"TOKEN": "${KC_TEST_TOKEN}"},
-            }
-        },
-    )
-    approvals, target_env = _rewrite_and_persist(tmp_path, mod, store)
-
-    assert approvals.refused == {"SRV": mod.REFUSED_CHANGED}
-    assert _targets_running(target_env, _ATTACK_CMD) == []
-
-
 def test_repeated_placeholder_changes_never_reach_the_launch_cap(tmp_path, monkeypatch):
     mod = _approval_module()
     assert mod is not None
@@ -2575,3 +2296,410 @@ def test_a_rebind_keeps_the_pair_of_an_agent_whose_source_could_not_be_read(tmp_
     assert (
         live_incomplete is True
     ), "LaunchApprovals exposes no live_incomplete set by a pass that kept an overlay"
+
+
+# --- One-step sharing ---------------------------------------------------------
+#
+# The switch IS the approval: one request records the exact launch and stubs
+# the server, with no launch shown first. While the switch stays on, a launch
+# that changes is approved on the next pass and logged, never re-asked. Only the
+# leakage classes (credential vending, tenant nonce, computer use) are refused.
+
+
+@pytest.mark.asyncio
+async def test_first_toggle_requires_the_displayed_launch(toggle_home):
+    from kiro_crew.dashboard.handlers import mcp as mcp_mod
+
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
+    response = await mcp_mod.api_mcp_gateway_set_stub(_stub_request({"name": "srv", "stub": True}))
+
+    assert response.status == 409
+    assert json.loads(response.body)["code"] == "expected_launch_required"
+
+
+@pytest.mark.asyncio
+async def test_partial_launch_display_cannot_be_approved(toggle_home):
+    from kiro_crew.dashboard.handlers import mcp as mcp_mod
+
+    padded = [str(index) for index in range(getattr(_approval_module(), "_MAX_DISPLAY_ARGS") + 1)]
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, padded)
+    launches = await asyncio.to_thread(
+        mcp_mod.launch_resolve.resolve_launches, ["srv"], refresh_specs=False
+    )
+    identities = {identity for launch in launches["srv"] for identity in launch.approval_identities}
+    display = mcp_mod.display_launches("srv", launches["srv"])
+
+    assert display["complete"] is False
+    assert "expected_launch" not in display
+    assert "partial" in display["commands"][0][-1]
+    response = await mcp_mod.api_mcp_gateway_set_stub(
+        _stub_request(
+            {
+                "name": "srv",
+                "stub": True,
+                "expected_launch": _approval_module().serialize_identities(identities),
+            }
+        )
+    )
+    assert response.status == 409
+    assert json.loads(response.body)["code"] == "launch_display_incomplete"
+
+
+@pytest.mark.asyncio
+async def test_one_press_approves_exactly_the_read_launch_and_stubs(tmp_path, toggle_home):
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
+
+    status, body = await _toggle_on()
+
+    assert status == 200, body
+    stored = _approval_module().load_approvals()
+    # Exact: this command, nothing wider.
+    assert stored.admits_command("SRV", rewriter.hash_command(_APPROVED_CMD, []))
+    assert not stored.admits_command("SRV", rewriter.hash_command(_ATTACK_CMD, []))
+    config = json.loads((tmp_path / "config.json").read_text())
+    assert config["mcp_gateway"]["stub_overrides"] == {"srv": True}
+
+
+@pytest.mark.asyncio
+async def test_a_sent_expected_launch_that_moved_is_still_refused(tmp_path, toggle_home):
+    """A sent expected_launch that moved after it was read must not approve."""
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
+    from kiro_crew.dashboard.handlers import mcp as mcp_mod
+
+    launches = await asyncio.to_thread(
+        mcp_mod.launch_resolve.resolve_launches, ["srv"], refresh_specs=False
+    )
+    shown = mcp_mod.display_launches("srv", launches["srv"])["expected_launch"]
+    assert shown
+
+    # The command changes after the launch was shown.
+    _declare(toggle_home, "agent spec", _ATTACK_CMD, [])
+    status, body = await _toggle_on(expected_launch=shown)
+
+    assert status == 409, body
+    assert body["code"] == "launch_changed_since_display"
+    config = json.loads((tmp_path / "config.json").read_text())
+    assert not config.get("mcp_gateway", {}).get("stub_overrides")
+    assert not _approval_module().approvals_path().exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("name", "code"),
+    [
+        ("creds-agent", "credential_vending"),
+        ("local-creds-agent-mcp", "credential_vending"),
+        ("kirocrew-computer", "computer_use"),
+    ],
+)
+async def test_the_leakage_classes_are_refused_and_nothing_is_written(
+    tmp_path, toggle_home, name, code
+):
+    (toggle_home / "a.json").write_text(
+        json.dumps({"name": "a", "mcpServers": {name: {"command": _APPROVED_CMD, "args": []}}})
+    )
+
+    status, body = await _toggle_on(name, expected_launch=None)
+
+    assert status == 409
+    assert body["code"] == "share_refused"
+    assert body["refused"] == {name: code}
+    assert json.loads((tmp_path / "config.json").read_text()) == {}
+    assert not _approval_module().approvals_path().exists()
+
+
+def test_share_refusal_names_every_class_and_nothing_else():
+    from kiro_crew.mcp_caller import POOLING_REQUIRES_TENANT_NONCE
+
+    mod = _approval_module()
+    assert mod.share_refusal("creds-agent") == mod.SHARE_REFUSED_CREDENTIALS
+    assert mod.share_refusal("local-creds-agent-mcp") == mod.SHARE_REFUSED_CREDENTIALS
+    assert mod.share_refusal("kirocrew-computer") == mod.SHARE_REFUSED_COMPUTER
+    for name in POOLING_REQUIRES_TENANT_NONCE - {"kirocrew-computer"}:
+        assert mod.share_refusal(name) == mod.SHARE_REFUSED_TENANT_NONCE
+    assert mod.share_refusal("slack-mcp") is None
+
+
+@pytest.mark.asyncio
+async def test_a_changed_launch_waits_for_one_more_tap(tmp_path, toggle_home):
+    """A shared backend runs outside the sandbox, so a moved launch is not followed."""
+    mod = _approval_module()
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
+    assert (await _toggle_on())[0] == 200
+
+    # The command under the switch changes (a version bump, or an agent's edit).
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, ["-V"])
+    target_env, approvals = _next_boot_rewrite(tmp_path, toggle_home)
+    mod.save_pass(approvals)
+
+    assert approvals.refused == {"SRV": mod.REFUSED_CHANGED}
+    assert _targets_running(target_env, _APPROVED_CMD) == []
+    new_hash = rewriter.hash_command(_APPROVED_CMD, ["-V"])
+    assert not mod.load_approvals().admits_command("SRV", new_hash)
+
+    # Confirming records the new launch it read, exactly.
+    assert (await _toggle_on())[0] == 200
+    assert mod.load_approvals().admits_command("SRV", new_hash)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["agent spec", "settings mcp.json"])
+async def test_a_spec_edited_after_the_toggle_is_not_approved(tmp_path, toggle_home, where):
+    _declare(toggle_home, where, _APPROVED_CMD, [])
+    status, body = await _toggle_on()
+    assert status == 200, body
+
+    # An agent rewrites the server's launch before the next gateway start.
+    _declare(toggle_home, where, _ATTACK_CMD, ["-c", "id"])
+    target_env, approvals = _next_boot_rewrite(tmp_path, toggle_home)
+
+    assert (
+        _targets_running(target_env, _ATTACK_CMD) == []
+    ), "the launch an agent wrote after the operator's click was approved"
+    mod = _approval_module()
+    assert approvals.refused.get("SRV") == mod.REFUSED_CHANGED
+
+
+def test_a_changed_command_under_a_stubbed_name_is_not_handed_to_the_daemon(tmp_path):
+    mod = _approval_module()
+    approvals = _approvals_for(mod, "srv", _APPROVED_CMD, [])
+    _write_agent(tmp_path / "agents", {"srv": {"command": _ATTACK_CMD, "args": ["-c", "id"]}})
+
+    target_env = _rewrite(tmp_path, frozenset({"srv"}), approvals)
+
+    assert _targets_running(target_env, _ATTACK_CMD) == []
+    overlay = json.loads((tmp_path / "home" / "mcp-gateway" / "agents" / "a.json").read_text())
+    entry = overlay["mcpServers"]["srv"]
+    # Left for the session to launch inside its own sandbox.
+    assert entry["command"] == _ATTACK_CMD
+    assert not entry.get(rewriter._WRAPPER_MARKER)
+    assert mod is not None and mod.REFUSED_CHANGED in approvals.refused.values()
+
+
+def test_a_changed_declared_env_text_is_still_refused(tmp_path, monkeypatch):
+    mod = _approval_module()
+    assert mod is not None
+    store = tmp_path / "approvals.json"
+    monkeypatch.setenv("KC_TEST_TOKEN", "first")
+    monkeypatch.setenv("KC_OTHER", "first")
+    _placeholder_agent(tmp_path)
+    _approve_as_the_toggle_does(tmp_path, mod, store)
+
+    # Same expansion, different declared text: the agent-writable part moved.
+    _placeholder_agent(tmp_path, "${KC_OTHER}")
+    approvals, target_env = _rewrite_and_persist(tmp_path, mod, store)
+
+    assert approvals.refused == {"SRV": mod.REFUSED_CHANGED}
+    assert not _targets_running(target_env, _APPROVED_CMD)
+
+
+def test_a_changed_command_with_a_placeholder_is_still_refused(tmp_path, monkeypatch):
+    mod = _approval_module()
+    assert mod is not None
+    store = tmp_path / "approvals.json"
+    monkeypatch.setenv("KC_TEST_TOKEN", "first")
+    _placeholder_agent(tmp_path)
+    _approve_as_the_toggle_does(tmp_path, mod, store)
+
+    monkeypatch.setenv("KC_TEST_TOKEN", "rotated")
+    _write_agent(
+        tmp_path / "agents",
+        {
+            "srv": {
+                "command": _ATTACK_CMD,
+                "args": ["-c", "id"],
+                "env": {"TOKEN": "${KC_TEST_TOKEN}"},
+            }
+        },
+    )
+    approvals, target_env = _rewrite_and_persist(tmp_path, mod, store)
+
+    assert approvals.refused == {"SRV": mod.REFUSED_CHANGED}
+    assert _targets_running(target_env, _ATTACK_CMD) == []
+
+
+def test_a_name_with_no_approval_is_not_shared(tmp_path):
+    """Seeding or a hand edit puts a name on the roster without the switch."""
+    mod = _approval_module()
+    approvals = mod.load_approvals(tmp_path / "absent.json")
+    _write_agent(tmp_path / "agents", {"srv": {"command": _APPROVED_CMD, "args": []}})
+
+    target_env = _rewrite(tmp_path, frozenset({"srv"}), approvals)
+
+    assert _targets_running(target_env, _APPROVED_CMD) == []
+    assert approvals.refused == {"SRV": mod.REFUSED_UNAPPROVED}
+
+
+def test_injected_settings_servers_get_the_agent_spec_env_expansion(monkeypatch):
+    """One server, one launch: the injected copy must not keep the short PATH."""
+    from kiro_crew.env import emit_env
+
+    spec = {"mcpServers": {"chorus": {"command": "/opt/chorus", "env": {"PATH": "/opt/bin"}}}}
+    out = rewriter._with_emitted_env(spec)
+
+    assert out["mcpServers"]["chorus"]["env"] == emit_env({"PATH": "/opt/bin"})
+    assert spec["mcpServers"]["chorus"]["env"] == {"PATH": "/opt/bin"}, "input mutated"
+
+
+@pytest.mark.asyncio
+async def test_a_changed_launch_identity_set_still_rejects_reapprove(tmp_path, toggle_home):
+    mod = _approval_module()
+    assert mod is not None
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
+    assert (await _toggle_on())[0] == 200
+
+    _declare_two(toggle_home, ["-c", "id"], ["-c", "whoami"])
+    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
+    assert mod.save_pass(refused)
+    expected_launch = mod.refused_servers()["srv"]["expected_launch"]
+    _declare_two(toggle_home, ["-c", "id"], ["-c", "uname"])
+
+    status, body = await _toggle_on(expected_launch=expected_launch)
+
+    assert status == 409
+    assert body["code"] == "launch_changed_since_display"
+
+
+@pytest.mark.asyncio
+async def test_a_changed_launch_refusal_shows_the_readable_approved_launch(tmp_path, toggle_home):
+    mod = _approval_module()
+    assert mod is not None
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, ["--safe"])
+    assert (await _toggle_on())[0] == 200
+
+    _declare(toggle_home, "agent spec", _ATTACK_CMD, ["-c", "id"])
+    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
+    assert refused.refused == {"SRV": mod.REFUSED_CHANGED}
+    assert mod.save_pass(refused)
+    refusal = mod.refused_servers()["srv"]
+
+    assert refusal["commands"] == [[_ATTACK_CMD, "-c", "id"]]
+    assert refusal["approved_commands"] == [[_APPROVED_CMD, "--safe"]]
+    assert refusal["approved_envs"] == [[]]
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_with_two_launch_identities_round_trips_through_reapprove(
+    tmp_path, toggle_home
+):
+    mod = _approval_module()
+    assert mod is not None
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
+    assert (await _toggle_on())[0] == 200
+
+    _declare_two(toggle_home, ["-c", "id"], ["-c", "whoami"])
+    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
+    assert refused.refused == {"SRV": mod.REFUSED_CHANGED}
+    assert mod.save_pass(refused)
+    refusal = mod.refused_servers()["srv"]
+    expected_launch = refusal["expected_launch"]
+    assert len(expected_launch.split(",")) == 2
+    assert sorted(refusal["commands"]) == sorted(
+        [
+            [_ATTACK_CMD, "-c", "id"],
+            [_ATTACK_CMD, "-c", "whoami"],
+        ]
+    )
+    assert refusal["envs"] == [[], []]
+
+    status, body = await _toggle_on(expected_launch=expected_launch)
+
+    assert status == 200, body
+    stored = mod.load_approvals()
+    assert stored.stored_refused == {}
+    assert stored.admits_command("SRV", rewriter.hash_command(_ATTACK_CMD, ["-c", "id"]))
+    assert stored.admits_command("SRV", rewriter.hash_command(_ATTACK_CMD, ["-c", "whoami"]))
+
+
+@pytest.mark.asyncio
+async def test_reapprove_matching_the_shown_launch_replaces_the_approval(tmp_path, toggle_home):
+    mod = _approval_module()
+    assert mod is not None
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
+    assert (await _toggle_on())[0] == 200
+
+    _declare(toggle_home, "agent spec", _ATTACK_CMD, ["-c", "id"])
+    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
+    assert refused.refused == {"SRV": mod.REFUSED_CHANGED}
+    assert mod.save_pass(refused)
+    expected_launch = mod.refused_servers()["srv"]["expected_launch"]
+
+    status, body = await _toggle_on(expected_launch=expected_launch)
+
+    assert status == 200, body
+    stored = mod.load_approvals()
+    assert stored.stored_refused == {}
+    assert stored.admits_command("SRV", rewriter.hash_command(_ATTACK_CMD, ["-c", "id"]))
+    assert not stored.admits_command("SRV", rewriter.hash_command(_APPROVED_CMD, []))
+
+
+@pytest.mark.asyncio
+async def test_reapprove_rejects_a_launch_changed_after_it_was_shown(
+    tmp_path, toggle_home, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from kiro_crew.dashboard.handlers import mcp as mcp_mod
+
+    mod = _approval_module()
+    assert mod is not None
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
+    assert (await _toggle_on())[0] == 200
+
+    audit = MagicMock()
+    monkeypatch.setattr(mcp_mod, "sel", lambda: audit)
+    _declare(toggle_home, "agent spec", _ATTACK_CMD, ["-c", "id"])
+    _target_env, refused = _next_boot_rewrite(tmp_path, toggle_home)
+    assert refused.refused == {"SRV": mod.REFUSED_CHANGED}
+    assert mod.save_pass(refused)
+    expected_launch = mod.refused_servers()["srv"]["expected_launch"]
+    approval_before = mod.approvals_path().read_bytes()
+    config_before = (tmp_path / "config.json").read_bytes()
+
+    # The operator still sees the refused shell command, but an agent changes the
+    # declaration before the click reaches the handler.
+    _declare(toggle_home, "agent spec", _APPROVED_CMD, [])
+    status, body = await _toggle_on(expected_launch=expected_launch)
+
+    assert status == 409
+    assert body["code"] == "launch_changed_since_display"
+    event = audit.log_api_access.call_args.kwargs
+    assert event["operation"] == "mcp_stub_rejected_launch_changed_since_display"
+    assert event["outcome"] == "denied"
+    assert event["resources"] == "code=launch_changed_since_display names=srv"
+    assert mod.approvals_path().read_bytes() == approval_before
+    assert (tmp_path / "config.json").read_bytes() == config_before
+
+
+def test_unchanged_argv_with_changed_env_renders_a_new_identity(tmp_path):
+    mod = _approval_module()
+    assert mod is not None
+    before = {"MODE": "before"}
+    after = {"MODE": "after"}
+    command_hash = rewriter.hash_command(_APPROVED_CMD, [])
+    before_identity = mod.launch_pair(
+        command_hash,
+        mod.env_fingerprint(rewriter._expand_env_map(before)),
+    )
+    approvals = mod.LaunchApprovals(
+        approved={"SRV": {mod.launch_fingerprint(_APPROVED_CMD, [], before)}},
+        approved_pairs={"SRV": {before_identity}},
+        names={"SRV": "srv"},
+    )
+    _write_agent(
+        tmp_path / "agents",
+        {"srv": {"command": _APPROVED_CMD, "args": [], "env": after}},
+    )
+
+    _rewrite(tmp_path, frozenset({"srv"}), approvals)
+    approvals.full_pass = True
+    store = tmp_path / "approvals.json"
+    assert mod.save_pass(approvals, path=store)
+    refusal = mod.refused_servers(store)["srv"]
+
+    assert refusal["commands"] == [[_APPROVED_CMD]]
+    assert refusal["envs"][0][0].startswith("MODE=<hidden sha256:")
+    assert refusal["expected_launch"] != before_identity
+    # This approval was recorded with no display, so no old launch is shown.
+    assert "approved_commands" not in refusal
+    assert "approved_envs" not in refusal

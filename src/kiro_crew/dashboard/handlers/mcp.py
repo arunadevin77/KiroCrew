@@ -53,7 +53,7 @@ from kiro_crew.mcp_discovery import (
     redact_mcp_error,
     redact_mcp_headers,
 )
-from kiro_crew.mcp_gateway import hazards, is_gateway_supported, launch_resolve
+from kiro_crew.mcp_gateway import direct_copies, hazards, is_gateway_supported, launch_resolve
 from kiro_crew.mcp_gateway.hashing import hash_command
 from kiro_crew.mcp_gateway.launch_approval import (
     approve,
@@ -62,6 +62,7 @@ from kiro_crew.mcp_gateway.launch_approval import (
     refused_servers,
     restore,
     revoke,
+    share_refusal,
     target_stem,
 )
 from kiro_crew.mcp_gateway.rewriter import records_dir
@@ -4165,6 +4166,9 @@ def _collect_server_rows() -> dict[str, dict[str, Any]]:
                     # distinct launch here means the row covers something nobody
                     # measured. Hashing opens no file the launch names.
                     "launch_ids": set(),
+                    # The launches this name runs, (command, *args), so the rows
+                    # endpoint can find the copies running now and measure them.
+                    "commands": set(),
                 }
                 rows[name] = row
             row["agents"].add(str(agent_name))
@@ -4173,6 +4177,9 @@ def _collect_server_rows() -> dict[str, dict[str, Any]]:
                 args = entry.get("args")
                 row["launch_ids"].add(
                     hash_command(command, [str(a) for a in args] if isinstance(args, list) else [])
+                )
+                row["commands"].add(
+                    (command, *([str(a) for a in args] if isinstance(args, list) else []))
                 )
             if entry.get("poolable") is True:
                 row["entry_poolable"] = True
@@ -4388,6 +4395,11 @@ async def api_mcp_gateway_servers(request: web.Request) -> web.Response:
     # payload disagree about the same file.
     observed, preflights = await asyncio.to_thread(_load_shareability_state)
     probe_current = await asyncio.to_thread(_probe_currency)
+    # What the per-session copies cost right now, read from this host's process
+    # table. A server with no reading gets no number on the page.
+    measured = await asyncio.to_thread(
+        direct_copies.measure, {n: r.get("commands", ()) for n, r in rows.items()}
+    )
 
     result: list[dict[str, Any]] = []
     for name in sorted(rows):
@@ -4406,6 +4418,7 @@ async def api_mcp_gateway_servers(request: web.Request) -> web.Response:
         # server in, and reading it as "stubbed" here made the row claim a stub
         # the broker had not created.
         stubbed = can_stub and name in stub_set
+        copies = measured.get(name)
         # Whether stubbing this server could actually produce a SHARED backend.
         # The rewriter leaves an env-declaring entry unwrapped when the pooled
         # spawn would withhold a declared key (every key with
@@ -4435,6 +4448,13 @@ async def api_mcp_gateway_servers(request: web.Request) -> web.Response:
                 "agents": sorted(row["agents"]),
                 "transport": row["transport"],
                 "denylisted": denylisted,
+                # Why this server can never be shared, or null. The switch is
+                # disabled with a one-line reason when set.
+                "share_blocked": share_refusal(name),
+                # Measured, never estimated: what sharing would save given the
+                # copies running now, or null when there is no reading or
+                # nothing to save. Only for a server not already stubbed.
+                "saves_bytes": (copies.saves_bytes if copies and not stubbed else None),
                 # Advisory only. Never auto-applied: the evidence is weaker
                 # than proof (the probe handshakes as a different client than
                 # the gateway does), so the operator decides.
@@ -4663,6 +4683,27 @@ async def api_mcp_gateway_set_stub(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    # The leakage classes are refused whatever the operator approved: a shared
+    # copy of one of them would hand one chat another chat's credentials or
+    # desktop. Turning one OFF is always allowed.
+    if stub:
+        blocked = {n: code for n in names if (code := share_refusal(n)) is not None}
+        if blocked:
+            sel().log_api_access(
+                caller=request.get("user", "dashboard"),
+                operation="mcp_stub_rejected_share_refused",
+                outcome="denied",
+                source="dashboard",
+                resources=f"names={','.join(sorted(blocked))}"[:256],
+            )
+            return web.json_response(
+                {
+                    "error": "this server cannot be shared: " + ", ".join(sorted(blocked)),
+                    "code": "share_refused",
+                    "refused": blocked,
+                },
+                status=409,
+            )
     # Opt-in: "stub only the ones the evidence allows, and decide that yourself".
     #
     # The alternative -- a client filtering the rows it already has -- can only
@@ -4760,7 +4801,13 @@ async def api_mcp_gateway_set_stub(request: web.Request) -> web.Response:
             )
 
         # Every approval is a compare-and-set on a complete launch display,
-        # including the first time a name is stubbed.
+        # including the first time a name is stubbed. A shared backend runs
+        # outside the session sandbox, and agent specs and mcp.json are
+        # agent-writable, so the press approves only the exact launch the caller
+        # read (the row's Share button, "Use new command", the mcp.share
+        # card and Share all each send the ``expected_launch`` they read). A
+        # later change under this name is refused as changed_needs_reapproval
+        # until the operator confirms it.
         current_display = display_launches(names[0], launches.get(names[0], ()))
         if not current_display["complete"]:
             _log_stub_rejection("launch_display_incomplete")

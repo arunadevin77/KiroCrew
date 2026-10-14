@@ -1,44 +1,29 @@
 /**
- * How the MCP page shows a launch before anyone vouches for it: the command and
- * environment lines, the review a STUB switch opens, and the panel of a stubbed server
- * the gateway refused to launch. `McpManagement` mounts them per row; its bulk review
- * dialog reuses the launch lines.
+ * How the MCP page shows a launch before anyone shares it: the command and
+ * environment lines, the launch shown beside a share button, a row's Details, and
+ * the share action itself. `McpManagement` mounts them per row; its Share all list
+ * reuses the launch lines.
  */
-import { useEffect, useRef } from 'react'
-import type { McpManagedServer } from '../../api/client'
-import { Btn } from '../../components/ui'
-import { i18nT } from '../../i18n/t'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Check, ChevronRight, Share2 } from 'lucide-react'
 import {
-  type LaunchRefusal,
-  type LaunchPreview,
-  pairLaunches,
-  refusalLaunches,
-  launchIsApprovable,
-  REFUSAL_REASON_KEY,
-} from './mcpManagementModel'
+  api,
+  type McpManagedServer,
+} from '../../api/client'
+import { Btn } from '../../components/ui'
+import ErrorNotice from '../../components/ErrorNotice'
+import { fmtBytes } from '../../i18n/format'
+import { i18nT } from '../../i18n/t'
+import { type LaunchRefusal, type LaunchPreview, SHARE_BLOCKED_KEY } from './mcpManagementModel'
 
-/** Every character the C category covers -- what a launch display must escape
- *  rather than render, because none of them is readable where it sits. */
+/** Every character the C category covers: escaped, never rendered, in a launch. */
 const HIDDEN_LAUNCH_CHAR = /\p{C}/u
 
-/** The command and declared environment of one launch, as the operator reads it.
- *
- *  Shared by the three surfaces that show a launch -- the review a stub switch
- *  opens, a refused row, and the bulk review list -- because three copies of this
- *  markup would be free to disagree about what an approval covers.
- */
+/** A launch value as text a reader can see all of: invisible characters escaped. */
 function visibleLaunchText(value: string): string {
   return Array.from(value, character => {
-    // The whole Unicode C category, not a list of the ranges that have been
-    // reported: control, format, surrogate, private-use and unassigned code
-    // points are all characters a command can carry and an operator cannot see
-    // in it, and a list of ranges is a list someone has to keep adding to --
-    // U+00AD soft hyphen and U+2060 word joiner are outside the bidi and
-    // zero-width blocks and hide just as much.
     if (!HIDDEN_LAUNCH_CHAR.test(character)) return character
-    // Iterating with `Array.from` yields whole code points, so an astral
-    // character is escaped once from its own value rather than twice from its
-    // surrogate halves.
     const code = character.codePointAt(0) ?? 0
     const zero = String.fromCharCode(48)
     if (code < 0x20) return JSON.stringify(character).slice(1, -1)
@@ -52,52 +37,64 @@ function visibleLaunchText(value: string): string {
   }).join('')
 }
 
-export function LaunchLines({ launches }: { launches: { argv: string[]; env: string[] }[] }) {
+/** Characters an argument may hold and still show bare; anything else is quoted. */
+const BARE_ARG = /^[A-Za-z0-9_@%+=:,./-]+$/
+
+/** One argument quoted the way the card's `shlex.join` does, so argument
+ *  boundaries survive the join: `sh -c 'echo ok'` never reads as `sh -c echo ok`. */
+function quoteArg(arg: string): string {
+  if (arg !== '' && BARE_ARG.test(arg)) return arg
+  // A single quote, and the shell's way to put one inside a quoted argument.
+  const quote = String.fromCharCode(39)
+  const doubleQuote = String.fromCharCode(34)
+  const escaped = quote + doubleQuote + quote + doubleQuote + quote
+  return quote + arg.split(quote).join(escaped) + quote
+}
+
+/** Whether a row offers a share action that approves a launch: a first share, or a changed command. */
+export function offersShare(server: McpManagedServer, waiting: boolean): boolean {
+  return server.can_stub && (waiting || (!server.stub && !server.share_blocked))
+}
+
+/** The one read of what a server runs. Every surface uses this key, so what is shown is what is approved.
+ *  The key carries whether the row waits on a changed command: a read cached before the
+ *  change never stands in for the new one. */
+function useLaunchPreview(name: string, enabled: boolean, waiting: boolean) {
+  return useQuery<LaunchPreview>({
+    queryKey: ['mcpGatewayLaunchPreview', name, waiting],
+    queryFn: () => api.mcpGatewayLaunchPreview(name),
+    enabled,
+    retry: false,
+  })
+}
+
+/** Every launch a server resolves to: its command, its env names, then their values. */
+export function LaunchList({ preview }: { preview?: LaunchPreview }) {
+  const launches = (preview?.commands ?? [])
+    .map((argv, i) => ({ argv, env: preview?.envs?.[i] ?? [] }))
+    .filter(launch => launch.argv.length > 0)
   return (
     <>
+      {launches.length > 1 && (
+        <p>{i18nT('pages.mcpManagement.details_variants', { count: launches.length })}</p>
+      )}
       {launches.map((launch, i) => (
-        <div key={i} className="mt-1.5">
-          <span className="block text-[11px] font-medium text-[var(--muted)]">
-            {i18nT('pages.mcpManagement.approval_command')}
-          </span>
-          <div
-            role="list"
-            aria-label={i18nT('pages.mcpManagement.approval_command')}
-            className="mt-0.5 flex flex-wrap gap-1"
-          >
-            {launch.argv.map((argument, argumentIndex) => (
-              <code
-                key={argumentIndex}
-                role="listitem"
-                className="break-words rounded border border-[var(--border)] bg-[var(--surface-2,transparent)] px-1.5 py-1 font-mono text-[11px] text-[var(--text)]"
-              >
-                {visibleLaunchText(argument)}
-              </code>
-            ))}
-          </div>
-          {/* The environment is part of what approval runs: a changed value with
-              the same command still counts. */}
+        <div key={i} className="space-y-0.5">
+          {/* pre-wrap: runs of spaces inside an argument must show as they run. */}
+          <code className="block whitespace-pre-wrap break-words font-mono text-[11.5px] text-[var(--text)] [overflow-wrap:anywhere]">
+            {launch.argv.map(arg => visibleLaunchText(quoteArg(arg))).join(' ')}
+          </code>
           {launch.env.length > 0 && (
-            <>
-              <span className="mt-1 block text-[11px] font-medium text-[var(--muted)]">
-                {i18nT('pages.mcpManagement.reapproval_env')}
-              </span>
-              <div
-                role="list"
-                aria-label={i18nT('pages.mcpManagement.reapproval_env')}
-                className="mt-0.5 space-y-1"
-              >
-                {launch.env.map((entry, entryIndex) => (
-                  <code
-                    key={entryIndex}
-                    role="listitem"
-                    className="block break-words rounded border border-[var(--border)] bg-[var(--surface-2,transparent)] px-1.5 py-1 font-mono text-[11px] text-[var(--text)]"
-                  >
-                    {visibleLaunchText(entry)}
-                  </code>
-                ))}
-              </div>
-            </>
+            <ul aria-label={i18nT('pages.mcpManagement.reapproval_env')} className="space-y-0.5">
+              {launch.env.map((entry, entryIndex) => (
+                <li
+                  key={entryIndex}
+                  className="whitespace-pre-wrap break-words font-mono text-[11px] text-[var(--muted)] [overflow-wrap:anywhere]"
+                >
+                  {visibleLaunchText(entry)}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       ))}
@@ -106,221 +103,208 @@ export function LaunchLines({ launches }: { launches: { argv: string[]; env: str
 }
 
 /**
- * The review a STUB switch opens before anything is written.
- *
- * Turning the switch on writes nothing by itself, because a switch that posted
- * straight away asked the operator to approve a NAME: the command only became
- * visible afterwards, in the row the gateway had already refused. The decision and
- * the thing being decided now arrive together, and the write carries
- * `expected_launch` -- the identity of the launch ON SCREEN -- so a command that
- * moves between this render and the click is refused rather than approved blind.
- *
- * Turning a stub OFF stays one click: it only ever narrows what runs outside a
- * session, and a confirmation on the safe direction trains people to click through
- * the other one.
+ * What a share would approve, shown in the row before its button can be
+ * pressed. A shared copy runs as the person outside the chat sandbox, and the
+ * command can be agent-written, so an approval covers only a launch shown here.
  */
-export function LaunchReviewPanel({
-  preview,
-  busy,
-  onApprove,
-  onCancel,
+export function ShareLaunch({
+  server,
+  waiting,
+  refusal,
+  alsoStarts,
 }: {
-  preview: LaunchPreview
-  busy: boolean
-  onApprove: () => void
-  onCancel: () => void
+  server: McpManagedServer
+  waiting: boolean
+  refusal?: LaunchRefusal
+  /** Marked servers that start sharing too, because this press turns sharing on. */
+  alsoStarts: string[]
 }) {
-  const panel = useRef<HTMLDivElement | null>(null)
-  // Read through a ref so the listener is bound ONCE per reviewed server. Binding
-  // it on the handler identity instead re-runs this effect every render, and the
-  // focus call inside it would then drag focus back here while the operator is
-  // reading -- the panel would fight its own keyboard user.
-  const cancel = useRef(onCancel)
-  cancel.current = onCancel
-  useEffect(() => {
-    const el = panel.current
-    if (!el) return
-    // Remembered so dismissing the panel hands focus back to the switch that
-    // opened it, instead of dropping a keyboard user onto the page body.
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    // Focus follows the decision: the switch that opened this is now the wrong
-    // control to be sitting on, and a keyboard user would otherwise have to hunt
-    // forward through the table for the buttons that answer it.
-    el.focus()
-    // Escape leaves the decision unmade, as it does on this page's dialog. Bound
-    // on the element rather than as a JSX prop so the panel stays a plain group
-    // that owns its own keys, and stopped here so it reaches nothing outside.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.stopPropagation()
-      cancel.current()
-    }
-    el.addEventListener('keydown', onKey)
-    return () => {
-      el.removeEventListener('keydown', onKey)
-      // Only when focus was inside the panel or has fallen to the body: a user who
-      // already moved elsewhere keeps their place.
-      const active = document.activeElement
-      const lost = active === null || active === document.body || el.contains(active)
-      if (lost && opener && opener !== el && opener.isConnected) opener.focus()
-    }
-  }, [preview.name])
-  const approvable = launchIsApprovable(preview)
+  const offered = offersShare(server, waiting)
+  const preview = useLaunchPreview(server.name, offered, waiting)
+  if (!offered || !preview.data?.complete) return null
+  const approved = waiting && refusal?.approved_commands?.length
+    ? { name: server.name, commands: refusal.approved_commands, envs: refusal.approved_envs ?? [], complete: true }
+    : null
   return (
-    <div
-      ref={panel}
-      tabIndex={-1}
-      role="group"
-      aria-label={i18nT('pages.mcpManagement.launch_review_title', { name: preview.name })}
-      className="space-y-1.5 outline-none"
-    >
-      <p className="text-[13px] font-medium text-[var(--text)]">
-        {i18nT('pages.mcpManagement.launch_review_title', { name: preview.name })}
+    <div className="mt-2 space-y-1.5 rounded-lg border border-[var(--border)] px-3 py-2 text-[12px] leading-relaxed text-[var(--muted)]">
+      <p className="font-medium text-[var(--text)]">
+        {i18nT(waiting ? 'pages.mcpManagement.share_runs_new' : 'pages.mcpManagement.share_runs')}
       </p>
-      {/* The decision copy at reading size and full contrast. This is the sentence
-          the operator has to weigh, not a footnote about a state they already
-          have, and 11px muted is how the old layout said the opposite. */}
-      <p className="text-[12.5px] leading-relaxed text-[var(--text)]">
-        {i18nT(
-          approvable
-            ? 'pages.mcpManagement.approval_consequence'
-            : 'pages.mcpManagement.approval_not_approvable_here',
-        )}
-      </p>
-      <LaunchLines launches={pairLaunches(preview.commands, preview.envs)} />
-      {/* The switch stays off while this is open. Said here so the operator does
-          not have to guess that approving is what turns it on. */}
-      {approvable && (
-        <p className="text-[12.5px] text-[var(--muted)]">
-          {i18nT('pages.mcpManagement.launch_review_switch_pending')}
+      <p>{i18nT('pages.mcpManagement.share_access')}</p>
+      {server.agents.length > 0 && (
+        <p className="break-words [overflow-wrap:anywhere]">
+          {i18nT('pages.mcpManagement.share_set_in', { agents: server.agents.join(', ') })}
         </p>
       )}
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        {/* No approve button when the display was cut short: an approval names the
-            launch it covers. Cancel stays either way, so this is never a dead end. */}
-        {approvable && (
-          <Btn
-            type="button"
-            disabled={busy}
-            aria-label={i18nT('pages.mcpManagement.launch_review_approve_aria', {
-              name: preview.name,
-            })}
-            onClick={onApprove}
-          >
-            {i18nT('pages.mcpManagement.reapprove_action', { name: preview.name })}
-          </Btn>
-        )}
-        <button
-          type="button"
-          aria-label={i18nT('pages.mcpManagement.launch_review_cancel_aria', {
-            name: preview.name,
-          })}
-          onClick={onCancel}
-          className="rounded-md border border-[var(--border)] px-2.5 py-1 text-[13px] text-[var(--text)] transition-colors hover:bg-[var(--hover)]"
-        >
-          {i18nT('pages.mcpManagement.cancel')}
-        </button>
-      </div>
+      <LaunchList preview={preview.data} />
+      {approved && (
+        <div className="space-y-1 border-t border-[var(--border)] pt-1.5">
+          <p className="font-medium text-[var(--text)]">{i18nT('pages.mcpManagement.share_approved_before')}</p>
+          <LaunchList preview={approved} />
+        </div>
+      )}
+      {alsoStarts.length > 0 && (
+        <p className="border-t border-[var(--border)] pt-1.5 text-[var(--text)]">
+          {i18nT('pages.mcpManagement.share_also_starts', { names: alsoStarts.join(', ') })}
+        </p>
+      )}
     </div>
   )
 }
 
 /**
- * A stubbed server the gateway will not launch until its command is approved.
- *
- * On a CHANGED command this shows both sides, because the question the operator
- * is actually being asked is what moved -- a bare "would run now" makes them
- * reconstruct the diff from memory, and the reason they are here is that it
- * changed. An older approval record kept no content, and that says so rather than
- * rendering an empty before-state as an approval of nothing.
+ * The debugging view of a server, collapsed by default and loaded on open:
+ * which agents declare it, and, when the row does not already show it, every
+ * launch it resolves to.
  */
-export function RefusalPanel({
+export function ServerDetails({ server, showLaunch }: { server: McpManagedServer; showLaunch: boolean }) {
+  const [open, setOpen] = useState(false)
+  const preview = useLaunchPreview(server.name, open && showLaunch && server.can_stub, false)
+  return (
+    <details
+      className="group mt-1"
+      open={open}
+      onToggle={e => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[12px] text-[var(--muted)] hover:text-[var(--text)] [&::-webkit-details-marker]:hidden">
+        <ChevronRight size={12} className="transition-transform group-open:rotate-90" aria-hidden="true" />
+        {i18nT('pages.mcpManagement.details')}
+      </summary>
+      <div className="mt-1.5 space-y-1.5 pl-4 text-[12px] leading-relaxed text-[var(--muted)]">
+        <p className="break-words [overflow-wrap:anywhere]">
+          {i18nT('pages.mcpManagement.details_used_by', { agents: server.agents.join(', ') })}
+        </p>
+        {open && preview.isLoading && (
+          <p role="status">{i18nT('pages.mcpManagement.details_loading')}</p>
+        )}
+        {preview.isError && (
+          <ErrorNotice variant="inline" message={i18nT('pages.mcpManagement.details_failed')} askAgent />
+        )}
+        {showLaunch && <LaunchList preview={preview.data} />}
+      </div>
+    </details>
+  )
+}
+
+/** Every share action is a real, labelled button, never a bare switch or link. */
+export const SHARE_BUTTON_CLASS =
+  'shrink-0 px-3 py-1.5 font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]'
+
+/**
+ * The one action a row offers. A shared copy runs outside the chat sandbox, so
+ * a command that changed after it was shared waits here until the person
+ * confirms the new one, which the row shows above its buttons and pins.
+ */
+export function ShareAction({
   server,
-  refusal,
+  waiting,
   busy,
-  onApprove,
-  approveRef,
+  supported,
+  describedBy,
+  onShare,
 }: {
   server: McpManagedServer
-  refusal: LaunchRefusal
+  waiting: boolean
   busy: boolean
-  onApprove: () => void
-  /** The row's STUB switch hands the keyboard here, so the decision the operator
-   *  came to make is the next thing they reach. */
-  approveRef?: (node: HTMLButtonElement | null) => void
+  supported: boolean
+  describedBy?: string
+  onShare: (stub: boolean, expectedLaunch?: string) => void
 }) {
-  const approvable = launchIsApprovable(refusal)
-  const changed = refusal.reason === 'changed_needs_reapproval'
-  const before = pairLaunches(refusal.approved_commands, refusal.approved_envs)
-  // The default reason line invites the operator to approve the command below it,
-  // which is a dead end on a row nothing here can approve. The unapprovable
-  // spelling drops that clause; why it cannot be approved is the line further
-  // down, said once.
-  const reasonKey =
-    refusal.reason === 'added_outside_dashboard' && !approvable
-      ? 'pages.mcpManagement.reapproval_reason_added_outside_dashboard_unapprovable'
-      : REFUSAL_REASON_KEY[refusal.reason] ?? REFUSAL_REASON_KEY.changed_needs_reapproval
-  return (
-    <div className="space-y-1.5">
-      <p className="text-[12.5px] leading-snug text-[var(--muted)]">{i18nT(reasonKey)}</p>
-      <p className="text-[12.5px] leading-snug text-[var(--muted)]">
-        {i18nT('pages.mcpManagement.reapproval_optin_kept')}
-      </p>
-      {/* Where the command comes from, so the operator can check the launch
-          against its source before trusting it. */}
-      {server.agents.length > 0 && (
-        <p className="text-[12.5px] leading-snug text-[var(--muted)]">
-          {i18nT('pages.mcpManagement.reapproval_declared_by', {
-            agents: server.agents.join(', '),
-          })}
-        </p>
-      )}
-      <p className="text-[12.5px] leading-relaxed text-[var(--text)]">
-        {i18nT(
-          approvable
-            ? 'pages.mcpManagement.approval_consequence'
-            : 'pages.mcpManagement.approval_not_approvable_here',
+  // Same key as the launch the row shows, so the launch approved is the one
+  // on screen. Both share actions send the `expected_launch` they read and
+  // stay disabled until there is one.
+  const offered = offersShare(server, waiting)
+  const preview = useLaunchPreview(server.name, offered, waiting)
+  const expected = preview.data?.complete ? preview.data.expected_launch : undefined
+  if (!server.can_stub) return null
+  const stopButton = (
+    <Btn
+      type="button"
+      className={SHARE_BUTTON_CLASS}
+      disabled={busy}
+      aria-label={i18nT('pages.mcpManagement.unshare_button_aria', { name: server.name })}
+      aria-describedby={describedBy}
+      onClick={() => onShare(false)}
+    >
+      {i18nT('pages.mcpManagement.unshare_button')}
+    </Btn>
+  )
+  if (waiting) {
+    // Stop sharing stays reachable: a changed launch the person cannot or will
+    // not confirm must still be turnable off.
+    return (
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-2 md:w-auto md:justify-end">
+        {stopButton}
+        <Btn
+          type="button"
+          primary
+          className={SHARE_BUTTON_CLASS}
+          disabled={busy || !supported || !expected}
+          aria-label={i18nT('pages.mcpManagement.new_command_aria', { name: server.name })}
+          aria-describedby={describedBy}
+          onClick={() => onShare(true, expected)}
+        >
+          <Check size={14} aria-hidden="true" />
+          {i18nT('pages.mcpManagement.new_command_button')}
+        </Btn>
+        {preview.isError && (
+          <div className="basis-full">
+            <ErrorNotice variant="inline" message={i18nT('pages.mcpManagement.share_unreadable')} askAgent />
+          </div>
         )}
-      </p>
-      {changed && (
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            {i18nT('pages.mcpManagement.approval_before_heading')}
-          </p>
-          {before.length > 0 ? (
-            <LaunchLines launches={before} />
-          ) : (
-            <p className="mt-1 text-[12.5px] leading-snug text-[var(--muted)]">
-              {i18nT('pages.mcpManagement.approval_before_unrecorded')}
-            </p>
-          )}
-        </div>
-      )}
-      <div>
-        {/* Headed only when there is a before-state to tell it apart from. On a
-            server never approved here the single command needs no label saying
-            which of two it is. */}
-        {changed && (
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            {i18nT('pages.mcpManagement.approval_now_heading')}
-          </p>
-        )}
-        <LaunchLines launches={refusalLaunches(refusal)} />
       </div>
-      {approvable && (
-        <div className="pt-1">
-          <Btn
-            type="button"
-            ref={approveRef}
-            disabled={busy}
-            aria-label={i18nT('pages.mcpManagement.reapprove_aria', { name: server.name })}
-            onClick={onApprove}
-            className="px-2 py-0.5 text-[12px]"
-          >
-            {i18nT('pages.mcpManagement.reapprove_action', { name: server.name })}
-          </Btn>
-        </div>
+    )
+  }
+  if (server.stub) return stopButton
+  if (server.share_blocked) return null
+  // A launch read that answered but gave nothing to pin cannot be shared at
+  // all: say so in place of the button, like a refused server.
+  if (preview.isSuccess && !expected) {
+    return (
+      <span className="text-[12px] text-[var(--muted)] md:text-right">
+        {i18nT('pages.mcpManagement.share_unreadable')}
+      </span>
+    )
+  }
+  // Say why the button is off once the read is done and gave nothing to pin;
+  // a failed read is an error and goes through ErrorNotice.
+  return (
+    <div className="flex w-full min-w-0 flex-col items-start gap-1 md:w-auto md:items-end">
+      <Btn
+        type="button"
+        primary
+        className={SHARE_BUTTON_CLASS}
+        disabled={busy || !supported || !expected}
+        aria-label={i18nT('pages.mcpManagement.stub_aria', { name: server.name })}
+        aria-describedby={describedBy}
+        onClick={() => onShare(true, expected)}
+      >
+        <Share2 size={14} aria-hidden="true" />
+        {i18nT('pages.mcpManagement.share_button')}
+      </Btn>
+      {preview.isLoading && (
+        <span role="status" className="text-[12px] text-[var(--muted)]">
+          {i18nT('pages.mcpManagement.share_checking')}
+        </span>
+      )}
+      {preview.isError && (
+        <ErrorNotice variant="inline" message={i18nT('pages.mcpManagement.share_unreadable')} askAgent />
       )}
     </div>
   )
+}
+
+/** The one hint under a row's switch: why it is off-limits, or what it saves. */
+export function shareHint(s: McpManagedServer): string | null {
+  if (s.share_blocked) {
+    return i18nT(SHARE_BLOCKED_KEY[s.share_blocked] ?? 'pages.mcpManagement.stub_error_share_refused')
+  }
+  if (!s.can_stub || s.stub) return null
+  if (typeof s.saves_bytes === 'number' && s.saves_bytes > 0) {
+    return i18nT('pages.mcpManagement.share_saves', {
+      size: fmtBytes(s.saves_bytes, { maximumFractionDigits: 0 }),
+    })
+  }
+  // No measurement, no line: "Saves memory" alone says nothing a number would not.
+  return null
 }
