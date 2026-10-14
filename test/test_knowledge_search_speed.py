@@ -3,13 +3,15 @@
 Three changes cut a knowledge search on a 22k-item, 59k-entity library from
 ~0.9 s to ~0.2 s: the alias fallback in ``find_entity`` skips rows that have no
 aliases, two indexes serve the graph leg, and the vector leg reuses one cached
-matrix until the database files change. These tests pin that each change
-returns what the code returned before it.
+matrix until a write changes the rows that feed it. These tests pin that each
+change returns what the code returned before it.
 """
 
 from __future__ import annotations
 
+import json
 import random
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -46,6 +48,18 @@ def _reference(store: KnowledgeStore, query_vec: list[float], monkeypatch) -> li
     with monkeypatch.context() as m:
         m.setattr(retrieval, "_cached_matrix", lambda *a, **k: None)
         return _retriever(store, query_vec)._vector_search("q", limit=20)
+
+
+def _count_builds(monkeypatch) -> list[int]:
+    builds: list[int] = []
+    real_build = retrieval._build_matrix
+
+    def counting_build(*a, **k):
+        builds.append(1)
+        return real_build(*a, **k)
+
+    monkeypatch.setattr(retrieval, "_build_matrix", counting_build)
+    return builds
 
 
 class TestFindEntity:
@@ -147,6 +161,35 @@ class TestVectorMatrixCache:
         reference = [(i, n + 1) for n, (i, _) in enumerate(scored[:40])]
         assert first == second == reference
 
+    def test_a_packed_blob_that_starts_like_json_stays_on_the_matrix(self, store, monkeypatch):
+        rng = random.Random(17)
+        lead = 0.0
+        while not floats_to_bytes([lead]).startswith(b"["):
+            lead = rng.gauss(0.0, 1.0)
+        for i in range(10):
+            store.add_item(f"doc {i}", "c", "doc", embedding=floats_to_bytes([lead, *_vec(rng)[1:]]))
+            store.add_item(f"plain {i}", "c", "doc", embedding=floats_to_bytes(_vec(rng)))
+        q = _vec(rng)
+        cached = _retriever(store, q)._vector_search("q", limit=20)
+        (entry,) = retrieval._matrix_cache.values()
+        assert entry[1] is not None and len(entry[1]) == 20
+        assert cached == _reference(store, q, monkeypatch)
+
+    def test_mixed_encodings_rank_like_the_reference(self, store, monkeypatch):
+        # float32-exact JSON vectors are admitted beside packed ones and land at
+        # their own row position in the joined matrix.
+        rng = random.Random(16)
+        for i in range(30):
+            v = [float(int(x * 8)) / 8 for x in _vec(rng)]
+            blob = json.dumps(v).encode() if i % 3 == 0 else floats_to_bytes(v)
+            store.add_item(f"doc {i}", "c", "doc", embedding=blob)
+        q = _vec(rng)
+        builds = _count_builds(monkeypatch)
+        cached = _retriever(store, q)._vector_search("q", limit=20)
+        assert len(builds) == 1 and retrieval._matrix_cache
+        assert next(iter(retrieval._matrix_cache.values()))[1] is not None
+        assert cached == _reference(store, q, monkeypatch)
+
     def test_write_invalidates_the_cache(self, store):
         rng = random.Random(3)
         for i in range(10):
@@ -157,18 +200,81 @@ class TestVectorMatrixCache:
         new_id = store.add_item("exact", "c", "doc", embedding=floats_to_bytes(q))
         assert r._vector_search("q")[0][0] == new_id
 
-    def test_a_wal_reset_changes_the_fingerprint_beyond_the_stat(self, store):
-        # After a checkpoint, the next write rewrites the WAL from its start, so
-        # its size can repeat and a coarse mtime can too; the header salts cannot.
+    def test_a_write_to_another_table_keeps_the_cache(self, store, monkeypatch):
         rng = random.Random(4)
-        store.add_item("a", "c", "doc", embedding=floats_to_bytes(_vec(rng)))
-        before = retrieval._db_fingerprint(store._db_path)
-        assert before is not None and before[2] is not None
+        for i in range(5):
+            store.add_item(f"doc {i}", "c", "doc", embedding=floats_to_bytes(_vec(rng)))
+        builds = _count_builds(monkeypatch)
+        q = _vec(rng)
+        r = _retriever(store, q)
+        first = r._vector_search("q")
+        store.db.execute(
+            "INSERT INTO ingestion_jobs (id, status, created_at, updated_at) "
+            "VALUES ('job-1', 'pending', 'now', 'now')"
+        )
         store.db.execute("PRAGMA wal_checkpoint(RESTART)").fetchall()
-        store.add_item("b", "c", "doc", embedding=floats_to_bytes(_vec(rng)))
-        after = retrieval._db_fingerprint(store._db_path)
-        assert after is not None and after[2] is not None
-        assert after[2] != before[2]
+        assert r._vector_search("q") == first
+        assert len(builds) == 1
+
+    def test_an_edit_outside_the_vector_columns_keeps_the_cache(self, store, monkeypatch):
+        rng = random.Random(11)
+        item_id = store.add_item("doc", "c", "doc", embedding=floats_to_bytes(_vec(rng)))
+        builds = _count_builds(monkeypatch)
+        r = _retriever(store, _vec(rng))
+        first = r._vector_search("q")
+        store.update_item(item_id, title="renamed", content="new body", summary="s")
+        assert r._vector_search("q") == first
+        assert len(builds) == 1
+
+    def test_a_status_change_invalidates_the_cache(self, store, monkeypatch):
+        rng = random.Random(12)
+        q = _vec(rng)
+        top = store.add_item("top", "c", "doc", embedding=floats_to_bytes(q))
+        store.add_item("other", "c", "doc", embedding=floats_to_bytes(_vec(rng)))
+        r = _retriever(store, q)
+        assert r._vector_search("q")[0][0] == top
+        store.update_item(top, status="archived")
+        assert r._vector_search("q") == _reference(store, q, monkeypatch)
+        assert top not in [i for i, _ in r._vector_search("q")]
+
+    def test_a_write_from_another_connection_invalidates_the_cache(self, store):
+        rng = random.Random(13)
+        for i in range(5):
+            store.add_item(f"doc {i}", "c", "doc", embedding=floats_to_bytes(_vec(rng)))
+        q = _vec(rng)
+        r = _retriever(store, q)
+        r._vector_search("q")
+        other = sqlite3.connect(store._db_path)
+        try:
+            other.execute(
+                "INSERT INTO items (id, title, content, item_type, embedding, created_at, updated_at) "
+                "VALUES ('outside', 't', 'c', 'doc', ?, 'now', 'now')",
+                (floats_to_bytes(q),),
+            )
+            other.commit()
+        finally:
+            other.close()
+        assert r._vector_search("q")[0][0] == "outside"
+
+    def test_a_source_location_write_invalidates_a_source_scoped_cache(self, store, monkeypatch):
+        rng = random.Random(14)
+        a = store.add_source("a", "file", "file:///a")
+        b = store.add_source("b", "file", "file:///b")
+        q = _vec(rng)
+        store.add_item("in a", "c", "doc", source_id=a, embedding=floats_to_bytes(_vec(rng)))
+        shared = store.add_item("in b", "c", "doc", source_id=b, embedding=floats_to_bytes(q))
+        r = _retriever(store, q)
+        assert shared not in [i for i, _ in r._vector_search("q", source_id=a)]
+        store.add_source_location(shared, a)
+        assert r._vector_search("q", source_id=a)[0][0] == shared
+
+    def test_a_store_without_a_generation_is_not_cached(self, store):
+        rng = random.Random(15)
+        q = _vec(rng)
+        store.add_item("a", "c", "doc", embedding=floats_to_bytes(q))
+        store.db.execute("DELETE FROM vector_generation")
+        assert _retriever(store, q)._vector_search("q")
+        assert retrieval._matrix_cache == {}
 
     def test_ids_count_against_the_cap(self, store, monkeypatch):
         rng = random.Random(8)

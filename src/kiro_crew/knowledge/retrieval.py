@@ -6,7 +6,6 @@ import importlib.util
 import json
 import logging
 import math
-import os
 import struct
 import sys
 import threading
@@ -838,11 +837,12 @@ _SCORE_BATCH_ROWS = 1024
 # 22k-item library), decoding it and scoring it in 1,024-row batches is most
 # of the vector leg, and six concurrent searches would hold six copies of the
 # blobs at once. So the matrix is
-# built once per (database, candidate query) and reused until the database
-# files change: main file + -wal, mtime and size, plus the WAL header salts
-# (see _db_fingerprint). Only an all-binary result of the query's
-# width is cached; anything else (legacy JSON rows, mixed widths) takes the
-# reference path below, unchanged.
+# built once per (database, candidate query) and reused until a write changes
+# the rows that feed it: the store's ``vector_generation`` value, read in the
+# same snapshot as the rows, moves on every insert, delete or vector-relevant
+# update of ``items`` and ``source_locations`` and on nothing else. A result
+# of another width, or one float32 cannot hold exactly, takes the reference
+# path below, unchanged.
 _MATRIX_CACHE_MAX_ENTRIES = 2
 # The cap on everything the cache retains (matrices, norms, ids), across all
 # entries. A library past it is scored the streaming way rather than held.
@@ -858,34 +858,9 @@ _matrix_build_locks: dict[str, threading.Lock] = {}
 _UNCACHEABLE: Any = object()
 
 
-def _db_fingerprint(db_path: str) -> tuple | None:
-    """mtime + size of the db and its ``-wal``, plus the WAL header salts.
-
-    A WAL reset after a checkpoint rewrites the log from its start, so a write
-    can leave the ``-wal`` size (and, on a coarse-mtime filesystem, its mtime)
-    unchanged. SQLite picks new salts for every reset, so the 8 salt bytes of
-    the WAL header tell two generations apart where the stat cannot.
-    """
-    sig: list[tuple[int, int] | bytes | None] = []
-    for p in (db_path, db_path + "-wal"):
-        try:
-            st = os.stat(p)
-            sig.append((st.st_mtime_ns, st.st_size))
-        except OSError:
-            sig.append(None)
-    if sig[0] is None:
-        return None
-    salts = None
-    if sig[1] is not None:
-        try:
-            with open(db_path + "-wal", "rb") as fh:
-                header = fh.read(32)
-            if len(header) == 32:
-                salts = header[16:24]
-        except OSError:
-            pass
-    sig.append(salts)
-    return tuple(sig)
+def _vector_generation(store: Any) -> int | None:
+    reader = getattr(store, "vector_generation", None)
+    return reader() if callable(reader) else None
 
 
 def _cached_matrix(store: Any, sql: str, params: list, q_len: int):
@@ -894,32 +869,32 @@ def _cached_matrix(store: Any, sql: str, params: list, q_len: int):
     if not isinstance(db_path, str) or not db_path or db_path.startswith((":memory:", "file:")):
         return None
     key = (db_path, sql, tuple(params), q_len)
-    fp = _db_fingerprint(db_path)
-    if fp is None:
+    gen = _vector_generation(store)
+    if gen is None:
         return None
     with _matrix_cache_lock:
         hit = _matrix_cache.get(key)
-        if hit is not None and hit[0] == fp:
+        if hit is not None and hit[0] == gen:
             return None if hit[1] is None else (hit[1], hit[2], hit[3])
         build_lock = _matrix_build_locks.setdefault(db_path, threading.Lock())
     # One build per database at a time: concurrent first searches on the same
     # library wait for one read instead of each reading the whole table, and a
     # build on one library never holds up a search on another.
     with build_lock:
-        fp = _db_fingerprint(db_path)
-        if fp is None:
-            return None
+        gen = _vector_generation(store)
         with _matrix_cache_lock:
             hit = _matrix_cache.get(key)
-            if hit is not None and hit[0] == fp:
+            if hit is not None and hit[0] == gen:
                 return None if hit[1] is None else (hit[1], hit[2], hit[3])
-        built = _build_matrix(store, sql, params, q_len)
+        # The generation is read in the build's own snapshot, so the entry is
+        # stamped with exactly the rows it holds: a write that lands during the
+        # read moves the live generation past it and the next search rebuilds.
+        snap_gen, built = _build_matrix(store, sql, params, q_len)
         with _matrix_cache_lock:
             _matrix_cache.pop(key, None)
-            # Re-check: a write that landed during the read must not be pinned.
-            if built is None or _db_fingerprint(db_path) != fp:
+            if built is None or snap_gen is None:
                 return None if built is None or built is _UNCACHEABLE else built[:3]
-            entry = (fp, None, None, None, 0) if built is _UNCACHEABLE else (fp, *built)
+            entry = (snap_gen, None, None, None, 0) if built is _UNCACHEABLE else (snap_gen, *built)
             while _matrix_cache and (
                 len(_matrix_cache) >= _MATRIX_CACHE_MAX_ENTRIES
                 or sum(e[4] for e in _matrix_cache.values()) + entry[4] > _MATRIX_CACHE_MAX_BYTES
@@ -929,33 +904,55 @@ def _cached_matrix(store: Any, sql: str, params: list, q_len: int):
         return None if built is _UNCACHEABLE else built[:3]
 
 
+def _read_snapshot(store: Any, sql: str, params: list) -> tuple[int | None, list]:
+    """``(vector generation, rows as plain tuples)`` from one read snapshot."""
+    conn = store.db
+    own_txn = not conn.in_transaction
+    if own_txn:
+        conn.execute("BEGIN")
+    try:
+        gen = _vector_generation(store)
+        cur = conn.cursor()
+        # Plain tuples: a sqlite3.Row per candidate costs more than the scoring.
+        cur.row_factory = None
+        rows = cur.execute(sql, params).fetchall()
+    finally:
+        if own_txn:
+            conn.execute("COMMIT")
+    return gen, rows
+
+
 def _build_matrix(store: Any, sql: str, params: list, q_len: int):
+    """``(generation, built)``: ``built`` is ``(ids, matrix, norms, retained)``,
+    :data:`_UNCACHEABLE` or ``None`` (no candidate rows)."""
     import numpy as np
 
     q_bytes = q_len * 4
-    rows = store.db.execute(sql, params).fetchall()
+    gen, rows = _read_snapshot(store, sql, params)
     if not rows:
-        return None
+        return gen, None
     # Everything the entry retains counts against the cap: matrix, norms, ids.
     retained = len(rows) * (q_bytes + 8)
     if retained > _MATRIX_CACHE_MAX_BYTES:
-        return _UNCACHEABLE
-    mat = np.empty((len(rows), q_len), dtype=np.float32)
-    ids: list[str] = []
-    n = 0
-    for row in rows:
-        item_id = row["id"]
-        retained += sys.getsizeof(item_id)
+        return gen, _UNCACHEABLE
+    fast = _join_packed(rows, q_bytes)
+    if fast is not None:
+        fast_ids, joined = fast
+        del rows
+        retained = len(fast_ids) * (q_bytes + 8) + sum(map(sys.getsizeof, fast_ids))
         if retained > _MATRIX_CACHE_MAX_BYTES:
-            return _UNCACHEABLE
-        blob = row["embedding"]
+            return gen, _UNCACHEABLE
+        return gen, _finish_matrix(fast_ids, joined, q_len, retained)
+    ids: list[str] = []
+    parts: list[bytes] = []
+    for item_id, blob in rows:
         if (
             isinstance(blob, bytes)
             and len(blob) == q_bytes
             and len(blob) >= _BINARY_BLOB_MIN_BYTES
             and not _looks_like_json(blob)
         ):
-            mat[n] = np.frombuffer(blob, dtype=np.float32)
+            parts.append(blob)
         else:
             # Same admission as _score_rows_numpy: decode, skip an empty one,
             # and leave a library holding another width to the reference path
@@ -964,20 +961,77 @@ def _build_matrix(store: Any, sql: str, params: list, q_len: int):
             if not item_vec:
                 continue
             if len(item_vec) != q_len:
-                return _UNCACHEABLE
-            mat[n] = np.asarray(item_vec, dtype=np.float32)
-            if not np.array_equal(mat[n].astype(np.float64), np.asarray(item_vec, dtype=np.float64)):
+                return gen, _UNCACHEABLE
+            as32 = np.asarray(item_vec, dtype=np.float32)
+            if not np.array_equal(as32.astype(np.float64), np.asarray(item_vec, dtype=np.float64)):
                 # A legacy JSON vector that float32 cannot hold exactly would
                 # score differently here; keep the reference path for it.
-                return _UNCACHEABLE
+                return gen, _UNCACHEABLE
+            parts.append(as32.tobytes())
         ids.append(item_id)
-        n += 1
     del rows
+    n = len(ids)
     if n == 0:
+        return gen, None
+    retained = n * (q_bytes + 8) + sum(map(sys.getsizeof, ids))
+    if retained > _MATRIX_CACHE_MAX_BYTES:
+        return gen, _UNCACHEABLE
+    return gen, _finish_matrix(ids, b"".join(parts), q_len, retained)
+
+
+def _join_packed(rows: list, q_bytes: int) -> tuple[list[str], bytes] | None:
+    """``(ids, all blobs joined)`` when every row is a packed vector of ``q_bytes``.
+
+    The common library is all packed float32 of one width, and for it the
+    per-row admission of :func:`_build_matrix` costs more than the scoring. Here
+    the widths are checked by one ``min`` over the lengths (the joined length is
+    the sum, so ``min == q_bytes`` holds only when every blob is exactly that
+    long) and the JSON sniff runs only on the rows whose first byte
+    :func:`_looks_like_json` would look past. ``None`` sends any other result
+    to the per-row loop, which admits exactly the same rows.
+    """
+    import numpy as np
+
+    if q_bytes < _BINARY_BLOB_MIN_BYTES:
         return None
-    mat = mat[:n]
+    ids, blobs = zip(*rows)
+    try:
+        joined = b"".join(blobs)
+    except TypeError:
+        return None  # a TEXT value: a legacy JSON vector
+    if len(joined) != len(blobs) * q_bytes or min(map(len, blobs)) != q_bytes:
+        return None
+    lead = np.frombuffer(joined, dtype=np.uint8)[::q_bytes]
+    json_leads = np.frombuffer(bytes(sorted(_JSON_LEAD_BYTES)), dtype=np.uint8)
+    for i in np.nonzero(np.isin(lead, json_leads))[0].tolist():
+        if not isinstance(blobs[i], bytes) or _parses_as_json_list(blobs[i]):
+            return None
+    return list(ids), joined
+
+
+def _parses_as_json_list(blob: bytes) -> bool:
+    """Whether :func:`_bytes_to_floats` would take ``blob`` as a JSON list.
+
+    A packed blob that merely starts like JSON fails the parse there and is
+    decoded as binary, which is the same float32 values this view holds. A JSON
+    list ends in ``]`` followed only by whitespace, and in every encoding
+    ``json.loads`` accepts those trail as ``]`` amid whitespace and NUL bytes, so
+    a blob whose last other byte is not ``]`` is dismissed without a parse.
+    """
+    if blob.rstrip(b" \t\n\r\x00")[-1:] != b"]" or not _looks_like_json(blob):
+        return False
+    try:
+        return isinstance(json.loads(blob), list)
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+        return False
+
+
+def _finish_matrix(ids: list[str], joined: bytes, q_len: int, retained: int):
+    import numpy as np
+
+    # The matrix is a read-only view of the one joined buffer.
+    mat = np.frombuffer(joined, dtype=np.float32).reshape(len(ids), q_len)
     norms = np.sqrt(np.einsum("ij,ij->i", mat, mat, dtype=np.float64))
-    mat.setflags(write=False)
     norms.setflags(write=False)
     return ids, mat, norms, retained
 

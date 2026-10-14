@@ -1217,6 +1217,65 @@ class KnowledgeStore:
             self.db.execute(stmt)
         self.db.commit()
 
+    #: Columns the vector leg's candidate query reads or filters on. A write that
+    #: touches none of them (a title or content edit, a job row) leaves every
+    #: cached vector matrix valid.
+    _VECTOR_ITEM_COLUMNS = "id, embedding, embedding_sig, status, source_id, namespace"
+
+    def _ensure_vector_generation(self) -> None:
+        """Keep ``vector_generation.gen`` changing with every vector-relevant write.
+
+        The vector leg caches its candidate matrix keyed on this value, read in
+        the same snapshot as the rows, so the cache follows the rows that feed it
+        rather than the database file: a write to an unrelated table keeps it,
+        and a write from any connection or process invalidates it. Each bump
+        stores a fresh ``random()`` instead of incrementing, so a library file
+        replaced by another (a restored copy, a new empty library) does not
+        repeat a value a cache already holds for different rows.
+        """
+        db = self.db
+        bump = "BEGIN UPDATE vector_generation SET gen = random() WHERE id = 1; END"
+        triggers = (
+            ("vector_gen_items_ins", "AFTER INSERT ON items"),
+            ("vector_gen_items_del", "AFTER DELETE ON items"),
+            ("vector_gen_items_upd", f"AFTER UPDATE OF {self._VECTOR_ITEM_COLUMNS} ON items"),
+            ("vector_gen_locations_ins", "AFTER INSERT ON source_locations"),
+            ("vector_gen_locations_del", "AFTER DELETE ON source_locations"),
+            ("vector_gen_locations_upd", "AFTER UPDATE OF item_id, source_id ON source_locations"),
+        )
+        # Every open runs this, and a write here would make each open wait on
+        # any writer in another process; once everything exists it only reads.
+        present = {
+            r[0]
+            for r in db.execute(
+                "SELECT name FROM sqlite_schema WHERE name = 'vector_generation' "
+                "OR (type = 'trigger' AND name LIKE 'vector_gen_%')"
+            ).fetchall()
+        }
+        if len(present) == len(triggers) + 1 and db.execute(
+            "SELECT 1 FROM vector_generation WHERE id = 1"
+        ).fetchone():
+            return
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS vector_generation ("
+            "id INTEGER PRIMARY KEY CHECK (id = 1), gen INTEGER NOT NULL)"
+        )
+        db.execute("INSERT OR IGNORE INTO vector_generation (id, gen) VALUES (1, random())")
+        for name, event in triggers:
+            db.execute(f"CREATE TRIGGER IF NOT EXISTS {name} {event} FOR EACH ROW {bump}")
+
+    def vector_generation(self) -> int | None:
+        """The current ``vector_generation.gen``, or ``None`` when this library has none.
+
+        A read-only store opened on a file no migrating open has touched yet has
+        no generation table; its caller must not cache on it.
+        """
+        try:
+            row = self.db.execute("SELECT gen FROM vector_generation WHERE id = 1").fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return None if row is None else int(row[0])
+
     def _migrate(self):
         """Add columns that may be missing in older databases."""
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(items)").fetchall()}
@@ -1267,6 +1326,7 @@ class KnowledgeStore:
         job_cols = {r[1] for r in self.db.execute("PRAGMA table_info(ingestion_jobs)").fetchall()}
         if "items_failed" not in job_cols:
             self.db.execute("ALTER TABLE ingestion_jobs ADD COLUMN items_failed INTEGER DEFAULT 0")
+        self._ensure_vector_generation()
         src_cols = {r[1] for r in self.db.execute("PRAGMA table_info(sources)").fetchall()}
         if "sync_status" not in src_cols:
             self.db.execute("ALTER TABLE sources ADD COLUMN sync_status TEXT DEFAULT 'pending'")
