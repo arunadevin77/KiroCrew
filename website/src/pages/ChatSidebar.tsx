@@ -1406,13 +1406,13 @@ function ChatSidebar({
              *  existing stopPropagation stays so the header click/drag
              *  handlers never see the press. */}
             <button type="button" data-testid={`col-${columnId}-folder-${folder.id}-new-chat`} className="text-muted hover:text-accent bg-transparent border-none cursor-pointer p-[2px]" title={i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })} aria-label={i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })}
-              onClick={e => { e.stopPropagation(); createChatInFolder(folder.id, { columnId, inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) }) }}
+              onClick={e => { e.stopPropagation(); createChatInFolder(folder.id, { columnId, inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) && 'foreground' }) }}
               onMouseDown={e => { e.stopPropagation(); if (e.button === 1 && onOpenSlotInNewTab) e.preventDefault() }}
               onAuxClick={onOpenSlotInNewTab ? (e => {
                 if (e.button !== 1) return
                 e.preventDefault()
                 e.stopPropagation()
-                createChatInFolder(folder.id, { columnId, inNewTab: true })
+                createChatInFolder(folder.id, { columnId, inNewTab: 'background' })
               }) : undefined}
               onKeyDown={e => { e.stopPropagation() }}>
               <MessageSquarePlus size={11} />
@@ -1440,9 +1440,9 @@ function ChatSidebar({
                 onAuxClick={onOpenSlotInNewTab ? (e => {
                   if (e.button !== 1) return
                   e.preventDefault()
-                  createChatInFolder(folder.id, { columnId, inNewTab: true })
+                  createChatInFolder(folder.id, { columnId, inNewTab: 'background' })
                 }) : undefined}
-                onClick={e => createChatInFolder(folder.id, { columnId, inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) })}
+                onClick={e => createChatInFolder(folder.id, { columnId, inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) && 'foreground' })}
                 title={i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })} aria-label={i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })}
                 className="w-full flex items-center gap-2.5 px-4 py-2 rounded-md text-[11px] text-muted hover:text-accent hover:bg-bg-hover transition-all bg-transparent border-none cursor-pointer text-left">
                 <span>{i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })}</span><MessageSquarePlus size={11} className="shrink-0 ml-auto" />
@@ -2117,18 +2117,19 @@ function ChatSidebar({
             </DropdownMenuContent>
           </DropdownMenu>
           {/* Same three-gesture contract as the header New button: plain click
-           *  creates and switches; Cmd/Ctrl-click and middle-click create the
-           *  session as a background TAB. Gated on `onOpenSlotInNewTab` --
-           *  embedded hosts have no tab strip, so the modifier is ignored. */}
+           *  creates and switches in the current tab; Cmd/Ctrl-click creates
+           *  the session in a NEW tab and switches to it; middle-click opens
+           *  it as a background tab. Gated on `onOpenSlotInNewTab` -- embedded
+           *  hosts have no tab strip, so the modifier is ignored. */}
           <button type="button" data-testid={`folder-new-chat-${folder.id}`} className="cursor-pointer p-[4px] rounded text-muted hover:text-accent hover:bg-bg-hover transition-all bg-transparent border-none" title={i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })} aria-label={i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })}
             onMouseDownCapture={onOpenSlotInNewTab ? (e => { if (e.button === 1) e.preventDefault() }) : undefined}
             onAuxClick={onOpenSlotInNewTab ? (e => {
               if (e.button !== 1) return
               e.preventDefault()
               e.stopPropagation()
-              createChatInFolder(folder.id, { inNewTab: true })
+              createChatInFolder(folder.id, { inNewTab: 'background' })
             }) : undefined}
-            onClick={e => { e.stopPropagation(); createChatInFolder(folder.id, { inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) }) }}><MessageSquarePlus size={12} /></button>
+            onClick={e => { e.stopPropagation(); createChatInFolder(folder.id, { inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) && 'foreground' }) }}><MessageSquarePlus size={12} /></button>
           {/* Third control: the conductor's own chat, on the row itself.
            *
            *  This is the one place in the sidebar over the two-controls-per-row
@@ -2462,9 +2463,9 @@ function ChatSidebar({
           onAuxClick={onOpenSlotInNewTab ? (e => {
             if (e.button !== 1) return
             e.preventDefault()
-            createChatInFolder(folder.id, { inNewTab: true })
+            createChatInFolder(folder.id, { inNewTab: 'background' })
           }) : undefined}
-          onClick={e => createChatInFolder(folder.id, { inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) })}
+          onClick={e => createChatInFolder(folder.id, { inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) && 'foreground' })}
           title={i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })} aria-label={i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })}
           className="w-full flex items-center gap-2.5 pl-3.5 pr-3 py-2 rounded-md text-[12px] text-muted hover:text-accent hover:bg-bg-hover transition-all bg-transparent border-none cursor-pointer text-left">
           <span>{i18nT('pages.chatSidebar.new_chat_in_name', { name: folder.name })}</span><MessageSquarePlus size={13} className="shrink-0 ml-auto" />
@@ -2686,9 +2687,11 @@ function ChatSidebar({
             <button
               disabled={creatingSlot}
               className={`mc-touch-hit-y flex items-center h-7 rounded-s-md cursor-pointer bg-transparent border-none text-accent-fg hover:bg-accent-hover active:scale-95 transition-all disabled:opacity-70 disabled:cursor-wait disabled:active:scale-100 ${compactHeader ? 'justify-center w-7' : 'gap-1.5 pl-2 pr-2.5 text-[12px] font-semibold'}`}
-              // Same three-gesture contract as a session row: plain click
-              // creates and switches; Cmd/Ctrl-click and middle-click create the
-              // session as a background TAB and leave the user where they are.
+              // Plain click creates and switches in the current tab.
+              // Cmd/Ctrl-click creates the session in a NEW tab beside the
+              // current one and switches to it, so the tab the user was on is
+              // kept. Middle-click opens it as a background tab and leaves the
+              // user where they are, as on a session row.
               // Both tab gestures are gated on `onOpenSlotInNewTab` — without a
               // tab strip (embedded hosts) there is nothing to open into, so the
               // modifier is ignored and the click stays an ordinary create.
@@ -2697,9 +2700,9 @@ function ChatSidebar({
               onAuxClick={onOpenSlotInNewTab ? (e => {
                 if (e.button !== 1 || creatingSlot) return
                 e.preventDefault()
-                createChatMutation.mutate({ inNewTab: true })
+                createChatMutation.mutate({ inNewTab: 'background' })
               }) : undefined}
-              onClick={e => { createChatMutation.mutate({ inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) }) }}
+              onClick={e => { createChatMutation.mutate({ inNewTab: !!onOpenSlotInNewTab && isOpenInTabModifierClick(e) && 'foreground' }) }}
               title={i18nT('pages.chatSidebar.new_chat')}
               aria-label={i18nT('pages.chatSidebar.new_chat_session')}
               aria-busy={creatingSlot}
