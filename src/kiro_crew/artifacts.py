@@ -2878,7 +2878,6 @@ class ArtifactStore:
 
     # Kept on the class for callers that parse a single meta.json block directly.
     _parse_publication = staticmethod(_records.parse_publication)
-    _parse_fork_metadata = staticmethod(_records.parse_fork_metadata)
     _parse_image_metadata = staticmethod(_records.parse_image_metadata)
 
     def _read_text(self, path: Path) -> str:
