@@ -7,6 +7,8 @@
  * The listbox rows are plain <button role="option">, so they are addressable
  * without a portal-aware query helper once the popup is open.
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import SearchableSelect, { type SearchableSelectOption } from '../components/SearchableSelect'
@@ -409,5 +411,31 @@ describe('SearchableSelect — per-option presentation', () => {
     await screen.findByRole('listbox')
     expect(screen.getByText('Hack')).toHaveStyle({ fontFamily: "'Hack', monospace" })
     expect(screen.getByText('0O1lI')).toHaveStyle({ fontFamily: "'Hack', monospace" })
+  })
+})
+
+describe('SearchableSelect — modal host-dialog scroll', () => {
+  it('threads the modal prop to the Radix Popover root', () => {
+    // Source-level pin: when modal={true}, the Popover must receive that prop
+    // so its own react-remove-scroll instance takes over from the host
+    // dialog's wheel lock. Without this, the host lock cancels wheel events
+    // over the portal and the list cannot scroll from a modal dialog caller
+    // (e.g. the crew-capabilities editor).
+    const src = readFileSync(join(__dirname, '..', 'components', 'SearchableSelect.tsx'), 'utf8')
+    expect(src).toContain('modal={modal}')
+  })
+
+  it('accepts modal={true} and still renders the trigger', () => {
+    render(
+      <SearchableSelect options={OPTS} value="" onChange={() => {}} aria-label="Timezone" modal />,
+    )
+    expect(screen.getByRole('button', { name: 'Timezone' })).toBeInTheDocument()
+  })
+
+  it('applies overscroll-contain to the inner list scroller', async () => {
+    render(<SearchableSelect options={OPTS} value="" onChange={() => {}} aria-label="Timezone" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Timezone' }))
+    const listbox = await screen.findByRole('listbox')
+    expect(listbox.className).toContain('overscroll-contain')
   })
 })

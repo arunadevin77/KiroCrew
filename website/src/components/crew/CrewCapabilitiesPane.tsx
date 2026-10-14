@@ -290,7 +290,7 @@ export default function CrewCapabilitiesPane({ member, members = [], hidden, onD
           </div>
           <div className="shrink-0 overflow-x-auto border-b border-border pb-2"><Tablist tabs={CATEGORIES.map(key => ({ key, label: t(CATEGORY_KEYS[key]) }))} value={category} onChange={setCategory} ariaLabel={t('crewCapabilities.title')} /></div>
           <fieldset disabled={!enabled || busy} className="min-w-0">
-            {category === 'mcpServers' && <SearchableSelect aria-label={t('crewCapabilities.connection')} triggerFallback={t('crewCapabilities.connection')} value="" disabled={!enabled || busy} options={view.connections.map(item => ({ value: item.id, label: item.label, disabled: item.managed, sublabel: item.managed ? t('crewCapabilities.managed') : undefined }))} onChange={id => changeRow({ section: 'mcpServers', id, action: 'set', connection_id: id })} />}
+            {category === 'mcpServers' && <SearchableSelect aria-label={t('crewCapabilities.connection')} triggerFallback={t('crewCapabilities.connection')} value="" disabled={!enabled || busy} options={view.connections.map(item => ({ value: item.id, label: item.label, disabled: item.managed, sublabel: item.managed ? t('crewCapabilities.managed') : undefined }))} onChange={id => changeRow({ section: 'mcpServers', id, action: 'set', connection_id: id })} modal />}
             {category === 'mcpServers' && <div className="mt-3 flex flex-col gap-2">
               <label className="text-[13px]">{t('crewCapabilityEditing.connectionName')}<Input value={connectionName} onChange={e => { setConnectionName(e.target.value); setPreview(null); setReviewedRequest(null) }} /></label>
               <Btn disabled={!connectionName.trim() || rows.some(row => row.section === 'mcpServers' && row.id === connectionName.trim())} onClick={() => {
@@ -298,7 +298,7 @@ export default function CrewCapabilitiesPane({ member, members = [], hidden, onD
                 setConnectionName('')
               }}>{t('crewCapabilityEditing.customConnection')}</Btn>
             </div>}
-            {category === 'skills' && <SearchableSelect aria-label={t('crewCapabilities.skill')} triggerFallback={t('crewCapabilities.skill')} value="" disabled={!enabled || busy} options={view.skills.map(item => ({ value: item.id, label: item.label }))} onChange={id => changeRow({ section: 'skills', id, action: 'set', value: true })} />}
+            {category === 'skills' && <SearchableSelect aria-label={t('crewCapabilities.skill')} triggerFallback={t('crewCapabilities.skill')} value="" disabled={!enabled || busy} options={view.skills.map(item => ({ value: item.id, label: item.label }))} onChange={id => changeRow({ section: 'skills', id, action: 'set', value: true })} modal />}
             {(category === 'tools' || category === 'autoApprove') && <div className="flex flex-col gap-2">
               <p className="text-[12px] text-muted">{t(category === 'tools' ? 'crewCapabilities.exposureHint' : 'crewCapabilities.approvalHint')}</p>
               {category === 'autoApprove' && <>

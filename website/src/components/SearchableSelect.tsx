@@ -85,6 +85,17 @@ export interface SearchableSelectProps {
   'aria-label'?: string
   /** Set on the trigger, so a note about the current value is read with the field. */
   'aria-describedby'?: string
+  /**
+   * Pass true when this selector renders INSIDE a Radix modal dialog (e.g. the
+   * crew-capabilities editor). The popup then mounts its own react-remove-scroll
+   * instance, which takes over the wheel lock from the host dialog's — without it
+   * the host lock cancels wheel events over this portal (outside the dialog's
+   * lock container and shards) and the list cannot scroll. Deliberately opt-in:
+   * on an ordinary page a modal popup would lock page scroll, swallow the first
+   * click on a neighbouring field, and aria-hide the rest of the page —
+   * regressions, not protections, when there is no host dialog to coexist with.
+   */
+  modal?: boolean
 }
 
 /** Row text style, from the option's font stack — the only styling a row exposes. */
@@ -115,6 +126,7 @@ export default function SearchableSelect({
   style,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
+  modal = false,
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false)
   const [filter, setFilter] = useState('')
@@ -186,6 +198,7 @@ export default function SearchableSelect({
     <Popover
       open={open}
       onOpenChange={o => { setOpen(o); if (!o) setFilter('') }}
+      modal={modal}
     >
       <PopoverTrigger
         ref={triggerRef}
@@ -216,9 +229,18 @@ export default function SearchableSelect({
         // keydown reaches window-level Escape handlers and closes the host
         // surface too — the fix mirrors ui/select.tsx's SelectContent.
         onEscapeKeyDown={e => e.stopPropagation()}
+        // Modal only: the focus trap is still live when closeToTrigger runs,
+        // so the deterministic focus return must happen at FocusScope teardown.
+        // Non-modal keeps Radix's own semantics — its hasInteractedOutside guard
+        // does NOT reclaim focus after an outside click, so the field the user
+        // clicked keeps the caret; overriding it in non-modal mode would yank
+        // focus back one macrotask after the click landed.
+        onCloseAutoFocus={modal ? e => { e.preventDefault(); triggerRef.current?.focus() } : undefined}
         // Exactly the trigger's width — see the note in ui/select.tsx's
         // SelectContent. No `min-w` floor: it would overhang the trigger.
-        className="w-[var(--radix-popover-trigger-width)] max-h-[300px] p-0 flex flex-col overflow-hidden"
+        // `min()` caps at the Radix-provided available height so the popup
+        // never overflows a short viewport (small phone, tight bottom-sheet).
+        className="w-[var(--radix-popover-trigger-width)] max-h-[min(300px,var(--radix-popover-content-available-height))] p-0 flex flex-col overflow-hidden"
       >
         <div className="p-2 border-b border-border flex items-center gap-2">
           <Search size={13} className="text-muted shrink-0" aria-hidden />
@@ -253,7 +275,7 @@ export default function SearchableSelect({
           // programmatically focusable so the interactive role is reachable.
           tabIndex={-1}
           onKeyDown={onListKeyDown}
-          className="flex-1 min-h-0 overflow-y-auto p-1"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1"
         >
           {action && (
             // Inside the list, but a `button` rather than an `option`: it commits
