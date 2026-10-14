@@ -1017,13 +1017,14 @@ def _session_touched_sensitive(messages: list[dict]) -> bool:
 
 
 class _CountClaim:
-    """One transcript's off-loop row count, held from claim until its thread is done."""
+    """One transcript's off-loop read, held from claim until its thread is done."""
 
     __slots__ = ("name", "reader")
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self.reader: asyncio.Future[tuple[int, int] | None] | None = None
+        #: The worker-thread read; the claim only needs to know when it is done.
+        self.reader: asyncio.Future[Any] | None = None
 
 
 class HistoryConsolidator:
@@ -1770,45 +1771,88 @@ class HistoryConsolidator:
             return
         if _persistence_disabled():
             return
-        total, unconsolidated = self._log.consolidation_counts(key)
-        if unconsolidated < 1:
+        # Idle expiry reaches this on the event loop long after the parsed
+        # transcript cache has dropped the entry, so the eligibility reads below
+        # are cold full parses. They run in _session_end_pass's worker thread;
+        # the loop only pays for a stat and a metadata-line read.
+        if not self._log._path(key).exists():
             return
         # This path consults no time-based throttle at all — every session expiry
         # for the same key fires a fresh consolidation — so the durable backoff
         # stands between a repeatedly failing span and one billed LLM turn per
-        # expiry. Checked here (as well as inside _consolidate()) so the skip is
-        # logged before a task is ever scheduled.
-        if not self.retry_eligible(key, message_count=total):
+        # expiry. A key inside its deadline is skipped here, before a task is
+        # scheduled; _session_end_pass re-checks with the counted total.
+        if self._inside_retry_deadline(key):
             self._logger.info(
                 "consolidate_session skipped for %s: consolidation retry backoff", key
             )
             return
-        # Short-circuit sensitive sessions before scheduling a task
-        messages = self._log._read_messages(key)
-        if _session_touched_sensitive(messages):
-            self._logger.info("consolidate_session skipped for %s: sensitive session", key)
+        # One off-loop read per transcript, shared with the idle sweep and the
+        # per-turn check. A read already in flight belongs to one of those or to
+        # an earlier session end; the idle sweep keeps the key tracked and
+        # consolidates its history once the read has finished.
+        claim = self._claim_count(key)
+        if claim is None:
+            self._logger.info("consolidate_session deferred for %s: transcript being read", key)
             return
-        self._running.add(key)
-        t = asyncio.create_task(self._consolidate(key, include_history=True))
-        self._tasks.add(t)
+        self._start_counted(claim, self._session_end_pass(key, claim))
 
-        def _on_done(
-            fut: asyncio.Task,  # type: ignore[type-arg]
-            k: str = key,
-        ) -> None:
-            self._tasks.discard(fut)
-            self._running.discard(k)
-            if fut.cancelled():
+    def _session_end_eligibility(self, key: str) -> tuple[int, int, bool]:
+        """Worker thread: ``(total, unconsolidated, sensitive)`` for *key*.
+
+        One cold parse at most: the sensitive scan reuses the entry the count
+        just published. ``sensitive`` is only computed when there is a tail.
+        """
+        total, unconsolidated = self._log.consolidation_counts(key)
+        if unconsolidated < 1:
+            return total, unconsolidated, False
+        return total, unconsolidated, _session_touched_sensitive(self._log._read_messages(key))
+
+    async def _session_end_pass(self, key: str, claim: _CountClaim) -> None:
+        """Check *key*'s eligibility off the loop, then run its history pass.
+
+        The read is shielded and *claim* covers it until the thread stops, as
+        in :meth:`_count_off_loop`.
+        """
+        try:
+            claim.reader = asyncio.ensure_future(
+                asyncio.to_thread(self._session_end_eligibility, key)
+            )
+            try:
+                total, unconsolidated, sensitive = await asyncio.shield(claim.reader)
+            except Exception:
+                self._logger.warning(
+                    "consolidate_session could not read %s; skipping", key, exc_info=True
+                )
                 return
-            exc = fut.exception()
-            if exc is None:
-                # A refusal is not a completed pass; leave the throttle unset.
-                if fut.result() is not _CONSOLIDATION_REFUSED:
-                    self._history_consolidated[k] = _time.time()
-            else:
-                self._logger.warning("consolidate_session failed for %s: %s", k, exc)
-
-        t.add_done_callback(_on_done)
+            if unconsolidated < 1:
+                return
+            # Re-checked after the await: another entry point may have claimed
+            # this transcript while the read ran.
+            if self._busy(key):
+                return
+            if not self.retry_eligible(key, message_count=total):
+                self._logger.info(
+                    "consolidate_session skipped for %s: consolidation retry backoff", key
+                )
+                return
+            if sensitive:
+                self._logger.info("consolidate_session skipped for %s: sensitive session", key)
+                return
+            # No await between the busy check above and this claim.
+            self._running.add(key)
+        finally:
+            self._release_count(claim)
+        try:
+            result = await self._consolidate(key, include_history=True)
+        except Exception as exc:
+            self._logger.warning("consolidate_session failed for %s: %s", key, exc)
+            return
+        finally:
+            self._running.discard(key)
+        # A refusal is not a completed pass; leave the throttle unset.
+        if result is not _CONSOLIDATION_REFUSED:
+            self._history_consolidated[key] = _time.time()
 
     async def consolidate_now(self, key: str) -> bool:
         """Consolidate a session synchronously (blocking), draining the tail.

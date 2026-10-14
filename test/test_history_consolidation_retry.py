@@ -702,10 +702,20 @@ async def test_consolidate_refuses_a_channel_thread_whose_map_entry_was_pruned(
         privacy_mode.reset()  # the fresh gateway's trackers start empty
         c = _make_consolidator(log, sessions=None)  # no map: the header must answer
         c._call_llm = AsyncMock(return_value={"history_entry": "x"})
+        real_consolidate = c._consolidate
+        outcomes: list[object] = []
+
+        async def _recording(*args, **kwargs):
+            outcomes.append(await real_consolidate(*args, **kwargs))
+            return outcomes[-1]
+
+        c._consolidate = _recording
         c.consolidate_session(live_key)
         tasks = list(c._tasks)
         assert len(tasks) == 1, "premise: the session-end hook scheduled one pass"
-        result = await asyncio.wait_for(tasks[0], 10)
+        await asyncio.wait_for(tasks[0], 10)
+        assert len(outcomes) == 1, "premise: the session-end hook ran one pass"
+        result = outcomes[0]
     finally:
         privacy_mode.reset()
 
@@ -2444,21 +2454,22 @@ class TestTheCapDoesNotOutliveTheSpanItMeasured:
         c = _make_consolidator(log)
         self._plant_capped(log)
 
-        c.consolidate_session(KEY)
-        assert not c._tasks, "a capped span with no growth still fired a turn"
+        with patch.object(c, "_call_llm", AsyncMock(return_value={"history_entry": "x"})) as spy:
+            c.consolidate_session(KEY)
+            await asyncio.gather(*list(c._tasks), return_exceptions=True)
+        assert spy.await_count == 0, "a capped span with no growth still fired a turn"
 
         with history_mod.allow_on_loop_persist():
             log.append(KEY, "user", "arrived after the cap")
 
         with patch.object(c, "_call_llm", AsyncMock(return_value={"history_entry": "recovered"})):
             c.consolidate_session(KEY)
-            assert c._tasks, (
-                "one failed abandon write left the session permanently unable to "
-                "consolidate anything it writes from now on"
-            )
             await asyncio.gather(*list(c._tasks), return_exceptions=True)
 
-        assert log.unconsolidated_count(KEY) == 0
+        assert log.unconsolidated_count(KEY) == 0, (
+            "one failed abandon write left the session permanently unable to "
+            "consolidate anything it writes from now on"
+        )
         assert "consolidation_attempts" not in log.get_metadata(KEY)
 
 
