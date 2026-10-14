@@ -3330,9 +3330,13 @@ env var overrides it.
     # uncapped glibc gives a busy thread its own 64 MiB arena heaps, and on a
     # many-core host those idle heaps were most of the gateway's RSS. In-process
     # so every launcher (service unit, pod, detached, live re-exec) gets it; an
-    # operator's MALLOC_ARENA_MAX wins. No-op off Linux/glibc.
+    # operator's MALLOC_ARENA_MAX wins. No-op off Linux/glibc. The cap only
+    # holds while this process is still single-threaded, so nothing that can
+    # start a thread may run above this call; test_malloc_arena_limit pins it.
+    # The outcome is logged once logging is configured below.
+    arena_cap = platform_compat.MallocArenaCap()
     if args.command == "gateway":
-        platform_compat.limit_malloc_arenas()
+        arena_cap = platform_compat.limit_malloc_arenas()
 
     # The mcp-* stdio servers run one per agent session, so a gateway hosts
     # dozens. If any import reaches numpy, OpenBLAS/OpenMP start one spinning
@@ -3416,6 +3420,7 @@ env var overrides it.
     # detach-spawned gateway needs double-write protection (stderr IS
     # gateway.log in that mode) — see _setup_cli_logging.
     _setup_cli_logging(args.command, args.verbose)
+    platform_compat.log_malloc_arena_cap(arena_cap)
 
     # No subcommand given (`kirocrew` with no args) — show banner + help and exit.
     # Without this guard, the `args.command.startswith("mcp-")` branch later
