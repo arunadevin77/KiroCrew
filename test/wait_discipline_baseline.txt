@@ -21,6 +21,7 @@
  1 metrics/test_provider.py
  1 metrics/test_provider_otlp_destinations.py
  1 overload_fakes.py
+ 1 slack_handler_helpers.py
  2 spawn_test_helpers.py
  1 test_abnormal_turn_usage_row_15013.py
  8 test_acp_client.py
@@ -376,7 +377,7 @@
  2 test_slack_gateway_coverage.py
  3 test_slack_gateway_cron_exec_coverage.py
  3 test_slack_gateway_more_coverage.py
- 3 test_slack_handler.py
+ 2 test_slack_handler.py
  2 test_slack_handler_composition_contract.py
  2 test_slack_handler_coverage.py
  1 test_slack_home_tab.py
