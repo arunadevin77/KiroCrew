@@ -6092,9 +6092,11 @@ def _pin_local_owner_gate(monkeypatch) -> None:
     ``test_member_memory_auth.py`` and ``test_dashboard_handlers_core_coverage.py``.
     Patched on its defining module, which the handler imports at call time.
     """
+    from kiro_crew.member_memory_auth import LocalOwnerProvenance
+
     monkeypatch.setattr(
-        "kiro_crew.member_memory_auth.local_owner_bootstrap_allowed",
-        lambda _request: True,
+        "kiro_crew.member_memory_auth.local_owner_bootstrap_provenance",
+        lambda _request: LocalOwnerProvenance(),
     )
 
 

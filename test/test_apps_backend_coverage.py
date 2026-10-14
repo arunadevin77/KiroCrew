@@ -535,6 +535,32 @@ class TestSpawnedBackendOwnsPid:
         monkeypatch.setattr(bmod, "_processes", {"app": self._live(11)})
         assert bmod.spawned_backend_owns_pid(11) is True
 
+    def test_the_owner_is_named_by_its_registry_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The attribution the token mint audits is the app the backend runs under."""
+        monkeypatch.setattr(
+            bmod,
+            "_processes",
+            {"first": self._live(11, "first"), "second": self._live(33, "second")},
+        )
+        monkeypatch.setattr(bmod.platform_compat, "get_ppid", lambda pid: {44: 33}.get(pid, 1))
+        assert bmod.spawned_backend_owner(11) == "first"
+        assert bmod.spawned_backend_owner(44) == "second"
+        assert bmod.spawned_backend_owner(22) is None
+
+    def test_no_owner_is_named_for_a_dead_or_adopted_record(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The name form answers on exactly the records the boolean form trusts."""
+        dead = AppProcess(
+            app_name="dead",
+            pid=11,
+            proc=SimpleNamespace(poll=lambda: 0),  # type: ignore[arg-type]
+        )
+        adopted = AppProcess(app_name="adopted", pid=22, proc=None, adopted_pids=[22])
+        monkeypatch.setattr(bmod, "_processes", {"dead": dead, "adopted": adopted})
+        assert bmod.spawned_backend_owner(11) is None
+        assert bmod.spawned_backend_owner(22) is None
+
     def test_a_launcher_descendant_is_owned(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``wrap_argv`` puts a sandbox launcher between us and the real server."""
         monkeypatch.setattr(bmod, "_processes", {"app": self._live(11)})

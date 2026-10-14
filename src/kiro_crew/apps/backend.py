@@ -1519,6 +1519,7 @@ if _typing.TYPE_CHECKING:
         _port_is_listening,
         _spawn_owns_listener,
         recorded_backend_port,
+        spawned_backend_owner,
         spawned_backend_owns_pid,
         unstopped_backend_port,
     )

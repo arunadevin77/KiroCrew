@@ -290,6 +290,7 @@ FROZEN_NAMES: tuple[str, ...] = (
     "signal_orphaned_spawn_group",
     "socket",
     "spawned_backend_names",
+    "spawned_backend_owner",
     "spawned_backend_owns_pid",
     "start_app_backend",
     "start_deferred_app_backends",

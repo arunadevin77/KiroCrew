@@ -3206,6 +3206,77 @@ class TestLocalToken:
         assert minted["extra"] == {"embed_parent_port": "5476"}
 
     @pytest.mark.asyncio
+    async def test_a_host_process_mint_is_audited_without_an_app(
+        self, monkeypatch, fake_sel, verified_owner_process
+    ) -> None:
+        """An ordinary host process is recorded with no app name."""
+        from kiro_crew import member_memory_auth as auth
+
+        monkeypatch.setattr("kiro_crew.dashboard.handlers.is_loopback", lambda _r: True)
+        monkeypatch.setattr(auth, "_gateway_spawned_app_backend", lambda _pid: None)
+        monkeypatch.setattr(core_mod, "generate_token", lambda *a, **k: "issued-value")
+        resp = await core_mod.api_token_local(
+            _req(app={"local_secret": "right"}, headers={"X-Local-Secret": "right"})
+        )
+        assert resp.status == 200
+        assert set(json.loads(resp.body)) == {"token", "expires_in"}
+        row = fake_sel.log_api_access.call_args.kwargs
+        assert row["operation"] == "token.local"
+        assert row["outcome"] == "success"
+        assert row["resources"] == "token-issued"
+
+    @pytest.mark.asyncio
+    async def test_an_app_backend_mint_is_attributed_to_the_app(
+        self, monkeypatch, fake_sel
+    ) -> None:
+        """The owning app's name reaches the audit row, not the response or the token.
+
+        The registry knows which app's backend owns the calling pid; the gate
+        hands that name through so forensics can tell which app minted an owner
+        token. The token itself carries no ``app`` claim: an app-scoped token is
+        refused by the owner-dashboard check, which would withdraw the capability
+        the admission grants.
+        """
+        from kiro_crew import member_memory_auth as auth
+
+        peer_pid = 4242
+        monkeypatch.setattr("kiro_crew.dashboard.handlers.is_loopback", lambda _r: True)
+        monkeypatch.setattr(auth, "_request_peer_pid", lambda _request: peer_pid)
+        monkeypatch.setattr(
+            auth.platform_compat,
+            "get_process_start_id",
+            lambda pid: "synthetic-start" if pid == peer_pid else None,
+        )
+        monkeypatch.setattr(auth, "_verified_host_process", lambda _pid: False)
+        monkeypatch.setattr(
+            auth,
+            "_gateway_spawned_app_backend",
+            lambda pid: "demo-app" if pid == peer_pid else None,
+        )
+        minted: dict = {}
+
+        def _generate(owner, ttl_seconds=0, extra=None):
+            minted.update({"owner": owner, "extra": extra})
+            return "issued-value"
+
+        monkeypatch.setattr(core_mod, "generate_token", _generate)
+        resp = await core_mod.api_token_local(
+            _req(
+                app={"local_secret": "right", "state": SimpleNamespace(owner_id="owner-1")},
+                headers={"X-Local-Secret": "right"},
+            )
+        )
+        assert resp.status == 200
+        body = json.loads(resp.body)
+        assert body == {"token": "issued-value", "expires_in": core_mod.MAX_SESSION_TTL_SECS}
+        assert minted["owner"] == "owner-1"
+        assert minted["extra"] is None
+        row = fake_sel.log_api_access.call_args.kwargs
+        assert row["operation"] == "token.local"
+        assert row["outcome"] == "success"
+        assert row["resources"] == "token-issued app=demo-app"
+
+    @pytest.mark.asyncio
     async def test_unix_peer_match_with_valid_secret_issues_a_token(
         self, monkeypatch, fake_sel, verified_owner_process
     ) -> None:
@@ -3353,7 +3424,7 @@ class TestLocalToken:
         monkeypatch.setattr("kiro_crew.dashboard.handlers.is_loopback", lambda _r: True)
         monkeypatch.setattr(auth, "sys", SimpleNamespace(platform="linux"))
         monkeypatch.setattr(auth, "_request_peer_pid", lambda _request: peer_pid)
-        monkeypatch.setattr(auth, "_gateway_spawned_app_backend", lambda _pid: False)
+        monkeypatch.setattr(auth, "_gateway_spawned_app_backend", lambda _pid: None)
         monkeypatch.setattr(
             auth.platform_compat, "get_process_start_id", lambda _pid: "synthetic-start"
         )

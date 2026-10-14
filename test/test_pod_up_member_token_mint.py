@@ -52,8 +52,8 @@ def linux_owner_gate(monkeypatch):
         pc, "process_namespaces_match", lambda pid, other: namespaces[pid] == namespaces[other]
     )
     # No app backend is registered on the pod gateway, so _gateway_spawned_app_backend
-    # answers False for every pid -- the pod gateway spawned no app backend.
-    monkeypatch.setattr(auth, "_gateway_spawned_app_backend", lambda pid: False)
+    # names no app for any pid -- the pod gateway spawned no app backend.
+    monkeypatch.setattr(auth, "_gateway_spawned_app_backend", lambda pid: None)
 
     def _request_for(pid):
         monkeypatch.setattr(auth, "_request_peer_pid", lambda request: pid)

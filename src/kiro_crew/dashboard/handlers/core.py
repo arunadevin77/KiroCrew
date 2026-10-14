@@ -3931,9 +3931,10 @@ async def api_token_local(request: web.Request) -> web.Response:
             resources="invalid-secret",
         )
         return web.json_response({"error": "invalid secret", "code": "invalid_secret"}, status=403)
-    from kiro_crew.member_memory_auth import local_owner_bootstrap_allowed
+    from kiro_crew.member_memory_auth import local_owner_bootstrap_provenance
 
-    if not await asyncio.to_thread(local_owner_bootstrap_allowed, request):
+    provenance = await asyncio.to_thread(local_owner_bootstrap_provenance, request)
+    if provenance is None:
         _sel().log_api_access(
             caller="local-process",
             operation="token.local",
@@ -3966,12 +3967,21 @@ async def api_token_local(request: web.Request) -> web.Response:
     if epp.isdigit() and 1 <= int(epp) <= 65535:
         extra["embed_parent_port"] = str(int(epp))
     token = generate_token(owner_id or "local-app", ttl_seconds=ttl, extra=extra or None)
+    # The provenance gate knows WHICH app's backend owns the calling process, so
+    # the audit row names it: a token minted by an app is attributed to that app,
+    # and any later per-app scoping of this grant is a data change here rather
+    # than a protocol change. The name goes into the record only, not into the
+    # token: an ``app``-scoped token is refused by ``is_owner_dashboard_request``,
+    # so a claim would withdraw the capability. The registry key is kebab-case
+    # (``apps.manifest.app_name_error``), so it cannot carry a space or ``=`` and
+    # cannot forge a second field in the row.
+    app_name = provenance.app
     _sel().log_api_access(
         caller=request.remote or "unknown",
         operation="token.local",
         outcome="success",
         source="local-bootstrap",
-        resources="token-issued",
+        resources=f"token-issued app={app_name}" if app_name else "token-issued",
     )
     return web.json_response({"token": token, "expires_in": ttl})
 
