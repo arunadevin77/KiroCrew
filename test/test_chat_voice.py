@@ -14,6 +14,8 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
 
+from kiro_crew.testing.wait import await_until
+
 
 def _make_voice_app(state):
     from kiro_crew.dashboard.chat_voice import (
@@ -1500,10 +1502,10 @@ class TestSynthesizeProviderRouting:
                 client.post("/api/voice/synthesize", json={**identity, "text": "Hello"})
             )
             try:
-                await asyncio.wait_for(started.wait(), 5)
+                await await_until(started, what="voice synthesis started")
                 response = await client.post("/api/voice/cancel", json=identity)
                 assert response.status == 200
-                await asyncio.wait_for(stopped.wait(), 5)
+                await await_until(stopped, what="voice synthesis stopped")
                 assert not app[chat_voice._VOICE_REQUESTS].tasks
                 state.broadcast_ws.assert_not_called()
             finally:

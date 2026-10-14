@@ -100,7 +100,6 @@
  4 test_chat_send_echo_scope.py
  1 test_chat_slot_switch_atomicity.py
  1 test_chat_title.py
- 2 test_chat_voice.py
  1 test_ci_pytest_progress.py
  1 test_cli.py
  1 test_cli_manifest_signature.py
