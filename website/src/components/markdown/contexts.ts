@@ -217,3 +217,14 @@ export type SidebarFolderActions = {
   folders?: readonly { id: string; name: string; parent_id?: string }[]
 }
 export const SidebarFolderCtx = createContext<SidebarFolderActions>({})
+
+/**
+ * Where a paragraph's closed-session notices render: a block the paragraph
+ * draws right after itself, so a notice about a link or chip in mid-sentence
+ * sits BELOW the paragraph instead of inside it, and the sentence reads whole.
+ * `null` where no paragraph provides one (a tight list item, a heading, a
+ * table cell): the notice then renders inline, after the reference's own
+ * trailing punctuation. Provided by `MdParagraph` for a paragraph that holds a
+ * session reference, and only then, so other paragraphs keep their exact DOM.
+ */
+export const ParagraphNoticeSlotCtx = createContext<HTMLElement | null>(null)

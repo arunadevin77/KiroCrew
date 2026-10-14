@@ -60,8 +60,9 @@ const LIST_STYLE_TYPE: Record<string, string> = {
   I: 'upper-roman',
 }
 
-/** Generate a URL-safe slug from heading children (handles nested elements) */
-function textOf(node: React.ReactNode): string {
+/** The plain text of a React subtree (handles nested elements): heading slugs,
+ *  and the visible label of a link. */
+export function textOf(node: React.ReactNode): string {
   if (typeof node === 'string') return node
   if (Array.isArray(node)) return node.map(textOf).join('')
   if (isElementWithProps(node)) {

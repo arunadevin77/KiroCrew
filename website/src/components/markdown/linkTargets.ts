@@ -175,6 +175,15 @@ type ClosedAnswer = ClosedRow | null | 'failed'
  */
 const closedProbes = new Map<string, Promise<ClosedAnswer>>()
 const closedAnswers = new Map<string, ClosedRow | null>()
+/** Every mounted `useSessionChip`, told when a shared answer turns definite
+ *  "gone", so each reference to that key drops together with the one whose
+ *  click or retry found it deleted, notice included. */
+const closedListeners = new Set<() => void>()
+function markGone(key: string): void {
+  closedProbes.delete(key)
+  closedAnswers.set(key, null)
+  for (const notify of closedListeners) notify()
+}
 
 function probeClosed(key: string, lookup: (key: string) => Promise<ClosedRow | null>, fresh = false): Promise<ClosedAnswer> {
   let pending = fresh ? undefined : closedProbes.get(key)
@@ -192,6 +201,7 @@ function probeClosed(key: string, lookup: (key: string) => Promise<ClosedRow | n
 export function resetClosedSessionProbes(): void {
   closedProbes.clear()
   closedAnswers.clear()
+  closedListeners.clear()
 }
 
 /**
@@ -210,6 +220,8 @@ export type ClosedSessionFailure = {
 
 export type SessionChipTarget = {
   key: string
+  /** The session as the reader should see it named: its title when a probe has
+   *  one, else the caller's visible label for it, else the raw key. */
   title: string
   open: (key: string) => void
   /** Present only while the closed session's check is failing. */
@@ -230,14 +242,25 @@ export type SessionChipTarget = {
  * click shows the inline notice instead of opening, and the notice's retry asks
  * again. `open` is the activation the caller must use, since the kinds of target
  * act differently.
+ *
+ * `label` is what the reader sees standing for the session (a link's prose
+ * text). A failed target has no probed title to name itself by, so its `title`
+ * falls back to the label before the raw key: the notice then says "Couldn't
+ * open the old run" rather than quoting a key the reader never saw.
  */
-export function useSessionChip(raw: string | null, actions: SessionActions): SessionChipTarget | null {
+export function useSessionChip(raw: string | null, actions: SessionActions, label?: string): SessionChipTarget | null {
   const closed = useContext(ClosedSessionCtx)
   const live = raw ? resolveSessionChip(raw, actions) : null
   const full = !live && raw && closed.lookup && closed.open && actions.onSessionOpen && actions.sessions ? sessionKeyFrom(raw) : null
   const candidate = full && full !== actions.activeSession && !actions.sessions!.has(full) ? full : null
   const [answer, setAnswer] = useState<{ for: string; value: ClosedAnswer } | null>(null)
   const [notice, setNotice] = useState<{ for: string; busy: boolean } | null>(null)
+  const [, bump] = useState(0)
+  useEffect(() => {
+    const notify = () => bump(n => n + 1)
+    closedListeners.add(notify)
+    return () => { closedListeners.delete(notify) }
+  }, [])
   useEffect(() => {
     if (!candidate || !closed.lookup || closedAnswers.has(candidate)) return
     let current = true
@@ -252,11 +275,16 @@ export function useSessionChip(raw: string | null, actions: SessionActions): Ses
     return { ...live, open: actions.onSessionOpen! }
   }
   if (!candidate || !closed.open || !closed.lookup) return null
-  // This chip's own failed check wins; otherwise the shared answer, then ours.
+  // A definite "gone" in the shared answer wins over everything: the session
+  // is deleted, whichever reference found out. Then this chip's own failed
+  // check; otherwise the shared answer, then ours.
   const mine = answer?.for === candidate ? answer : null
-  const value: ClosedAnswer = mine?.value === 'failed'
-    ? 'failed'
-    : closedAnswers.has(candidate) ? closedAnswers.get(candidate)! : mine ? mine.value : null
+  const shared = closedAnswers.has(candidate) ? closedAnswers.get(candidate)! : undefined
+  const value: ClosedAnswer = shared === null
+    ? null
+    : mine?.value === 'failed'
+      ? 'failed'
+      : shared !== undefined ? shared : mine ? mine.value : null
   if (value === null) return null
   const openClosed = closed.open
   const lookup = closed.lookup
@@ -268,8 +296,7 @@ export function useSessionChip(raw: string | null, actions: SessionActions): Ses
   const openRow = (row: ClosedRow) => {
     void openClosed(row).then((outcome) => {
       if (outcome === 'gone') {
-        closedProbes.delete(key)
-        closedAnswers.set(key, null)
+        markGone(key)
         setNotice(null)
         settle(null)
       } else if (outcome === 'failed') {
@@ -283,6 +310,9 @@ export function useSessionChip(raw: string | null, actions: SessionActions): Ses
     })
   }
   if (value !== 'failed') return { key, title: value.title, open: () => openRow(value) }
+  // Named for the reader: the title a probe found (a click-time check can fail
+  // after the background probe answered), else the visible label, else the key.
+  const title = closedAnswers.get(key)?.title ?? (label?.trim() || key)
   const shown = notice?.for === key
   const failure: ClosedSessionFailure = {
     shown,
@@ -291,13 +321,18 @@ export function useSessionChip(raw: string | null, actions: SessionActions): Ses
       setNotice({ for: key, busy: true })
       void probeClosed(key, lookup, true).then((next) => {
         if (next === 'failed') { setNotice({ for: key, busy: false }); return }
+        // A definite "no such session" on retry: the session was deleted since
+        // the reader first saw the link. Hand it to the page's `open` under the
+        // name the reader knows, so its check says "was deleted" the way a click
+        // on a deleted chip does, and the target then drops through `gone`.
+        // Dropping here silently would leave Try again answered by nothing.
+        if (next === null) { openRow({ key, title }); return }
         settle(next)
-        if (next === null) { setNotice(null); return }
         openRow(next)
       })
     },
   }
-  return { key, title: key, open: () => setNotice({ for: key, busy: false }), failure }
+  return { key, title, open: () => setNotice({ for: key, busy: false }), failure }
 }
 
 /**

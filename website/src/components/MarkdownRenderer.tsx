@@ -73,6 +73,7 @@ import {
   LinkOverrideCtx,
   LinkUnfurlCtx,
   MdSourceCtx,
+  ParagraphNoticeSlotCtx,
   PathActionCtx,
   PathProbeCtx,
   ReadOnlyCodeCtx,
@@ -86,7 +87,7 @@ import { artifactSlugFromHref, classifySessionLink, soleLinkInParagraph, useSess
 import { dashboardPreviewRef, dashboardPreviewTargetFromHref } from '../utils/dashboardPreview'
 import { ClosedSessionNotice } from './markdown/ClosedSessionNotice'
 import { activatePath, usePathResolution } from './markdown/pathReferences'
-import { ELEMENT_OVERRIDES, sp } from './markdown/elements'
+import { ELEMENT_OVERRIDES, sp, textOf } from './markdown/elements'
 import { InlineCode } from './markdown/InlineCode'
 import { MarkdownTable } from './markdown/MarkdownTable'
 import { ImgWithFallback } from './markdown/ImgWithFallback'
@@ -94,7 +95,7 @@ import { DeferredMedia, MdSourceEl } from './markdown/remoteMedia'
 import { MermaidBlock } from './markdown/MermaidBlock'
 import { isGenericLang, looksLikeMarkdown } from './markdown/markdownSniff'
 import { ALLOWED_TAGS, VERBATIM_CONTENT_TAGS, rehypeSanitize, remarkVerbatimUnknownTags } from './markdown/sanitize'
-import { rehypeMarkFencedCode, rehypeSourcepos, rehypeStableRootKeys, rehypeUnwrapBlocks, remarkSoftBreaks } from './markdown/treeTransforms'
+import { holdsSessionRef, rehypeMarkFencedCode, rehypeSessionRefPunctuation, rehypeSourcepos, rehypeStableRootKeys, rehypeUnwrapBlocks, remarkSoftBreaks, SESSION_REF_TRAILING } from './markdown/treeTransforms'
 import { GLOW_TAIL_CHARS, REVEAL_IDLE_SETTLE_MS, rehypeStreamingCaret, rehypeStreamingGlow, rehypeStreamingReveal } from './markdown/streamingEffects'
 import { closeCjkAutolinkBoundaries, encodeRefusedLinkDestinations } from './markdown/linkBoundaryRepair'
 import { guideUntrusted } from '../guide/guideMarkers'
@@ -118,7 +119,13 @@ const URL_SCHEME_RE = /^[a-z][a-z\d+.-]*:/i
  * Extracted from the inline `MD_COMPONENTS.a` so it can read context (it is a
  * component, so hooks are legal here). Only ALLOWED_PROTOCOLS links (editor
  * schemes) keep in-place navigation; everything else opens in a new tab. */
-function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAnchorElement> & ExtraProps) {
+type MdAnchorProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & ExtraProps & {
+  /** Sentence punctuation that followed a session link, moved here by
+   *  `rehypeSessionRefPunctuation` so it renders before the inline notice. */
+  [SESSION_REF_TRAILING]?: string
+}
+
+function MdAnchor({ node, href, children, [SESSION_REF_TRAILING]: trailing }: MdAnchorProps) {
   const override = useContext(LinkOverrideCtx)
   const probeEnabled = useContext(PathProbeCtx)
   const actions = useContext(PathActionCtx)
@@ -201,7 +208,9 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
   // A closed session the page can resume counts too (`useSessionChip`): its
   // background probe can turn a `?sid=` the open roster does not hold into a live,
   // resumable chip, so this — not the roster alone — is the switchable case.
-  const sessionLink = useSessionChip(sessionHrefSid, sessionActions)
+  // The label is what the reader sees standing for the session, so a notice
+  // about it says "the old run" rather than a key the prose never showed.
+  const sessionLink = useSessionChip(sessionHrefSid, sessionActions, sessionHrefSid ? textOf(children) : undefined)
   // ONE classification drives the hover text, so the anchor never resolves the
   // key a second time of its own — a second copy drifts, and that drift is the
   // false "not open" tooltip (#18036). `classifySessionLink` reports `not-open`
@@ -293,11 +302,15 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
   // re-enter the normal inline-code ladder (click-to-copy, and for session-key
   // or confirmed-path shaped spans, their usual chips), pinned by the
   // rejected-destinations tests.
-  if (!href) return <span {...sp(node)}>{children}</span>
-  if (claimed) return <>{claimed}</>
+  // Punctuation `rehypeSessionRefPunctuation` lifted off the text after a
+  // session link is the sentence's own; whatever this anchor renders as, it
+  // goes back right after it, so no branch can swallow a full stop.
+  const keep = (el: React.ReactElement) => (trailing ? <>{el}{trailing}</> : el)
+  if (!href) return keep(<span {...sp(node)}>{children}</span>)
+  if (claimed) return keep(<>{claimed}</>)
   if (source?.provider === 'jira') {
     const jira = source
-    return (
+    return keep(
       <span className="group inline-flex max-w-full items-center gap-1 rounded-md border border-border/60 bg-accent/10 px-1.5 py-px align-baseline text-[13px] mc-md-ref-chip transition-colors hover:border-border hover:bg-accent/20 focus-within:border-border">
         <a
           href={jira.url}
@@ -309,14 +322,14 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
           <JiraLogo size={12} className="shrink-0" />
           <span className="truncate max-w-[24ch]">{`${jira.repo}-${jira.number}`}</span>
         </a>
-      </span>
+      </span>,
     )
   }
   const forgeLabel = source ? forgeChipLabel(source) : null
   if (source && forgeLabel) {
     const forgeMeta = sourceProviderMeta(source.provider)
     const ForgeIcon = forgeMeta.icon
-    return (
+    return keep(
       <span className="group inline-flex max-w-full items-center gap-1 rounded-md border border-border/60 bg-accent/10 px-1.5 py-px align-baseline text-[13px] mc-md-ref-chip transition-colors hover:border-border hover:bg-accent/20 focus-within:border-border">
         <a
           href={href}
@@ -337,14 +350,14 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
                 : <GitPullRequest className="lucide-inline shrink-0" />}
           <span className="truncate max-w-[32ch]">{forgeLabel}</span>
         </a>
-      </span>
+      </span>,
     )
   }
   if (target && meta) {
-    return (
+    return keep(
       <LinkChip meta={meta} href={target}>
         <InsideLinkCtx.Provider value={linkKind}>{children}</InsideLinkCtx.Provider>
-      </LinkChip>
+      </LinkChip>,
     )
   }
   let ext = false
@@ -398,7 +411,11 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
         <span className="sr-only">{` (${i18nT('components.markdownRenderer.session_closed_link_disabled')})`}</span>
       )}
     </a>
-    <ClosedSessionNotice failure={sessionLink?.failure} name={sessionLink?.key ?? ''} />
+    {/* The sentence's own punctuation, before the notice: "See the old run."
+        keeps its full stop beside the link, and the notice follows the
+        sentence instead of splitting it. */}
+    {trailing}
+    <ClosedSessionNotice failure={sessionLink?.failure} name={sessionLink?.title ?? ''} />
     {reveal.error && (
       <ErrorNotice variant="inline" className="ml-1.5 align-baseline" message={reveal.error} askAgent onDismiss={reveal.clear} testId="md-link-reveal-error" />
     )}
@@ -461,7 +478,26 @@ function MdParagraph({ node, children }: React.HTMLAttributes<HTMLParagraphEleme
     )
   }
   if (unfurl && meta) return <LinkCard meta={meta} href={unfurl} />
+  // A paragraph holding a session reference draws a slot right after itself,
+  // where that reference's closed-session notice renders (`ClosedSessionNotice`
+  // portals into it). Below the paragraph, the notice leaves the sentence whole
+  // whether the reference ends it or sits mid-sentence. Only such a paragraph
+  // gets the slot, so every other paragraph keeps its exact DOM.
+  if (holdsSessionRef(node)) return <ParagraphWithNoticeSlot node={node}>{children}</ParagraphWithNoticeSlot>
   return <p {...sp(node)} className="my-1 leading-6">{children}</p>
+}
+
+function ParagraphWithNoticeSlot({ node, children }: { node?: HastElement; children?: React.ReactNode }) {
+  // State, not a ref: the slot element must exist before a notice can portal
+  // into it, and the provider's value has to change once it does.
+  const [slot, setSlot] = useState<HTMLElement | null>(null)
+  return (
+    <ParagraphNoticeSlotCtx.Provider value={slot}>
+      <p {...sp(node)} className="my-1 leading-6">{children}</p>
+      {/* A `div` so the notices stack as blocks; empty, it takes no height. */}
+      <div ref={setSlot} data-paragraph-notices="" />
+    </ParagraphNoticeSlotCtx.Provider>
+  )
 }
 
 /**
@@ -607,12 +643,14 @@ const REMARK_PLUGINS: PluggableList = [
 // `rehypeBoundRawDepth` sits ahead of `rehypeRaw`: raw HTML that would nest
 // past the depth bound is downgraded to text before rehype-raw's recursive
 // hast conversion can overflow on it.
-const REHYPE_PLUGINS: PluggableList = [rehypeBoundRawDepth, [rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeMarkFencedCode, rehypeUnwrapBlocks, rehypeSanitize, rehypeKatex]
+// `rehypeSessionRefPunctuation` runs after the sanitizer so the marker it
+// stamps is the only one a session reference can carry into `MdAnchor` / `InlineCode`.
+const REHYPE_PLUGINS: PluggableList = [rehypeBoundRawDepth, [rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeMarkFencedCode, rehypeUnwrapBlocks, rehypeSanitize, rehypeSessionRefPunctuation, rehypeKatex]
 
 // User-message variant: base remark chain plus soft-break → hard-break.
 const REMARK_PLUGINS_WITH_BREAKS: PluggableList = [...REMARK_PLUGINS, remarkSoftBreaks]
 
-const REHYPE_PLUGINS_WITH_SOURCEPOS: PluggableList = [rehypeBoundRawDepth, [rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeMarkFencedCode, rehypeUnwrapBlocks, rehypeSanitize, rehypeKatex, rehypeSourcepos]
+const REHYPE_PLUGINS_WITH_SOURCEPOS: PluggableList = [rehypeBoundRawDepth, [rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeMarkFencedCode, rehypeUnwrapBlocks, rehypeSanitize, rehypeSessionRefPunctuation, rehypeKatex, rehypeSourcepos]
 // NOTE: remark plugin config is shared via REMARK_PLUGINS above (singleDollarTextMath:
 // false). The sourcepos variant only differs in the rehype chain.
 
