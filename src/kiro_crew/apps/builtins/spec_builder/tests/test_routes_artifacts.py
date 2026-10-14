@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import re
 import time
 
@@ -32,6 +33,30 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa:
     _spec_identity,
     _state_for,
 )
+
+# ── handlers offload filesystem work; delete tears down the slot ─────────────
+
+
+def test_collect_spec_documents_returns_the_detail_bundle(tmp_path):
+    """The bundled collector produces phase, docs, state and task metadata."""
+
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "requirements.md").write_text("# reqs")
+    (spec_dir / "design.md").write_text("# design")
+    (spec_dir / ".spec-state.json").write_text(json.dumps({"blocking": "waiting on you"}))
+
+    phase, files, state, meta = routes._collect_spec_documents(spec_dir)
+    assert phase == "design"  # newest present phase file wins
+    assert files["requirements.md"] == "# reqs"
+    assert state is not None and state["blocking"] == "waiting on you"
+    # The hash is of the file AS STORED because it binds a phase approval to the
+    # exact document reviewed.
+    assert meta["docs"]["requirements.md"]["hash"] == routes._sha256_text("# reqs")
+    assert set(meta["docs"]["requirements.md"]) == {"hash"}
+    # No tasks.md here, so the list is empty rather than absent.
+    assert meta["tasks"] == [] and meta["task_progress"] == {"done": 0, "total": 0}
+
 
 # ── direct authority over the artifacts ──────────────────────────────────────
 # Before these endpoints the user could only ASK the agent to change anything:

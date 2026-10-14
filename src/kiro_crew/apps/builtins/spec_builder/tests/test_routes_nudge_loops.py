@@ -9,16 +9,161 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from kiro_crew.apps.builtins.spec_builder.tests.routes_facade import routes
+
 # _never_touch_the_real_state is an autouse fixture: pytest finds it by the name bound here.
 from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa: F401
     _never_touch_the_real_state,
+    _redirect_state,
 )
 from kiro_crew.testing.wait import async_wait_until
+
+# ── abort cleanup spares replacements; status is served reconciled ───────────
+
+
+@pytest.mark.asyncio
+async def test_stale_executing_status_settles_back_to_planning(tmp_path, monkeypatch):
+    """The reported defect: the nudge loop is CAPPED, and when it runs out of
+    cycles the service deactivates it without telling this app — so `executing`
+    stayed in the index forever and the UI showed 'building' plus a Pause button
+    for a run that had already finished."""
+    _redirect_state(monkeypatch, tmp_path)
+    spec_dir = tmp_path / "wd" / ".kiro" / "specs" / "done"
+    routes._save_index(
+        {
+            "done": {
+                "spec_dir": str(spec_dir),
+                "working_dir": str(tmp_path / "wd"),
+                "status": "executing",
+            }
+        }
+    )
+    meta = routes._load_index()["done"]
+
+    class _Idle:
+        running = False
+
+    # No loop at all (the capped loop was removed) -> settles.
+    monkeypatch.setattr(routes, "_autonudge_instance", lambda: None)
+    assert await routes._effective_status("done", meta, _Idle()) == "planning"
+    assert routes._load_index()["done"]["status"] == "planning", "status not persisted"
+
+
+@pytest.mark.asyncio
+async def test_live_execution_is_not_settled(tmp_path, monkeypatch):
+    """Non-vacuous: an execution whose loop is still active must keep reporting
+    executing, and a deactivated loop must not."""
+    _redirect_state(monkeypatch, tmp_path)
+    routes._save_index({"live": {"spec_dir": "/s/live", "status": "executing"}})
+    meta = routes._load_index()["live"]
+
+    class _Idle:
+        running = False
+
+    class _Loop:
+        def __init__(self, active):
+            self.id = "l1"
+            self.active = active
+
+    def _svc(active):
+        class _Svc:
+            def get_by_slot(self, key):
+                return _Loop(active)
+
+        return lambda: _Svc()
+
+    monkeypatch.setattr(routes, "_autonudge_instance", _svc(True))
+    assert await routes._effective_status("live", meta, _Idle()) == "executing"
+    assert routes._load_index()["live"]["status"] == "executing"
+
+    monkeypatch.setattr(routes, "_autonudge_instance", _svc(False))
+    assert await routes._effective_status("live", meta, _Idle()) == "planning"
+
+
+@pytest.mark.asyncio
+async def test_running_turn_keeps_executing(tmp_path, monkeypatch):
+    """A single dispatched turn with no loop (the degraded path) still counts as
+    executing while the slot is actually running."""
+    _redirect_state(monkeypatch, tmp_path)
+    routes._save_index({"one": {"spec_dir": "/s/one", "status": "executing"}})
+    meta = routes._load_index()["one"]
+    monkeypatch.setattr(routes, "_autonudge_instance", lambda: None)
+
+    class _Busy:
+        running = True
+
+    assert await routes._effective_status("one", meta, _Busy()) == "executing"
+
+
+def test_status_is_served_reconciled_not_raw():
+    """Source guard: both read endpoints must serve the reconciled status."""
+
+    for handler in (routes._handle_list, routes._handle_get):
+        src = inspect.getsource(handler)
+        assert "_effective_status(" in src, f"{handler.__name__} serves the raw status"
+        assert 'meta.get("status", "planning")' not in src
+
+
+# ── cancelled persistence cannot be overtaken ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cancelled_persistence_cannot_be_overtaken(tmp_path):
+    """The reported inversion, in my own round-24 change: run_in_executor hands
+    back a future whose worker keeps writing after cancellation, so bailing out on
+    CancelledError released the service lock mid-write. A later add() could then
+    acquire the lock and persist FIRST, leaving the older payload to land last and
+    erase the new loop across a restart. The drain keeps the lock until the write
+    settles."""
+    from kiro_crew import autonudge as an
+
+    svc = an.AutoNudgeService(base_dir=tmp_path)
+    doomed = await svc.add(slot_key="dashboard:a", message="a", idle_secs=60, max_cycles=1)
+
+    order: list[str] = []
+    started = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    real_write = svc._write_state
+
+    def _slow_write(payload):
+        order.append("write-start")
+        loop.call_soon_threadsafe(started.set)
+        # A wedge backstop, not an automatic successful release of the writer.
+        if not release.wait(10):
+            raise TimeoutError("test did not release the persistence worker")
+        real_write(payload)
+        order.append("write-done")
+
+    svc._write_state = _slow_write  # type: ignore[method-assign]
+
+    remover = asyncio.create_task(svc.remove(doomed.id))
+    try:
+        # Removal has asynchronous prerequisites before persistence. Cancelling
+        # during those is not cancellation of an in-flight write.
+        await asyncio.wait_for(started.wait(), 10)
+        remover.cancel()
+        await asyncio.sleep(0)  # deliver cancellation, without guessing elapsed time
+
+        # The lock must still be held: a competing writer cannot get in yet.
+        assert svc._lock.locked(), "service lock released while the write was in flight"
+        assert not remover.done(), "cancellation did not wait for the persistence worker"
+    finally:
+        release.set()
+        try:
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait_for(remover, 10)
+        finally:
+            svc._cancel_timer(doomed.id)
+
+    assert order == ["write-start", "write-done"], order
+    assert remover.cancelled()  # cancellation still propagates after the drain
 
 
 @pytest.fixture

@@ -32,6 +32,792 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa:
 )
 from kiro_crew.testing.wait import async_wait_until
 
+
+def _stage_identity(path: Path) -> dict[str, int]:
+    """Serialize the inode identity captured with a duplicate reservation."""
+    info = path.stat()
+    return {"stage_dev": info.st_dev, "stage_ino": info.st_ino}
+
+
+# ── stale-index writes (concurrent delete resurrects a spec) ─────────────────
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="atomic no-replace directory publication is unavailable",
+)
+def test_duplicate_publication_never_replaces_a_destination_created_concurrently(
+    tmp_path, monkeypatch
+):
+    """The destination's creation and the publish syscall are one arbitration.
+
+    An existence check followed by ordinary rename loses this race on POSIX:
+    rename replaces an empty directory, including its identity and metadata.
+    """
+    stage = tmp_path / ".copy.stage"
+    stage.mkdir()
+    (stage / "requirements.md").write_text("# staged")
+    target = tmp_path / "copy"
+    target_identity: list[tuple[int, int]] = []
+    real_rename = routes.rename_noreplace
+
+    def _writer_wins_before_the_syscall(*args, **kwargs):
+        target.mkdir(mode=0o700)
+        stat = target.stat()
+        target_identity.append((stat.st_dev, stat.st_ino))
+        return real_rename(*args, **kwargs)
+
+    monkeypatch.setattr(routes, "rename_noreplace", _writer_wins_before_the_syscall)
+
+    assert routes._publish_staged_copy(stage, target) == "conflict"
+    after = target.stat()
+    assert (after.st_dev, after.st_ino) == target_identity[0]
+    assert stage.is_dir(), "the losing staged copy replaced the concurrent destination"
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PIN_DIR,
+    reason="descriptor-pinned duplicate writes are unavailable",
+)
+def test_duplicate_doc_creation_refuses_an_ancestor_swapped_after_validation(tmp_path, monkeypatch):
+    """The opened directory, not its raceable pathname, owns authorization."""
+    project = tmp_path / "project"
+    spec_dir = project / "copy"
+    spec_dir.mkdir(parents=True)
+    external_parent = tmp_path / "external"
+    external_spec = external_parent / "copy"
+    external_spec.mkdir(parents=True)
+    original_project = tmp_path / "original-project"
+    real_verified = routes._verified_spec_dir
+    swapped = False
+
+    def _verify_then_swap(path):
+        nonlocal swapped
+        verified = real_verified(path)
+        if path == spec_dir and verified is not None and not swapped:
+            project.rename(original_project)
+            project.symlink_to(external_parent, target_is_directory=True)
+            swapped = True
+        return verified
+
+    monkeypatch.setattr(routes, "_verified_spec_dir", _verify_then_swap)
+
+    result, identity = routes._create_spec_doc(spec_dir, "requirements.md", "# copied")
+
+    assert result == "unsafe_dir"
+    assert identity is None
+    assert not (external_spec / "requirements.md").exists()
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PIN_DIR,
+    reason="descriptor-pinned duplicate cleanup is unavailable",
+)
+def test_duplicate_rollback_refuses_an_ancestor_swapped_after_validation(tmp_path, monkeypatch):
+    """A redirected path cannot make rollback unlink an external matching inode."""
+    project = tmp_path / "project"
+    spec_dir = project / "copy"
+    spec_dir.mkdir(parents=True)
+    external_parent = tmp_path / "external"
+    external_spec = external_parent / "copy"
+    external_spec.mkdir(parents=True)
+    external_doc = external_spec / "requirements.md"
+    external_doc.write_text("# external")
+    stat = external_doc.stat()
+    identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+    original_project = tmp_path / "original-project"
+    real_verified = routes._verified_spec_dir
+    swapped = False
+
+    def _verify_then_swap(path):
+        nonlocal swapped
+        verified = real_verified(path)
+        if path == spec_dir and verified is not None and not swapped:
+            project.rename(original_project)
+            project.symlink_to(external_parent, target_is_directory=True)
+            swapped = True
+        return verified
+
+    monkeypatch.setattr(routes, "_verified_spec_dir", _verify_then_swap)
+
+    routes._rollback_staged_docs(spec_dir, {"requirements.md": identity})
+
+    assert external_doc.read_text() == "# external"
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PIN_DIR,
+    reason="descriptor-pinned duplicate cleanup is unavailable",
+)
+def test_duplicate_cleanup_leaves_the_empty_stage_instead_of_racing_replacement(tmp_path):
+    """POSIX has no inode-bound rmdir, so safe cleanup stops at an empty stage."""
+    stage = tmp_path / ".copy.duplicate-deadbeef"
+    stage.mkdir()
+
+    routes._rollback_staged_docs(stage, {})
+
+    assert stage.is_dir()
+    assert not any(stage.iterdir())
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PIN_DIR,
+    reason="descriptor-pinned duplicate staging is unavailable",
+)
+def test_duplicate_marker_failure_does_not_remove_a_redirected_stage(tmp_path, monkeypatch):
+    """Marker unwind cannot follow a swapped ancestor into an external tree."""
+    project = tmp_path / "project"
+    project.mkdir()
+    external_parent = tmp_path / "external"
+    external_parent.mkdir()
+    token = "d" * 32
+    stage = project / f".copy.duplicate-{token}"
+    external_stage = external_parent / stage.name
+    external_stage.mkdir()
+    original_project = tmp_path / "original-project"
+
+    def _swap_then_refuse(_stage_fd, _duplicate_token):
+        project.rename(original_project)
+        project.symlink_to(external_parent, target_is_directory=True)
+        return False
+
+    monkeypatch.setattr(routes, "_write_duplicate_marker_at", _swap_then_refuse)
+
+    result = routes._create_duplicate_stage(stage, token)
+
+    assert result == "write_failed"
+    assert external_stage.is_dir()
+    assert (original_project / stage.name).is_dir()
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate publication requires atomic no-replace directory publication",
+)
+def test_duplicate_write_failure_retains_provenance_until_documents_are_rolled_back(
+    tmp_path, monkeypatch
+):
+    """Failure cleanup cannot create markerless staged-document residue."""
+    token = "d" * 32
+    stage = tmp_path / f".copy.duplicate-{token}"
+    target = tmp_path / "copy"
+    assert routes._create_duplicate_stage(stage, token) == ""
+    real_create = routes._create_spec_doc
+    calls = 0
+
+    def _fail_second(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return "write_failed", None
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(routes, "_create_spec_doc", _fail_second)
+    result, created = routes._write_and_publish_duplicate(
+        stage,
+        target,
+        {"requirements.md": "# copied", "design.md": "# fails"},
+        token,
+    )
+
+    assert result == "write_failed"
+    assert routes._duplicate_marker_matches(stage, token)
+    assert routes._rollback_staged_docs(stage, created) is True
+    assert routes._duplicate_marker_matches(stage, token)
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate publication requires atomic no-replace directory publication",
+)
+def test_duplicate_fsyncs_staged_directory_entries_before_publication(tmp_path, monkeypatch):
+    """A durable rename cannot expose child entries that were never persisted."""
+    token = "d" * 32
+    stage = tmp_path / f".copy.duplicate-{token}"
+    target = tmp_path / "copy"
+    assert routes._create_duplicate_stage(stage, token) == ""
+    stage_stat = stage.stat()
+    stage_identity = (stage_stat.st_dev, stage_stat.st_ino)
+    stage_synced = False
+    real_fsync = routes.os.fsync
+
+    def _record_stage_fsync(fd):
+        nonlocal stage_synced
+        current = os.fstat(fd)
+        if (current.st_dev, current.st_ino) == stage_identity:
+            stage_synced = True
+        return real_fsync(fd)
+
+    monkeypatch.setattr(routes.os, "fsync", _record_stage_fsync)
+
+    result, _created = routes._write_and_publish_duplicate(
+        stage, target, {"requirements.md": "# copied"}, token
+    )
+
+    assert result == ""
+    assert stage_synced
+    assert (target / "requirements.md").read_text() == "# copied"
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate publication requires atomic no-replace directory publication",
+)
+def test_duplicate_refuses_a_stage_replaced_at_the_publication_boundary(tmp_path, monkeypatch):
+    """The renamed directory must be the descriptor-pinned transaction stage."""
+    token = "d" * 32
+    stage = tmp_path / f".copy.duplicate-{token}"
+    displaced_stage = tmp_path / ".displaced-transaction"
+    target = tmp_path / "copy"
+    assert routes._create_duplicate_stage(stage, token) == ""
+    real_publish = routes._publish_staged_copy
+
+    def _replace_then_publish(stage_dir, target_dir):
+        stage_dir.rename(displaced_stage)
+        stage_dir.mkdir()
+        (stage_dir / "requirements.md").write_text("# attacker payload")
+        return real_publish(stage_dir, target_dir)
+
+    monkeypatch.setattr(routes, "_publish_staged_copy", _replace_then_publish)
+
+    result, _created = routes._write_and_publish_duplicate(
+        stage, target, {"requirements.md": "# intended payload"}, token
+    )
+
+    assert result == "identity_mismatch"
+    assert (target / "requirements.md").read_text() == "# attacker payload"
+    assert (displaced_stage / "requirements.md").read_text() == "# intended payload"
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate publication requires atomic no-replace directory publication",
+)
+def test_duplicate_refuses_a_stage_replaced_before_document_creation(tmp_path, monkeypatch):
+    """Copied documents are written only through the reservation's stage inode."""
+    token = "d" * 32
+    stage = tmp_path / f".copy.duplicate-{token}"
+    displaced_stage = tmp_path / ".displaced-transaction"
+    target = tmp_path / "copy"
+    assert routes._create_duplicate_stage(stage, token) == ""
+    expected_identity = routes._duplicate_stage_identity(stage, token)
+    assert expected_identity is not None
+    real_create = routes._create_spec_doc
+
+    def _replace_then_create(*args, **kwargs):
+        stage.rename(displaced_stage)
+        stage.mkdir()
+        (stage / routes._DUPLICATE_MARKER).write_text(token)
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(routes, "_create_spec_doc", _replace_then_create)
+
+    result, _created = routes._write_and_publish_duplicate(
+        stage,
+        target,
+        {"requirements.md": "# intended payload"},
+        token,
+        expected_identity,
+    )
+
+    assert result == "identity_mismatch"
+    assert not (stage / "requirements.md").exists()
+    assert (displaced_stage / routes._DUPLICATE_MARKER).read_text() == token
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate recovery requires atomic no-replace directory publication",
+)
+def test_startup_recovery_publishes_a_complete_duplicate_staged_by_a_dead_process(
+    tmp_path, monkeypatch
+):
+    """A crash after all documents are staged must not hide the copy forever.
+
+    Custom ``base_path`` roots are not part of folder discovery, so dropping the
+    reservation would strand the files while their name remains unusable.
+    """
+    _redirect_state(monkeypatch, tmp_path)
+    token = "d" * 32
+    target = tmp_path / "custom" / "copy"
+    stage = target.parent / f".copy.duplicate-{token}"
+    stage.mkdir(parents=True)
+    (stage / routes._DUPLICATE_MARKER).write_text(token)
+    documents = {"requirements.md": "# copied", "design.md": ""}
+    for fname, text in documents.items():
+        (stage / fname).write_text(text)
+    routes._save_index(
+        {
+            "copy": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(target),
+                "status": "planning",
+                "slot_key": "spec-builder-copy-deadbeef",
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(stage),
+                    **_stage_identity(stage),
+                    "documents": {
+                        fname: routes._sha256_text(text) for fname, text in documents.items()
+                    },
+                },
+            }
+        }
+    )
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert "copy" in loaded
+    assert routes._DUPLICATING not in loaded["copy"]
+    assert not stage.exists()
+    assert (target / "requirements.md").read_text() == "# copied"
+    assert (target / "design.md").read_text() == ""
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate recovery requires atomic no-replace directory publication",
+)
+def test_startup_recovery_refuses_a_stage_replaced_at_the_publication_boundary(
+    tmp_path, monkeypatch
+):
+    """Recovery must publish the inode whose marker and manifest it validated."""
+    _redirect_state(monkeypatch, tmp_path)
+    token = "d" * 32
+    target = tmp_path / "custom" / "copy"
+    stage = target.parent / f".copy.duplicate-{token}"
+    displaced_stage = target.parent / ".displaced-transaction"
+    stage.mkdir(parents=True)
+    (stage / routes._DUPLICATE_MARKER).write_text(token)
+    (stage / "requirements.md").write_text("# intended payload")
+    identity = _stage_identity(stage)
+    routes._save_index(
+        {
+            "copy": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(target),
+                "status": "planning",
+                "slot_key": "spec-builder-copy-deadbeef",
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(stage),
+                    **identity,
+                    "documents": {
+                        "requirements.md": routes._sha256_text("# intended payload"),
+                    },
+                },
+            }
+        }
+    )
+    real_publish = routes._publish_staged_copy
+
+    def _replace_then_publish(stage_dir, target_dir):
+        stage_dir.rename(displaced_stage)
+        stage_dir.mkdir()
+        (stage_dir / "requirements.md").write_text("# attacker payload")
+        return real_publish(stage_dir, target_dir)
+
+    monkeypatch.setattr(routes, "_publish_staged_copy", _replace_then_publish)
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert "copy" not in loaded
+    assert (target / "requirements.md").read_text() == "# attacker payload"
+    assert (displaced_stage / "requirements.md").read_text() == "# intended payload"
+
+
+def test_startup_recovery_does_not_adopt_a_competing_target_after_identity_check_crash(
+    tmp_path, monkeypatch
+):
+    """An ambiguous post-rename crash remains reserved instead of adopting files."""
+    _redirect_state(monkeypatch, tmp_path)
+    token = "d" * 32
+    target = tmp_path / "custom" / "copy"
+    stage = target.parent / f".copy.duplicate-{token}"
+    displaced_stage = target.parent / ".displaced-transaction"
+    stage.mkdir(parents=True)
+    (stage / routes._DUPLICATE_MARKER).write_text(token)
+    (stage / "requirements.md").write_text("# intended payload")
+    identity = _stage_identity(stage)
+    stage.rename(displaced_stage)
+    target.mkdir()
+    (target / "requirements.md").write_text("# attacker payload")
+    routes._save_index(
+        {
+            "copy": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(target),
+                "status": "planning",
+                "slot_key": "spec-builder-copy-deadbeef",
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(stage),
+                    **identity,
+                    "documents": {
+                        "requirements.md": routes._sha256_text("# intended payload"),
+                    },
+                },
+            }
+        }
+    )
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert routes._DUPLICATING in loaded["copy"]
+    assert (target / "requirements.md").read_text() == "# attacker payload"
+    assert (displaced_stage / routes._DUPLICATE_MARKER).read_text() == token
+
+
+def test_startup_recovery_preserves_a_spec_with_unproven_duplicate_metadata(tmp_path, monkeypatch):
+    """Untrusted reservation metadata is not proof that the entry is disposable."""
+    _redirect_state(monkeypatch, tmp_path)
+    spec_dir = tmp_path / "custom" / "real-spec"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "requirements.md").write_text("# keep me")
+    token = "d" * 32
+    routes._save_index(
+        {
+            "real-spec": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(spec_dir),
+                "status": "planning",
+                "slot_key": "spec-builder-real-spec-deadbeef",
+                "approvals": {"requirements": {"hash": "a" * 64}},
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(spec_dir.parent / f".real-spec.duplicate-{token}"),
+                    "documents": {
+                        "requirements.md": routes._sha256_text("# keep me"),
+                    },
+                },
+            }
+        }
+    )
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert "real-spec" in loaded
+    assert routes._DUPLICATING not in loaded["real-spec"]
+    assert loaded["real-spec"]["approvals"] == {"requirements": {"hash": "a" * 64}}
+    assert (spec_dir / "requirements.md").read_text() == "# keep me"
+
+
+def test_startup_recovery_preserves_an_unproven_reservation_with_no_files(tmp_path, monkeypatch):
+    """Well-shaped metadata alone cannot prove that recovery may delete a spec."""
+    _redirect_state(monkeypatch, tmp_path)
+    token = "d" * 32
+    target = tmp_path / "offline" / "copy"
+    stage = target.parent / f".copy.duplicate-{token}"
+    approvals = {"requirements": {"hash": "a" * 64}}
+    routes._save_index(
+        {
+            "copy": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(target),
+                "status": "planning",
+                "slot_key": "spec-builder-copy-deadbeef",
+                "approvals": approvals,
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(stage),
+                    "documents": {
+                        "requirements.md": routes._sha256_text("# copied"),
+                    },
+                },
+            }
+        }
+    )
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert "copy" in loaded
+    assert routes._DUPLICATING not in loaded["copy"]
+    assert loaded["copy"]["approvals"] == approvals
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate recovery requires atomic no-replace directory publication",
+)
+@pytest.mark.parametrize("target_exists_before_recovery", [False, True])
+def test_startup_recovery_discards_duplicate_when_an_external_target_wins(
+    tmp_path, monkeypatch, target_exists_before_recovery
+):
+    """A proven duplicate must not adopt a competing writer's target files."""
+    _redirect_state(monkeypatch, tmp_path)
+    token = "d" * 32
+    target = tmp_path / "custom" / "copy"
+    stage = target.parent / f".copy.duplicate-{token}"
+    stage.mkdir(parents=True)
+    (stage / routes._DUPLICATE_MARKER).write_text(token)
+    (stage / "requirements.md").write_text("# copied")
+    if target_exists_before_recovery:
+        target.mkdir()
+        (target / "requirements.md").write_text("# external")
+    routes._save_index(
+        {
+            "copy": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(target),
+                "status": "planning",
+                "slot_key": "spec-builder-copy-deadbeef",
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(stage),
+                    **_stage_identity(stage),
+                    "documents": {
+                        "requirements.md": routes._sha256_text("# copied"),
+                    },
+                },
+            }
+        }
+    )
+
+    def _concurrent_writer_wins(stage_dir, target_dir):
+        assert not target_exists_before_recovery
+        target_dir.mkdir()
+        (target_dir / "requirements.md").write_text("# external")
+        return "conflict"
+
+    monkeypatch.setattr(routes, "_publish_staged_copy", _concurrent_writer_wins)
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert "copy" not in loaded
+    assert (target / "requirements.md").read_text() == "# external"
+    assert stage.is_dir()
+    assert not any(stage.iterdir())
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate recovery requires descriptor-pinned cleanup",
+)
+@pytest.mark.parametrize("external_target", [False, True])
+def test_startup_recovery_cleanup_stays_on_the_proven_stage_inode(
+    tmp_path, monkeypatch, external_target
+):
+    """Cleanup cannot unlink files from a replacement at the reserved stage name."""
+    _redirect_state(monkeypatch, tmp_path)
+    token = "d" * 32
+    target = tmp_path / "custom" / "copy"
+    stage = target.parent / f".copy.duplicate-{token}"
+    displaced_stage = target.parent / ".displaced-transaction"
+    stage.mkdir(parents=True)
+    (stage / routes._DUPLICATE_MARKER).write_text(token)
+    (stage / "requirements.md").write_text("# copied")
+    if external_target:
+        target.mkdir()
+        (target / "requirements.md").write_text("# external")
+    documents = {"requirements.md": routes._sha256_text("# copied")}
+    if not external_target:
+        documents["design.md"] = routes._sha256_text("# missing")
+    routes._save_index(
+        {
+            "copy": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(target),
+                "status": "planning",
+                "slot_key": "spec-builder-copy-deadbeef",
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(stage),
+                    **_stage_identity(stage),
+                    "documents": documents,
+                },
+            }
+        }
+    )
+    real_clear = routes._clear_duplicate_stage_documents_at
+
+    def _replace_then_clear(dir_fd, marker_token, manifest):
+        stage.rename(displaced_stage)
+        stage.mkdir()
+        (stage / "requirements.md").write_text("# unrelated")
+        return real_clear(dir_fd, marker_token, manifest)
+
+    monkeypatch.setattr(routes, "_clear_duplicate_stage_documents_at", _replace_then_clear)
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert "copy" not in loaded
+    assert (stage / "requirements.md").read_text() == "# unrelated"
+    assert not (displaced_stage / "requirements.md").exists()
+    assert (displaced_stage / routes._DUPLICATE_MARKER).read_text() == token
+    if external_target:
+        assert (target / "requirements.md").read_text() == "# external"
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate recovery requires atomic no-replace directory publication",
+)
+def test_startup_recovery_keeps_a_duplicate_published_by_a_dead_process(tmp_path, monkeypatch):
+    """The exact post-rename/pre-index crash window keeps the visible copy."""
+    _redirect_state(monkeypatch, tmp_path)
+    token = "d" * 32
+    target = tmp_path / "custom" / "copy"
+    target.mkdir(parents=True)
+    (target / routes._DUPLICATE_MARKER).write_text(token)
+    (target / "requirements.md").write_text("# copied")
+    stage = target.parent / f".copy.duplicate-{token}"
+    routes._save_index(
+        {
+            "copy": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(target),
+                "status": "planning",
+                "slot_key": "spec-builder-copy-deadbeef",
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(stage),
+                    **_stage_identity(target),
+                    "documents": {
+                        "requirements.md": routes._sha256_text("# copied"),
+                    },
+                },
+            }
+        }
+    )
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert "copy" in loaded
+    assert routes._DUPLICATING not in loaded["copy"]
+    assert (target / "requirements.md").read_text() == "# copied"
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate recovery requires atomic no-replace directory publication",
+)
+def test_startup_recovery_discards_an_incomplete_duplicate_stage_from_a_dead_process(
+    tmp_path, monkeypatch
+):
+    """A marker-provenanced partial stage is transaction residue, not user data."""
+    _redirect_state(monkeypatch, tmp_path)
+    token = "d" * 32
+    target = tmp_path / "custom" / "copy"
+    stage = target.parent / f".copy.duplicate-{token}"
+    stage.mkdir(parents=True)
+    (stage / routes._DUPLICATE_MARKER).write_text(token)
+    (stage / "requirements.md").write_text("# only the first document landed")
+    documents = {
+        "requirements.md": routes._sha256_text("# only the first document landed"),
+        "design.md": routes._sha256_text("# never written"),
+    }
+    routes._save_index(
+        {
+            "copy": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(target),
+                "status": "planning",
+                "slot_key": "spec-builder-copy-deadbeef",
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(stage),
+                    **_stage_identity(stage),
+                    "documents": documents,
+                },
+            }
+        }
+    )
+
+    real_save = routes._save_index
+
+    def _assert_cleanup_order(index):
+        if "copy" not in index:
+            assert routes._duplicate_marker_matches(stage, token)
+            assert not (stage / "requirements.md").exists()
+        real_save(index)
+
+    monkeypatch.setattr(routes, "_save_index", _assert_cleanup_order)
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert "copy" not in loaded
+    assert stage.is_dir()
+    assert not any(stage.iterdir()), "the abandoned transaction left hidden copied documents"
+
+
+@pytest.mark.skipif(
+    not routes._CAN_PUBLISH_DIR_NOREPLACE,
+    reason="duplicate recovery requires descriptor-pinned cleanup",
+)
+@pytest.mark.parametrize("external_target", [False, True])
+def test_startup_recovery_preserves_a_mismatched_staged_document(
+    tmp_path, monkeypatch, external_target
+):
+    """A marker proves the stage directory, not ownership of replaced files."""
+    _redirect_state(monkeypatch, tmp_path)
+    token = "d" * 32
+    target = tmp_path / "custom" / "copy"
+    stage = target.parent / f".copy.duplicate-{token}"
+    stage.mkdir(parents=True)
+    (stage / routes._DUPLICATE_MARKER).write_text(token)
+    moved_file = tmp_path / "user-requirements.md"
+    moved_file.write_text("# user file moved into the abandoned stage")
+    moved_file.replace(stage / "requirements.md")
+    if external_target:
+        target.mkdir()
+        (target / "requirements.md").write_text("# external target")
+    routes._save_index(
+        {
+            "copy": {
+                "working_dir": str(tmp_path),
+                "spec_dir": str(target),
+                "status": "planning",
+                "slot_key": "spec-builder-copy-deadbeef",
+                routes._DUPLICATING: {
+                    "owner": "1234:deadbeef",
+                    "at": 1.0,
+                    "token": token,
+                    "stage_dir": str(stage),
+                    **_stage_identity(stage),
+                    "documents": {
+                        "requirements.md": routes._sha256_text("# copied"),
+                    },
+                },
+            }
+        }
+    )
+
+    routes._recover_abandoned_reservations()
+    loaded = routes._load_index()
+
+    assert routes._DUPLICATING in loaded["copy"]
+    assert (stage / "requirements.md").read_text() == "# user file moved into the abandoned stage"
+    if external_target:
+        assert (target / "requirements.md").read_text() == "# external target"
+
+
 # ── gap 1: documents are reviewable through their redacted rendering ─────────
 
 

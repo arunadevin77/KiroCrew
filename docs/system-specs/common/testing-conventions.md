@@ -3968,7 +3968,7 @@ test for a bug -- and when the owner turns out to be a pool, fix the pool.
   `test_subagent_force_stop_audit.py` read `outcome == "refused"` where they assert the
   failed-kill wording -- three reds in one round, green in four. An autouse conftest reset
   now clears both tables on both sides of every test.
-- **A wall-clock barrier as a race detector.** `spec_builder/tests/test_routes.py`'s
+- **A wall-clock barrier as a race detector.** `spec_builder/tests/test_routes_delete.py`'s
   tombstone race parked both writers on a `threading.Barrier(3, timeout=10)`, but once the
   first holds `_INDEX_LOCK` the second can never reach the barrier, so the CORRECT code
   paid the full 10 s `BrokenBarrierError` every run and told pass from fail by elapsed

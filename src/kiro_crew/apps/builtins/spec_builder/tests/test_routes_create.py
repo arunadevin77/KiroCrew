@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import os
 import types
 from pathlib import Path
 
 import pytest
 
-from kiro_crew.apps.builtins.spec_builder.tests.routes_facade import routes
+from kiro_crew.apps.builtins.spec_builder.tests.routes_facade import routes, routes_source
 
 # _never_touch_the_real_state is an autouse fixture: pytest finds it by the name bound here.
 from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa: F401
@@ -26,6 +27,454 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa:
     _never_touch_the_real_state,
     _redirect_state,
 )
+
+# ── symlink containment, state normalization, create pre-checks ──────────────
+#
+# One test group per finding, so a regression names the finding it re-opens.
+
+
+# (4) create must not silently adopt/overwrite an existing spec
+
+
+@pytest.mark.asyncio
+async def test_create_refuses_existing_spec_files(tmp_path, monkeypatch):
+    """An existing .kiro/specs/<name> with Kiro markdown returns 409."""
+    project = tmp_path / "proj"
+    existing = project / ".kiro" / "specs" / "already"
+    existing.mkdir(parents=True)
+    (existing / "requirements.md").write_text("# pre-existing")
+
+    async with _make_client(monkeypatch, tmp_path) as client:
+        resp = await client.post(
+            f"{_BASE}/specs",
+            json={"name": "already", "working_dir": str(project), "spec_type": "feature"},
+        )
+        assert resp.status == 409
+        assert "import_existing" in (await resp.json())["error"]
+        # The pre-existing file is untouched.
+        assert (existing / "requirements.md").read_text() == "# pre-existing"
+
+
+# ── foreign-slot refusal; the seed prompt is self-contained ──────────────────
+
+
+def test_seed_prompt_is_self_contained_and_type_aware():
+    """The reported gap: the seed told the agent to "follow the `spec-workflow`
+    skill exactly", but builtin apps are not run through bridges.register_app
+    (that path symlinks from ~/.kiro/crew/apps/<name>/, which a wheel-shipped
+    builtin has no copy of), so the skill is not on the agent's skill path. It
+    also listed all three documents for every spec type, contradicting `quick`."""
+    spec_dir = Path("/w/.kiro/specs/thing")
+
+    quick = routes._seed_prompt("quick", "thing", spec_dir, "/w", "make it fast")
+    assert "spec-workflow" not in quick, "seed still points at an unavailable skill"
+    assert (
+        "design.md" not in quick.split("Do NOT write design.md")[0]
+    ), "quick spec is still told to write design.md"
+    assert "Do NOT write design.md" in quick
+    assert str(spec_dir / "requirements.md") in quick
+    assert str(spec_dir / "tasks.md") in quick
+
+    feature = routes._seed_prompt("feature", "thing", spec_dir, "/w", "")
+    for f in ("requirements.md", "design.md", "tasks.md"):
+        assert str(spec_dir / f) in feature, f"feature spec omits {f}"
+
+    bug = routes._seed_prompt("bug", "thing", spec_dir, "/w", "")
+    assert "root cause" in bug.lower()
+
+    # The state-file contract must be stated inline, not deferred to the skill's
+    # 'Structured state' section.
+    for token in ('"decisions"', '"blocking"', '"context"', ".spec-state.json"):
+        assert token in quick, f"seed no longer states {token}"
+    # ...and stay plumbing, never a chat topic or a deliverable.
+    assert "never mention it in chat" in quick
+
+    # An unknown type must not lose the deliverables entirely.
+    assert str(spec_dir / "requirements.md") in routes._seed_prompt(
+        "weird", "thing", spec_dir, "/w", ""
+    )
+
+
+# ── create refuses, and unwinds, when the spec is replaced ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_refuses_when_the_spec_is_replaced_during_slot_setup(tmp_path, monkeypatch):
+    """The working-dir chokepoint is async, so slot setup AWAITS and a delete-and-recreate
+    can land between the index insert and the dispatch. The seed prompt names OUR
+    spec_dir, so dispatching would drive the replacement spec's agent with our plan."""
+    client = _make_client(monkeypatch, tmp_path)
+    wd = Path(os.path.realpath(tmp_path)) / "wd"
+    wd.mkdir()
+    other = Path(os.path.realpath(tmp_path)) / "other" / ".kiro" / "specs" / "racy"
+    other.mkdir(parents=True)
+
+    dispatched: list[str] = []
+    monkeypatch.setattr(routes, "_dispatch_turn", lambda *a, **k: dispatched.append("x"))
+
+    real_ensure = routes._ensure_worker_slot
+
+    class _Slot:
+        key = "spec-builder-racy"
+        _app = routes.APP_NAME
+        project = ""
+        _titled = False
+
+    slot = _Slot()
+
+    async def _ensure_then_replace(state, name, meta, **kwargs):
+        out = await real_ensure(state, name, meta, **kwargs)
+        # The concurrent delete+recreate, landing inside the await window.
+        routes._forget_observed_slot_identity(name, str(meta.get("slot_key", "")))
+        routes._save_index({"racy": {"spec_dir": str(other), "working_dir": str(other.parent)}})
+        return out
+
+    monkeypatch.setattr(routes, "_ensure_worker_slot", _ensure_then_replace)
+
+    class _State:
+        def get_slot(self, key):
+            return None
+
+        def get_or_create_slot(self, name, app=""):
+            return slot
+
+    client.app["state"] = _State()
+    await client.start_server()
+    try:
+        resp = await client.post(
+            f"{_BASE}/specs", json={"name": "racy", "working_dir": str(wd), "spec_type": "quick"}
+        )
+    finally:
+        await client.close()
+
+    assert resp.status == 409, "create dispatched against a replaced spec"
+    assert dispatched == []
+    # The REPLACEMENT's index entry survives -- the unwind is identity-pinned.
+    assert routes._load_index()["racy"]["spec_dir"] == str(
+        other
+    ), "the unwind deleted the replacement spec's index entry"
+
+
+def test_create_unwind_is_identity_pinned():
+    """Source guard: the create unwind must not pop by name alone, and the identity
+    recheck must precede the dispatch."""
+    src = inspect.getsource(routes._handle_create)
+    assert "idx.pop(name, None)" not in src, "create unwinds by name alone"
+    assert "_pop_if_ours" in src
+    recheck = src.index("!= str(spec_dir)")
+    assert recheck < src.index("_dispatch_turn("), "create dispatches before rechecking identity"
+
+
+# ── settings shapes, slot-name grammar, and the browse skip list ─────────────
+
+
+def test_opt_in_flags_require_a_real_boolean():
+    """The reported bypass: bool("false") is True, so a request that said NOT to
+    create a worktree (or NOT to adopt existing documents) did both. These two
+    flags cause side effects a retry cannot undo, so the check is exact."""
+    rejected: tuple[object, ...] = ("false", "0", "no", "", 0, [], None, 1, "true")
+    for truthy_but_not_true in rejected:
+        assert (
+            routes._opted_in({"use_worktree": truthy_but_not_true}, "use_worktree") is False
+        ), f"{truthy_but_not_true!r} opted in"
+    assert routes._opted_in({"use_worktree": True}, "use_worktree") is True
+    assert routes._opted_in({}, "import_existing") is False
+
+    # Source guard: no handler may go back to coercing these flags with bool().
+    src = routes_source()
+    for field in ("use_worktree", "import_existing"):
+        assert f'bool(body.get("{field}"))' not in src, f"{field} is coerced with bool() again"
+
+
+# ── a create abort spares a replacement spec ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_abort_does_not_drop_a_replacement_spec(tmp_path, monkeypatch):
+    """The reported gap: the create path's two identity checks compared spec_dir
+    only. A delete plus a re-import at the same name AND path during slot setup
+    leaves spec_dir identical, so a stale create either removed the replacement's
+    index entry on its abort path or drove the replacement's agent with its own seed
+    prompt. The per-creation slot key is what separates them."""
+    client = _make_client(monkeypatch, tmp_path)
+    working = tmp_path / "wd"
+    spec_dir = working / ".kiro" / "specs" / "reused"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "requirements.md").write_text("# adopted")
+    seeded: list[str] = []
+    monkeypatch.setattr(routes, "_dispatch_turn", lambda *a, **k: seeded.append("seed"))
+
+    # A REPLACEMENT spec occupies the name at the same path, with its own creation.
+    replacement = {
+        "working_dir": str(working),
+        "spec_dir": str(spec_dir),
+        "spec_type": "feature",
+        "status": "planning",
+        "slot_key": "spec-builder-reused-99999999",
+    }
+
+    slot = types.SimpleNamespace(
+        key="spec-builder-reused-99999999",
+        _app=routes.APP_NAME,
+        running=False,
+        project="",
+        messages=[],
+        _titled=True,
+        task=None,
+    )
+
+    class _State:
+        def get_slot(self, key):
+            return slot
+
+        def get_or_create_slot(self, name, app=""):
+            return slot
+
+    real_ensure = routes._ensure_worker_slot
+
+    async def _ensure_then_replace(state, name, meta, **kw):
+        got = await real_ensure(state, name, meta, **kw)
+        # The delete + re-import lands while the slot is being set up.
+        routes._forget_observed_slot_identity(name, str(meta.get("slot_key", "")))
+        routes._save_index({"reused": dict(replacement)})
+        return got
+
+    monkeypatch.setattr(routes, "_ensure_worker_slot", _ensure_then_replace)
+
+    client.app["state"] = _State()
+    await client.start_server()
+    try:
+        resp = await client.post(
+            f"{_BASE}/specs",
+            json={
+                "name": "reused",
+                "working_dir": str(working),
+                "spec_type": "feature",
+                "import_existing": True,
+            },
+        )
+        status, body = resp.status, await resp.json()
+    finally:
+        await client.close()
+
+    assert status == 409, f"{status}: {body}"
+    assert body["code"] == "spec_changed_during_create"
+    assert seeded == [], "the stale create seeded the replacement spec's agent"
+    # And the replacement's entry survived the abort.
+    entry = routes._load_index().get("reused")
+    assert entry is not None, "the abort deleted the replacement spec's index entry"
+    assert entry["slot_key"] == "spec-builder-reused-99999999"
+
+
+def test_create_identity_checks_pin_the_creation():
+    """Source guard: both create-path checks compare the slot key, not just the
+    directory."""
+    src = inspect.getsource(routes._handle_create)
+    pop = src.index("def _pop_if_ours(")
+    pop_body = src[pop : src.index("del idx[name]", pop)]
+    assert "slot_key" in pop_body, "the unwind pops on the directory alone"
+    post = src.index("live = current.get(name) or {}")
+    assert (
+        "slot_key" in src[post : src.index("_unwind_create()", post)]
+    ), "the post-slot-setup check compares the directory alone"
+
+
+# ── a failed archive restores the name; a reserved name holds ────────────────
+
+
+@pytest.mark.asyncio
+async def test_failed_archive_restores_the_original_name_and_key(tmp_path, monkeypatch):
+    """A teardown that pops the entry and restores it as `<name>-2` when the name was
+    taken mid-archival severs the conversation: slot keys are bound to their entry's own
+    name, so a renamed entry cannot own its per-creation key -- `_slot_key` falls back
+    to the name-derived form and the original conversation is unreachable. The name is
+    RESERVED for the whole teardown, so a failure puts the spec back exactly as it
+    was."""
+    client = _make_client(monkeypatch, tmp_path)
+    spec_dir = tmp_path / "wd" / ".kiro" / "specs" / "keeper"
+    spec_dir.mkdir(parents=True)
+    key = "spec-builder-keeper-abcd1234"
+    routes._save_index(
+        {
+            "keeper": {
+                "spec_dir": str(spec_dir),
+                "working_dir": str(tmp_path / "wd"),
+                "slot_key": key,
+            }
+        }
+    )
+
+    async def _archive_fails(*_a, **_kw):
+        return False
+
+    monkeypatch.setattr(routes, "_teardown_worker_slot", _archive_fails)
+
+    client.app["state"] = None
+    await client.start_server()
+    try:
+        resp = await client.delete(f"{_BASE}/specs/keeper")
+        status, body = resp.status, await resp.json()
+    finally:
+        await client.close()
+
+    assert status == 503
+    assert body["code"] == "archive_failed"
+    assert "nothing was deleted" in body["error"]
+    # No rename: the spec is back under its own name, with its own key, and the
+    # conversation therefore still resolves.
+    index = routes._load_index()
+    assert set(index) == {"keeper"}, f"the spec was renamed or lost: {list(index)}"
+    assert index["keeper"]["slot_key"] == key
+    assert routes._DELETING not in index["keeper"], "the reservation was left behind"
+    routes._load_index()
+    assert routes._slot_key("keeper") == key, "the original conversation is unreachable"
+    assert str(spec_dir) not in routes._load_deleted(), "a live spec is tombstoned"
+
+
+@pytest.mark.asyncio
+async def test_a_reserved_name_cannot_be_taken_mid_delete(tmp_path, monkeypatch):
+    """The reservation is what makes the rename unnecessary: while the delete runs the
+    entry is still present, so create refuses the name instead of racing into it."""
+    client = _make_client(monkeypatch, tmp_path)
+    working = tmp_path / "wd"
+    spec_dir = working / ".kiro" / "specs" / "busy"
+    spec_dir.mkdir(parents=True)
+    routes._save_index(
+        {
+            "busy": {
+                "spec_dir": str(spec_dir),
+                "working_dir": str(working),
+                "slot_key": "spec-builder-busy-11112222",
+            }
+        }
+    )
+    # Mark the entry as a delete in flight, then try to create the same name.
+    assert await routes._mark_deleting(
+        "busy", expect_spec_dir=str(spec_dir), expect_slot_key="spec-builder-busy-11112222"
+    )
+
+    client.app["state"] = None
+    await client.start_server()
+    try:
+        listed = await (await client.get(f"{_BASE}/specs")).json()
+        resp = await client.post(
+            f"{_BASE}/specs",
+            json={"name": "busy", "working_dir": str(working), "spec_type": "feature"},
+        )
+        status = resp.status
+    finally:
+        await client.close()
+
+    assert [s["name"] for s in listed["specs"]] == [], "a delete in flight is still listed"
+    assert status == 409, f"the reserved name was taken: {status}"
+
+
+# ── A stale create-unwind must not delete a replacement's worktree ───────────
+
+
+def _removal_probe(monkeypatch):
+    """Record what _remove_worktree would destroy, without touching git."""
+    removed: list = []
+
+    async def _fake_remove(repo_root, worktree_path, branch=""):
+        removed.append((worktree_path, branch))
+
+    monkeypatch.setattr(routes, "_remove_worktree", _fake_remove)
+    return removed
+
+
+@pytest.mark.asyncio
+async def test_rollback_removes_the_worktree_when_the_name_is_still_ours(monkeypatch):
+    """The control. Without this, every failed create orphans a worktree+branch."""
+    removed = _removal_probe(monkeypatch)
+    did = await routes._rollback_worktree_if_ours(
+        "s",
+        was_ours=True,
+        repo_root="/repo",
+        created_worktree="/repo-wt-s",
+        worktree_branch="spec/s",
+    )
+    assert did is True
+    assert removed == [("/repo-wt-s", "spec/s")]
+
+
+@pytest.mark.asyncio
+async def test_rollback_spares_a_replacements_worktree(monkeypatch):
+    """The reported hazard. A concurrent delete + same-name recreate makes the
+    identity-pinned pop return False; the worktree path is derived from the NAME,
+    so it now belongs to the replacement. Removing it would force-delete that
+    spec's uncommitted work and hard-delete its branch."""
+    removed = _removal_probe(monkeypatch)
+    did = await routes._rollback_worktree_if_ours(
+        "s",
+        was_ours=False,
+        repo_root="/repo",
+        created_worktree="/repo-wt-s",
+        worktree_branch="spec/s",
+    )
+    assert did is False
+    assert removed == [], "a stale unwind destroyed the replacement spec's worktree"
+
+
+@pytest.mark.asyncio
+async def test_rollback_is_a_noop_when_this_create_made_no_worktree(monkeypatch):
+    removed = _removal_probe(monkeypatch)
+    assert (
+        await routes._rollback_worktree_if_ours(
+            "s", was_ours=True, repo_root="/repo", created_worktree="", worktree_branch=""
+        )
+        is False
+    )
+    assert removed == []
+
+
+def test_unwind_gates_the_rollback_on_the_pinned_pop():
+    """Source guard on the WIRING: the unwind must pass the pop's own result
+    through, not re-derive ownership or hardcode it."""
+    src = inspect.getsource(routes._handle_create)
+    unwind = src[src.index("async def _unwind_create") :]
+    pop = unwind.index("was_ours = await _mutate_index(")
+    call = unwind.index("_rollback_worktree_if_ours(")
+    assert pop < call, "ownership must be established before the rollback"
+    args = unwind[call : unwind.index(")", unwind.index("worktree_branch=worktree_branch", call))]
+    assert "was_ours=was_ours" in args, (
+        "the rollback is not gated on the pinned pop -- a stale unwind would "
+        "force-delete a replacement spec's worktree and branch"
+    )
+    # The raw destructive call must NOT survive alongside the gated one.
+    assert (
+        "_remove_worktree(" not in unwind
+    ), "the unwind still calls _remove_worktree directly, bypassing the gate"
+
+
+def test_remove_worktree_is_destructive_enough_to_need_the_gate():
+    """Pins WHY the gate matters. If _remove_worktree ever stops being a
+    force-remove + branch delete, the gate can be re-argued rather than assumed."""
+    src = inspect.getsource(routes._remove_worktree)
+    assert '"worktree", "remove", "--force"' in src
+    assert '"branch", "-D"' in src
+
+
+def test_only_the_post_insert_unwind_needs_the_gate():
+    """Scope guard: the six early rollbacks are unconditional on purpose.
+
+    They run before the index insert, so no other request can hold the name --
+    and _create_worktree would itself have failed had a concurrent create already
+    made `<repo>-wt-<name>`. Gating those would orphan a worktree on every
+    legitimate 400/409. Only the post-insert unwind spans an await (the slot
+    acquisition) during which a delete + recreate can land.
+
+    The ledger refusals are reached after awaits of their own, but both precede the
+    insert, so this create has claimed nothing and ``created_worktree`` is still only
+    ever the one it made itself -- the same reasoning that leaves the others ungated.
+    """
+    src = inspect.getsource(routes._handle_create)
+    early = src[: src.index("async def _unwind_create")]
+    assert early.count("_remove_worktree(") == 6, (
+        "the early-rollback count changed -- re-audit whether the new one spans "
+        "an await after the index insert (if so it needs the ownership gate too)"
+    )
+    assert "was_ours" not in early, "an early rollback should not need the gate"
 
 
 def _maintenance_loader(service):
