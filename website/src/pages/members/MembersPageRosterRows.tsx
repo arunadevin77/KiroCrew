@@ -17,8 +17,8 @@ import { useTranslation } from 'react-i18next'
 import { type MemberRosterRow } from '../../api/client'
 import { crewDisplayName } from '../../components/AgentSelector'
 import CrewAvatar from '../../components/CrewAvatar'
-import CrewStateAvatar from '../../components/CrewStateAvatar'
-import CrewLoopIndicator from '../../components/crew/CrewLoopIndicator'
+import CrewMonitoredAvatar from '../../components/crew/CrewMonitoredAvatar'
+import { isAutomationActive, type AutomationRecord } from '../../monitoring/automation'
 import { motion } from 'framer-motion'
 import { cn } from '../../lib/utils'
 import { ROW_BOX_CLS, ROW_IDLE_CLS, ROW_ACTIVE_CLS, ROW_TITLE_CLS, ROW_STATUS_CLS } from '../../components/listShell'
@@ -46,7 +46,7 @@ export function MemberRow({
   isRunning,
   isUnread,
   isNeedsYou,
-  isLoopOn,
+  automationOf,
   reduceMotion,
   scrollActiveRowIntoView,
   slugCollides,
@@ -64,8 +64,8 @@ export function MemberRow({
   /** The crewmate's turn is parked on an approval or a question — the same
    *  reading the status filter and the switcher row take (`signalsOf`). */
   isNeedsYou: (m: MemberRosterRow) => boolean
-  /** The crewmate's automation loop is on (`signalsOf().patrolling`). */
-  isLoopOn: (m: MemberRosterRow) => boolean
+  /** The normalized automation record for this crewmate's own slot. */
+  automationOf: (m: MemberRosterRow) => AutomationRecord | null
   reduceMotion: boolean | null
   scrollActiveRowIntoView: (el: HTMLButtonElement | null) => void
   slugCollides: boolean
@@ -113,6 +113,8 @@ export function MemberRow({
         last_message: m.last_message || roster.last_message,
       }
     : m
+  const automation = automationOf(view)
+  const loopOn = isAutomationActive(automation)
   // `layout` on the row, so the ONE move the recency re-sort makes is
   // followable: a row relocating to the top on the user's own send is a
   // persistent, already-identified element changing place, and an instant
@@ -159,11 +161,13 @@ export function MemberRow({
                 flashes its finished / failed expression on the turn's
                 trailing edge. The dot below stays presence-only — a
                 finished turn is not presence. */}
-            <CrewStateAvatar
+            <CrewMonitoredAvatar
               seed={view.name}
               avatar={view.avatar}
               slotKey={slotKeyOf(view)}
               running={!!isRunning(view)}
+              automation={automation}
+              indicatorTestId="member-loop-indicator"
               size={36}
               working="subtle"
             />
@@ -177,10 +181,8 @@ export function MemberRow({
                 data-testid="member-presence-dot"
               />
             )}
-            {/* On watch — the member's own thread has a live monitor or
-                goal loop. Presence only: no nudge text, no cycle count; the
-                drawer's block keeps the details. */}
-            <CrewLoopIndicator on={isLoopOn(view)} testId="member-loop-indicator" />
+            {/* On watch is drawn by CrewMonitoredAvatar from the same record
+                this row uses for its visible label. */}
           </span>
           <span className="min-w-0 flex-1">
             <span className={`block ${ROW_TITLE_CLS} font-semibold text-text truncate`}>{crewDisplayName(view)}</span>
@@ -209,7 +211,7 @@ export function MemberRow({
               )}
               {/* The mark's word, so it reads without a tooltip (touch,
                   reduced motion). Accent, like the mark. */}
-              {isLoopOn(view) && (
+              {loopOn && (
                 <Badge
                   variant="muted"
                   className="shrink-0 px-1.5 py-0 text-[11px] font-sans bg-accent-subtle text-accent"

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import { renderWithProviders } from '../../test/helpers'
 
 /* Same api mock shape as MembersPage.filters.test.tsx. */
@@ -15,6 +15,8 @@ vi.mock('../../api/client', () => ({
     webhooks: vi.fn(() => Promise.resolve({ tokens: [] })),
     defaultAgent: vi.fn(() => Promise.resolve({ default_agent: '' })),
     autonudgeList: vi.fn(() => Promise.resolve({ enabled: true, loops: [] })),
+    autonudgeForSlot: vi.fn(() => Promise.resolve({ enabled: true, loop: null })),
+    monitorForSlot: vi.fn(() => Promise.resolve({ enabled: true, monitor: null })),
   },
 }))
 
@@ -24,8 +26,9 @@ vi.mock('../../components/ChatPane', () => ({
 
 import { api } from '../../api/client'
 import MembersPage from './MembersPage'
+import { normalizeAutomationRecord } from '../../monitoring/automation'
 import { sseAutomation } from '../../store/chatSlice'
-import type { StructuredMonitor } from '../../monitoring/automation'
+import { structuredMonitorLoop } from '../../test/monitorFixtures'
 
 const LABEL = 'On watch'
 
@@ -36,16 +39,10 @@ function row(name: string) {
   }
 }
 
-const monitor = (slotKey: string, overrides: Partial<StructuredMonitor> = {}): StructuredMonitor => ({
-  kind: 'structured_monitor', id: `monitor-${slotKey}`, slotKey, active: true,
-  actionable: true, version: 1, monitorKind: 'github_pull_request', objective: 'review_ready',
-  target: 'https://github.com/kirodotdev/KiroCrew/pull/42', cadenceSecs: 300,
-  nextProbeAt: 0, wakeInstructions: '',
-  budgets: { maxRuntimeSecs: 14_400, maxAgentTurns: 8, maxTokens: 250_000, maxProviderErrors: 3 },
-  latest: { classification: 'unchanged', reasonCode: '', observedAt: 0, decision: 'stay_quiet' },
-  usage: { probes: 5, wakes: 2, agentTurns: 1, inputTokens: 100, outputTokens: 20, providerErrors: 0, tokenUsageKnown: true },
-  action: { wakeInFlight: false, wakeDelivery: '' }, terminal: null,
-  ...overrides,
+const monitor = (slotKey: string, patch: Record<string, unknown> = {}) => ({
+  ...structuredMonitorLoop(patch),
+  id: `monitor-${slotKey}`,
+  slot_key: slotKey,
 })
 
 async function renderPage(route = '/members') {
@@ -63,25 +60,33 @@ beforeEach(() => {
   localStorage.clear()
   // clearAllMocks keeps implementations: reset the one a case overrides.
   vi.mocked(api.autonudgeList).mockResolvedValue({ enabled: true, loops: [] } as never)
+  vi.mocked(api.autonudgeForSlot).mockResolvedValue({ enabled: true, loop: null } as never)
+  vi.mocked(api.monitorForSlot).mockResolvedValue({ enabled: true, monitor: null } as never)
 })
 
 describe('MembersPage — on-watch loop indicator', () => {
-  it('a live monitor (Redux, from WS frames) marks only that crewmate, with no loop details', async () => {
-    const { store } = await renderPage()
-    expect(rosterIndicators()).toHaveLength(0)
-    act(() => { store.dispatch(sseAutomation(monitor('member-beta'))) })
+  it('a live structured monitor marks every avatar surface, then stops at terminal state', async () => {
+    const { store } = await renderPage('/members?member=beta')
+    const live = normalizeAutomationRecord(monitor('member-beta'))!
+    act(() => { store.dispatch(sseAutomation(live)) })
     await waitFor(() => expect(rosterIndicators()).toHaveLength(1))
-    const mark = rosterIndicators()[0]
-    expect(mark.closest('li')?.textContent).toContain('beta')
-    expect(mark.getAttribute('aria-hidden')).toBe('true')
-    expect(mark.getAttribute('title')).toBe(LABEL)
-    // A visible word names it, so touch and reduced-motion readers get it too.
-    expect(mark.closest('li')?.querySelector('[data-testid="member-loop-label"]')?.textContent).toBe(LABEL)
-    // Turns off when the monitor finishes.
-    act(() => {
-      store.dispatch(sseAutomation(monitor('member-beta', { terminal: { outcome: 'success', reason: '', stoppedAt: 1 } })))
-    })
+    const rosterMark = rosterIndicators()[0]
+    expect(rosterMark.closest('li')?.textContent).toContain('beta')
+    expect(rosterMark.getAttribute('aria-hidden')).toBe('true')
+    expect(rosterMark.getAttribute('title')).toBe(LABEL)
+    expect(rosterMark.closest('li')?.querySelector('[data-testid="member-loop-label"]')?.textContent).toBe(LABEL)
+    const pill = await screen.findByTestId('member-identity-pill')
+    expect(within(pill).getByTestId('member-pill-loop-indicator')).toBeInTheDocument()
+
+    const stopped = normalizeAutomationRecord(monitor('member-beta', {
+      active: false,
+      outcome: 'success',
+      stopped_reason: 'monitor_terminal',
+      stopped_at: 1,
+    }))!
+    act(() => { store.dispatch(sseAutomation(stopped)) })
     await waitFor(() => expect(rosterIndicators()).toHaveLength(0))
+    expect(within(pill).queryByTestId('member-pill-loop-indicator')).toBeNull()
   })
 
   it('an active legacy goal loop shows the same label, never its cycle count', async () => {
@@ -95,16 +100,36 @@ describe('MembersPage — on-watch loop indicator', () => {
     expect(document.body.textContent).not.toMatch(/3 of 24|On patrol/)
   })
 
-  it('the open thread header shows it too, keeping the pill named by the crewmate', async () => {
-    const { store } = await renderPage('/members?member=alpha')
+  it('fails closed when the Profile monitor snapshot cannot be read', async () => {
+    vi.mocked(api.monitorForSlot).mockRejectedValue(new Error('owner read failed'))
+    await renderPage('/members?member=alpha')
     const pill = await screen.findByTestId('member-identity-pill')
-    expect(within(pill).queryByTestId('member-pill-loop-indicator')).toBeNull()
-    act(() => { store.dispatch(sseAutomation(monitor('member-alpha'))) })
-    const mark = await within(pill).findByTestId('member-pill-loop-indicator')
-    // Decorative inside the button; the screen-reader line carries the label.
-    expect(mark.getAttribute('aria-hidden')).toBe('true')
-    expect(mark.getAttribute('title')).toBe(LABEL)
+    fireEvent.click(pill)
+    const card = await screen.findByTestId('crew-profile-panel')
+    fireEvent.click(within(card).getByRole('tab', { name: 'Profile' }))
+    const details = await within(card).findByTestId('crew-profile-monitor')
+    await waitFor(() => expect(details).toHaveTextContent('Monitor status unavailable'))
+    expect(within(card).queryByTestId('crew-profile-loop-indicator')).toBeNull()
+  })
+
+  it('the Profile avatar and details use the same active record', async () => {
+    const raw = monitor('member-alpha', { created_ts: 1_799_996_400 })
+    vi.mocked(api.monitorForSlot).mockResolvedValue({ enabled: true, monitor: raw } as never)
+    const { store } = await renderPage('/members?member=alpha')
+    act(() => { store.dispatch(sseAutomation(normalizeAutomationRecord(raw)!)) })
+    const pill = await screen.findByTestId('member-identity-pill')
+    const pillMark = await within(pill).findByTestId('member-pill-loop-indicator')
+    expect(pillMark.getAttribute('title')).toBe(LABEL)
     expect(screen.getByTestId('member-pill-activity-sr').textContent).toContain(LABEL)
-    expect(screen.getByTestId('member-pill-activity').textContent).toContain(LABEL)
+
+    fireEvent.click(pill)
+    const card = await screen.findByTestId('crew-profile-panel')
+    expect(within(card).getByTestId('crew-profile-loop-indicator')).toBeInTheDocument()
+    fireEvent.click(within(card).getByRole('tab', { name: 'Profile' }))
+    const details = within(card).getByTestId('crew-profile-monitor')
+    expect(details).toHaveAttribute('data-monitor-active', 'true')
+    expect(details).toHaveTextContent('https://github.com/owner/repo/pull/123')
+    expect(details).toHaveTextContent('5m')
+    expect(details).toHaveTextContent('5 / —')
   })
 })

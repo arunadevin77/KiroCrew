@@ -27,6 +27,8 @@ vi.mock('../../api/client', () => ({
     defaultAgent: vi.fn(() => Promise.resolve({ default_agent: '' })),
     updateKirocrewAgent: vi.fn(() => Promise.resolve({ ok: true })),
     autonudgeList: vi.fn(() => Promise.resolve({ enabled: true, loops: [] })),
+    autonudgeForSlot: vi.fn(() => Promise.resolve({ enabled: true, loop: null })),
+    monitorForSlot: vi.fn(() => Promise.resolve({ enabled: true, monitor: null })),
     // The drawer's webview section. Stubbed as "nothing published" so it renders
     // its empty state: an unstubbed reader rejects, the section shows an
     // ErrorNotice of its own, and assertions that read the LAST ErrorNotice props

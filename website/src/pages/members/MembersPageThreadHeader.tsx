@@ -14,8 +14,7 @@ import { PanelLeftLight, PanelLeftSolid, PanelRightSolid } from '../../component
 import { useTranslation } from 'react-i18next'
 import { type MemberRosterRow } from '../../api/client'
 import { crewDisplayName } from '../../components/AgentSelector'
-import CrewStateAvatar from '../../components/CrewStateAvatar'
-import CrewLoopIndicator from '../../components/crew/CrewLoopIndicator'
+import CrewMonitoredAvatar from '../../components/crew/CrewMonitoredAvatar'
 import Glass from '../../components/Glass'
 import CrewmateSwitcher, { CrewmateUnreadColumn } from './CrewmateSwitcher'
 import { createPortal } from 'react-dom'
@@ -62,7 +61,7 @@ export function MembersPageThreadHeader({
   const {
     threadHeaderRef, setSwitcherOpenRequest, switcherOpenRequest, topbarSlot, headerInBar, pillActivity,
   } = threadView
-  const { isLoopOn, signalsOf } = rosterSignals
+  const { automationOf, isLoopOn, signalsOf } = rosterSignals
   const { faceFlight } = profileFlight
   const { openMember } = navigation
   const threadHeader = (
@@ -195,18 +194,19 @@ export function MembersPageThreadHeader({
           style={faceFlight || (profile && profile.placement === 'floating') ? { visibility: 'hidden' } : undefined}
           data-testid="member-pill-face"
         >
-          <CrewStateAvatar
+          <CrewMonitoredAvatar
             seed={active.name}
             avatar={active.avatar}
             slotKey={activeSlot || active.slot_key}
             running={!!isRunning(active)}
+            automation={automationOf(active)}
+            indicatorTestId="member-pill-loop-indicator"
             // Smaller in the shell bar, which is 42px tall: the pill sits
             // there with no vertical padding, at the height of the 32px
             // controls beside it, so it does not reach the bar's edges.
             size={headerInBar ? 26 : 30}
             working="full"
           />
-          <CrewLoopIndicator on={isLoopOn(active)} testId="member-pill-loop-indicator" />
         </span>
         {/* The name and activity line stay open at rest: this pill is
             how the reader knows which crewmate the page is talking to,

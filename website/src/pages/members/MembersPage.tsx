@@ -67,7 +67,7 @@ import { MEMBERS_ROSTER_QUERY_KEY, memberThreadQueryKey, type MemberThreadOutcom
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query'
 import { i18nT } from '../../i18n/t'
 import { useAppSelector } from '../../store'
-import CrewStateAvatar from '../../components/CrewStateAvatar'
+import CrewMonitoredAvatar from '../../components/crew/CrewMonitoredAvatar'
 import { PROFILE_FACE_PX } from './CrewProfilePanel'
 import { createPortal } from 'react-dom'
 import { useGuideOpenedSurface } from '../../guide/useGuideOpenedSurface'
@@ -185,7 +185,15 @@ function CrewFaceFlight({ flight, onDone }: { flight: FaceFlight; onDone: () => 
       aria-hidden="true"
       data-testid="crew-face-flight"
     >
-      <CrewStateAvatar seed={flight.seed} avatar={flight.avatar} slotKey={flight.slotKey} running={flight.running} size={PROFILE_FACE_PX} working="full" />
+      <CrewMonitoredAvatar
+        seed={flight.seed}
+        avatar={flight.avatar}
+        slotKey={flight.slotKey}
+        running={flight.running}
+        automation={flight.automation}
+        size={PROFILE_FACE_PX}
+        working="full"
+      />
     </div>,
     document.body,
   )
@@ -635,7 +643,7 @@ export default function MembersPage() {
   }, [anyDraftAtStake])
   const threadView = useMembersPageThreadView({ layout, rosterView, thread, t, createOpen, active })
   const rosterSignals = useMembersPageRosterSignals({ rosterRead, rosterView, slotKeyOf })
-  const profileFlight = useMembersPageProfileFlight({ profileCard, rosterView, thread, activeName, profile, active })
+  const profileFlight = useMembersPageProfileFlight({ profileCard, rosterView, rosterSignals, thread, activeName, profile, active })
   const { faceFlight, endFaceFlight } = profileFlight
   // A create the user walked away from that then FAILED: the card that says so
   // is hidden, so the page says it instead, in the card's own words. Cleared by

@@ -459,7 +459,7 @@ export function MembersPageRosterColumn({
     starError, starPending, toggleStar, rowsReady, shownMembers,
   } = rosterView
   const {
-    isUnread, patrol, isLoopOn, isNeedsYou, sortedMembers, filterCounts, narrowed, filteredOut, allHidden,
+    isUnread, patrol, automationOf, isNeedsYou, sortedMembers, filterCounts, narrowed, filteredOut, allHidden,
   } = rosterSignals
   const { reduceMotion } = profileFlight
   const { openMember, pickFromRosterDrawer } = navigation
@@ -920,7 +920,7 @@ export function MembersPageRosterColumn({
                           isRunning={isRunning}
                           isUnread={isUnread}
                           isNeedsYou={isNeedsYou}
-                          isLoopOn={isLoopOn}
+                          automationOf={automationOf}
                           // No layout projection under the drawer's compositor-
                           // driven slide (registerDrawerTargets' precondition).
                           reduceMotion={rosterDrawerAvailable ? true : reduceMotion}

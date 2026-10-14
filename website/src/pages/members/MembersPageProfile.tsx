@@ -42,6 +42,9 @@ import { type MembersPageThreadState } from './MembersPageThread'
 import { DRIVING_VISIBLE, memberMemoryDisplay, PROFILE_MEMORY_KEYS, type ProfileCardOpen, type TFn } from './membersPageModel'
 import { type MembersPageCrewEditing } from './useMembersPageCrewEditor'
 import { type MembersPageLayout } from './useMembersPageLayout'
+import { type MembersPageRosterSignals } from './useMembersPageRoster'
+import { type AutomationRecord } from '../../monitoring/automation'
+import { readSessionAutomationSnapshot } from '../../monitoring/sessionAutomationSnapshot'
 
 // Lazy for the same reason as `CrewEditorDialog` in MembersPage.tsx: its fields come from the crew manager page module.
 const CrewProfileSettings = lazy(() => import('./CrewProfileSettings'))
@@ -65,6 +68,7 @@ export interface FaceFlight {
   avatar: unknown
   slotKey: string
   running: boolean
+  automation: AutomationRecord | null
   from: DOMRect
   to: () => DOMRect | null
 }
@@ -355,6 +359,7 @@ export type MembersPageSchedules = ReturnType<typeof useMembersPageSchedules>
 interface MembersPageProfileFlightOptions {
   profileCard: MembersPageProfileState
   rosterView: MembersPageRosterView
+  rosterSignals: MembersPageRosterSignals
   thread: MembersPageThreadState
   activeName: string
   profile: ProfileCardOpen | null
@@ -363,11 +368,33 @@ interface MembersPageProfileFlightOptions {
 
 /** The Profile card's clock and the face flight between pill and card. */
 export function useMembersPageProfileFlight({
-  profileCard, rosterView, thread, activeName, profile, active,
+  profileCard, rosterView, rosterSignals, thread, activeName, profile, active,
 }: MembersPageProfileFlightOptions) {
   const { pillFaceRef, cardFaceRef, flightFromRef } = profileCard
   const { isRunning, activeView } = rosterView
+  const { automationOf } = rosterSignals
   const { activeSlot } = thread
+  // Profile reuses the active chat's existing authoritative snapshot query.
+  // A websocket record wins while live; the focused read supplies retained
+  // stopped state and full owner-gated structured details.
+  const activeAutomation = active ? automationOf(active) : null
+  const profileSlot = activeSlot || active?.slot_key || ''
+  const profileMonitorQuery = useQuery({
+    queryKey: ['session-automation', profileSlot],
+    enabled: !!profile && !!profileSlot,
+    queryFn: () => readSessionAutomationSnapshot(profileSlot),
+    staleTime: 0,
+  })
+  const profileMonitorReadState = !profileSlot
+    ? 'ready' as const
+    : profileMonitorQuery.isError
+      ? 'error' as const
+      : profileMonitorQuery.isSuccess || activeAutomation
+        ? 'ready' as const
+        : 'loading' as const
+  const profileAutomation = profileMonitorReadState === 'error'
+    ? null
+    : activeAutomation ?? profileMonitorQuery.data ?? null
   // Relative times in the Profile Schedules tab move while the card is open.
   const [nowTs, setNowTs] = useState(() => Date.now() / 1000)
   useEffect(() => {
@@ -409,10 +436,11 @@ export function useMembersPageProfileFlight({
       avatar: active.avatar,
       slotKey: activeSlot || active.slot_key || '',
       running: !!isRunning(active),
+      automation: automationOf(active),
       from,
       to: () => target.current?.getBoundingClientRect() ?? null,
     })
-  }, [profileOpen, reduceMotion, active, activeSlot, isRunning, cardFaceRef, flightFromRef, pillFaceRef])
+  }, [profileOpen, reduceMotion, active, activeSlot, isRunning, automationOf, cardFaceRef, flightFromRef, pillFaceRef])
   const endFaceFlight = useCallback(() => setFaceFlight(null), [])
   // A flight belongs to the crewmate it was measured on. Leaving that crewmate
   // mid-flight (Back, a bare /members, a team open) unmounts the copy before its
@@ -421,7 +449,7 @@ export function useMembersPageProfileFlight({
   useEffect(() => { setFaceFlight(null) }, [activeName])
 
   return {
-    nowTs, reduceMotion, profileDocked, faceFlight, endFaceFlight,
+    nowTs, reduceMotion, profileDocked, faceFlight, endFaceFlight, profileAutomation, profileMonitorReadState,
   }
 }
 
@@ -466,7 +494,7 @@ export function MembersPageProfileCard({
     schedAgentField, profileGoalsQuery, schedulesCountQuery, schedulesForActive, setSchedDraftDirty,
     setSchedSaving, requestCancelSchedDraft,
   } = schedules
-  const { nowTs, reduceMotion, profileDocked, faceFlight } = profileFlight
+  const { nowTs, reduceMotion, profileDocked, faceFlight, profileAutomation, profileMonitorReadState } = profileFlight
   // Notes — the crewmate's own standing notes, read-only (no editor:
   // see CrewNotesTab). Its briefing read is gated on the tab being on
   // screen, like the work log's reads.
@@ -621,6 +649,8 @@ export function MembersPageProfileCard({
       member={activeView}
       running={!!isRunning(active)}
       slotKey={activeSlot || active.slot_key}
+      automation={profileAutomation ?? null}
+      monitorReadState={profileMonitorReadState}
       description={profileRegistryQuery.data?.agents.find((a) => a.name === active.name)?.description ?? ''}
       descriptionError={profileRegistryQuery.isError}
       goal={profileGoalsQuery.data?.goals[0]?.text ?? ''}

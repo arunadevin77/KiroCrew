@@ -1878,7 +1878,8 @@ exist yet.
 description (two lines with a pushed full-text page); when the registry read fails,
 the About section shows the shared actionable `ErrorNotice` above any retained
 description, and only omits the no-description claim when no cached description
-exists. Memory and
+exists. The read-only Monitor section follows About. It uses the same normalized automation record and `isAutomationActive` predicate as the roster, header pill, Profile avatar, and face-flight; `CrewMonitoredAvatar` owns the shared orbit. Live Redux frames remain the first source, the legacy registry remains the cold-start fallback, and Profile's existing `session-automation` slot query supplies retained stopped state and full owner-gated details, so missing or failed cold reads cannot invent an active mark and a live frame is never hidden by a failed refresh. It shows state, loop type, watched subject, cadence, current/maximum cycle, start, next check, used/maximum runtime, and a retained stop reason; unavailable legacy fields render an em dash rather than an estimate. Structured targets and full state come only from the existing owner-gated `/api/monitors/slot/{slot_key}` read. The ungated compatibility read contributes legacy cadence and counters, but Profile never renders its prompt, banner, sentinel path, or session data. The section contains no control or action handler.
+Memory and
 Workspace sit side by side, but Memory is a flat readout — a solid `border-border`
 hairline, transparent background, no hover and no pointer; never dashed, which is
 this card's empty language (Sessions empty) and would make a

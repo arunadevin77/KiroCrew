@@ -14,10 +14,16 @@
 import { useCallback, useMemo } from 'react'
 import { api, type MemberRosterRow } from '../../api/client'
 import { membersRosterQuery } from '../../api/membersQuery'
-import { AUTONUDGE_LOOPS_QUERY_KEY, type AutoNudgeLoop } from '../../components/autoNudgeLoop'
+import { AUTONUDGE_LOOPS_QUERY_KEY } from '../../components/autoNudgeLoop'
 import { useQuery } from '@tanstack/react-query'
 import { useAppSelector } from '../../store'
-import { selectSidebarAutomationRunningKeys } from '../../store/chatSlice'
+import { selectAutomationForSlot } from '../../store/chatSlice'
+import {
+  isAutomationActive,
+  isFullLegacyAutomationRecord,
+  normalizeAutomationRecord,
+  type AutomationRecord,
+} from '../../monitoring/automation'
 import { countByFilter, hasNoCrewmates, narrowRoster, queryNarrows, type MemberSignals } from './rosterFilter'
 import { useMemberRosterViews } from '../../state/useMemberProjection'
 import type { RosterView } from '../../state/memberProjectionTypes'
@@ -165,77 +171,42 @@ export function useMembersPageRosterSignals({ rosterRead, rosterView, slotKeyOf 
     [slotKeyOf, unreadSlots],
   )
 
-  // Auto patrol: the auto-nudge loop (monitor / goal loop) bound to a member's
-  // own DM slot. This is the thing that wakes a standing member without anyone
-  // asking — so a member whose loop has silently stopped, or never armed, is a
-  // member that will not act again until someone notices. The roster badge
-  // and the drawer block both read from here, so the whole registry is read
-  // (the badge needs every member, not just the open drawer's) and filtered
-  // per member at render by slot key — the member's derived slot is
-  // `member-<slug>`, resolved the same way isRunning resolves it.
-  //
-  // One React Query read, not a private fetch + frame merge: the websocket
-  // hook invalidates AUTONUDGE_LOOPS_QUERY_KEY on every `autonudge_state`
-  // frame AND on every (re)connect, so a stop that landed while the socket was
-  // down is re-read the moment it comes back, and a transient mount-time
-  // failure is retried on the next signal rather than freezing the block in
-  // its failed state. The interval is a floor under that: frames fire only on
-  // change, and the one reading this block must never give is a stale
-  // "Patrolling" for a dead patrol.
+  // The roster and header keep their existing live Redux source. The full
+  // legacy registry is only a cold-start fallback before the first websocket
+  // snapshot arrives; a live frame wins for its slot.
   const patrolQuery = useQuery({
     queryKey: AUTONUDGE_LOOPS_QUERY_KEY,
     queryFn: () => api.autonudgeList(),
     refetchOnReconnect: true,
   })
-  // `failed` is kept distinct from empty for the same reason the wake-sources
-  // block keeps it: a failed read must never render the affirmative "no patrol
-  // scheduled", which is precisely the false statement this block exists to
-  // prevent. A refetch error after a good read keeps showing the last data.
-  const patrol = useMemo(() => {
-    const data = patrolQuery.data
-    const loops: Record<string, AutoNudgeLoop> = {}
-    for (const lp of data?.loops || []) if (lp?.slot_key) loops[lp.slot_key] = lp
-    return {
-      loaded: data !== undefined || patrolQuery.isError,
-      failed: data === undefined && patrolQuery.isError,
-      loops,
+  const patrol = useMemo(() => ({ failed: patrolQuery.isError }), [patrolQuery.isError])
+  const liveAutomations = useAppSelector((s) => s.chat.automations)
+  const legacyAutomations = useMemo(() => {
+    const records: Record<string, AutomationRecord> = {}
+    if (patrolQuery.data === undefined || patrolQuery.isError) return records
+    for (const raw of patrolQuery.data.loops ?? []) {
+      if (!isFullLegacyAutomationRecord(raw)) continue
+      const record = normalizeAutomationRecord(raw)
+      if (record?.kind === 'legacy_goal_loop') records[record.slotKey] = record
     }
+    return records
   }, [patrolQuery.data, patrolQuery.isError])
-  const patrolLoopOf = useCallback(
-    (m: MemberRosterRow) => {
+  const automationOf = useCallback(
+    (m: MemberRosterRow): AutomationRecord | null => {
       const key = slotKeyOf(m)
-      return key ? patrol.loops[key] : undefined
+      if (!key) return null
+      return selectAutomationForSlot({ chat: { automations: liveAutomations } }, key)
+        ?? legacyAutomations[key]
+        ?? null
     },
-    [slotKeyOf, patrol.loops],
+    [slotKeyOf, liveAutomations, legacyAutomations],
   )
-  /** Roster-level reading of a member's loop record: the loop while it is
-   *  ACTIVE, nothing otherwise. A stopped record and a member that never
-   *  armed one look the same at the roster — "not patrolling" is the resting
-   *  state of a member, not an incident that needs a placeholder mark; the
-   *  drawer's block is where a stopped loop keeps its reason. The badge's
-   *  presence IS the signal, the way the presence dot and unread dot work. */
-  const activePatrolOf = useCallback(
-    (m: MemberRosterRow): AutoNudgeLoop | undefined => {
-      const lp = patrolLoopOf(m)
-      return lp?.active ? lp : undefined
-    },
-    [patrolLoopOf],
-  )
-  // On watch: the sidebar's live-automation keys (Redux, kept by
-  // `autonudge_state` frames — structured monitors AND goal loops), or the
-  // registry read above.
-  const loopRunningKeys = useAppSelector(selectSidebarAutomationRunningKeys)
   const isLoopOn = useCallback(
-    (m: MemberRosterRow) => {
-      if (activePatrolOf(m)) return true
-      const key = slotKeyOf(m)
-      return !!key && loopRunningKeys.includes(key)
-    },
-    [activePatrolOf, slotKeyOf, loopRunningKeys],
+    (m: MemberRosterRow) => isAutomationActive(automationOf(m)),
+    [automationOf],
   )
-  // The live facts the status filters read, resolved per row the same way the
-  // row's own markers are (isRunning / isUnread / activePatrolOf), so a filter
-  // can never disagree with the dot it filters on.
+  // The live facts the status filters read, resolved per row from the same
+  // automation record as its avatar and Profile details.
   const signalsOf = useCallback(
     (m: MemberRosterRow): MemberSignals => {
       const key = slotKeyOf(m)
@@ -275,7 +246,7 @@ export function useMembersPageRosterSignals({ rosterRead, rosterView, slotKeyOf 
     rowsReady && loaded && !loadError && !filter.trim() && shownMembers.length === 0 && !hasNoCrewmates(members)
 
   return {
-    isUnread, patrol, isLoopOn, signalsOf, isNeedsYou, sortedMembers, filterCounts, narrowed, filteredOut,
+    isUnread, patrol, automationOf, isLoopOn, signalsOf, isNeedsYou, sortedMembers, filterCounts, narrowed, filteredOut,
     allHidden,
   }
 }
