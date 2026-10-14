@@ -75,6 +75,9 @@ export function usePromptHistory() {
       // Only intercept when input is empty OR caret is collapsed at position 0.
       const atStart = ta.selectionStart === 0 && ta.selectionEnd === 0
       if (!atStart && cur !== '') return
+      // A held ↑ scrolling up through the user's own draft stops at its start;
+      // a fresh press recalls, and a held ↑ keeps walking recalled prompts.
+      if (e.repeat && !cursor && cur !== '') return
     } else {
       if (!cursor) return // not in history mode — let textarea handle
       // Only intercept when caret is at end (so multi-line edits still navigate within).

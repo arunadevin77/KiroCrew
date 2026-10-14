@@ -650,6 +650,9 @@ function InteractionPlugin({
       const cursor = livePromptHistoryCursor(historyCursorRef.current, current)
       historyCursorRef.current = cursor
       if (direction === 'up' && current !== '' && selection.start !== 0) return false
+      // A held ↑ scrolling up through the user's own draft stops at its start;
+      // a fresh press recalls, and a held ↑ keeps walking recalled prompts.
+      if (direction === 'up' && event.repeat && !cursor && current !== '') return false
       if (direction === 'down' && selection.end !== current.length) return false
       const step = stepPromptHistory(sentMessages, cursor, direction === 'up' ? 'older' : 'newer', current)
       if (!step) return false

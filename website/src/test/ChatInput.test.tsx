@@ -914,6 +914,36 @@ describe('ChatInput', () => {
       expect(onChange).not.toHaveBeenCalled()
     })
 
+    it('ignores an auto-repeat ArrowUp that reaches the start of a typed draft', () => {
+      const onChange = vi.fn()
+      renderWithProviders(<ChatInput {...defaultProps} onChange={onChange} sentMessages={sent} value="my long draft" />)
+      const ta = screen.getByLabelText('Message input') as HTMLTextAreaElement
+      ta.setSelectionRange(0, 0)
+      fireEvent.keyDown(ta, { key: 'ArrowUp', repeat: true })
+      expect(onChange).not.toHaveBeenCalled()
+      // Letting go and pressing again is a deliberate recall.
+      fireEvent.keyDown(ta, { key: 'ArrowUp' })
+      expect(onChange).toHaveBeenLastCalledWith('third')
+    })
+
+    it('keeps walking history on auto-repeat once a prompt is recalled', () => {
+      const onChange = vi.fn()
+      const { rerender } = renderWithProviders(<ChatInput {...defaultProps} onChange={onChange} sentMessages={sent} value="" />)
+      const ta = screen.getByLabelText('Message input') as HTMLTextAreaElement
+      fireEvent.keyDown(ta, { key: 'ArrowUp' })
+      rerender(<ChatInput {...defaultProps} onChange={onChange} sentMessages={sent} value="third" />)
+      ta.setSelectionRange(0, 0)
+      fireEvent.keyDown(ta, { key: 'ArrowUp', repeat: true })
+      expect(onChange).toHaveBeenLastCalledWith('second')
+    })
+
+    it('recalls on an auto-repeat ArrowUp from an empty composer', () => {
+      const onChange = vi.fn()
+      renderWithProviders(<ChatInput {...defaultProps} onChange={onChange} sentMessages={sent} value="" />)
+      fireEvent.keyDown(screen.getByLabelText('Message input'), { key: 'ArrowUp', repeat: true })
+      expect(onChange).toHaveBeenLastCalledWith('third')
+    })
+
     it('ArrowDown is ignored when not in history mode', () => {
       const onChange = vi.fn()
       renderWithProviders(<ChatInput {...defaultProps} onChange={onChange} sentMessages={sent} />)
