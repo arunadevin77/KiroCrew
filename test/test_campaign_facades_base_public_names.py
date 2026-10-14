@@ -129,7 +129,7 @@ _MOVE_DIGESTS: dict[str, str] = dict(row.split() for row in """
 
 _PROBE = """
 import importlib, json, sys
-rebound = json.loads(sys.argv[1])
+rebound = json.loads(sys.stdin.read())
 checked, wrong = 0, []
 for facade, names in rebound.items():
     module = importlib.import_module(facade)
@@ -156,12 +156,15 @@ def test_every_rebound_name_is_a_base_public_name_of_its_facade() -> None:
 def test_a_rebound_name_is_the_object_its_home_module_holds(tmp_path: Path) -> None:
     """Checked in a fresh interpreter, so no module another test reloaded or evicted
     can make a copy look like the original, or the original look like a copy. The child
-    runs in ``tmp_path``, so anything an import writes by a relative path stays there."""
+    runs in ``tmp_path``, so anything an import writes by a relative path stays there. The
+    inventory goes in on stdin, not argv: it grows with every facade, and Windows refuses a
+    command line over 32,767 characters."""
     env = dict(os.environ)
     src = str(Path(kiro_crew.__file__).resolve().parents[1])
     env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
     out = subprocess.run(
-        [sys.executable, "-c", _PROBE, json.dumps(_REBOUND)],
+        [sys.executable, "-c", _PROBE],
+        input=json.dumps(_REBOUND),
         capture_output=True,
         check=True,
         env=env,

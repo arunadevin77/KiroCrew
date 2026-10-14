@@ -104,7 +104,7 @@
 3261 src/kiro_crew/dashboard/session_control.py
 2255 src/kiro_crew/dashboard/session_directive_apply.py
 3095 src/kiro_crew/dashboard/session_transfer.py
-11318 src/kiro_crew/dashboard/state.py
+5376 src/kiro_crew/dashboard/state.py
 3885 src/kiro_crew/dashboard/token_auth.py
 2795 src/kiro_crew/deploy/handlers.py
 2177 src/kiro_crew/discord/client.py
