@@ -54,12 +54,16 @@ async function mount(props: Partial<React.ComponentProps<typeof ChatEmbed>> = {}
   })
 }
 
-async function sendText(text: string) {
+/** Types `text` and presses the composer's send control. On a busy slot that
+ *  control is the Send atom's queue state, named "Queue message", so a send
+ *  that is meant to wait in the queue says `{ queue: true }` and the test
+ *  also checks the slot offered the queue control rather than a plain send. */
+async function sendText(text: string, { queue = false }: { queue?: boolean } = {}) {
   await act(async () => {
     fireEvent.change(screen.getByLabelText('Chat message'), { target: { value: text } })
   })
   await act(async () => {
-    fireEvent.click(screen.getByLabelText('Send message'))
+    fireEvent.click(screen.getByRole('button', { name: queue ? 'Queue message' : 'Send message' }))
   })
 }
 
@@ -126,7 +130,7 @@ describe('ChatEmbed optimistic own message', () => {
     let resolvePost: (v: unknown) => void = () => {}
     mockPost.mockReturnValue(new Promise(r => { resolvePost = r }))
     await mount()
-    await sendText('later please')
+    await sendText('later please', { queue: true })
     // Shown at once, in the queue strip only -- never in the transcript.
     expect(rows()).toEqual(['user:first', 'assistant:reply'])
     const card = screen.getByTestId('queue-card')
@@ -169,10 +173,10 @@ describe('ChatEmbed optimistic own message', () => {
     mockPost.mockResolvedValueOnce({ ok: true, queued: true, queue_id: 'q1' })
       .mockResolvedValueOnce({ ok: true, queued: true, queue_id: 'q2' })
     await mount()
-    await sendText('one')
+    await sendText('one', { queue: true })
     await settle()
     const cardOne = screen.getByTestId('queue-card')
-    await sendText('two')
+    await sendText('two', { queue: true })
     await settle()
     // The poll then shows only the first entry. Both cards stay, and the first
     // is the same element it was before the second send: it never left.
@@ -191,7 +195,7 @@ describe('ChatEmbed optimistic own message', () => {
     mockPost.mockResolvedValue({ ok: true, queued: true, queue_id: 'q9' })
     await mount()
     mockGet.mockResolvedValue({ messages: earlier, queue: [{ id: 'q9', content: 'later please' }], running: true, title: '' })
-    await sendText('later please')
+    await sendText('later please', { queue: true })
     await nextPoll()
     expect(screen.getAllByTestId('queue-card')).toHaveLength(1)
     mockGet.mockResolvedValue({ messages: earlier, queue: [], running: true, title: '' })
