@@ -17,11 +17,21 @@ from hypothesis import strategies as st
 
 from kiro_crew.apps.lifecycle import LifecycleDispatcher
 from kiro_crew.apps.manifest import app_name_error
-from kiro_crew.testing.wait import await_until
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _thread_event_set(event: threading.Event, what: str) -> bool:
+    """Wait on the loop for a worker thread's ``threading.Event``, holding no thread.
+
+    The hook workers these tests start run on the loop's default executor and block
+    there until released. A waiter that also went through ``to_thread`` would queue
+    behind them on a busy pool, so the wait polls the event from the loop instead.
+    """
+    return await async_wait_until(event.is_set, describe=lambda: f"{what} is still clear")
 
 
 def _make_app_info(name: str, *, on_startup: str = "", on_shutdown: str = "") -> dict[str, Any]:
@@ -597,7 +607,7 @@ class TestLifecycleHookTimeout:
             # The 50 ms hook deadline can expire before the pool thread is scheduled
             # on a loaded runner. The worker is already submitted, so wait for it to
             # start instead of betting it started inside the deadline.
-            assert await asyncio.to_thread(started.wait, 5)
+            assert await _thread_event_set(started, "the hook's worker start")
             assert not finished.is_set()
             assert "thread-app" in lifecycle_mod._DETACHED_HOOK_TASKS
             assert await dispatcher.stop_detached_startup_hooks(
@@ -607,7 +617,7 @@ class TestLifecycleHookTimeout:
         finally:
             release.set()
             if started.is_set():
-                await asyncio.to_thread(finished.wait, 1)
+                await asyncio.to_thread(finished.wait, 30)
             await await_until(
                 asyncio.ensure_future(dispatcher.stop_detached_startup_hooks("thread-app")),
                 what="the thread-app detached startup hook stopping",
@@ -625,23 +635,26 @@ class TestLifecycleHookTimeout:
 
         import kiro_crew.apps.lifecycle as lifecycle_mod
 
-        monkeypatch.setattr(lifecycle_mod, "_HOOK_TIMEOUT_SEC", 1.0)
+        monkeypatch.setattr(lifecycle_mod, "_HOOK_TIMEOUT_SEC", 30.0)
         app_name = "early-cancel-app"
         lifecycle_mod._DETACHED_HOOK_RESIDUALS.discard(app_name)
         worker_started = threading.Event()
         worker_release = threading.Event()
         worker_finished = threading.Event()
 
-        def worker() -> None:
+        def worker(cancel_hook: Any) -> None:
             worker_started.set()
+            # Posted from the running worker: a cancel that reached the hook while
+            # its call still sat in the pool's queue would cancel the call unrun.
+            cancel_hook()
             worker_release.wait()
             worker_finished.set()
 
         async def self_cancelling_hook(_ctx: Any) -> None:
             task = asyncio.current_task()
             assert task is not None
-            asyncio.get_running_loop().call_soon(task.cancel)
-            await asyncio.to_thread(worker)
+            loop = asyncio.get_running_loop()
+            await asyncio.to_thread(worker, lambda: loop.call_soon_threadsafe(task.cancel))
 
         dispatcher = LifecycleDispatcher()
         monkeypatch.setattr(
@@ -650,10 +663,12 @@ class TestLifecycleHookTimeout:
         ctx = dispatcher._build_context(self._app_info(app_name), phase="startup")
 
         try:
+            # The deadline is far past the cancel, so the cancel decides the outcome
+            # however late the pool starts the worker.
             assert await dispatcher._invoke(
                 app_name, "backend.hooks:on_startup", ctx, phase="startup"
             ) is False
-            assert await asyncio.to_thread(worker_started.wait, 1)
+            assert worker_started.is_set()
             await asyncio.sleep(0)
             assert app_name in lifecycle_mod._DETACHED_HOOK_RESIDUALS
             assert app_name not in lifecycle_mod._DETACHED_HOOK_TASKS
@@ -663,7 +678,7 @@ class TestLifecycleHookTimeout:
             ) is False
         finally:
             worker_release.set()
-            await asyncio.to_thread(worker_finished.wait, 1)
+            await asyncio.to_thread(worker_finished.wait, 30)
             lifecycle_mod._DETACHED_HOOK_TASKS.pop(app_name, None)
             lifecycle_mod._DETACHED_HOOK_RESIDUALS.discard(app_name)
 
@@ -676,7 +691,7 @@ class TestLifecycleHookTimeout:
 
         import kiro_crew.apps.lifecycle as lifecycle_mod
 
-        monkeypatch.setattr(lifecycle_mod, "_HOOK_TIMEOUT_SEC", 1.0)
+        monkeypatch.setattr(lifecycle_mod, "_HOOK_TIMEOUT_SEC", 30.0)
         app_name = "parent-cancel-app"
         worker_started = threading.Event()
         worker_release = threading.Event()
@@ -702,7 +717,9 @@ class TestLifecycleHookTimeout:
         )
 
         try:
-            assert await asyncio.to_thread(worker_started.wait, 1)
+            # The deadline is far past the parent's cancel, so a late worker start
+            # cannot let the deadline end the invoke first.
+            assert await _thread_event_set(worker_started, "the hook's worker start")
             assert app_name in lifecycle_mod._DETACHED_HOOK_TASKS
             invoke_task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -714,7 +731,7 @@ class TestLifecycleHookTimeout:
             ) is False
         finally:
             worker_release.set()
-            await asyncio.to_thread(worker_finished.wait, 1)
+            await asyncio.to_thread(worker_finished.wait, 30)
             await await_until(
                 asyncio.ensure_future(dispatcher.stop_detached_startup_hooks(app_name)),
                 what="the detached startup hook stopping",
@@ -739,8 +756,11 @@ class TestLifecycleHookTimeout:
         worker_release = threading.Event()
         worker_finished = threading.Event()
 
-        def worker() -> None:
+        def worker(cancel_hook: Any) -> None:
             worker_started.set()
+            # Posted from the running worker: a cancel that reached the hook while
+            # its call still sat in the pool's queue would cancel the call unrun.
+            cancel_hook()
             worker_release.wait()
             worker_finished.set()
 
@@ -748,8 +768,8 @@ class TestLifecycleHookTimeout:
             task = asyncio.current_task()
             assert task is not None
             await arm_cancel.wait()
-            asyncio.get_running_loop().call_soon(task.cancel)
-            await asyncio.to_thread(worker)
+            loop = asyncio.get_running_loop()
+            await asyncio.to_thread(worker, lambda: loop.call_soon_threadsafe(task.cancel))
 
         dispatcher = LifecycleDispatcher()
         monkeypatch.setattr(
@@ -764,11 +784,11 @@ class TestLifecycleHookTimeout:
             assert app_name in lifecycle_mod._DETACHED_HOOK_TASKS
 
             arm_cancel.set()
-            assert await asyncio.to_thread(worker_started.wait, 1)
-            for _ in range(10):
-                await asyncio.sleep(0)
-                if app_name in lifecycle_mod._DETACHED_HOOK_RESIDUALS:
-                    break
+            assert await _thread_event_set(worker_started, "the hook's worker start")
+            await async_wait_until(
+                lambda: app_name in lifecycle_mod._DETACHED_HOOK_RESIDUALS,
+                describe=lambda: "the cancelled hook has left no residual marker",
+            )
 
             assert app_name in lifecycle_mod._DETACHED_HOOK_RESIDUALS
             assert app_name not in lifecycle_mod._DETACHED_HOOK_TASKS
@@ -778,13 +798,13 @@ class TestLifecycleHookTimeout:
             ) is False
 
             worker_release.set()
-            assert await asyncio.to_thread(worker_finished.wait, 1)
+            assert await _thread_event_set(worker_finished, "the hook's worker finish")
             # Actual worker completion cannot be inferred from the cancelled
             # asyncio wrapper, so ownership remains fail-closed.
             assert await dispatcher.stop_detached_startup_hooks(app_name) is False
         finally:
             worker_release.set()
-            await asyncio.to_thread(worker_finished.wait, 1)
+            await asyncio.to_thread(worker_finished.wait, 30)
             lifecycle_mod._DETACHED_HOOK_TASKS.pop(app_name, None)
             lifecycle_mod._DETACHED_HOOK_RESIDUALS.discard(app_name)
 
