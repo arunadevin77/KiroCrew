@@ -10,12 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from kiro_crew import platform_compat
 from kiro_crew.dashboard.state import DashboardState, _ChatSlot
 from kiro_crew.history import ConversationLog
 from kiro_crew.trust_patterns import (
@@ -203,10 +204,21 @@ class TestTimedGrantDeadline:
     def test_a_quoted_gt_is_covered_by_a_chat_long_base_grant(self):
         """The same reading as ``redirect_outside_grant``: a quoted ``>`` is text."""
         timed = {"echo*": GrantDeadline(100.0, 90.0)}
-        assert timed_grant_deadline("echo 'a > b'", base_trust_patterns("echo"), timed) is None
-        assert timed_grant_deadline("echo 'a' > b", base_trust_patterns("echo"), timed) == (
-            GrantDeadline(float("-inf"), float("-inf"))
-        )
+        with patch.object(platform_compat, "IS_WINDOWS", False):
+            assert timed_grant_deadline("echo 'a > b'", base_trust_patterns("echo"), timed) is None
+            assert timed_grant_deadline("echo 'a' > b", base_trust_patterns("echo"), timed) == (
+                GrantDeadline(float("-inf"), float("-inf"))
+            )
+
+    def test_a_cut_inside_double_quotes_does_not_hide_a_redirect(self):
+        """The segment after a cut at ``\\|`` inside ``"..."`` still writes ``out``."""
+        command = "echo \"x\\|ls '\" > out '\\'"
+        patterns = base_trust_patterns("echo") | base_trust_patterns("ls")
+        timed = {"echo*": GrantDeadline(100.0, 90.0)}
+        with patch.object(platform_compat, "IS_WINDOWS", False):
+            assert timed_grant_deadline(command, patterns, timed) == (
+                GrantDeadline(float("-inf"), float("-inf"))
+            )
 
     @pytest.mark.parametrize("command", ["ls && rm x", "$(ls)"])
     def test_a_command_no_grant_covers_gets_a_deadline_already_passed(self, command):

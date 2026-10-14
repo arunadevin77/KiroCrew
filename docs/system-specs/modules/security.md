@@ -3145,11 +3145,14 @@ its shell word (a space, tab, newline, operator or the end of the line; any othe
 character, including non-ASCII whitespace, continues the word), and every other
 `>` is. The trusted-pattern tier applies that rule after dropping each `>` bash
 reads as text: one inside single or double quotes, or right after a backslash
-outside single quotes (`_writes_through_redirect`). `git *` therefore covers
+outside quotes (`_literal_gt_offsets`). An escaped `>` is text for the splitter
+as well, so the `&` after it separates commands. `git *` therefore covers
 `git log --format='%h -> %s'`, and `grep *` covers `grep -E "a>b" f`, but
 neither covers `echo 'a' > b` or `echo "a > b" > c`. The same reading decides
 whether a pattern spells a write redirect and which timed grant an approval rests
-on. Where the walk cannot follow bash's quoting, every `>` stays a write: a quote
+on. Quote state is read once over the whole command, not per segment, because
+the splitter also cuts at a separator escaped inside double quotes (`"x\|y"`).
+Where the walk cannot follow bash's quoting, every `>` stays a write: a quote
 left open, a command carrying `<<` (a heredoc body, which can sit in a later
 segment than its `<<`), `#` (a comment), `$'` (ANSI-C quoting, where a backslash
 escapes a single quote) or `${` (a quoting context of its own inside double
