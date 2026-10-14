@@ -56,7 +56,7 @@ const DRIVES_FAILED_KEYS: Record<SearchErrorCause, string> = {
 }
 // Only two arms have copy of their own: the recents endpoint answers any read error
 // with 200 `{"dirs": []}` and never a coded body (`api_recent_projects` in
-// chat_handlers.py), so `denied` / `root_missing` cannot be produced for it -- a 403
+// chat_api/project_lists.py), so `denied` / `root_missing` cannot be produced for it -- a 403
 // carrying `authRequired` classifies as `failed` -- and both take the generic copy
 // rather than keys no request can reach.
 const RECENT_FAILED_KEYS: Record<SearchErrorCause, string> = {

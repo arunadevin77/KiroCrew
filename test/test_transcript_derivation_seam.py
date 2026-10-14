@@ -481,7 +481,7 @@ class TestThePublicationFence:
         ("rel", "function", "write_call"),
         [
             (
-                "kiro_crew/dashboard/chat_handlers.py",
+                "kiro_crew/dashboard/chat_api/handover_drain.py",
                 "_persist_handover_tail",
                 "save_slot_off_loop",
             ),

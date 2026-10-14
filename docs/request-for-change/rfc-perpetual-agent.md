@@ -525,7 +525,7 @@ a security boundary.
 The existing `ask_question` tool is **not** reusable here. It blocks the caller
 on an open HTTP request until the human clicks
 (`dashboard/handlers/ask_question.py:127`; see the note at
-`dashboard/chat_handlers.py:1917` — "ask_question holds an MCP worker on a
+`dashboard/chat_handlers.py` (`_reset_slot_session`) — "ask_question holds an MCP worker on a
 blocked HTTP request"). Correct for a dashboard user who is looking at the
 screen; wrong for an agent whose next reasonable act is to sleep for six hours.
 

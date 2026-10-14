@@ -2008,8 +2008,8 @@ resolution), `dashboard/state.py` (`_send_ws_all`, `_ws_client_allowed`,
 (`_granted_list`, `RESERVED_APP_PATH_SEGMENTS`), `dashboard/slot_ownership.py`
 (`slot_ownership_middleware`, `SLOT_ROUTE_POLICIES`, `deny_app_slot_access`,
 `app_reserved_key_reason`, `transcript_acquisition_reason`, `app_holds_gateway_key`),
-`dashboard/chat_handlers.py` (`_app_slot_acquisition_denial`,
-`_app_resume_refusal`, `resume_slot_from_history`); consumers: `website/src/app-sdk/index.ts` (mirrors the tables
+`dashboard/chat_api/app_admission.py` (`_app_slot_acquisition_denial`,
+`_app_resume_refusal`), `dashboard/chat_api/resume.py` (`resume_slot_from_history`); consumers: `website/src/app-sdk/index.ts` (mirrors the tables
 for developer-facing diagnostics, drift-guarded by
 `website/src/test/appSdkEventScope.test.ts`). Runtime-facing summary for app
 authors: [../../architecture/app-platform-trust-model.md](../../architecture/app-platform-trust-model.md).

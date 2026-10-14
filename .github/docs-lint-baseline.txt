@@ -310,7 +310,6 @@ line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:2351
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:2407
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:321
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:345
-line-ref	docs/request-for-change/rfc-perpetual-agent.md	dashboard/chat_handlers.py:1917
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	dashboard/handlers/ask_question.py:127
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	heartbeat.py:39
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	mcp_core.py:758
@@ -326,7 +325,6 @@ line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	config/loade
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	context.py:872
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	context.py:897-902
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	dashboard/chat_folders.py:130
-line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	dashboard/chat_handlers.py:2252
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	dashboard/chat_persistence.py:326,476
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	dashboard/chat_utils.py:369-375
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	dashboard/handlers/artifacts.py:696

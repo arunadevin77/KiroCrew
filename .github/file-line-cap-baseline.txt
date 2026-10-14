@@ -81,7 +81,6 @@
 3161 src/kiro_crew/cron_script.py
 2643 src/kiro_crew/dashboard/change_cards.py
 3398 src/kiro_crew/dashboard/chat_folders.py
-11790 src/kiro_crew/dashboard/chat_handlers.py
 3617 src/kiro_crew/dashboard/chat_persistence.py
 20862 src/kiro_crew/dashboard/chat_runner.py
 2283 src/kiro_crew/dashboard/chat_tags.py

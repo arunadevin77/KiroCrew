@@ -1082,7 +1082,7 @@ def start_queue_persist(state: "DashboardState", slot: "_ChatSlot") -> None:
     """Begin the durable write for a just-queued prompt, off the event loop.
 
     Called from both places a prompt is accepted onto a slot queue: the busy-slot
-    path in this module, and the sub-agent hold branch in ``chat_handlers``. Both
+    path in this module, and the sub-agent hold branch in ``chat_api/chat_send``. Both
     answer the sender a receipt saying whether the entry is durable, so both must
     start the write that makes it so; a receipt from one path and a write from
     only the other is the asymmetry this seam exists to prevent.

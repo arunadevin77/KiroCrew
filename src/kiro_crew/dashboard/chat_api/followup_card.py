@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 if TYPE_CHECKING:
+    import time
+
     from kiro_crew.dashboard.chat_handlers import (
         _FOLLOWUP_TEXT_FIELDS,
         SUGGEST_FOLLOWUP_SCHEMA,
@@ -20,7 +22,6 @@ if TYPE_CHECKING:
         redact_credentials,
         redact_exfiltration_urls,
         slot_not_found,
-        time,
         validate_tool_args,
     )
 

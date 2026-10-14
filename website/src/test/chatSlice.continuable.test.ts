@@ -11,7 +11,7 @@ import type { ChatMessage } from '../types'
  * composer — mirroring `_has_conversation` in
  * `src/kiro_crew/dashboard/chat_handlers.py`, which authorizes the press under
  * the slot lock. `selectTurnInterrupted` only decides what the button SAYS,
- * mirroring `_is_interrupted`, which makes the same split to pick the
+ * mirroring `_is_interrupted` (`chat_api/continue_turn.py`), which makes the same split to pick the
  * continuation body handed to the model.
  *
  * These tests pin both so the pairs cannot drift apart silently — a drift on the

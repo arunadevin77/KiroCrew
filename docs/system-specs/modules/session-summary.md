@@ -21,7 +21,7 @@ to pay for, so the whole subsystem is inert until `session_summary.enabled`.
 | Transcript extraction, payload shaping | `session_summary.py` |
 | Turn-end generation, the prompt | `dashboard/chat_summary.py` |
 | Sidecar cache | `history.py` (`ConversationLog`) |
-| Read endpoint | `dashboard/chat_handlers.py` (`api_chat_slot_summary`) |
+| Read endpoint | `dashboard/chat_api/slot_summary.py` (`api_chat_slot_summary`) |
 
 ## Storage: a sidecar, never the transcript
 
@@ -492,7 +492,7 @@ incognito mode, liveness, a clean `end_turn`, the turn count and the cadence, an
 nothing else. Coverage is decided instead by *where the generator is called from*:
 the automatic pass has exactly one dispatch site, `_finish_queue_cycle` at the
 tail of a `_ChatSlot` turn in `dashboard/chat_runner.py`, plus the explicit
-on-demand route in `dashboard/chat_handlers.py`. Only a turn that ran through
+on-demand route in `dashboard/chat_api/slot_summary.py`. Only a turn that ran through
 `_run_chat` on a slot reaches the automatic pass — and reaching it is not the same
 as producing a summary, because the gates above still apply. The on-demand route
 is the one path that produces a summary with no turn at all.

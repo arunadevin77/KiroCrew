@@ -1891,7 +1891,7 @@ class DashboardContributor(Protocol):
     def on_user_message(self, app: "web.Application", message: str) -> None:
         """Observe an inbound user chat message (Default: no-op).
 
-        WIRED: ``dashboard/chat_handlers.py::api_chat`` calls this once per user
+        WIRED: ``dashboard/chat_api/chat_send.py::api_chat`` calls this once per user
         message, just before the turn is scheduled, inside a fail-safe guard so
         an observer error never blocks the chat.  Fire-and-forget by contract:
         the observer must not block (schedule its own task if it needs to do

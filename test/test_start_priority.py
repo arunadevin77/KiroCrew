@@ -926,7 +926,7 @@ def test_the_dashboard_runner_allocates_at_the_turns_priority():
 @pytest.mark.parametrize(
     ("path", "function"),
     [
-        ("dashboard/chat_handlers.py", "api_chat_slot_create"),
+        ("dashboard/chat_api/slot_create.py", "api_chat_slot_create"),
         ("dashboard/chat_api/session_relaunch.py", "api_chat_slot_project"),
     ],
 )

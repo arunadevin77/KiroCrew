@@ -2178,14 +2178,15 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # user-visible surface is already covered by a registered sink.
         "dashboard/chat_folders.py",
         "dashboard/chat_fork.py",
-        "dashboard/chat_handlers.py",
-        # The owners composed into that facade: the same redactor calls, moved
-        # verbatim, under the facade's existing non-egress classification; the
-        # split adds no egress path.
+        # The owners composed into the ``dashboard/chat_handlers.py`` facade: the same
+        # redactor calls, moved verbatim, under the facade's existing non-egress
+        # classification; the split adds no egress path.
         "dashboard/chat_api/agent_switch.py",
+        "dashboard/chat_api/chat_send.py",
         "dashboard/chat_api/followup_card.py",
         "dashboard/chat_api/pending_context.py",
         "dashboard/chat_api/resume.py",
+        "dashboard/chat_api/slot_create.py",
         "dashboard/chat_api/slot_detail.py",
         "dashboard/chat_api/slot_note.py",
         "dashboard/chat_api/slot_settings.py",

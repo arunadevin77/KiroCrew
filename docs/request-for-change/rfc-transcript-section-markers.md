@@ -305,10 +305,10 @@ Why this over an HTTP route, in the module's own words
 
 **Explicitly rejecting `/note` reuse.** `/note` always performs *two* writes: a
 visible `inject` row and a `_pending_context` entry drained into the next user
-message (`chat_handlers.py`). The context half is the one thing a marker
+message (`dashboard/chat_api/slot_note.py`). The context half is the one thing a marker
 must never do. There is no visible-only mode, and the docstring says why — "there
 is no visible-only mode, because no caller wanted one"
-(`chat_handlers.py`). Adding one would graft a second, quieter feature
+(`dashboard/chat_api/slot_note.py`). Adding one would graft a second, quieter feature
 onto an endpoint whose contract is "both writes always happen".
 
 ### 5.6 MCP tool signature
@@ -481,7 +481,7 @@ Exit criteria:
 `POST /api/chat/slots/{slot}/section`, mirroring `/note`'s auth and
 re-authorization shape (`deny_app_slot_session_access` in
 `dashboard/slot_ownership.py`, and `_reauthorize_after_await` in
-`chat_handlers.py`, which delegates to it), body `{label?, collapseEarlier?}`,
+`dashboard/chat_api/app_admission.py`, which delegates to it), body `{label?, collapseEarlier?}`,
 returning `{"ok", "appended", "visibleDeferred"}`.
 
 Listed so the directive design does not foreclose it. Not proposed for the first

@@ -1059,7 +1059,7 @@ is byte-identical) with no `CONTRACT_VERSION` bump.
   Default: one destination for a non-empty `telemetry.otlp_endpoint`, none
   otherwise (byte-identical to the endpoint-only exporter it replaced).
 - `DashboardContributor.on_user_message(app, message)` — fired once per user
-  message by `dashboard/chat_handlers.py::api_chat` before the turn, inside a
+  message by `dashboard/chat_api/chat_send.py::api_chat` before the turn, inside a
   fail-safe `safe_context_call`. OBSERVER only. Default no-op.
 - `McpToolingProvider.extra_skills()` — WIRED: `SkillsLoader.__init__`
   appends returned paths as lowest-precedence extra skill roots (sensitivity- +

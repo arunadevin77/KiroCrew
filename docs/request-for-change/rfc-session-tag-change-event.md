@@ -311,7 +311,7 @@ only care about human transitions can filter it. Left as an open question below.
 
 **Recommendation: a single choke-point emitter, not per-handler emits.** Because
 the write surface is this wide and shares one invariant (`slot.tags` mutated under
-`tags_write_lock`, per the comment at `chat_handlers.py`), the emit
+`tags_write_lock`, per the comment at `chat_api/slot_create.py`), the emit
 belongs at a single helper that every write site funnels through, it takes the
 pre-write and post-write status-tag sets, computes the delta, and dispatches the
 hook only if the status subset changed. A single choke point is the only way to
@@ -327,7 +327,7 @@ recommendation stands as the target shape, but the implementation PR (#7669) doe
 no emit site: it touches neither `chat_tags.py` nor `chat_handlers.py`, so no writer calls
 the dispatcher and the event cannot fire. Per-writer emits — the two `chat_tags.py`
 writers, and closing-order step 1, the folder inheritance in `_read_folder_tags` reached
-from `api_chat_slot_create` (`chat_handlers.py`) — are deferred to a follow-up PR. The two
+from `api_chat_slot_create` (`chat_api/slot_create.py`) — are deferred to a follow-up PR. The two
 `slot.tags.append` sites in `surface_channel_session` (`channel_slots.py`) stay silent
 after that follow-up too, until closing-order step 2.
 

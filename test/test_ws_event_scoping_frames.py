@@ -596,15 +596,17 @@ class TestApprovalResolvedCarriesSlot:
         withhold the resolution from the owning app. Pin every broadcast site."""
         import re
 
+        dashboard = Path(__file__).resolve().parents[1] / "src" / "kiro_crew" / "dashboard"
         roots = [
-            Path(__file__).resolve().parents[1] / "src" / "kiro_crew" / "dashboard" / f
+            dashboard / f
             for f in (
                 "interaction_coordinator.py",
                 "chat_handlers.py",
-                "chat_api/slot_approval.py",
                 "chat_runner.py",
             )
         ]
+        # The handlers facade is scanned with every ``chat_api`` owner it composes.
+        roots += sorted((dashboard / "chat_api").glob("*.py"))
         found = 0
         for path in roots:
             src = path.read_text(encoding="utf-8")

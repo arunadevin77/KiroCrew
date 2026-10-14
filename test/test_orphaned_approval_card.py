@@ -305,8 +305,9 @@ class TestResolveApprovalFlushes:
         `_flush_dirty_slots` skips slots whose `_dirty` is False, so a call site
         that marks without flagging can lose the write on restart and resurrect
         the card. Guard every current site so a new one is caught in review; the
-        ``chat_turn`` owners the runner composes are scanned too, so a call that
-        moves into one keeps the guard. Counted in ``test_source_pin_budget.py``.
+        ``chat_turn`` owners the runner composes and the ``chat_api`` owners the
+        handlers compose are scanned too, so a call that moves into one keeps the
+        guard. Counted in ``test_source_pin_budget.py``.
         """
         import re
         from pathlib import Path
@@ -318,11 +319,11 @@ class TestResolveApprovalFlushes:
             root / name
             for name in (
                 "chat_handlers.py",
-                "chat_api/slot_approval.py",
                 "chat_runner.py",
                 "state.py",
             )
         ]
+        sources += sorted((root / "chat_api").glob("*.py"))
         sources += sorted((root / "chat_turn").glob("*.py"))
         for path in sources:
             src = path.read_text(encoding="utf-8")

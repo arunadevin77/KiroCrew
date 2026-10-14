@@ -451,7 +451,7 @@ def test_every_api_chat_body_key_is_classified() -> None:
     """
     from kiro_crew.dashboard import chat_handlers
 
-    tree = ast.parse(inspect.getsource(chat_handlers))
+    tree = ast.parse(inspect.getsource(chat_handlers._owner_chat_send))
     functions = {
         node.name: node
         for node in tree.body

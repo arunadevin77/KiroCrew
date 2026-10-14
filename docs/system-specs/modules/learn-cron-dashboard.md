@@ -1592,7 +1592,22 @@ specified compatibility change.
   - `project_lists` — the recent and favourite project lists;
   - `pending_context` — the pending-context route, with the validators and the
     per-source cap the note route shares;
-  - `slot_note` — the note route and its deferred hold.
+  - `slot_note` — the note route and its deferred hold;
+  - `chat_send` — the send path (`api_chat`), its SSE writer and the
+    steer-or-queue decision a busy slot's human send asks for;
+  - `app_admission` — whether an app may take a slot for a send, a create or a
+    resume, send to or cancel on a slot, or change its session settings, and the
+    re-check a slot write runs after every await (`_reauthorize_after_await`);
+  - `turn_stop` — stop (`stop_slot_turn`) and interrupt, the stop-event card, and
+    the approval rejection a stop runs first;
+  - `continue_turn` — continue (`continue_slot_turn`), the session-start failure
+    streak, and end-wait;
+  - `prompt_queue` — the queued-prompt routes: cancel, edit and reorder;
+  - `slot_create` — slot create (`api_chat_slot_create`), the app-agent owner record
+    it persists, and the default-template stamp;
+  - `handover_drain` — the hand-over drain (`_persist_handover_tail`) and its
+    lost-prompt accounting;
+  - `slot_summary` — the session summary read and generate routes.
 
   `chat_api.compose` runs every owner function on `chat_handlers`' globals, so a
   patch of `kiro_crew.dashboard.chat_handlers.<name>` reaches moved code, records
@@ -1604,20 +1619,19 @@ specified compatibility change.
   `test/test_chat_handlers_composition_contract.py` pins the surface, the
   composition and the patch reach.
 
-  What stays in `chat_handlers.py`: the send path (`api_chat`), stop, continue,
-  interrupt, end-wait and the queue routes, summary, and slot create
-  (`api_chat_slot_create`), whose eager-spawn priority `test/test_start_priority.py`
-  reads by function name in this file; the hand-over drain `_persist_handover_tail`,
-  the shared protocol records (`ResumeRefusal`, `ResumeOutcome`, `SlotCloseError`)
-  and the shared chokepoints (`_unblock_pending_waits`, `_reset_slot_session`, the
-  ownership and app-isolation checks such as `deny_non_dashboard_caller` and
-  `_reauthorize_after_await`); and every construct a guard reads in that
-  file by path (the three baselined ACP and provider imports, which
-  `_ACP_LAYER_TYPES` binds for the owners that read them, the turn dispatch, the
-  synthesis boundary, the stop path's permission-resolution site). The
-  approval-mode writers, the approve route's permission-resolution site and the
-  approval-resolved broadcasts live in `slot_approval`, where their guards read
-  them; the contract test maps each guarded construct to the file that holds it.
+  What stays in `chat_handlers.py`: the imports, the module state and the
+  constants every owner reads; the shared protocol records (`ResumeRefusal`,
+  `ResumeOutcome`, `SlotCloseError`); the shared chokepoints
+  (`_unblock_pending_waits`, `_reset_slot_session`) and the owner-only caller gate
+  `deny_non_dashboard_caller`; the Continue predicate
+  `_has_conversation`; and the constructs guards read in that file by path (the
+  three baselined ACP and provider imports, which `_ACP_LAYER_TYPES` binds for the
+  owners that read them, and the synthesis boundary `_orphan_in_current_turn`).
+  Every other guarded construct lives in the owner its guard reads -- the turn
+  dispatch and the app-actor kwargs in `chat_send`, the queue-clear and the stop
+  path's permission-resolution site in `turn_stop`, the fence opt-out in
+  `handover_drain`, the approval-mode writers in `slot_approval` -- and the
+  contract test maps each one to the file that holds it.
 
   **Where new code goes**: new work for a family an owner holds goes in that owner;
   new work for a family that stays goes in `chat_handlers.py`, beside it. Every name

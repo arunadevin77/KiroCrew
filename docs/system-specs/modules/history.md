@@ -2116,7 +2116,7 @@ orphaned card from a prior attempt **in the same turn** (no turn-opening row —
 `groupDisplayItems.ts` — after it) RE-ARMS that row in place (same `id`, back to `stopping`) instead of
 resolving it and appending a fresh row — the pane upserts stop cards by
 `meta.id`, so a resolve-plus-append put two chips on screen for one press
-(`_open_stop_event_card` in `chat_handlers.py`, shared by `/stop` and
+(`_open_stop_event_card` in `chat_api/turn_stop.py`, shared by `/stop` and
 `/interrupt`). A cross-turn orphan is settled where it lies and the press's
 card is appended fresh, so the chip lands in the turn the user stopped.
 Because reuse makes card ids non-unique across presses, per-attempt identity

@@ -1,7 +1,7 @@
 """A ``cron:`` caller on ``POST /api/chat/mode`` sets one posture on one slot it created.
 
 ``ScriptContext.set_session_mode`` is the cron path to ``api_chat_mode``
-(``src/kiro_crew/dashboard/chat_handlers.py``). The handler holds a caller that
+(``src/kiro_crew/dashboard/chat_api/slot_approval.py``). The handler holds a caller that
 presents an attested ``cron:<job id>`` key to three rules, each audited:
 
 1. the mode is ``trust`` or ``trust_reads``; ``yolo``, ``normal`` and anything

@@ -885,10 +885,17 @@ def test_a_worker_session_closing_reaches_no_wake():
     reported -- and that same flag is the only cover for a worker whose process dies
     with its slot still open.
     """
-    from kiro_crew.dashboard import chat_handlers
-    from kiro_crew.dashboard.chat_api import slot_lifecycle
+    import importlib
+    import pkgutil
 
-    for module in (slot_lifecycle, chat_handlers):
+    from kiro_crew.dashboard import chat_api, chat_handlers
+
+    # The handlers facade and every ``chat_api`` owner it composes.
+    owners = [
+        importlib.import_module(f"{chat_api.__name__}.{info.name}")
+        for info in pkgutil.iter_modules(chat_api.__path__)
+    ]
+    for module in (chat_handlers, *sorted(owners, key=lambda owner: owner.__name__)):
         source = inspect.getsource(module)
         assert "conductor_wake" not in source, f"{module.__name__} reaches the wake again"
 

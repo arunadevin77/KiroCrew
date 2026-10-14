@@ -100,7 +100,7 @@ export const SESSION_START_REPEAT_REFUSAL_AT = 2
  * How many session starts in a row failed at the tail of the transcript.
  *
  * Mirrors `session_start_failure_streak` in
- * `src/kiro_crew/dashboard/chat_handlers.py` -- the two must agree, or the card
+ * `src/kiro_crew/dashboard/chat_api/continue_turn.py` -- the two must agree, or the card
  * hides a Resume the server would honour (or offers one it refuses). Walks back
  * from the newest row counting `error` rows of the `session_start_failed` kind.
  * Rows that are not the conversation's floor are walked past -- tool rows,

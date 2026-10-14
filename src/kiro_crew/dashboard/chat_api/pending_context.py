@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 if TYPE_CHECKING:
+    import time
+
     from kiro_crew.dashboard.chat_handlers import (
         _MAX_CONTEXT_CONTENT,
         _MAX_CONTEXT_PER_SOURCE,
@@ -24,7 +26,6 @@ if TYPE_CHECKING:
         redact_credentials,
         sel,
         slot_not_found,
-        time,
     )
 
 

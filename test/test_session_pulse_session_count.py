@@ -164,13 +164,14 @@ def _opted_in_call_counts() -> dict[str, int]:
 
 def test_only_human_request_paths_opt_in() -> None:
     # Exactly the three human request-layer paths carry the flag: the chat-send
-    # auto-create and the new-chat tab (chat_handlers.py), and fork
+    # auto-create and the new-chat tab (chat_api/chat_send.py, chat_api/slot_create.py), and fork
     # (chat_fork.py). This sweeps every module under src/kiro_crew, so an
     # opt-in appearing anywhere else -- most importantly the session-control
     # create verb, whose absence is required -- or disappearing from
     # these two files is a deliberate decision: update this pin alongside it.
     assert _opted_in_call_counts() == {
-        "dashboard/chat_handlers.py": 2,
+        "dashboard/chat_api/chat_send.py": 1,
+        "dashboard/chat_api/slot_create.py": 1,
         "dashboard/chat_fork.py": 1,
     }
 

@@ -662,7 +662,7 @@ def test_an_app_authored_send_is_not_dispatched_as_a_person():
 
     from kiro_crew.dashboard import chat_handlers
 
-    tree = ast.parse(inspect.getsource(chat_handlers))
+    tree = ast.parse(inspect.getsource(chat_handlers.api_chat))
     kwargs_writes = [
         node
         for node in ast.walk(tree)

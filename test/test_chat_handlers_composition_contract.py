@@ -538,12 +538,18 @@ _GLOBAL_OPS = frozenset({"LOAD_GLOBAL", "STORE_GLOBAL", "DELETE_GLOBAL"})
 _OWNER_MODULES = frozenset(
     {
         "agent_switch",
+        "app_admission",
+        "chat_send",
+        "continue_turn",
         "followup_card",
+        "handover_drain",
         "pending_context",
         "project_lists",
+        "prompt_queue",
         "resume",
         "session_relaunch",
         "slot_approval",
+        "slot_create",
         "slot_detail",
         "slot_effort",
         "slot_guards",
@@ -551,7 +557,9 @@ _OWNER_MODULES = frozenset(
         "slot_model",
         "slot_note",
         "slot_settings",
+        "slot_summary",
         "source_links",
+        "turn_stop",
     }
 )
 
@@ -807,6 +815,57 @@ slot_settings | _turn_timeout_body_value | function | (body: 'dict[str, Any]') -
 slot_settings | _turn_timeout_payload | async function | (secs: 'int | None') -> 'dict[str, Any]'
 slot_settings | api_chat_slot_turn_timeout | async function | (request: 'web.Request') -> 'web.Response'
 slot_settings | api_chat_slot_color | async function | (request: 'web.Request') -> 'web.Response'
+chat_send | _sweep_stale_permissions | function | (slot: "'_ChatSlot'") -> 'None'
+chat_send | _send_binds_agent | function | (agent: 'str', slot: 'Any') -> 'bool'
+chat_send | _send_writes_persona | function | (body: 'dict') -> 'bool'
+chat_send | _send_harness_command | async function | (message: 'str') -> 'str'
+chat_send | steer_is_auto | function | (value: 'object') -> 'bool'
+chat_send | decided_message_handling | async function | (slot: 'Any', message: 'str') -> 'tuple[bool, dict | None]'
+chat_send | api_chat | async function | (request: 'web.Request') -> 'web.StreamResponse'
+chat_send | write_sse_or_abort | async function | (request: 'web.Request', resp: 'web.StreamResponse', data: 'bytes') -> 'None'
+app_admission | _app_slot_acquisition_denial | async function | (request: 'web.Request', state: "'DashboardState'", request_app: 'str', slot_name: 'str', operation: 'str', *, session_grant_route: 'bool') -> 'tuple[web.Response | None, Any]'
+app_admission | _app_slot_acquisition_recheck | async function | (state: "'DashboardState'", request_app: 'str', key: 'str', judged: 'Any', operation: 'str') -> 'web.Response | None'
+app_admission | _acquired_slot_was_judged | function | (state: "'DashboardState'", key: 'str', judged: 'Any') -> 'bool'
+app_admission | _app_acquisition_conflict | function | (state: "'DashboardState'", request_app: 'str', key: 'str', judged: 'Any', exc: 'ValueError') -> 'web.Response'
+app_admission | _deny_app_yolo | function | (request_app: 'str', operation: 'str') -> 'web.Response'
+app_admission | _deny_app_session_settings | function | (request_app: 'str', slot_key: 'str', trigger: 'str') -> 'web.Response'
+app_admission | _slot_not_found | function | () -> 'web.Response'
+app_admission | _app_may_send_to_slot | async function | (request_app: 'str', slot: 'Any') -> 'bool'
+app_admission | _app_claim_refused | async function | (state: 'DashboardState', request_app: 'str', operation: 'str', keys: 'Iterable[str]') -> 'bool'
+app_admission | _app_cancel_denied | function | (request: 'web.Request | Mapping[str, Any]', slot: '_ChatSlot', operation: 'str', target_key: 'str') -> 'web.Response | None'
+app_admission | _app_resume_refusal | async function | (state: "'DashboardState'", request_app: 'str', name: 'str', history_key: 'str', meta: 'dict') -> 'ResumeRefusal | None'
+app_admission | _reauthorize_after_await | function | (state: 'DashboardState', slot: '_ChatSlot', name: 'str', request_app: 'str', operation: 'str') -> 'web.Response | None'
+turn_stop | _reject_pending_approvals | function | (slot: '_ChatSlot') -> 'None'
+turn_stop | _resolve_stop_event | function | (slot: '_ChatSlot', outcome: 'str') -> 'None'
+turn_stop | _rearm_stop_event | function | (slot: '_ChatSlot', stop_data: 'dict[str, Any]') -> 'bool'
+turn_stop | _open_stop_event_card | function | (slot: '_ChatSlot', state_label: 'str') -> 'str'
+turn_stop | _make_stop_resolver | function | (state: 'DashboardState', slot: '_ChatSlot', outcome: 'str', card_id: 'str | None') -> 'Callable[[], Awaitable[None]]'
+turn_stop | _cancel_target | function | (slot: '_ChatSlot') -> 'str'
+turn_stop | _settle_discarded_stage_deliveries | async function | (state: "'DashboardState'", slot: "'_ChatSlot'", contents: 'list[str]') -> 'None'
+turn_stop | stop_slot_turn | async function | (state: "'DashboardState'", slot: "'_ChatSlot'", *, force: 'bool' = False, source: 'str' = 'dashboard', cancel_key: 'str' = '', escalate: 'bool' = True) -> 'dict[str, Any]'
+turn_stop | _compaction_in_flight | function | (state: 'DashboardState', cancel_key: 'str') -> 'bool'
+turn_stop | api_chat_slot_stop | async function | (request: 'web.Request') -> 'web.Response'
+turn_stop | api_chat_slot_interrupt | async function | (request: 'web.Request') -> 'web.Response'
+continue_turn | api_chat_slot_continue | async function | (request: 'web.Request') -> 'web.Response'
+continue_turn | SlotContinueRefusal | class
+continue_turn | continue_slot_turn | async function | (state: 'DashboardState', slot: '_ChatSlot', *, directive_user_origin: 'bool', via: 'str' = '', require_interrupted: 'bool' = False, before_dispatch: 'Callable[[], None] | None' = None, extra_meta: 'dict[str, Any] | None' = None, replaced: 'Callable[[], bool] | None' = None) -> 'str'
+continue_turn | session_start_failure_streak | function | (messages: 'list[dict]') -> 'int'
+continue_turn | _is_stop_event | function | (m: 'dict') -> 'bool'
+continue_turn | _is_interrupted | function | (slot: '_ChatSlot') -> 'bool'
+continue_turn | api_chat_slot_end_wait | async function | (request: 'web.Request') -> 'web.Response'
+prompt_queue | api_chat_slot_queue_cancel | async function | (request: 'web.Request') -> 'web.Response'
+prompt_queue | api_chat_slot_queue_edit | async function | (request: 'web.Request') -> 'web.Response'
+prompt_queue | api_chat_slot_queue_reorder | async function | (request: 'web.Request') -> 'web.Response'
+slot_create | _default_template_stamp | function | (cfg: 'KiroCrewConfig') -> 'str'
+slot_create | _persist_app_agent_owner | async function | (state: 'DashboardState', slot: '_ChatSlot') -> 'bool'
+slot_create | api_chat_slot_create | async function | (request: 'web.Request') -> 'web.Response'
+handover_drain | _HandoverDrainResult | class
+handover_drain | _owed_prompts_lost_on_line | async function | (state: 'DashboardState', name: 'str', slot: '_ChatSlot', history_key: 'str') -> 'int'
+handover_drain | _report_lost_queued_prompts | function | (state: 'DashboardState', name: 'str', count: 'int', history_key: 'str') -> 'None'
+handover_drain | _persist_handover_tail | async function | (state: 'DashboardState', name: 'str', slot: '_ChatSlot') -> '_HandoverDrainResult'
+slot_summary | api_chat_slot_summary | async function | (request: 'web.Request') -> 'web.Response'
+slot_summary | _generate_state | function | (cfg: 'KiroCrewConfig', slot: 'Any') -> 'str'
+slot_summary | api_chat_slot_summary_generate | async function | (request: 'web.Request') -> 'web.Response'
 """
 
 
@@ -911,17 +970,10 @@ _FACADE_STATE = (
     "logger",
 )
 
-#: Definitions that stay in the facade file: the summary routes the
-#: session-summary spec names there, the Continue predicate the session spec
-#: mirrors, the shared protocol records, the hand-over drain several guards read by
-#: path, and ``api_chat_slot_create``, whose eager-spawn priority
-#: ``test_start_priority`` reads by function name in this file.
+#: Definitions that stay in the facade file: the Continue predicate the session
+#: spec mirrors, and the shared protocol records.
 _FACADE_DEFS = (
-    "api_chat_slot_summary",
-    "api_chat_slot_summary_generate",
     "_has_conversation",
-    "_persist_handover_tail",
-    "api_chat_slot_create",
     "ResumeRefusal",
     "ResumeOutcome",
     "SlotCloseError",
@@ -1530,28 +1582,31 @@ def test_no_owner_captures_a_name_tests_rebind_on_the_facade() -> None:
 #: Constructs repository guards read by path or through module source, each mapped
 #: to the files that hold it -- the facade (``chat_handlers``) or an owner -- which
 #: are the files those guards read: the agent-SDK boundary's three baselined
-#: imports, the queue-clear the session-control doc counts, the app-actor turn
-#: kwargs, the hold-branch persist, the stop chokepoints, the synthesis boundary
-#: the frontend mirrors and the hand-over drain's fence opt-out in the facade; the
-#: approval-mode writers ``test_approval_modes_enforcement``'s ``WRITERS`` keys to
+#: imports, the stop chokepoints and the synthesis boundary the frontend mirrors in
+#: the facade; the app-actor turn kwargs and the hold-branch persist in
+#: ``chat_api/chat_send.py``; the queue-clear the session-control doc counts in
+#: ``chat_api/turn_stop.py``; the hand-over drain's fence opt-out in
+#: ``chat_api/handover_drain.py``; the approval-mode writers
+#: ``test_approval_modes_enforcement``'s ``WRITERS`` keys to
 #: ``chat_api/slot_approval.py``; and the permission-resolution sites with their
-#: dirty flags and the approval-resolved broadcasts, whose guards read the facade
-#: and ``chat_api/slot_approval.py``. A holder that grew one, or lost one, would
-#: move it out of such a guard's sight, so each set is exact.
+#: dirty flags and the approval-resolved broadcasts, whose guards read
+#: ``chat_api/turn_stop.py`` and ``chat_api/slot_approval.py``. A holder that grew
+#: one, or lost one, would move it out of such a guard's sight, so each set is
+#: exact.
 _GUARDED_CONSTRUCT_HOMES: dict[str, frozenset[str]] = {
     r"(?m)^from kiro_crew\.acp\.client import AcpModelUnavailable$": frozenset({"chat_handlers"}),
     r"(?m)^from kiro_crew\.providers\.acp import AcpProvider$": frozenset({"chat_handlers"}),
     r"(?m)^from kiro_crew\.providers\.base import LLMProvider$": frozenset({"chat_handlers"}),
     r"safety_override\(\)\.activate": frozenset({"slot_approval"}),
-    r"\._queue\.clear\(\)": frozenset({"chat_handlers"}),
-    r'_turn_kwargs\["_turn_actor"\]': frozenset({"chat_handlers"}),
-    r"warn_if_not_durable\(slot\._queue, qid, slot\.key\)": frozenset({"chat_handlers"}),
+    r"\._queue\.clear\(\)": frozenset({"turn_stop"}),
+    r'_turn_kwargs\["_turn_actor"\]': frozenset({"chat_send"}),
+    r"warn_if_not_durable\(slot\._queue, qid, slot\.key\)": frozenset({"chat_send"}),
     r"(?m)^def _unblock_pending_waits\(": frozenset({"chat_handlers"}),
     r"(?m)^async def _reset_slot_session\(": frozenset({"chat_handlers"}),
     r"(?m)^def _orphan_in_current_turn\(": frozenset({"chat_handlers"}),
-    r"_mark_permission_resolved\(": frozenset({"chat_handlers", "slot_approval"}),
+    r"_mark_permission_resolved\(": frozenset({"slot_approval", "turn_stop"}),
     r'"approval_resolved"': frozenset({"slot_approval"}),
-    r"issued_by_the_retraction=True": frozenset({"chat_handlers"}),
+    r"issued_by_the_retraction=True": frozenset({"handover_drain"}),
 }
 
 
@@ -1567,14 +1622,14 @@ def test_a_construct_a_guard_reads_stays_where_the_guard_reads_it(pattern: str) 
 
 
 #: Calls guards check by reading the files that make them, mapped to those files:
-#: the turn dispatch the turn-ceiling scan counts in the facade, and the
-#: permission-resolution sites, whose guard reads the facade and
+#: the turn dispatch the turn-ceiling scan counts in ``chat_api/chat_send.py``, and
+#: the permission-resolution sites, whose guard reads ``chat_api/turn_stop.py`` and
 #: ``chat_api/slot_approval.py``. A caller anywhere else would slip past the guard
 #: that counts it.
 _GUARDED_CALL_SITES: dict[str, frozenset[str]] = {
-    "_run_chat": frozenset({"chat_handlers"}),
-    "spawn_guarded_turn": frozenset({"chat_handlers"}),
-    "_mark_permission_resolved": frozenset({"chat_handlers", "slot_approval"}),
+    "_run_chat": frozenset({"chat_send"}),
+    "spawn_guarded_turn": frozenset({"chat_send"}),
+    "_mark_permission_resolved": frozenset({"slot_approval", "turn_stop"}),
 }
 
 #: Harness-identity reads the agent-SDK ratchets ban in ``dashboard/chat_handlers.py``
@@ -1627,6 +1682,87 @@ def test_no_owner_reads_a_harness_identity() -> None:
     assert len(_identity_reads(ast.parse(planted))) == 4
     reads = {stem: _identity_reads(ast.parse(source)) for stem, source in _owner_sources().items()}
     assert {stem: found for stem, found in reads.items() if found} == {}
+
+
+# ── the sync-io gate keeps its reach ──────────────────────────────────────────
+
+#: Module names ``scripts/check_sync_io_in_async.py`` resolves, and only from an
+#: ``import <module>`` in the same file: an owner that took one through the facade's
+#: import would drop its coroutines out of that gate. Patched ones (``time``) are
+#: imported under ``TYPE_CHECKING``, which the gate reads and the capture scan skips.
+_SYNC_IO_MODULES = frozenset({"time", "os", "subprocess", "socket", "requests", "httpx"})
+
+#: One call per module that the gate reports as blocking.
+_SYNC_IO_PLANTS = {"time": "time.sleep(1)", "os": 'os.system("true")'}
+
+#: Owners that still take a gated module through the facade's import. Both predate
+#: this split and sit outside it; each row goes when its owner is respelled.
+_SYNC_IO_REACH_PENDING = frozenset({"resume", "slot_lifecycle"})
+
+
+def _sync_io_gate() -> types.ModuleType:
+    path = _SRC.parent / "scripts" / "check_sync_io_in_async.py"
+    spec = importlib.util.spec_from_file_location("check_sync_io_in_async_probe", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _from_imported_sync_io_modules(source: str) -> set[str]:
+    return {
+        alias.asname or alias.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if (alias.asname or alias.name) in _SYNC_IO_MODULES
+    }
+
+
+def test_no_owner_takes_a_sync_io_module_through_an_import_the_gate_cannot_read() -> None:
+    blind = {
+        stem: sorted(found)
+        for stem, source in _owner_sources().items()
+        if (found := _from_imported_sync_io_modules(source))
+    }
+    assert set(blind) == _SYNC_IO_REACH_PENDING, blind
+
+
+def _with_blocking_call(source: str, call: str) -> tuple[str, int]:
+    """*source* with *call* as the first statement of its first top-level coroutine,
+    and the call's line."""
+    coroutine = next(n for n in ast.parse(source).body if isinstance(n, ast.AsyncFunctionDef))
+    first = coroutine.body[0]
+    lines = source.splitlines(keepends=True)
+    lines.insert(first.lineno - 1, " " * first.col_offset + call + "\n")
+    return "".join(lines), first.lineno
+
+
+@pytest.mark.parametrize("module", sorted(_SYNC_IO_PLANTS))
+@pytest.mark.parametrize("stem", sorted(_OWNER_MODULES - _SYNC_IO_REACH_PENDING))
+def test_the_sync_io_gate_reports_a_blocking_call_planted_in_an_owner(
+    stem: str, module: str
+) -> None:
+    """Every owner's coroutines are in the gate's reach: a blocking call planted in
+    its first one, beside the ``import <module>`` the rule above requires, is reported."""
+    planted, line = _with_blocking_call(_owner_sources()[stem], _SYNC_IO_PLANTS[module])
+    planted += f"\nimport {module}\n"
+    reported = {
+        found for found, _family, _provenance in _sync_io_gate()._violations_in_source(planted)
+    }
+    assert line in reported
+
+
+def test_the_gate_reach_check_tells_a_blind_spelling_from_a_seen_one() -> None:
+    """The two checks above can fail: the gate misses a call whose module came
+    through a facade import, and reports it once ``import <module>`` is present."""
+    blind = "from kiro_crew.dashboard.chat_handlers import time\n\n\nasync def f():\n    pass\n"
+    assert _from_imported_sync_io_modules(blind) == {"time"}
+    planted, line = _with_blocking_call(blind, "time.sleep(1)")
+    gate = _sync_io_gate()
+    assert line not in {found for found, _f, _p in gate._violations_in_source(planted)}
+    seen = planted + "\nimport time\n"
+    assert line in {found for found, _f, _p in gate._violations_in_source(seen)}
 
 
 # ── compose, on its own ───────────────────────────────────────────────────────

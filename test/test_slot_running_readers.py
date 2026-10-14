@@ -137,12 +137,12 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 # The palette create's retraction of a newborn whose app-agent
                 # binding did not persist: it reads the RESERVATION, because a
                 # turn that started on the slot during the write keeps it.
-                ("chat_handlers.py", "api_chat_slot_create"),
+                ("chat_api/slot_create.py", "api_chat_slot_create"),
                 ("handlers/members.py", "_turn_busy"),
                 ("handlers/members.py", "_turn_ends_within"),
                 # The agent route's transaction; the in-turn /agent command shares it.
                 ("chat_api/agent_switch.py", "switch_slot_agent"),
-                ("chat_handlers.py", "api_chat_slot_interrupt"),
+                ("chat_api/turn_stop.py", "api_chat_slot_interrupt"),
                 ("chat_api/slot_model.py", "api_chat_slot_model"),
                 ("chat_api/slot_note.py", "api_chat_slot_note"),
                 ("chat_api/slot_effort.py", "api_chat_slot_reasoning_effort"),
@@ -154,8 +154,8 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("chat_api/session_relaunch.py", "api_chat_slot_workspace"),
                 ("chat_api/slot_lifecycle.py", "api_chat_slots_cleanup"),
                 ("chat_api/slot_model.py", "api_chat_slots_model"),
-                ("chat_handlers.py", "continue_slot_turn"),
-                ("chat_handlers.py", "stop_slot_turn"),
+                ("chat_api/continue_turn.py", "continue_slot_turn"),
+                ("chat_api/turn_stop.py", "stop_slot_turn"),
                 ("chat_rewind.py", "api_chat_slot_rewind"),
                 # The memory-ready queue drain starts a turn only on a slot no
                 # dispatch has reserved, the same guard the dispatch routes take.
@@ -211,7 +211,7 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
             site: both
             for site in {
                 ("chat_api/slot_detail.py", "api_chat_slot_detail"),
-                ("chat_handlers.py", "api_chat"),
+                ("chat_api/chat_send.py", "api_chat"),
                 ("chat_regenerate.py", "_destructive_history_busy"),
                 ("chat_regenerate.py", "api_chat_slot_edit_resend"),
                 ("chat_regenerate.py", "api_chat_slot_regenerate"),
@@ -225,7 +225,7 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
         # way api_send_message starts one (spawn_guarded_turn, then slot.task).
         # The Daily Goal Reminder's hidden turn shares the same publisher.
         ("mate_welcome.py", "dispatch_hidden_turn"),
-        ("chat_handlers.py", "api_chat"),
+        ("chat_api/chat_send.py", "api_chat"),
         ("chat_regenerate.py", "api_chat_slot_edit_resend"),
         ("chat_regenerate.py", "api_chat_slot_regenerate"),
         ("chat_rewind.py", "api_chat_slot_rewind"),

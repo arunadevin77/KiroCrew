@@ -110,8 +110,8 @@ const TURN_INJECT_KINDS: ReadonlySet<unknown> = new Set<string>(
   (Object.keys(TURN_INJECT_DISPATCHED) as InjectKind[]).filter((k) => TURN_INJECT_DISPATCHED[k]),
 )
 /** Roles the continue scans walk past: they are not the conversation's floor.
- *  Mirrors `_is_interrupted` / `_has_conversation` in
- *  `src/kiro_crew/dashboard/chat_handlers.py`, which likewise only read
+ *  Mirrors `_is_interrupted` (`src/kiro_crew/dashboard/chat_api/continue_turn.py`) /
+ *  `_has_conversation` (`src/kiro_crew/dashboard/chat_handlers.py`), which likewise only read
  *  `user` / `assistant` / `error` rows. Keep them in sync — these predicates
  *  decide whether to OFFER Continue and what to call it, those decide whether to
  *  authorize it and what to tell the model. */
@@ -203,7 +203,7 @@ const firstPythonToken = (content: string): string | undefined =>
  *
  * Gates the composer's Resume button (composed with `selectContinuable` in
  * ChatPage) and selects the continuation body handed to the model. Mirrors
- * `_is_interrupted` in `src/kiro_crew/dashboard/chat_handlers.py` — the two must
+ * `_is_interrupted` in `src/kiro_crew/dashboard/chat_api/continue_turn.py` — the two must
  * agree, or the button promises one thing and the agent is told another.
  *
  * A false result means "nothing in the transcript proves an interruption", never

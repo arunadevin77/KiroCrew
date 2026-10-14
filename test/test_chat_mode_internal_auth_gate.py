@@ -1,7 +1,7 @@
 """F150 — internal-auth bypass fix on POST /api/chat/mode and siblings.
 
 Verifies that ``deny_session_approval_caller`` in
-``src/kiro_crew/dashboard/chat_handlers.py`` now gates internal-auth callers:
+``src/kiro_crew/dashboard/chat_api/slot_approval.py`` now gates internal-auth callers:
 
 * Bare internal-auth (no session key) is refused on every operation.
 * A verified ``cron:`` key is admitted only on ``chat_mode``; refused on every
