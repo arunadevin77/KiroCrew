@@ -151,6 +151,21 @@ scheduled job). The cards are read-only in the embed: to cancel or edit a queued
 message, open the session in the dashboard. Finished sub-agent results waiting
 for the same turn show as one progress line instead of cards.
 
+The embed polls the session about once a second while the agent works and
+every five seconds otherwise. A failed poll is retried at the same pace and
+stays silent. Once polls have kept failing for 10 seconds, counted from the
+first failure (the gateway restarted, the session was deleted, or access was
+lost), the transcript stays on its last update, the header stops showing the
+session as running and its dot turns muted, a half-written reply loses its live
+caret, and a notice with a Reconnect button appears above the composer. The poll
+then backs off, waiting as long as the outage has lasted, up to 30 seconds
+between reads. Reconnect reads the session at once: the button is disabled and
+marked busy while that read is in flight, and a read that fails announces the
+notice again. The first successful read clears the notice. Sending stays
+available during the outage, since the gateway may be back before the next
+read; a send that is refused or unconfirmed hands its text back to the composer
+as usual.
+
 A file the agent sends with `file_send` appears in the transcript as the same
 card the main chat shows: a download card, or an inline player or image for
 audio, video and pictures. The card links to `/api/outbox/<filename>` as an

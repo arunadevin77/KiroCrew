@@ -7,7 +7,10 @@
  * send renders here exactly as the dashboard's QueueStack shows it.
  *
  * State management: polling via useQuery refetchInterval.
- * Poll faster during streaming (1s), slower when idle (5s).
+ * Poll faster during streaming (1s), slower when idle (5s). A poll that keeps
+ * failing backs off to at most 30s, and once it has kept failing for
+ * EMBED_STALL_MS (counted from its first failure) the page on screen is
+ * flagged as stale instead of still reading as running.
  *
  * The poll is BOUNDED (chat-core P5-e): it asks the slot-detail endpoint for
  * the newest `EMBED_PAGE_LIMIT` rows, and the transcript's "load earlier" bar
@@ -229,6 +232,54 @@ const RUNNING_POLL_MS = 1000
  *  so the window spans two polls: one slow read must not flash the indicator
  *  under a reply that is still arriving. */
 export const EMBED_STREAM_IDLE_MS = RUNNING_POLL_MS * 2 + 500
+/** How long the poll may keep failing, measured from the first failure of the
+ *  current run of failed reads (see `embedOutageMs`), before the page on screen
+ *  is reported as stale. Shorter outages stay silent so a single dropped poll
+ *  does not flash a notice. Exported for tests. */
+export const EMBED_STALL_MS = 10_000
+/** Ceiling of the failing poll's back-off. Exported for tests. */
+export const EMBED_STALL_POLL_MAX_MS = 30_000
+
+interface PollState {
+  status: string
+  data?: { running?: boolean }
+  dataUpdatedAt: number
+  errorUpdatedAt: number
+}
+
+/** Where the current run of failed reads began, per query key. Keyed on the
+ *  last success it follows, so a success starts a fresh run. */
+type FailureRuns = Map<string, { after: number; since: number }>
+
+/** How long the current run of failed reads has lasted, in ms; 0 while the
+ *  read is healthy. Measured from the run's FIRST failure, not from the last
+ *  success: a key that never succeeded has no success time at all, and a tab
+ *  that was hidden (the poll pauses there) carries a success time from before
+ *  it was hidden, so either would read one dropped request as a long outage.
+ *  Exported for tests. */
+export function embedOutageMs(runs: FailureRuns, key: string, state: PollState): number {
+  if (state.status !== 'error') {
+    runs.delete(key)
+    return 0
+  }
+  let run = runs.get(key)
+  if (!run || run.after !== state.dataUpdatedAt) {
+    run = { after: state.dataUpdatedAt, since: state.errorUpdatedAt }
+    runs.set(key, run)
+  }
+  return state.errorUpdatedAt - run.since
+}
+
+/** Next poll delay. A healthy poll runs at the running/idle cadence. A failing
+ *  one keeps that cadence until the outage reaches EMBED_STALL_MS (so the stall
+ *  is noticed on time), then waits as long as the outage has lasted, up to the
+ *  ceiling, so a dead endpoint is not hit every second forever. Exported for
+ *  tests. */
+export function embedPollInterval(state: PollState, outage: number): number {
+  const base = state.data?.running ? RUNNING_POLL_MS : 5000
+  if (state.status !== 'error' || outage < EMBED_STALL_MS) return base
+  return Math.min(EMBED_STALL_POLL_MAX_MS, Math.max(base, outage))
+}
 
 function ChatEmbed({
   slotKey,
@@ -277,7 +328,10 @@ function ChatEmbed({
     return () => { window.removeEventListener('focus', reload); window.removeEventListener('mc-config-changed', reload) }
   }, [])
 
-  const { data: slotData, refetch, isPlaceholderData, isError } = useQuery({
+  // One failure-run record per query key, shared by the poll cadence and the
+  // stall notice so both measure the same outage.
+  const failureRunsRef = useRef<FailureRuns>(new Map())
+  const { data: slotData, refetch, isPlaceholderData, isError, isFetching, status, dataUpdatedAt, errorUpdatedAt } = useQuery({
     queryKey: ['app-sdk-embed', slotKey, limit],
     queryFn: () => api.get<ChatSlotData>(
       '/api/chat/slots/' + encodeURIComponent(slotKey) + '?limit=' + limit,
@@ -288,10 +342,10 @@ function ChatEmbed({
     // under the new slot's header while its first read is in flight.
     placeholderData: (prev, prevQuery) =>
       prevQuery && (prevQuery.queryKey as unknown[])[1] === slotKey ? prev : undefined,
-    refetchInterval: (query) => {
-      const running = query.state.data?.running ?? false
-      return running ? RUNNING_POLL_MS : 5000
-    },
+    refetchInterval: (query) => embedPollInterval(
+      query.state,
+      embedOutageMs(failureRunsRef.current, `${String(query.queryKey[1])}:${String(query.queryKey[2])}`, query.state),
+    ),
   })
 
   // The last SETTLED page for this slot. A placeholder covers the in-flight
@@ -303,9 +357,37 @@ function ChatEmbed({
   const settled = settledRef.current?.slot === slotKey ? settledRef.current.data : undefined
   const shown = slotData ?? settled
 
+  // The widen failed: the wider read errored and the rows on screen are still
+  // the narrower page. An ambient poll error on a settled page (nothing being
+  // widened) is not the bar's to report.
+  const widenFailed = isError && limit > EMBED_PAGE_LIMIT && slotData == null && settled != null
+  // The poll on the page shown has kept failing for EMBED_STALL_MS, counted
+  // from the first failure of the run (gateway restart, deleted session, lost
+  // permission). The page is then a stale snapshot: its `running` says nothing
+  // about now, so it is not shown as running, and the notice above the
+  // composer says so.
+  const outage = embedOutageMs(failureRunsRef.current, `${slotKey}:${limit}`, { status, data: slotData, dataUpdatedAt, errorUpdatedAt })
+  const stalled = isError && slotData != null && !widenFailed && outage >= EMBED_STALL_MS
+  // Reconnect is the same read the poll makes, issued now. While a read is in
+  // flight the button is busy, so a click visibly does something; a click
+  // whose read fails remounts the notice so its alert is announced again
+  // instead of the screen staying exactly as it was.
+  const [reconnectFailures, setReconnectFailures] = useState(0)
+  const reconnect = useCallback(async () => {
+    const result = await refetch()
+    if (result.isError) setReconnectFailures((n) => n + 1)
+  }, [refetch])
+
   const serverMessages = shown?.messages ?? EMPTY_MESSAGES
 
-  const running = shown?.running ?? false
+  const running = !stalled && (shown?.running ?? false)
+  // A stale page's half-written reply must not keep its live caret: render
+  // the tail as a settled row while the poll is stalled.
+  const listMessages = useMemo(() => {
+    const last = serverMessages[serverMessages.length - 1]
+    if (!stalled || last?.role !== 'streaming') return serverMessages
+    return [...serverMessages.slice(0, -1), { ...last, role: 'assistant' }]
+  }, [serverMessages, stalled])
   const title = shown?.title ?? ''
   // Queued sends, through the same hydration and split the dashboard panes
   // use, so a sub-agent delivery or a recovery continuation never shows as a
@@ -365,8 +447,8 @@ function ChatEmbed({
   )
   const messages = useMemo(() => {
     const rows = pendingHere.filter(p => !p.asQueued && isShown(p)).map(p => p.row)
-    return rows.length ? [...serverMessages, ...rows] : serverMessages
-  }, [serverMessages, pendingHere, isShown])
+    return rows.length ? [...listMessages, ...rows] : listMessages
+  }, [listMessages, pendingHere, isShown])
   const { queuedMessages, systemDeliveryCount } = useMemo(() => {
     const entries = normalizeQueueEntries(queueRaw)
     for (const p of pendingHere) {
@@ -382,10 +464,6 @@ function ChatEmbed({
     }
     return splitPaneMessages(hydrateQueuedBubbles([], entries))
   }, [queueRaw, pendingHere, isShown])
-  // The widen failed: the wider read errored and the rows on screen are still
-  // the narrower page. An ambient poll error on a settled page (nothing being
-  // widened) is not the bar's to report.
-  const widenFailed = isError && limit > EMBED_PAGE_LIMIT && slotData == null && settled != null
   // No page at all and the read failed: the transcript is unavailable, which is
   // not the same thing as an empty session — say so, with the retry.
   const loadFailed = isError && shown == null
@@ -797,7 +875,8 @@ function ChatEmbed({
     >
       {!frameless && (
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card shrink-0">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${running ? 'bg-ok animate-pulse' : 'bg-accent'}`} />
+          {/* Muted while stalled: the idle accent would say the session is fine. */}
+          <span className={`w-2 h-2 rounded-full shrink-0 ${stalled ? 'bg-muted' : running ? 'bg-ok animate-pulse' : 'bg-accent'}`} />
           <span className="text-[13px] font-semibold text-text-strong truncate flex-1">{title || slotKey}</span>
           {agent && <span className="text-[10px] font-mono text-muted">{agent}</span>}
           {running && <span className="text-[10px] text-ok font-mono">{i18nT('appSdk.chatEmbed.streaming')}</span>}
@@ -865,6 +944,23 @@ function ChatEmbed({
       {startAtBottom && (
         <div className="relative">
           <JumpToBottomButton visible={!isAtBottom && messages.length > 0} onClick={scrollToBottom} />
+        </div>
+      )}
+
+      {/* No hand-off: the embed's composer draft is unsaved local state that
+          the hand-off's navigation to the main chat would discard. */}
+      {stalled && (
+        <div className="shrink-0 mx-3 my-2 flex items-start gap-2">
+          <ErrorNotice key={reconnectFailures} className="flex-1" testId="chat-embed-stalled" message={i18nT('appSdk.chatEmbed.connection_lost')} />
+          <button
+            type="button"
+            className="text-[12px] text-accent underline bg-transparent border-none cursor-pointer hover:text-accent-hover disabled:cursor-default disabled:opacity-60"
+            disabled={isFetching}
+            aria-busy={isFetching}
+            onClick={() => { void reconnect() }}
+          >
+            {i18nT('appSdk.chatEmbed.reconnect')}
+          </button>
         </div>
       )}
 
