@@ -224,7 +224,7 @@ class DefaultSlackEnterpriseGate:
 
     def heartbeat_safe_tools(self) -> "frozenset[str]":
         # The public edition adds no tools to the heartbeat allowlist — the set
-        # stays exactly the core HEARTBEAT_SAFE_TOOLS. The companion returns its
+        # stays exactly the core heartbeat allowlist. The companion returns its
         # internal read-only tool names.
         return frozenset()
 

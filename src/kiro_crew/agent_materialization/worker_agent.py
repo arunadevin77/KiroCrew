@@ -31,6 +31,7 @@ from kiro_crew.agent_files import HEARTBEAT_AGENT_FILENAME as _HEARTBEAT_FILENAM
 from kiro_crew.agent_files import WORKER_AGENT_FILENAME as _WORKER_AGENT_FILENAME
 from kiro_crew.agent_materialization import auto_approve, managed_mcp
 from kiro_crew.agent_spec_format import parse_markdown_spec, volatile_env_keys
+from kiro_crew.platform import safe_context_call
 
 #: The keys the worker spec MIRRORS from the resolved default agent spec, so its
 #: superset claim holds against the agent the user actually runs rather than
@@ -66,15 +67,47 @@ _WORKER_MIRRORED_KEYS: tuple[str, ...] = tuple(_WORKER_MIRRORED_SHAPES)
 
 #: The agent names whose spec is DERIVED from the default spec, and so can be stale
 #: against it. ``kirocrew-worker`` mirrors the keys above; ``kirocrew-heartbeat`` copies
-#: the default's ``kirocrew-core`` server entry, ``autoApprove`` included (see
+#: the default's :func:`heartbeat_mirrored_servers` entries (see
 #: ``agent._install_heartbeat_agent``). Every other agent mirrors nothing.
 _WORKER_AGENT = Path(_WORKER_AGENT_FILENAME).stem
 _HEARTBEAT_AGENT = Path(_HEARTBEAT_FILENAME).stem
 _DERIVED_AGENTS: frozenset[str] = frozenset({_WORKER_AGENT, _HEARTBEAT_AGENT})
 
-#: The default-spec servers the heartbeat spec copies. Kept here, beside the surface the
-#: fingerprint covers, so the copy and the freshness check name the same servers.
+#: The default-spec servers the heartbeat spec copies on EVERY edition, in copy order.
+#: ``autoApprove`` is kept and the main agent's tool filters are stripped from these;
+#: an edition's additions (:func:`heartbeat_mirrored_servers`) are copied verbatim
+#: minus ``autoApprove``.
 HEARTBEAT_MIRRORED_SERVERS: tuple[str, ...] = ("kirocrew-core",)
+
+
+def heartbeat_mirrored_servers() -> tuple[str, ...]:
+    """Every default-spec server the heartbeat spec copies, core first.
+
+    :data:`HEARTBEAT_MIRRORED_SERVERS`, then the ``@server/`` prefix of every pin in
+    ``SlackEnterpriseGate.heartbeat_safe_tools()`` (sorted, a core name never
+    repeated). The servers heartbeat mounts are exactly those the edition pinned
+    tools on, so the copy (:func:`heartbeat_mcp_servers`), the fingerprint
+    (:func:`_mirrored_surface`) and the freshness check read one list, and the
+    approval allowlist names the same servers.
+
+    Fail-closed like every context read: a ``PlatformCompositionError`` re-raises,
+    any other lookup failure (an older companion without the method) degrades to
+    the core list.
+    """
+    empty: frozenset[str] = frozenset()
+    pins: frozenset[str] = safe_context_call(
+        lambda: frozenset(agent_mod.current_context().slack_gate.heartbeat_safe_tools()),
+        fallback=empty,
+        log_message="heartbeat_safe_tools lookup failed; mirroring core only",
+    )
+    prefixes: set[str] = set()
+    for entry in pins:
+        if not isinstance(entry, str) or not entry.startswith("@") or "/" not in entry:
+            continue
+        server = entry[1:].split("/", 1)[0]
+        if server and server not in HEARTBEAT_MIRRORED_SERVERS:
+            prefixes.add(server)
+    return HEARTBEAT_MIRRORED_SERVERS + tuple(sorted(prefixes))
 
 
 def _mirrored_surface(spec: dict[str, Any], agent: str) -> dict[str, Any]:
@@ -89,7 +122,7 @@ def _mirrored_surface(spec: dict[str, Any], agent: str) -> dict[str, Any]:
             return {}
         copied = {
             name: servers[name]
-            for name in HEARTBEAT_MIRRORED_SERVERS
+            for name in heartbeat_mirrored_servers()
             if isinstance(servers.get(name), dict)
         }
         return {"mcpServers": copied}
@@ -1329,7 +1362,8 @@ def rederive_worker_agent(reason: str) -> bool:
 
 #: Command-line filters the heartbeat copy removes from a copied server's ``args``, so
 #: every read tool on that server surfaces to the heartbeat agent. Approval is enforced
-#: gateway-side against ``HEARTBEAT_SAFE_TOOLS``, not by per-agent MCP filtering.
+#: gateway-side by the heartbeat allowlist (``_heartbeat_approval``), not by
+#: per-agent MCP filtering.
 _HEARTBEAT_STRIPPED_FLAGS: tuple[str, ...] = (
     "--include-tools",
     "--include-tool-tags",
@@ -1347,21 +1381,29 @@ _HEARTBEAT_SPEC_KEYS: frozenset[str] = frozenset(
 def heartbeat_mcp_servers(default_spec: dict[str, Any] | None) -> dict[str, dict]:
     """The ``mcpServers`` map the heartbeat spec derives from *default_spec*.
 
-    A copy of each server in :data:`HEARTBEAT_MIRRORED_SERVERS` that the default spec
-    mounts, ``autoApprove`` included, with :data:`_HEARTBEAT_STRIPPED_FLAGS` removed
-    from its ``args``: ``--flag=value`` is dropped, and a bare ``--flag`` drops the
-    argument after it too. Pure, so the installer and the spawn gate derive the same map
-    from the same bytes.
+    A copy of each server in :func:`heartbeat_mirrored_servers` that the default spec
+    mounts. A core server (:data:`HEARTBEAT_MIRRORED_SERVERS`) is copied ``autoApprove``
+    included, with :data:`_HEARTBEAT_STRIPPED_FLAGS` removed from its ``args``:
+    ``--flag=value`` is dropped, and a bare ``--flag`` drops the argument after it too.
+    An edition server is copied verbatim, filters included, minus ``autoApprove``:
+    that field makes kiro-cli approve a matching call itself, before the gateway's
+    ``_heartbeat_approval`` and its SEL audit ever see it, and this agent has no
+    approver behind it. Pure given the context, so the installer and the spawn gate
+    derive the same map from the same bytes.
     """
     servers = (default_spec or {}).get("mcpServers")
     if not isinstance(servers, dict):
         return {}
     mcp: dict[str, dict] = {}
-    for name in HEARTBEAT_MIRRORED_SERVERS:
+    for name in heartbeat_mirrored_servers():
         entry = servers.get(name)
         if not isinstance(entry, dict):
             continue
         cleaned = dict(entry)
+        if name not in HEARTBEAT_MIRRORED_SERVERS:
+            cleaned.pop("autoApprove", None)
+            mcp[name] = cleaned
+            continue
         args = entry.get("args") or []
         if isinstance(args, list):
             filtered: list[Any] = []
@@ -1411,7 +1453,7 @@ def _heartbeat_copy_mismatch(
     if not isinstance(servers, dict) or _without_volatile_mcp_env(
         {"mcpServers": servers}
     ) != _without_volatile_mcp_env({"mcpServers": expected}):
-        return "its mcpServers differ from the default spec's kirocrew-core entry"
+        return "its mcpServers differ from the default spec's mirrored entries"
     if copy_spec.get("tools") != [f"@{name}" for name in expected]:
         return "its tools differ from the servers it mounts"
     return None
@@ -1424,9 +1466,10 @@ def _require_fresh_heartbeat_spec(work_dir: str | Path | None) -> None:
     same shape: no ``return`` statement, so falling off the end is reachable only after
     a verified match or a re-derive whose result verified.
 
-    The heartbeat spec copies the default's ``kirocrew-core`` entry, ``autoApprove``
-    included. A copy the default has since moved past keeps an auto-approval the default
-    dropped, so a start on it is refused here unless one re-derive brings it current.
+    The heartbeat spec copies the default's mirrored entries (:func:`heartbeat_mcp_servers`),
+    the core one ``autoApprove`` included. A copy the default has since moved past keeps
+    an auto-approval the default dropped, or a server the edition does not name, so a
+    start on it is refused here unless one re-derive brings it current.
     The verdict is :func:`_heartbeat_copy_mismatch` on the two files' bytes, so it needs
     no bookkeeping and holds in a data home that did not write the copy.
     """

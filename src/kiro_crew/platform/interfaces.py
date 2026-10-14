@@ -317,15 +317,19 @@ class SlackEnterpriseGate(Protocol):
         """Extra tool names an edition allows during unattended heartbeat polling.
 
         WIRED: ``slack/gateway_runtime/tool_policy.py::_is_heartbeat_safe_tool`` checks this set after
-        the core ``HEARTBEAT_SAFE_TOOLS`` exact-name match. The public default is
+        the core heartbeat allowlist's identity match. The public default is
         ``frozenset()`` (no additions — the heartbeat allowlist is byte-identical
         to today). A companion returns its own read-only tool names so its
-        heartbeat polls can auto-approve them.
+        heartbeat polls can auto-approve them. The ``@server/`` prefix of every pin
+        is also what ``agent_materialization.worker_agent.heartbeat_mirrored_servers``
+        mounts on the heartbeat agent (copied from the default spec, ``autoApprove``
+        dropped; a prefix the default spec does not mount is skipped), so one list
+        names both the servers and the tools.
 
         **Entries MUST be server-qualified ``"@server/Tool"``.** An entry is
-        honored ONLY when it matches that qualified identity; a bare tool name
-        never matches (and a tool-call title with no resolvable server is never
-        auto-approved from this set). This is deliberate: a bare-name allowlist
+        honored ONLY when it matches the event's trusted ``mcp_server_name`` /
+        ``tool_name`` pair (``_meta.kiro``); a bare tool name never matches, and
+        the model-authored title is never consulted. This is deliberate: a bare-name allowlist
         entry would let a *different* (or compromised) MCP server expose a
         destructive tool with the same bare name as an allowlisted read-only one
         and get it auto-approved during an unattended heartbeat — a hole in the

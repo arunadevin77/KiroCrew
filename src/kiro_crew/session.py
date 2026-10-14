@@ -643,7 +643,8 @@ def _load_bg_runtime_types() -> tuple[Any, type[BaseException]]:
 # Heartbeat session key — used by HeartbeatService.  Spawned with the full
 # ``kirocrew`` agent so polled tasks can call read-only MCP tools (CR/ticket
 # status, etc.).  Tool approval at runtime is gated by the
-# ``HEARTBEAT_SAFE_TOOLS`` allowlist in ``slack/gateway_runtime/tool_policy.py``.
+# heartbeat allowlist (``_heartbeat_approval``, deciding through
+# ``slack/gateway_runtime/tool_policy.py``).
 HEARTBEAT_KEY = "_hb"
 
 

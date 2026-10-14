@@ -6402,8 +6402,8 @@ to write to).
   status, a file change, an external page state). When you see it, report.
   When you don't, respond with `HEARTBEAT_KEEP` so the task stays armed for the
   next cycle.
-- **No write actions.** Tool approval is gated at the gateway against
-  `HEARTBEAT_SAFE_TOOLS` (read-only allowlist). Any write tool you try will
+- **No write actions.** Tool approval is gated at the gateway by
+  `_heartbeat_approval` (a read-only allowlist). Any write tool you try will
   be rejected and audited; do not waste a turn attempting one. If a task
   asks you to "fix" or "update" something, treat it as "observe and notify
   the user so they can fix" — never the action itself.
@@ -6444,17 +6444,13 @@ the response — the operator will add it after observing the SEL `denied` event
 def _install_heartbeat_agent() -> None:
     """Generate and install the kirocrew-heartbeat agent config.
 
-    A dedicated agent for HeartbeatService.  Minimal MCP surface — only
-    ``kirocrew-core`` (learn/cron/spawn list and status, artifact reads,
-    local_knowledge_search) on
-    public installs.  Tool approval is enforced gateway-side against
-    ``HEARTBEAT_SAFE_TOOLS`` regardless; the per-agent MCP narrowing here
+    A dedicated agent for HeartbeatService.  Minimal MCP surface: the default
+    spec's ``kirocrew-core`` entry (learn/spawn list and status, artifact
+    reads, local_knowledge_search) plus the default-spec servers behind the
+    edition's ``heartbeat_safe_tools()`` pins (none on a standalone install).  Tool approval is enforced gateway-side by
+    ``_heartbeat_approval``'s read-only allowlist regardless; the per-agent MCP narrowing here
     keeps cold-start cost low and reduces the surface the gateway has to
     police.
-
-    (The Amazon-internal MCP server code-review/ticket/pipeline read wiring is
-    omitted on public installs, matching ``_install_research_agent`` /
-    ``_install_knowledge_agent``.)
 
     SEL audit logging stays at the gateway side — see
     ``GatewayOrchestrator._heartbeat_approval``.
@@ -6484,8 +6480,8 @@ def _write_heartbeat_spec(path: Path, main_path: Path, model: str) -> None:
     # commands and security still come from bundled hooks). Strip the main
     # agent's ``--include-tools``/``--include-tool-tags``/``--exclude-tools``
     # filters so all read tools surface to the heartbeat agent — security is
-    # enforced gateway-side against ``HEARTBEAT_SAFE_TOOLS`` via
-    # ``_heartbeat_approval``, not by per-agent MCP filtering. Read through the
+    # enforced gateway-side by ``_heartbeat_approval``'s read-only
+    # allowlist, not by per-agent MCP filtering. Read through the
     # capped reader: a refused main spec degrades as absent, but with an
     # operator-visible signal, because the result is a heartbeat agent with no
     # MCP servers -- a worker that fails every task.
@@ -6495,13 +6491,23 @@ def _write_heartbeat_spec(path: Path, main_path: Path, model: str) -> None:
             "Main agent spec %s unusable; heartbeat agent installs with no MCP servers", main_path
         )
     mcp = worker_agent.heartbeat_mcp_servers(main_config)
+    # An edition's servers ride along verbatim minus ``autoApprove`` (see
+    # ``heartbeat_mcp_servers``); say so where the operator reads the install log,
+    # since a dropped grant otherwise shows up only as SEL ``denied`` rows.
+    edition = [name for name in mcp if name not in worker_agent.HEARTBEAT_MIRRORED_SERVERS]
+    if edition:
+        logger.info(
+            "Heartbeat agent also mounts edition MCP servers %s; their autoApprove is "
+            "withheld, every call goes through _heartbeat_approval",
+            ", ".join(edition),
+        )
 
     config: dict[str, object] = {
         "name": "kirocrew-heartbeat",
         "description": (
             "Unattended polling worker — runs one HeartbeatService task per "
             "cycle with a read-only MCP toolset. Tool approval is gated "
-            "gateway-side against HEARTBEAT_SAFE_TOOLS."
+            "gateway-side by _heartbeat_approval's read-only allowlist."
         ),
         "model": model,
         "includeMcpJson": False,

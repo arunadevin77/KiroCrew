@@ -702,6 +702,14 @@ class HooksConfig:
     denied_commands_disabled_ids: list[str] = field(default_factory=list)
     denied_commands_disable_all: bool = False
     denied_commands_user_added: list[UserDeniedPattern] = field(default_factory=list)
+    #: Structural, never read from config (``from_dict`` does not set it): a scoped
+    #: HookManager builder (``slack.gateway._build_heartbeat_hooks``) sets it for a
+    #: session whose own approval callback must see every call. When True the gate's
+    #: read-only classifier tier (``_tier_read_only``) gives no verdict, so a call it
+    #: would have auto-approved on the ACP ``kind``, the title or a read-only shell
+    #: command falls through to that callback instead. The deny tiers above it are
+    #: untouched, so this can only narrow what runs unattended, never widen it.
+    defer_reads_to_approver: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> HooksConfig:
@@ -860,7 +868,8 @@ class HookManager:
         Opt-in rather than automatic, because a DERIVED manager must not follow
         config: the heartbeat-scoped manager (``_build_heartbeat_hooks``)
         deliberately drops the user's ``auto_approve_tools`` so
-        ``HEARTBEAT_SAFE_TOOLS`` is the sole approval authority, and re-reading the
+        the heartbeat allowlist (``_heartbeat_approval``) is the sole approval
+        authority, and re-reading the
         section would hand that widening straight back. Only the primary
         interactive manager -- the one the gateway builds from config in the first
         place -- calls this; the heartbeat manager is re-derived from it each cycle,

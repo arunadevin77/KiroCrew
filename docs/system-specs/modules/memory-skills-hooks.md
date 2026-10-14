@@ -5464,7 +5464,8 @@ manager subscribes to the `hooks` section, so a `config.json` write re-parses th
 flat hook keys onto the running manager. Subscription is opt-in rather than
 automatic because a DERIVED manager must not follow config: the heartbeat-scoped
 manager (`_build_heartbeat_hooks`) deliberately drops the user's
-`auto_approve_tools` so `HEARTBEAT_SAFE_TOOLS` is the sole approval authority, and
+`auto_approve_tools` so the heartbeat allowlist (`_heartbeat_approval`) is the sole
+approval authority, and
 re-reading the section would hand that widening straight back. It is re-derived
 from the primary each cycle, so it inherits the reload without subscribing.
 

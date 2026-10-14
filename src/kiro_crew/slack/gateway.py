@@ -239,7 +239,12 @@ from kiro_crew.heartbeat import (
     strip_keep_sentinel,
 )
 from kiro_crew.history import ConversationLog, HistoryConsolidator
-from kiro_crew.hooks import HookManager, HooksConfig, hooks_config_from_config_dict  # noqa: F401
+from kiro_crew.hooks import (  # noqa: F401
+    HookManager,
+    HooksConfig,
+    _is_host_read_only_builtin,
+    hooks_config_from_config_dict,
+)
 from kiro_crew.kiro_cli import PATH_ONLY_INSTALL_NOTE, is_bundled_kiro_cli, pin_kiro_cli
 from kiro_crew.learn import LessonStore
 from kiro_crew.llm_helpers import (  # noqa: F401
@@ -391,6 +396,7 @@ from kiro_crew.security import (
     redact_credentials,
     redact_exfiltration_urls,
 )
+from kiro_crew.security.readonly_bash import is_read_only_bash  # noqa: F401
 from kiro_crew.sel import flush_audit_queue_before_hard_exit, sel
 from kiro_crew.service.common import restart_command_hint
 from kiro_crew.session import (
@@ -455,10 +461,11 @@ from kiro_crew.slack.gateway_runtime.cron_verdict import (  # noqa: F401
 )
 from kiro_crew.slack.gateway_runtime.tool_policy import (  # noqa: F401
     _BACKGROUND_APPROVAL_SOURCES,
+    _HEARTBEAT_CORE_SERVER,
+    _HEARTBEAT_SAFE_CORE_MCP_TOOLS,
     _HEARTBEAT_STATUS_PREFIXES,
     _READ_ONLY_TOOL_PREFIXES,
     _WRITE_INDICATORS,
-    HEARTBEAT_SAFE_TOOLS,
     _bare_tool_name,
     _build_heartbeat_hooks,
     _is_heartbeat_safe_tool,
@@ -2097,9 +2104,11 @@ class GatewayOrchestrator:
         """Tool-approval callback for heartbeat sessions.
 
         Heartbeat runs unattended on a timer — there is no human to click an
-        approval button.  We auto-approve only tools whose name is in
-        ``HEARTBEAT_SAFE_TOOLS`` (strict exact-match) and reject everything
-        else with a SEL audit event.
+        approval button.  We auto-approve only tools whose TRUSTED identity
+        ``_is_heartbeat_safe_tool`` accepts (the core heartbeat allowlist and the
+        edition's pinned additions, each qualified to its owning server; a
+        read-only, git-free shell command) and reject everything else with a
+        SEL audit event.
 
         This is the "Option A" mitigation for the heartbeat security review
         on blanket ``AUTO_APPROVE`` was rejected because polled
@@ -2116,6 +2125,18 @@ class GatewayOrchestrator:
         # surface — SEL audit AND dashboard-visible logger warnings —
         # per the security-controls "never trust LLM output" guideline.
         safe_title = redact(title)
+        # The audit row names what the decision keyed on. On a trusted event that
+        # is the ``server/tool`` identity (a real ``fs_read`` displays as ``Read``,
+        # so the title alone would record a different name than the one judged);
+        # on an untrusted event the trusted fields prove nothing, so the redacted
+        # title -- the possibly forged input that was refused -- stays the label.
+        audit_label = safe_title or "<unknown>"
+        if event.mcp_identity_trusted and event.tool_name:
+            audit_label = (
+                f"{event.mcp_server_name}/{event.tool_name}"
+                if event.mcp_server_name
+                else event.tool_name
+            )
 
         def _audit(outcome: str, *, critical: bool = False, **metadata: str) -> None:
             """Emit a SEL ``log_tool_invocation`` event.
@@ -2131,7 +2152,7 @@ class GatewayOrchestrator:
                 session_key=HEARTBEAT_KEY,
                 source="heartbeat",
                 agent="kirocrew-heartbeat",
-                tool_name=safe_title or "<unknown>",
+                tool_name=audit_label,
                 tool_kind=event.tool_kind,
                 outcome=outcome,
                 request_id=event.request_id,
@@ -2139,7 +2160,38 @@ class GatewayOrchestrator:
                 critical=critical,
             )
 
-        if _is_heartbeat_safe_tool(title):
+        if _is_heartbeat_safe_tool(event):
+            # A shell command passed on its text; the program names in it still
+            # resolve through a PATH that can lead with agent-writable directories,
+            # so run the name-grant check every other unattended auto-approve path
+            # runs (``llm_helpers._resolve_permission``). A refusal is a deny here,
+            # this session's own no-approver fallback.
+            if event.is_shell:
+                _ng_refusal = await name_grant.refusal_for_event(event)
+                if _ng_refusal is not None:
+                    logger.warning(
+                        "declining a heartbeat shell auto-approve: %s; the request "
+                        "falls through to deny-by-default",
+                        _ng_refusal.log_text,
+                    )
+                    name_grant.log_decline(
+                        source="heartbeat",
+                        session_key=HEARTBEAT_KEY,
+                        agent="kirocrew-heartbeat",
+                        event=event,
+                        refusal=_ng_refusal,
+                        tier="heartbeat_safe_tool",
+                        sel_factory=sel,
+                    )
+                    try:
+                        _audit("denied", reason="name_grant_refused")
+                    except Exception:
+                        logger.warning(
+                            "SEL audit failed on heartbeat name-grant deny path — "
+                            "tool was still rejected",
+                            exc_info=True,
+                        )
+                    return False
             # Fail-closed: if SEL is down we cannot record the auto-approve
             # decision, and unattended sessions must not run tools without
             # an auditable permission record. Deny rather than approve
@@ -2165,20 +2217,39 @@ class GatewayOrchestrator:
 
         # Reject + audit. Logged via the same SEL channel as the interactive
         # approval path so operators can see what got blocked and decide
-        # whether to extend HEARTBEAT_SAFE_TOOLS. SEL failure here is
+        # whether to extend the heartbeat allowlist. SEL failure here is
         # tolerated because the tool is denied regardless — the safety
         # property the audit protects (no unaudited tool runs) is preserved.
+        # The deny reason splits on the gate's own first two checks: a trusted
+        # identity AND a non-empty tool name. A backend whose adapter stamps no
+        # ``_meta`` identity yields a cache hit on empty names, which sets the
+        # trusted flag with no name behind it, so the flag alone cannot tell
+        # that backend apart. Either missing half gets ``no_trusted_identity``:
+        # on such a backend every heartbeat tool call lands here, and the
+        # operator reads it as a backend property, not a list to extend.
+        untrusted = not (event.mcp_identity_trusted and event.tool_name)
         try:
-            _audit("denied", reason="not_in_heartbeat_safe_tools")
+            _audit(
+                "denied",
+                reason="no_trusted_identity" if untrusted else "not_in_heartbeat_safe_tools",
+            )
         except Exception:
             logger.warning(
                 "SEL audit failed on heartbeat deny path — " "tool was still rejected",
                 exc_info=True,
             )
-        logger.warning(
-            "Heartbeat blocked tool call: %s (not in HEARTBEAT_SAFE_TOOLS)",
-            safe_title or "<unknown>",
-        )
+        if untrusted:
+            logger.warning(
+                "Heartbeat blocked tool call: %s (this backend published no trusted tool "
+                "identity, so every heartbeat tool call is denied on it; heartbeat runs "
+                "text-only here)",
+                audit_label,
+            )
+        else:
+            logger.warning(
+                "Heartbeat blocked tool call: %s (not on the heartbeat allowlist)",
+                safe_title or "<unknown>",
+            )
         return False
 
     # Required packages that must be importable (import_name, pip_spec).
@@ -6482,8 +6553,9 @@ class GatewayOrchestrator:
         memory = self.ctx_builder.memory if self.ctx_builder else MemoryStore()
 
         # Heartbeat-scoped hooks: drops the user's ``auto_approve_tools`` so
-        # ``HEARTBEAT_SAFE_TOOLS`` is the sole approval authority for any
-        # tool call in a heartbeat session.  REBUILT per run (below) from the
+        # the heartbeat allowlist (``_heartbeat_approval``) is the sole
+        # approval authority for any tool call in a heartbeat session.
+        # REBUILT per run (below) from the
         # live primary manager: denied-command opt-out state is mutable at
         # runtime (Settings > Security hot-reloads ``ctx_builder.hooks``), so a
         # once-at-init snapshot would let a heartbeat session keep enforcing a
@@ -6528,8 +6600,7 @@ class GatewayOrchestrator:
                 # Use the dedicated ``kirocrew-heartbeat`` agent — minimal
                 # MCP surface (kirocrew-core only on public installs) so cycle
                 # cold-starts stay cheap.  Tool calls are still gated at
-                # runtime by ``_heartbeat_approval`` against
-                # ``HEARTBEAT_SAFE_TOOLS``.
+                # runtime by ``_heartbeat_approval``'s read-only allowlist.
                 client, is_new, _resumed = await self.sessions.get_or_create(
                     session_key,
                     agent="kirocrew-heartbeat",

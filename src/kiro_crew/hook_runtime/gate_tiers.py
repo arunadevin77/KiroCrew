@@ -1094,6 +1094,13 @@ def _tier_read_only(facts: GateFacts, tier: GateTier) -> ToolHookResult | None:
     flag the interactive path keeps its ACP-kind allow-list and title fallback.
     """
     call = facts.call
+    # A session whose own approver must judge every read (heartbeat: no human behind
+    # it, and the ACP ``kind``, the title and ``is_shell`` are all agent-influenced)
+    # gets no verdict from this tier at all. Every deny tier above has already run,
+    # so nothing a tier blocked is re-admitted; the call simply reaches the caller's
+    # ``on_tool_approval``, which decides on the event's trusted identity.
+    if facts.config.defer_reads_to_approver:
+        return None
     # An operator's confirm list asks for what it names whatever the call says
     # about itself, so a confirm-listed MCP call gets no verdict from any branch
     # below. That includes the shell branch: kiro-cli can classify an MCP-served

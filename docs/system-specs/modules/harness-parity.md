@@ -172,6 +172,32 @@ Two card lines stay unavailable on pi, each on a driven observation:
   pre-approve. That is a change to how side sessions launch, not a membership edit,
   and it has not been built.
 
+### Heartbeat tools on a harness with no adapter-authored tool identity
+
+The heartbeat agent has no approver behind it, so `_heartbeat_approval`
+(`slack/gateway.py`) approves a call only on the identity the adapter wrote under
+`_meta` — `AcpEvent.mcp_identity_trusted`, `tool_name`, `mcp_server_name` — and
+never on the title the model wrote (`slack/gateway_runtime/tool_policy.py`,
+`_is_heartbeat_safe_tool`). kiro-cli stamps `_meta.kiro.toolName` on every tool
+call, goose writes `_meta.goose.toolCall`, codex-acp marks MCP calls with
+`_meta.is_mcp_tool_call`. claude-agent-acp stamps `_meta.claudeCode.toolName` on its
+built-ins, but Crew reads that key only on a Side Chat session the harness itself
+launched read-only (`claude-code-provider.md`, "A Side Chat session"); it is not a row
+of `_MCP_IDENTITY_META_CHANNELS`, so a heartbeat event on claude-agent-acp carries no
+trusted identity. opencode sends `kind="other"` and no identity (`acp/_dispatch.py`,
+`classify_tool_call`). On those two, every heartbeat tool call is denied and audited
+`reason=no_trusted_identity`, with one gateway warning per denied call naming the
+backend condition, and the heartbeat cycle runs as a text-only poller. The signal is
+per call on purpose: each row is derived from the event itself, so it cannot drift
+from what the gate decided, and the positive set a start-time warning would key on
+(`ACP_BACKENDS_META_IDENTITY`) deliberately omits kiro-cli -- it lists harnesses whose
+recorded corpus covers every tool class -- so a start-time warning keyed on it would
+fire on the default harness. This is the
+same line as pi's Side Chat above: a name proves nothing on a harness whose channels
+cannot carry one, and heartbeat is the one session with nobody to catch a forged
+name. Heartbeat tool use on such a harness returns when its adapter's channel joins
+the identity table on a recorded corpus, not through a title or `kind` fallback.
+
 ## Group C: the Kiro path keeps its own machinery
 
 An adapter that lands by *generalizing* a Kiro-specific step to a

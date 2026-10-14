@@ -186,7 +186,7 @@ there; the responsibilities below live in private owners under
 
 | Owner | Responsibility |
 |---|---|
-| `slack/gateway_runtime/tool_policy.py` | Which tool calls an unattended turn may run: the `--approval reads` verb test (`hooks.py` imports it through the facade), `HEARTBEAT_SAFE_TOOLS` and `_is_heartbeat_safe_tool`, the heartbeat-scoped hooks, `_BACKGROUND_APPROVAL_SOURCES`, tool-title normalisation |
+| `slack/gateway_runtime/tool_policy.py` | Which tool calls an unattended turn may run: the `--approval reads` verb test (`hooks.py` imports it through the facade), the heartbeat allowlist (`_HEARTBEAT_SAFE_CORE_MCP_TOOLS`) and the identity-based `_is_heartbeat_safe_tool`, the heartbeat-scoped hooks, `_BACKGROUND_APPROVAL_SOURCES`, tool-title normalisation |
 | `slack/gateway_runtime/cron_dispatch.py` | What a cron run clears before and while it dispatches: the bounded fire-time gate and its retention marker, the reserved-env screen, the first-run tab, the claim-time re-vet with its handoff, the one-shot post-token resume |
 | `slack/gateway_runtime/cron_verdict.py` | What a cron run's tool-gate outcomes and result add up to: the per-run tally and its refusal summary, the banner on a partially blocked result, the dedup hash and reminder windows |
 | `slack/gateway_runtime/delivery.py` | Where an unattended result is routed: the origin key, the channel conversation behind it, the channel leg that hands a result to that conversation, the dedup anchor a confirmed delivery advances, OPTIONS bookkeeping, the bounded DM open, whether a job is silent |
@@ -1484,17 +1484,24 @@ stall cron, heartbeat, task-runner, or AutoNudge turns.
 - The Slack and dashboard windows reference `DashboardState._BACKGROUND_APPROVAL_TIMEOUT_SECS`
   / `DashboardState._APPROVAL_TIMEOUT` as the single source of truth.
 
-### Heartbeat Tool Allowlist (`HEARTBEAT_SAFE_TOOLS`)
+### Heartbeat Tool Allowlist
 
-Heartbeat sessions run unattended and cannot prompt a human for tool approval. `_is_heartbeat_safe_tool(event_title)` (`slack/gateway_runtime/tool_policy.py`) checks whether a tool is safe to auto-approve using a strict **exact-match** against the `HEARTBEAT_SAFE_TOOLS` frozenset — no verb/heuristic fallback (deny-by-default, per security-controls).
+Heartbeat sessions run unattended and cannot prompt a human for tool approval. `_is_heartbeat_safe_tool(event)` (`slack/gateway_runtime/tool_policy.py`) decides whether a tool is safe to auto-approve — exact-match, no verb/heuristic fallback (deny-by-default, per security-controls).
 
-**Title normalization** (applied before the set lookup):
+**The decision keys on the event's trusted identity, never on `event.title`.** The title is model-authored prose (`select_tool_title` can prefer the model's own `description`), so a heartbeat polling untrusted content could otherwise forge a title spelled like a safe tool over a real write. The gate reads `event.mcp_identity_trusted` (set only when `tool_name` / `mcp_server_name` came from the adapter's `_meta` channel; `False` denies outright), `event.tool_name` and `event.mcp_server_name` (empty only for a genuine host built-in or shell). A trusted pair of two empty strings — what a backend with no `_meta.kiro` support produces — is denied too: every branch needs a non-empty `tool_name`.
 
-1. Strip leading status prefix (`Running: `) via `_HEARTBEAT_STATUS_PREFIXES`.
-2. Strip ACP `mcp__<server>__<Tool>` prefix.
-3. Strip runtime `@<server>/<Tool>` prefix (kiro-cli titles arrive as `Running: @internal-mcp/ReadInternalWebsites`).
+Four branches, one per identity shape:
 
-Only the **bare tool name** (e.g. `ReadInternalWebsites`) is tested against the frozenset. Unknown tools are denied and a SEL audit event (`outcome: denied`, `reason: not_in_heartbeat_safe_tools`) is emitted so operators can tune the list. SEL failure on the approve path fails closed (denies the tool).
+| Shape | Rule |
+|---|---|
+| Host shell (`is_shell`, no server) | the recovered `shell_command` must pass `is_read_only_bash` and must not run `git` (`name_grant.program_names` walks every command position; a program set it cannot establish denies, and any program whose basename is `git`, any case, denies; then `is_read_only_bash`). git reads `.git/config` on invocation and `core.fsmonitor` / `core.hooksPath` name a program there that no text classifier sees; heartbeat has no human behind it to catch that. `_heartbeat_approval` then runs `name_grant.refusal_for_event`, the check every other unattended shell auto-approve runs; a refusal denies (`reason=name_grant_refused`) |
+| Host built-in (no server) | `hooks._is_host_read_only_builtin` on the real `_meta.kiro.toolName` spellings (`fs_read`, `glob`, `grep`, `web_fetch`, `web_search`; kiro-cli's `read` alias included). A built-in name with a server attached is an MCP server claiming the name and is denied |
+| Core MCP read | a `_HEARTBEAT_SAFE_CORE_MCP_TOOLS` name, matched only on `kirocrew-core`; the same name from another server, or with no server, is denied |
+| Edition addition | the exact `@server/tool` identity a companion pinned in `SlackEnterpriseGate.heartbeat_safe_tools()`; a bare entry never matches, and an MCP tool that declares `kind="execute"` is judged here on its identity, never on command text |
+
+Anything that matches no branch is denied and a SEL audit event (`outcome: denied`) is emitted so operators can tune the list: `reason: no_trusted_identity` when the event carries no trusted identity or an empty trusted `tool_name` -- the shape a backend with no `_meta` identity channel produces (a cache hit on empty names), so on such a backend every heartbeat tool call is denied this way, and the gateway warning says so, `reason: not_in_heartbeat_safe_tools` otherwise; the row's `tool_name` is the trusted `server/tool` identity when the event is trusted and the redacted title otherwise. SEL failure on the approve path fails closed (denies the tool).
+
+The heartbeat-scoped hooks (`_build_heartbeat_hooks`) set `HooksConfig.defer_reads_to_approver`, so the gate's read-only classifier tier gives no verdict for this session and every call the deny tiers let through reaches `_heartbeat_approval`: the tier approves on the ACP `kind`, the title and `is_shell`, all agent-influenced, and would otherwise run an edition tool declaring `kind="read"` before the allowlist saw it.
 
 ## Dashboard Token Authentication
 

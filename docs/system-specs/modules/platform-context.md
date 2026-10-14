@@ -1000,9 +1000,19 @@ the public fork dropped without the core importing it. All are v1 additions (a
 `Default*` no-op reproduces today's OSS behavior exactly — a standalone process
 is byte-identical) with no `CONTRACT_VERSION` bump.
 
-- `SlackEnterpriseGate.heartbeat_safe_tools() -> frozenset[str]` — unioned into
+- `SlackEnterpriseGate.heartbeat_safe_tools() -> frozenset[str]` — consulted by
   `slack/gateway_runtime/tool_policy.py::_is_heartbeat_safe_tool` after the core
-  `HEARTBEAT_SAFE_TOOLS` exact-match. Default `frozenset()`. ADD-only; never sourced from config.
+  branches, matched only as the exact trusted `@server/tool` identity. Default
+  `frozenset()`. ADD-only; never sourced from config. The `@server/` prefixes of
+  its pins also decide which default-spec servers
+  `worker_agent.heartbeat_mirrored_servers()` mounts on the heartbeat agent after
+  `HEARTBEAT_MIRRORED_SERVERS`: each is copied verbatim (narrowing filters
+  included) minus `autoApprove`, which would let kiro-cli approve a call before
+  `_heartbeat_approval` and its SEL audit saw it; a name the default spec does not
+  mount is skipped; the spawn-path fingerprint and freshness check read the same
+  list. The read goes through `safe_context_call`, so an older companion's
+  `AttributeError` degrades to the core list and `PlatformCompositionError`
+  re-raises.
 - `AppsLoader.registry_rows() -> List[Dict]` — ADD-only merged by
   `apps/registry_pipeline/sources.py::_load_registry_file` after bundled `app-registry.json`
   (same-`name` core row wins). Default `[]`.

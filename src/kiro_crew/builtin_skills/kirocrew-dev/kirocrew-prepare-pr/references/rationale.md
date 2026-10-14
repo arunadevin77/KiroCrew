@@ -584,8 +584,9 @@ nothing. A cron has no owning slot, so its tool calls hit a deny-by-default appr
 path and time out after 180s without a global auto-approve grant — and a denied tool
 inside a completed turn still records `last_status: ok`. A real PR watcher logged 101
 runs over 25 hours with 23 approval blocks, zero pushes, and a healthy-looking
-registry. Heartbeat runs under a strict name allowlist (`HEARTBEAT_SAFE_TOOLS`) with
-no shell and no `git push`, so it cannot amend a commit at all.
+registry. Heartbeat runs under a strict identity allowlist (`_heartbeat_approval`)
+with no write tool, and its read-only shell excludes every git subcommand, so it can
+read files but never amend or publish a commit.
 
 `monitor_watch` is exempted only for a pure-watch stretch because it never interprets
 comment bodies: it digests them only to notice a change, so it cannot tell whether a

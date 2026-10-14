@@ -290,9 +290,8 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("_READ_ONLY_TOOL_PREFIXES", "value", "'tuple'"),
         ("_WRITE_INDICATORS", "value", "'tuple'"),
         ("_is_read_only_tool", "function", "(event_title: 'str') -> 'bool'"),
-        ("HEARTBEAT_SAFE_TOOLS", "value", "'frozenset'"),
         ("_HEARTBEAT_STATUS_PREFIXES", "value", "'tuple'"),
-        ("_is_heartbeat_safe_tool", "function", "(event_title: 'str') -> 'bool'"),
+        ("_is_heartbeat_safe_tool", "function", "(event: 'LLMEvent') -> 'bool'"),
         ("_build_heartbeat_hooks", "function", "(user_hooks: 'HookManager') -> 'HookManager'"),
         ("_bare_tool_name", "function", "(title: 'str') -> 'str'"),
     ),
@@ -455,7 +454,6 @@ def test_a_star_import_carries_the_moved_public_names(tmp_path: Path) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     for name in (
-        "HEARTBEAT_SAFE_TOOLS",
         "CronClaimTimeDenied",
         "claim_vet_bound",
         "cron_job_env_without_reserved",

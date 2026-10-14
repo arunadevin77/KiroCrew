@@ -74,7 +74,7 @@ BASE_SURFACE: dict[str, str] = {
     "_FORK_REFRESH_WAIT_SECS": "value float db58b6c40698d737",
     "_GUEST_AGENT_FILENAME": "value str b1766e070226dc68",
     "_HEARTBEAT_AGENT_FILENAME": "value str 42387f9e3eabbf0e",
-    "_HEARTBEAT_SYSTEM_PROMPT": "value str 9054896452b91851",
+    "_HEARTBEAT_SYSTEM_PROMPT": "value str 63259f9ea08bdf5e",
     "_HOME_DERIVING_ENV_KEYS": "value frozenset 816c277fc333b3e0",
     "_HOOK_EVENT_CANONICAL": "value dict a09f334fa63b1a4f",
     "_HOOK_HEADER_RE": "value Pattern 905320879920c153",

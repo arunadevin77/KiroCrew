@@ -45,6 +45,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from kiro_crew.acp.types import AcpEvent
 from kiro_crew.autonudge import (
     APPROVAL_STALL_REASON,
     CONSECUTIVE_FAILURE_REASON,
@@ -120,17 +121,16 @@ def _slack_default_deliver() -> Any:
 
 
 class TestHeartbeatSafeToolNormalisation:
-    """A malformed ``mcp__`` title yields no server-qualified identity."""
+    """The title is never parsed: a malformed or a well-formed ``mcp__`` / ``@server``
+    title with no trusted identity behind it is refused the same way."""
 
-    def test_mcp_prefix_without_tool_segment_is_refused(self):
-        # "mcp__foo".split("__", 2) is only 2 parts, so neither the qualified
-        # form nor the bare-name strip applies: the title stays "mcp__foo",
-        # misses HEARTBEAT_SAFE_TOOLS, and (qualified == "") can never match an
-        # edition entry -> deny-by-default.
-        assert gw._is_heartbeat_safe_tool("mcp__foo") is False
-
-    def test_at_prefix_without_slash_is_refused(self):
-        assert gw._is_heartbeat_safe_tool("@server-only") is False
+    @pytest.mark.parametrize(
+        "title", ["mcp__foo", "@server-only", "mcp__kirocrew-core__learn_list", ""]
+    )
+    def test_a_title_alone_is_refused(self, title: str):
+        event = AcpEvent(kind="permission_request", title=title, tool_kind="mcp")
+        assert event.mcp_identity_trusted is False
+        assert gw._is_heartbeat_safe_tool(event) is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════

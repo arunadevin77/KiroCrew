@@ -1908,7 +1908,8 @@ exist because `compute_effective_denied` force-re-adds only pinned rules.
 `HookManager` via `_reload_live_hooks` so the PreToolUse gate reflects the new
 opt-out state immediately. The **heartbeat**-scoped manager
 (`slack.gateway._build_heartbeat_hooks`, which drops the user's
-`auto_approve_tools` so `HEARTBEAT_SAFE_TOOLS` is the sole approval authority) is
+`auto_approve_tools` so the heartbeat allowlist (`_heartbeat_approval`) is the sole
+approval authority) is
 rebuilt **per heartbeat run** from the current primary manager — not snapshotted
 once at init — so a just-disabled built-in or just-added user deny reaches
 unattended heartbeat sessions without a gateway restart (cross-surface
