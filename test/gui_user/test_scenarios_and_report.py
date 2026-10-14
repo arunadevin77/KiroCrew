@@ -909,21 +909,31 @@ class TestSeededTitleReset:
 
     def test_the_fixture_title_is_the_one_the_reset_restores(self) -> None:
         # The reset target must match the title the rich fixture seeds, or it
-        # would "restore" the wrong name. Hold them equal here.
+        # would "restore" the wrong name. Hold them equal here. The harness
+        # keys the map on the SLOT NAME the gateway lists, which startup restore
+        # derives from the ``dashboard_starter`` transcript stem by stripping
+        # ``dashboard_``; assert both the key and the title against that real
+        # mapping so neither can drift away from the gateway silently.
+        from kiro_crew.dashboard.slot_persistence.restore_inputs import (
+            _recent_session_slot_name,
+        )
         from kiro_crew.history import ConversationLog
         from kiro_crew.testing.fixtures import seeded_home
 
+        slot_name = _recent_session_slot_name("dashboard_starter")
+        assert slot_name == "starter"
+        assert slot_name in harness.SEEDED_SLOT_TITLES
         with seeded_home("rich") as home:
             meta = ConversationLog(base_dir=home / "sessions").get_metadata("dashboard_starter")
-        assert harness.SEEDED_SLOT_TITLES["dashboard_starter"] == meta["title"]
+        assert harness.SEEDED_SLOT_TITLES[slot_name] == meta["title"]
 
     def test_renamed_seeded_title_is_restored_before_the_next_attempt(self) -> None:
         # A prior scenario left the pinned starter renamed; a clean session is
         # left untouched.
         base_url, patches, stop = self._fake_gateway(
             [
-                {"key": "dashboard_starter", "title": "Welcome renamed by gui test"},
-                {"key": "dashboard_research-notes", "title": "Research: MCP transport trade-offs"},
+                {"key": "starter", "title": "Welcome renamed by gui test"},
+                {"key": "research-notes", "title": "Research: MCP transport trade-offs"},
             ],
             self._COOKIE,
         )
@@ -932,7 +942,7 @@ class TestSeededTitleReset:
         finally:
             stop()
         # Exactly the drifted seeded title is restored; nothing else is touched.
-        assert patches == [("dashboard_starter", self._FIXTURE_WELCOME_TITLE)]
+        assert patches == [("starter", self._FIXTURE_WELCOME_TITLE)]
 
     def test_reset_works_after_the_link_token_window_has_closed(self) -> None:
         # The whole point of authenticating with the session cookie rather than
@@ -940,7 +950,7 @@ class TestSeededTitleReset:
         # closed, but the reset must still restore the title. The gateway here
         # 401s any ?token= request yet honours the cookie.
         base_url, patches, stop = self._fake_gateway(
-            [{"key": "dashboard_starter", "title": "Welcome renamed by gui test"}],
+            [{"key": "starter", "title": "Welcome renamed by gui test"}],
             self._COOKIE,
             reject_link_token=True,
         )
@@ -948,11 +958,11 @@ class TestSeededTitleReset:
             self._runner(base_url, self._COOKIE).reset_seeded_titles()
         finally:
             stop()
-        assert patches == [("dashboard_starter", self._FIXTURE_WELCOME_TITLE)]
+        assert patches == [("starter", self._FIXTURE_WELCOME_TITLE)]
 
     def test_a_title_already_at_the_fixture_value_is_not_rewritten(self) -> None:
         base_url, patches, stop = self._fake_gateway(
-            [{"key": "dashboard_starter", "title": self._FIXTURE_WELCOME_TITLE}], self._COOKIE
+            [{"key": "starter", "title": self._FIXTURE_WELCOME_TITLE}], self._COOKIE
         )
         try:
             self._runner(base_url, self._COOKIE).reset_seeded_titles()
@@ -964,7 +974,7 @@ class TestSeededTitleReset:
         # Local reproduction without the cookie file: the reset must do nothing
         # rather than raise, so a scenario still runs.
         base_url, patches, stop = self._fake_gateway(
-            [{"key": "dashboard_starter", "title": "Welcome renamed by gui test"}], self._COOKIE
+            [{"key": "starter", "title": "Welcome renamed by gui test"}], self._COOKIE
         )
         try:
             self._runner(base_url, "").reset_seeded_titles()

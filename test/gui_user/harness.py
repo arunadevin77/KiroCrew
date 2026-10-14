@@ -76,10 +76,17 @@ VERDICT_RE = re.compile(r"^\s*VERDICT:\s*(PASS|FAIL)\b", re.IGNORECASE | re.MULT
 #: title renamed, and the next scenario -- or that scenario's own retry -- then
 #: opens a row whose title does not match the fixture. The harness restores these
 #: titles before every attempt so each one starts from the fixture state
-#: regardless of what a prior attempt left behind. The slot key is the transcript
-#: stem (``<stem>.jsonl``).
+#: regardless of what a prior attempt left behind.
+#:
+#: The key is the SLOT NAME the gateway lists at ``GET /api/chat/slots``, not the
+#: transcript stem. Startup restore maps the ``dashboard_<name>`` transcript stem
+#: to the slot name by stripping the ``dashboard_`` prefix
+#: (``_recent_session_slot_name`` in ``dashboard/slot_persistence/restore_inputs.py``),
+#: so the ``dashboard_starter.jsonl`` fixture is served as slot ``starter``. The
+#: reset keys and PATCHes on that slot name; keying on the stem would miss on
+#: every attempt.
 SEEDED_SLOT_TITLES: dict[str, str] = {
-    "dashboard_starter": "Welcome to KiroCrew",  # brand-ok: verbatim seeded fixture title
+    "starter": "Welcome to KiroCrew",  # brand-ok: verbatim seeded fixture title
 }
 
 
