@@ -156,6 +156,14 @@ _SANDBOX_LAUNCHER_PREFIX = "sandbox: "
 # failing closed there would break every sandboxed spawn on such a host.
 _SANDBOX_LAUNCHER_WARNING_PREFIX = "sandbox: WARNING"
 
+# The launcher prints ``sandbox: FATAL — cannot exec <command> (<reason>)``, then
+# exits 1, when the kernel will not exec the command it was handed. The sandbox was
+# built; git is missing or not executable inside it. That is git failing to start,
+# not isolation failing, so it is not a refusal either. The dash is matched as any
+# one token: the launcher inherits the gateway's locale, and where stderr is not
+# UTF-8 the dash arrives as the six-character escape for U+2014.
+_SANDBOX_LAUNCHER_EXEC_FAILURE_RE = re.compile(r"^sandbox: FATAL \S+ cannot exec ")
+
 # STRICT, not the "standard" default. `_checkout_filter` runs `git config
 # --includes`, and `include.path` is repo-controlled: a hostile checkout can point
 # it at `~/.aws/credentials` (or `~/.netrc`, `~/.git-credentials`) and have git
@@ -283,7 +291,7 @@ def _run_git(
 
 
 def _launcher_failure_line(stderr: str) -> str:
-    """The sandbox launcher's FATAL line in *stderr*, or ``""`` when it did not fail.
+    """The sandbox launcher's refusal line in *stderr*, or ``""`` when it did not refuse.
 
     Line-wise and WARNING-aware, and both properties are load-bearing.
 
@@ -298,10 +306,18 @@ def _launcher_failure_line(stderr: str) -> str:
 
     Scanning per line rather than only the head also catches the opposite order: a
     real fatal line that an advisory happens to precede.
+
+    A command the kernel would not exec is not a refusal either. The launcher built
+    the sandbox and git could not start inside it, so answering "this host has no OS
+    sandbox backend" would name the wrong cause on a host that has one. The line is
+    left as git's stderr, and the caller reports the failed call as it reports any
+    other git failure.
     """
     for line in stderr.splitlines():
-        if line.startswith(_SANDBOX_LAUNCHER_PREFIX) and not line.startswith(
-            _SANDBOX_LAUNCHER_WARNING_PREFIX
+        if (
+            line.startswith(_SANDBOX_LAUNCHER_PREFIX)
+            and not line.startswith(_SANDBOX_LAUNCHER_WARNING_PREFIX)
+            and not _SANDBOX_LAUNCHER_EXEC_FAILURE_RE.match(line)
         ):
             return line.strip()
     return ""

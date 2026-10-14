@@ -462,11 +462,13 @@ class TestAFailedExecIsOneLauncherLine:
         assert run.execs == [["/bin/agent", "/bin/agent", "--flag"]]
 
     def test_every_reader_of_launcher_stderr_keeps_its_verdict(self, tmp_path: Path) -> None:
-        # The line is one of the FATAL family, which each reader already handles: no
-        # sandbox refusal, no ACP sandbox-init failure, and a launcher failure to the
-        # clone probe, whose surfaced detail is the line that names the command.
+        # Each reader's verdict on the line: no sandbox refusal, no ACP sandbox-init
+        # failure, a launcher failure to the clone probe, whose surfaced detail is the
+        # line that names the command, and no refusal to the worktree handler, which
+        # reports the failed call as git's own.
         from kiro_crew.acp.transport_errors import is_sandbox_init_failure_output
         from kiro_crew.apps.builtins.auto_improvement.backend import clone_setup
+        from kiro_crew.dashboard.handlers import worktree
 
         def missing(file: str, args: list[str]) -> None:
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT))
@@ -478,3 +480,4 @@ class TestAFailedExecIsOneLauncherLine:
         assert sb.launcher_refusal(line) is None
         assert not is_sandbox_init_failure_output(line + "\n")
         assert clone_setup._launcher_failure_detail(line + "\n") == line
+        assert worktree._launcher_failure_line(line + "\n") == ""
