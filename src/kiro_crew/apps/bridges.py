@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import ntpath
 import os
 import re
 import shutil
@@ -2673,6 +2674,107 @@ def _live_port_for(app_name: str, live_port: int | None) -> int | None:
 _BARE_PYTHON = frozenset({"python", "python3", "py"})
 
 
+def _refuse_app_launcher(cfg: dict, app_root: Path, target: str, reason: str) -> bool:
+    """Refuse an app's stdio launcher: log, audit, and disable the server.
+
+    ``disabled: true`` is honoured by kiro-cli natively, so the server is not
+    started; the raw ``target`` is never used as a launch path. The SEL event is
+    best effort -- an audit failure must not turn a refusal back into a launch.
+    Always returns ``True`` so a caller can ``return`` it directly.
+    """
+    logger.error(
+        "App launcher %r refused (%s); stdio MCP server %s not started.",
+        target,
+        reason,
+        app_root.name,
+    )
+    try:
+        sel().log_api_access(
+            caller="app_bridge",
+            operation="app_stdio_launcher_refused",
+            outcome="denied",
+            resources=f"app={app_root.name} launcher={target}",
+            error=reason,
+        )
+    except Exception:  # noqa: BLE001 - audit must not break registration
+        logger.debug("SEL audit unavailable for a refused app launcher", exc_info=True)
+    cfg["disabled"] = True
+    return True
+
+
+def _resolve_app_launcher_arg(cfg: dict, app_root: Path) -> bool:
+    """Anchor an app's OWN relative ``.py`` launcher to its install root.
+
+    Rewrites ``cfg["args"]`` in place and returns ``False``, or refuses the
+    server and returns ``True`` (``cfg["disabled"]`` is set; see
+    :func:`_refuse_app_launcher`). A refusal changes nothing else in ``cfg``.
+
+    WHY: an app whose own package is staged (``apps/<id>/src/...``) and not
+    pip-installed cannot be started by ``-m its.package``: the package is not
+    importable, and without a ``requirements.txt`` nothing is put on
+    ``PYTHONPATH``. Such an app ships a launcher that registers its package
+    from its own ``__file__``. A manifest can name that launcher only relative
+    to the app root, and kiro-cli spawns these servers under the session's cwd,
+    so a relative operand never reaches the staged file. This is the one place
+    that knows the install root. It runs before the deps shim is inserted, so
+    ``deps_boot`` receives the absolute target whatever the deps state.
+
+    WHICH ARG: only the launch TARGET -- the first token CPython treats as the
+    script operand (``_py_target_index``) -- and only when it ends in ``.py``.
+    ``-m`` and ``-c`` launches, interpreter options, and every argument after
+    the script operand are never read or changed.
+
+    OUTCOMES for a ``.py`` target:
+
+    * relative, inside the app root, and an existing file: rewritten to its
+      real absolute path (what was checked is what is executed);
+    * relative and not a file under the app root: left exactly as authored,
+      which is today's behaviour for any other relative operand;
+    * absolute (POSIX, drive-letter, UNC or leading-separator), or containing a
+      ``..`` segment, or resolving through a link to outside the app root:
+      REFUSED. An absolute ``.py`` operand launched before this change; it is
+      refused now because an absolute path is how a manifest points at a file
+      outside the staged tree, which is the escape the containment stops.
+
+    The manifest is app-authored and so untrusted. Absolute and ``..`` forms are
+    rejected before any join; the joined path must then sit inside the real app
+    root (``_is_within`` on realpaths: a component-wise check, never a string prefix).
+
+    NOT FIXED here, same root cause: a relative path in ``command`` itself is
+    still never rewritten (see the manifest reference), so it still resolves
+    against the spawn cwd.
+    """
+    args = list(cfg.get("args") or [])
+    ti = _py_target_index(args)
+    if ti is None:
+        return False
+    target = args[ti]
+    if not isinstance(target, str) or not target.endswith(".py"):
+        return False
+    if (
+        os.path.isabs(target)
+        or ntpath.isabs(target)
+        or ntpath.splitdrive(target)[0]
+        or target[:1] in ("/", "\\")
+    ):
+        return _refuse_app_launcher(cfg, app_root, target, "absolute path")
+    if any(part == ".." for part in re.split(r"[\\/]+", target)):
+        return _refuse_app_launcher(cfg, app_root, target, "parent-directory segment")
+    try:
+        real_root = os.path.realpath(app_root)
+        real_target = os.path.realpath(os.path.join(real_root, target))
+        contained = _is_within(Path(real_target), Path(real_root))
+    except (OSError, ValueError):
+        contained = False
+    if not contained:
+        return _refuse_app_launcher(cfg, app_root, target, "resolves outside the app root")
+    if not os.path.isfile(real_target):
+        return False
+    args[ti] = real_target
+    cfg["args"] = args
+    return False
+
+
 def resolve_stdio_command(cfg: dict, app_root: Path | None = None) -> dict:
     """Resolve a bare stdio MCP ``command`` to an absolute path, venv first.
 
@@ -2873,6 +2975,16 @@ def resolve_stdio_command(cfg: dict, app_root: Path | None = None) -> dict:
             cfg["command"] = sys.executable
         else:
             cfg["command"] = resolve_app_python(app_root)
+            # App launcher resolution: anchor the app's own relative .py
+            # launcher to its install root BEFORE the deps shim below, so
+            # deps_boot (or the plain launch) receives the absolute target
+            # whatever the deps state. A containment violation sets
+            # ``disabled`` and nothing else: the entry still goes through the
+            # shim and isolation below, because a per-agent policy grant
+            # clears ``disabled`` (_apply_agent_mcp_policy) and the entry
+            # underneath must then be a normal, bootstrapped one.
+            if app_root is not None:
+                _resolve_app_launcher_arg(cfg, app_root)
             # Provisioned-deps launch shim (same reasoning as the backend
             # spawn): PYTHONPATH never processes .pth files, so a python
             # launcher with provisioned (or expected) deps routes through

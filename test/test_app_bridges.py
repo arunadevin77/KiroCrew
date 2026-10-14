@@ -5234,3 +5234,215 @@ class TestScrubDoesNotRematerializeAgents:
 
         assert brmod.scrub_backend_mcp_url("app") == []
         assert removed == ["app"]
+
+
+class TestStdioAppLauncherResolution:
+    """A non-gateway APP stdio server that launches its OWN package through a
+    RELATIVE ``.py`` launcher has that launcher resolved to its absolute path
+    under the app root, so a staged (not pip-installed) package is reachable
+    without a cwd or ``PYTHONPATH`` the host does not provide.
+
+    The launcher name comes from an app-authored manifest, so containment is the
+    whole risk surface: an absolute or drive/UNC-rooted path, a ``..`` segment,
+    or a link that leaves the app root REFUSES the server (``disabled: true``,
+    an error log and a SEL ``denied`` event) and never launches the raw arg.
+    Everything else is left as authored: ``-m``/``-c`` launches, args after the
+    script operand, gateway-module servers, and a relative target that is not a
+    file under the app root.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _pinned_interpreter(self, nonbundled_python_without_user_site):
+        """Pin the user-site policy the way every sibling stdio test does:
+        ``-s`` is added or not depending on the HOST interpreter, so a test
+        reading the isolated args must not inherit the runner's state."""
+
+    @pytest.fixture()
+    def audit(self, monkeypatch):
+        import kiro_crew.apps.bridges as bmod
+
+        events: list[dict] = []
+        monkeypatch.setattr(
+            bmod,
+            "sel",
+            lambda: SimpleNamespace(log_api_access=lambda **kw: events.append(kw)),
+        )
+        return events
+
+    def _resolve(self, app_root, args):
+        from kiro_crew.apps.bridges import resolve_stdio_command
+
+        return resolve_stdio_command({"command": "python3", "args": list(args)}, app_root=app_root)
+
+    def _plant(self, app_root, rel="src/pkg/_mcp_launch.py"):
+        launcher = app_root / rel
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        launcher.write_text("print('ok')\n")
+        return launcher
+
+    # ── the rewrite ────────────────────────────────────────────────────────
+
+    def test_relative_launcher_resolves_to_absolute_staged_path(self, tmp_path, audit):
+        launcher = self._plant(tmp_path)
+        cfg = self._resolve(tmp_path, ["src/pkg/_mcp_launch.py"])
+        assert not cfg.get("disabled"), cfg
+        assert _isolated_python_args(cfg) == [os.path.realpath(launcher)], cfg
+        assert audit == [], "a resolved launcher is not a denial"
+
+    def test_relative_launcher_still_starts_with_a_provisioned_deps_tree(self, tmp_path):
+        """The rewrite does not depend on the deps state: with a provisioned
+        tree deps_boot receives the ABSOLUTE launcher, not the authored
+        relative one that would resolve against the session cwd."""
+        from kiro_crew.apps.interpreter import app_deps_dir
+
+        launcher = self._plant(tmp_path)
+        app_deps_dir(tmp_path).mkdir(parents=True)
+        (tmp_path / "requirements.txt").write_bytes(b"requests\n")
+        _plant_deps_stamp(tmp_path, b"requests\n")
+        cfg = self._resolve(tmp_path, ["src/pkg/_mcp_launch.py"])
+        assert not cfg.get("disabled"), cfg
+        iso = _isolated_python_args(cfg)
+        assert iso[0].endswith("deps_boot.py"), cfg
+        assert iso[1] == str(app_deps_dir(tmp_path)), cfg
+        assert iso[2] == os.path.realpath(launcher), cfg
+
+    def test_relative_target_that_is_not_a_file_is_left_as_authored(self, tmp_path, audit):
+        cfg = self._resolve(tmp_path, ["server.py"])
+        assert not cfg.get("disabled"), cfg
+        assert _isolated_python_args(cfg) == ["server.py"], cfg
+        assert audit == []
+
+    # ── containment ────────────────────────────────────────────────────────
+
+    @pytest.mark.parametrize(
+        ("target", "reason"),
+        [
+            ("/abs/x.py", "absolute"),
+            ("C:\\abs\\x.py", "absolute"),
+            ("\\\\server\\share\\x.py", "absolute"),
+            ("\\rooted\\x.py", "absolute"),
+            ("../x.py", "parent"),
+            ("a/../../x.py", "parent"),
+            ("..\\x.py", "parent"),
+            ("a\\..\\..\\x.py", "parent"),
+        ],
+    )
+    def test_rooted_and_parent_launchers_are_refused_and_audited(
+        self, tmp_path, audit, caplog, target, reason
+    ):
+        import logging
+
+        self._plant(tmp_path)
+        with caplog.at_level(logging.ERROR, logger="kiro_crew.apps.bridges"):
+            cfg = self._resolve(tmp_path, [target])
+        assert cfg.get("disabled") is True, cfg
+        assert any("refused" in r.getMessage() for r in caplog.records), caplog.text
+        assert len(audit) == 1, audit
+        event = audit[0]
+        assert event["operation"] == "app_stdio_launcher_refused", event
+        assert event["outcome"] == "denied", event
+        assert target in event["resources"], event
+        assert reason in event["error"], event
+
+    def test_symlink_escaping_the_app_root_is_refused_and_audited(self, tmp_path, audit):
+        app_root = tmp_path / "app"
+        outside = tmp_path / "outside"
+        app_root.mkdir()
+        outside.mkdir()
+        (outside / "evil.py").write_text("print('evil')\n")
+        # A directory link (a junction on Windows) INSIDE the app root whose
+        # real path is outside it.
+        platform_compat.symlink_or_junction(str(outside), str(app_root / "link"))
+        cfg = self._resolve(app_root, ["link/evil.py"])
+        assert cfg.get("disabled") is True, cfg
+        assert len(audit) == 1, audit
+        assert audit[0]["outcome"] == "denied", audit
+        assert "outside" in audit[0]["error"], audit
+
+    def test_a_refused_server_still_gets_isolation_and_the_deps_bootstrap(self, tmp_path):
+        """Refusal sets ``disabled`` and nothing else. A per-agent policy grant
+        clears ``disabled`` by design, so the entry underneath must already be
+        a normal one: ``-s`` isolation, and the deps_boot shim when the app has
+        a provisioned tree (its ``.pth`` hooks never run without it)."""
+        from kiro_crew.apps.interpreter import app_deps_dir
+
+        plain = self._resolve(tmp_path, ["../x.py"])
+        assert plain.get("disabled") is True, plain
+        assert plain["args"][0] == "-s", plain
+
+        app_deps_dir(tmp_path).mkdir(parents=True)
+        (tmp_path / "requirements.txt").write_bytes(b"requests\n")
+        _plant_deps_stamp(tmp_path, b"requests\n")
+        shimmed = self._resolve(tmp_path, ["/abs/server.py"])
+        assert shimmed.get("disabled") is True, shimmed
+        iso = _isolated_python_args(shimmed)
+        assert iso[0].endswith("deps_boot.py"), shimmed
+        assert iso[1] == str(app_deps_dir(tmp_path)), shimmed
+        assert iso[2] == "/abs/server.py", "the refused arg is kept as written, never substituted"
+
+    def test_a_failing_audit_never_unrefuses_the_server(self, tmp_path, monkeypatch):
+        import kiro_crew.apps.bridges as bmod
+
+        def _boom():
+            raise RuntimeError("sel down")
+
+        monkeypatch.setattr(bmod, "sel", _boom)
+        cfg = self._resolve(tmp_path, ["../x.py"])
+        assert cfg.get("disabled") is True, cfg
+
+    def test_a_refused_server_is_written_disabled_by_registration(
+        self, tmp_path, app_env, monkeypatch
+    ):
+        entry = TestStdioInterpreterResolution()._register_stdio(
+            tmp_path,
+            app_env,
+            monkeypatch,
+            {"command": "python3", "args": ["../x.py"]},
+        )
+        assert entry["disabled"] is True, entry
+
+    def test_registration_writes_the_absolute_launcher_for_an_installed_app(
+        self, tmp_path, app_env, monkeypatch
+    ):
+        created: list[Path] = []
+        entry = TestStdioInterpreterResolution()._register_stdio(
+            tmp_path,
+            app_env,
+            monkeypatch,
+            {"command": "python3", "args": ["src/pkg/_mcp_launch.py"]},
+            setup=lambda root: created.append(self._plant(root)),
+        )
+        assert not entry.get("disabled"), entry
+        assert os.path.realpath(created[0]) in entry["args"], entry
+
+    # ── what must not change ───────────────────────────────────────────────
+
+    def test_non_launcher_args_are_unchanged(self, tmp_path, audit):
+        cfg = self._resolve(tmp_path, ["-m", "myapp.server"])
+        assert not cfg.get("disabled"), cfg
+        assert _isolated_python_args(cfg) == ["-m", "myapp.server"], cfg
+        cfg = self._resolve(tmp_path, ["-c", "import server"])
+        assert _isolated_python_args(cfg) == ["-c", "import server"], cfg
+        assert audit == []
+
+    def test_args_after_the_script_operand_are_not_touched(self, tmp_path):
+        launcher = self._plant(tmp_path)
+        cfg = self._resolve(tmp_path, ["src/pkg/_mcp_launch.py", "../passed-through.py"])
+        assert not cfg.get("disabled"), cfg
+        assert _isolated_python_args(cfg) == [
+            os.path.realpath(launcher),
+            "../passed-through.py",
+        ], cfg
+
+    def test_gateway_module_server_is_unchanged(self, tmp_path):
+        import sys as _sys
+
+        from kiro_crew.apps.bridges import resolve_stdio_command
+
+        cfg = resolve_stdio_command(
+            {"command": "python3", "args": ["-m", "kiro_crew.apps.builtins.x.mcp_server"]},
+            app_root=tmp_path,
+        )
+        assert not cfg.get("disabled"), cfg
+        assert cfg["command"] == _sys.executable, cfg
+        assert _isolated_python_args(cfg) == ["-m", "kiro_crew.apps.builtins.x.mcp_server"], cfg

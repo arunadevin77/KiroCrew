@@ -86,6 +86,16 @@ installed against:
 - **A command carrying a path** (absolute or relative) is never rewritten. If it
   does not point at a runnable file at registration time, a warning naming the
   app, server, and command is logged — the entry is still written.
+- **An app's own `.py` launcher** (a stdio server whose python launch target is a
+  relative path ending in `.py`, given in `args` and relative to the app root) is
+  resolved to its absolute path under the app root, so a staged app whose package is not
+  pip-installed can start. Only that one operand is touched; `-m`, `-c`, and every
+  argument after the script are left as written. An absolute path (POSIX, drive
+  letter, UNC), a `..` segment, or a link that resolves outside the app root
+  **refuses the server**: it is written `disabled: true`, an error is logged, and
+  a SEL `app_stdio_launcher_refused` event is recorded. A relative `.py` that is not
+  a file under the app root is left as written. A relative path in `command`
+  itself is still never rewritten.
 - The host CLI name `kirocrew` is pinned to the running gateway before any of
   the above applies.
 
@@ -1248,8 +1258,10 @@ gateway has them: `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`,
   and `..` traversal are rejected (canonical resolve + containment when the app dir
   is known). `backend.hooks.*` are format-checked (`module.path:callable`, which
   cannot express traversal) and containment-checked again at load time.
-  `mcpServers` entries use `command`/`args`/`url`/`env` (not app-relative file paths)
-  and are not path-checked.
+  `mcpServers` entries use `command`/`args`/`url`/`env`. They are not path-checked at
+  manifest load; at registration a python server's relative `.py` launch target is
+  resolved against the app root with the same containment (see "An app's own `.py`
+  launcher" above).
 - All required fields must be non-empty strings
 - Each cron entry must specify either `every` or `cron_expr`
 - A non-empty `crons` requires `"cron": true` under `permissions`. Install,
