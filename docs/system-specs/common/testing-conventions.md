@@ -520,6 +520,22 @@ skips the set and leaves the owner without the name, which
 `test/test_agent_refactor_create_guard.py` catches. A module-valued name (a shared
 module the facade holds) cannot be rebound at all; patch its attributes instead.
 
+A **mirrored facade** is the variant for a split whose owners import each other's
+names: `kiro_crew._facade_mirror` indexes, once, every owner that binds a name, and a
+write or delete through the facade lands in all of them (and in the facade when it
+binds the name too), so a patch of `facade.name` reaches every reader the unsplit
+module had, module-valued names included; a name the patch creates, such as a builtin
+shadowed with `raising=False`, lands on every owner that lacks it as well. Patch a name
+that two modules of the family bind through the facade, never on one owner: the
+facade's undo would restore every holder to that owner's patched value. A name one
+owner binds alone may be patched in that owner. Never write the facade's namespace dict
+(`vars(facade)[...]`, `facade.__dict__[...]`, `mock.patch.dict` on either): that skips
+the mirror, so no owner sees the write. `test/test_facade_mirror_guards.py` refuses all
+three shapes for every facade that serves a mirror:
+`test_no_test_patches_a_mirrored_facade_name_with_create_true`,
+`test_no_test_patches_a_shared_name_on_an_owner_directly` and
+`test_no_test_writes_a_mirrored_facade_namespace_directly`.
+
 A module first imported while a patch is active binds the patched object by name
 (`from x import f` copies the object), so the patch outlives itself in that
 module. For `kiro_agents_dir` and `kiro_sessions_dir`, redirect through
