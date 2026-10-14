@@ -10258,7 +10258,8 @@
       "duplicate_failed_reason": "Impossibile duplicare questa sessione: {{reason}}"
     },
     "useStreamingStt": {
-      "audio_worklet_unavailable": "audio worklet non disponibile",
+      "audio_module_load_failed": "La dettatura non ha finito di caricarsi. Controlla la connessione, poi riprova a dettare.",
+      "audio_start_failed": "Il browser non è riuscito ad avviare l’audio per la dettatura. Riprova a dettare, o ricarica la pagina se continua a non funzionare.",
       "stt_connection_error": "errore di connessione stt",
       "stt_connection_lost": "connessione stt persa",
       "stt_model_still_loading": "Il modello vocale è ancora in caricamento, quindi la tua dettatura non è stata trascritta e non è stata conservata. Dettala di nuovo quando il modello ha finito di caricarsi.",

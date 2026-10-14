@@ -10258,7 +10258,8 @@
       "duplicate_failed_reason": "No se pudo duplicar esta sesión: {{reason}}"
     },
     "useStreamingStt": {
-      "audio_worklet_unavailable": "audio worklet no disponible",
+      "audio_module_load_failed": "El dictado no terminó de cargarse. Revisa tu conexión y vuelve a dictar.",
+      "audio_start_failed": "Tu navegador no pudo iniciar el audio del dictado. Vuelve a dictar o recarga la página si sigue fallando.",
       "stt_connection_error": "error de conexión de stt",
       "stt_connection_lost": "se perdió la conexión de stt",
       "stt_model_still_loading": "El modelo de voz aún se está cargando, así que no se pudo transcribir tu dictado y no se conservó. Vuelve a dictarlo cuando el modelo termine de cargarse.",

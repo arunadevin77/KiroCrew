@@ -9974,7 +9974,8 @@
       "duplicate_failed_reason": "无法复制此会话：{{reason}}"
     },
     "useStreamingStt": {
-      "audio_worklet_unavailable": "audio worklet 不可用",
+      "audio_module_load_failed": "口述未能完成加载。检查网络连接后再口述一次。",
+      "audio_start_failed": "浏览器无法启动口述所需的音频。再口述一次；如果持续失败，重新加载页面。",
       "stt_connection_error": "语音转文字连接错误",
       "stt_connection_lost": "语音转文字连接已断开",
       "stt_model_still_loading": "语音模型还没加载完，这段录音没能转写，也没有保留。等模型加载完成后请重新口述。",

@@ -164,6 +164,13 @@ Every actual capture end, including a fatal server frame, synchronously fires
 the composer's once-only capture-stop protection before deferred socket-close
 transcript delivery; explicit cancel and unmount remain discard-only and do not fire it.
 
+Audio start-up has two failure messages, one per step. A rejected
+`audioWorklet.addModule` load of `/pcm-worklet.js` reports that dictation could
+not finish loading and points at the connection; a rejected
+`AudioContext.resume()`, which happens after the module loaded, reports that the
+browser could not start audio and offers dictating again or reloading the page.
+Either one releases the microphone and ends the start.
+
 | Component | File | Role |
 |---|---|---|
 | WS endpoint | `src/kiro_crew/dashboard/stt_stream.py` | One provider session per connection, plus the caps and the SEL audit pair |

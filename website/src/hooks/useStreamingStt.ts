@@ -458,11 +458,14 @@ export function useStreamingStt ({ onPartial, onFinal, onCaptureStop, onError, o
 
     const ctx = new AudioContext()
     ctxRef.current = ctx
+    // The two startup failures below get different messages because the user
+    // does something different about each. This one is a download: the module
+    // comes from the dashboard server, so the connection is what to check.
     try {
       await ctx.audioWorklet.addModule(withBase('/pcm-worklet.js'))
     } catch {
       if (sessionRef.current === session && !session.cancelled) {
-        onErrorRef.current?.(i18nT('hooks.useStreamingStt.audio_worklet_unavailable'))
+        onErrorRef.current?.(i18nT('hooks.useStreamingStt.audio_module_load_failed'))
         cleanup()
       }
       return false
@@ -471,11 +474,15 @@ export function useStreamingStt ({ onPartial, onFinal, onCaptureStop, onError, o
       void ctx.close()
       return false
     }
+    // The module is loaded by now, so a refusal here is the browser declining to
+    // start audio processing, which an autoplay rule does to a context resumed
+    // outside a user gesture. A fresh press is a fresh gesture, so the message
+    // sends the user back to dictate again rather than to the connection.
     try {
       if (ctx.state === 'suspended') await ctx.resume()
     } catch {
       if (sessionRef.current === session) {
-        onErrorRef.current?.(i18nT('hooks.useStreamingStt.audio_worklet_unavailable'))
+        onErrorRef.current?.(i18nT('hooks.useStreamingStt.audio_start_failed'))
         cleanup()
       }
       return false

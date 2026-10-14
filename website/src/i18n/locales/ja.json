@@ -9974,7 +9974,8 @@
       "duplicate_failed_reason": "このセッションを複製できませんでした: {{reason}}"
     },
     "useStreamingStt": {
-      "audio_worklet_unavailable": "オーディオワークレットが利用できません",
+      "audio_module_load_failed": "口述の読み込みを完了できませんでした。接続を確認してから、もう一度口述してください。",
+      "audio_start_failed": "ブラウザーで口述用のオーディオを開始できませんでした。もう一度口述してください。続く場合はページを再読み込みしてください。",
       "stt_connection_error": "stt接続エラー",
       "stt_connection_lost": "stt接続が失われました",
       "stt_model_still_loading": "音声モデルの読み込みが終わらなかったため、録音した音声を文字起こしできず、保存もされていません。モデルの読み込みが終わってからもう一度お話しください。",

@@ -9974,7 +9974,8 @@
       "duplicate_failed_reason": "이 세션을 복제할 수 없습니다: {{reason}}"
     },
     "useStreamingStt": {
-      "audio_worklet_unavailable": "오디오 워크릿을 사용할 수 없습니다",
+      "audio_module_load_failed": "구술을 끝까지 불러오지 못했습니다. 연결을 확인한 뒤 다시 구술하세요.",
+      "audio_start_failed": "브라우저가 구술용 오디오를 시작하지 못했습니다. 다시 구술하거나 계속 실패하면 페이지를 새로 고치세요.",
       "stt_connection_error": "stt 연결 오류",
       "stt_connection_lost": "stt 연결이 끊어졌습니다",
       "stt_model_still_loading": "음성 모델을 아직 로드하는 중이라 녹음한 음성을 텍스트로 변환하지 못했고 보관되지도 않았습니다. 모델 로드가 끝난 뒤에 다시 말해 주세요.",

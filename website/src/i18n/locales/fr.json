@@ -10258,7 +10258,8 @@
       "duplicate_failed_reason": "Impossible de dupliquer cette session : {{reason}}"
     },
     "useStreamingStt": {
-      "audio_worklet_unavailable": "audio worklet indisponible",
+      "audio_module_load_failed": "La dictée n’a pas pu finir de se charger. Vérifie ta connexion, puis relance la dictée.",
+      "audio_start_failed": "Ton navigateur n’a pas pu démarrer l’audio de la dictée. Relance la dictée, ou recharge la page si l’échec persiste.",
       "stt_connection_error": "erreur de connexion stt",
       "stt_connection_lost": "connexion stt perdue",
       "stt_model_still_loading": "Le modèle vocal est encore en cours de chargement, ta dictée n'a donc pas pu être transcrite et n'a pas été conservée. Redis-la une fois le modèle chargé.",

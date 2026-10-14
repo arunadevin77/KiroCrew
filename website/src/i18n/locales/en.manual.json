@@ -4395,7 +4395,8 @@
       "duplicate_failed_reason": "Couldn't duplicate this session: {{reason}}"
     },
     "useStreamingStt": {
-      "audio_worklet_unavailable": "audio worklet unavailable",
+      "audio_module_load_failed": "Dictation could not finish loading. Check your connection, then try dictating again.",
+      "audio_start_failed": "Your browser could not start audio for dictation. Try dictating again, or reload the page if it keeps failing.",
       "stt_connection_error": "stt connection error",
       "stt_connection_lost": "stt connection lost",
       "stt_model_still_loading": "The speech model is still loading, so your dictation could not be transcribed and was not kept. Dictate it again once the model has finished loading.",

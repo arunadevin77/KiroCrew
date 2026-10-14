@@ -10116,7 +10116,8 @@
       "duplicate_failed_reason": "Diese Sitzung konnte nicht dupliziert werden: {{reason}}"
     },
     "useStreamingStt": {
-      "audio_worklet_unavailable": "Audio-Worklet nicht verfügbar",
+      "audio_module_load_failed": "Das Diktat konnte nicht fertig geladen werden. Prüf deine Verbindung und diktier dann noch einmal.",
+      "audio_start_failed": "Dein Browser konnte das Audio für das Diktat nicht starten. Diktier noch einmal oder lade die Seite neu, wenn es weiterhin fehlschlägt.",
       "stt_connection_error": "STT-Verbindungsfehler",
       "stt_connection_lost": "STT-Verbindung verloren",
       "stt_model_still_loading": "Das Sprachmodell wird noch geladen, deine Aufnahme konnte deshalb nicht transkribiert werden und ist nicht erhalten. Diktier sie erneut, sobald das Modell geladen ist.",
