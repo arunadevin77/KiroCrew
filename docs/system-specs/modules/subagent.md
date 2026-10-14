@@ -1948,7 +1948,13 @@ stopped the run. Reached from `spawn_release` (REST
 is not resuming: the route answers `{"status": "cancelled"}`. It is the parent's
 one control over a run the gate is holding, which otherwise keeps the parent
 attached (`subagents_attached_async`), so a reload refuses until it starts.
-Pinned by `test_spawn_release_queued.py`.
+Pinned by `test_spawn_release_queued.py`. `DELETE /api/spawn/{id}` on the same
+id takes the same cancel before anything else and answers
+`{"ok": true, "cancelled": true, "queued": true}`; the persisted-dismissal arm
+below is for cards of FINISHED runs only, so without this a queued id was
+answered 403 (an internal caller) or 404 (the owner) by a route whose `GET`
+names it `queued`. A cancel that finds the row started meanwhile re-reads the
+run and takes the live `cancel` path. Pinned by `test_spawn_delete_queued.py`.
 
 ### `cancel_all() -> None`
 Cancels all running subagents, stops the reaper loop, and awaits their cleanup. Handles `CancelledError` gracefully — sessions released, count decremented.

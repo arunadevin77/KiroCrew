@@ -696,7 +696,16 @@ async def _log_panel_dismissal(state: DashboardState, agent_id: str) -> str:
 
 
 async def api_spawn_delete(request: web.Request) -> web.Response:
-    """DELETE /api/spawn/{agent_id} — cancel a running subagent or remove a finished one."""
+    """DELETE /api/spawn/{agent_id} — cancel a running subagent or remove a finished one.
+
+    A spawn that was accepted and has not started is cancelled too, through the
+    same queued stop ``POST .../release`` uses: it never starts, and the answer
+    says ``cancelled`` with ``queued``. ``GET /api/spawn/{id}`` answers that id
+    as ``queued``, so without this arm the same id fell through to the
+    persisted-dismissal path below, a route for cards of FINISHED runs that an
+    internal caller cannot use. Ownership is unchanged: the route sits behind
+    ``_spawn_scope_refusal``, which owns a queued row by its session key.
+    """
     state: DashboardState = request.app["state"]
     agent_id = request.match_info["agent_id"]
     # Handle native kiro-cli subagents (native:* IDs not in SubagentManager)
@@ -755,6 +764,26 @@ async def api_spawn_delete(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     manager = state.subagents
     info = manager.get(agent_id) if manager is not None else None
+    if manager is not None and info is None:
+        # Not a registered run: a spawn the gate is still holding, or a
+        # persisted record. Only the former is cancelled here. A row that is
+        # resuming already STARTED, so it is not stopped as a queued one and
+        # keeps the answer the arms below give an unregistered id.
+        try:
+            queued = await _queued_lookup(request, state, agent_id)
+        except QueuedReadUnavailable:
+            return _queue_unreadable()
+        if queued is not None and not queued.resuming:
+            cancelled = await manager.cancel_queued(
+                agent_id,
+                queued.parent_session_key,
+                stop_origin="cancelled by its parent session",
+            )
+            if cancelled:
+                return web.json_response({"ok": True, "cancelled": True, "queued": True})
+            # It started (or another stop ended it) between the read and the
+            # cancel: whatever it is now, the paths below answer for it.
+            info = manager.get(agent_id)
     if manager is None or info is None:
         # A card the durable replay rebuilt has no manager entry -- after a
         # gateway restart that is every finished run -- so a flat 404 made those
