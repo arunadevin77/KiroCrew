@@ -20051,10 +20051,8 @@ async def _run_chat(
                 # enough (teardown can drive it back to "idle" concurrently —
                 # the race documented in chat_handlers._make_stop_resolver);
                 # the generation only ever counts up on initiations.
-                _canary_fence = _escalation.begin_probe(
-                    stop_generation=slot._stop_generation,
-                    session_stop_generation=_session_stop_generation(),
-                )
+                _stop_gen_before_canary = slot._stop_generation
+                _session_stop_gen_before_canary = _session_stop_generation()
                 # The canary must run on the SAME served model as the failing
                 # session — a success on any other model (the cheap background
                 # default, or a rejected-model fallback) says nothing about
@@ -20101,9 +20099,9 @@ async def _run_chat(
                     )
             else:
                 _canary_ok = False
-            if _canary_ok and _canary_fence.stopped_since(
-                stop_generation=slot._stop_generation,
-                session_stop_generation=_session_stop_generation(),
+            if _canary_ok and (
+                slot._stop_generation != _stop_gen_before_canary
+                or _session_stop_generation() != _session_stop_gen_before_canary
             ):
                 # A Stop was initiated while the canary ran (even if it already
                 # resolved and _stop_state is back to "idle"): the user

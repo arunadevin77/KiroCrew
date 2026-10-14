@@ -18,11 +18,13 @@ The state crosses turns and is two cells on the slot:
   re-arms it, so a genuine prolonged outage gets one fresh conversation, never a
   discard loop.
 
-The cells stay slot fields because the recovery-replay ledger re-arms the
-one-shot by attribute name when it cancels an image-history or thinking-binding
-replay (``recovery_replays.POLICIES``). Every other transition goes through
-:class:`PoisonedConversationEscalation`; the runner never writes either cell
-itself, which ``test/test_poisoned_escalation.py`` pins.
+The cells stay slot fields, initialised by the slot's constructor. Every
+transition goes through :class:`PoisonedConversationEscalation`, the
+recovery-replay ledger's refund included: its policy asks for the refund
+(``recovery_replays.ReplayPolicy.refunds_discard_one_shot``) and the runner's
+re-arm calls :meth:`~PoisonedConversationEscalation.refund_one_shot`. Nothing
+else in the package writes either cell or names one in a string, which
+``test/test_poisoned_escalation.py`` pins.
 
 The rule, as the runner drives it:
 
@@ -36,8 +38,8 @@ The rule, as the runner drives it:
    is due (:meth:`~PoisonedConversationEscalation.should_probe`). The runner
    runs it on a fresh background conversation; only a canary that answers is
    evidence the rejection is specific to this conversation. A Stop initiated
-   while the probe runs vetoes the discard
-   (:meth:`~PoisonedConversationEscalation.begin_probe`, :class:`ProbeFence`).
+   while the probe runs vetoes the discard; the runner compares the Stop
+   counters it read before the probe, which are locals of that turn.
 4. A discard spends the one-shot
    (:meth:`~PoisonedConversationEscalation.arm_discard`). The canary's keeps the
    streak; the image-history and thinking-binding discards clear it, since
@@ -45,6 +47,9 @@ The rule, as the runner drives it:
 5. A landed turn breaks the streak and re-arms the one-shot
    (:meth:`~PoisonedConversationEscalation.record_landed_turn`). A cancelled turn
    never re-arms it: a Stop proves nothing about the conversation's health.
+6. A cancelled image-history or thinking-binding replay re-arms the one-shot and
+   leaves the streak (:meth:`~PoisonedConversationEscalation.refund_one_shot`):
+   the discard spent it, but the turn it was spent for never ran.
 
 Whether the turn's own ``finally`` discards the conversation is that turn's
 decision, so it stays a local of the turn; this object holds what outlives it.
@@ -52,7 +57,7 @@ decision, so it stays a local of the turn; this object holds what outlives it.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import Any
 
 #: Consecutive pre-stream-exhausted cycles (TRANSIENT_RETRIES + 1 attempts, zero
 #: output) before the terminal error branch stops advising "retry in a moment" and
@@ -63,27 +68,8 @@ from typing import Any, NamedTuple
 POISONED_SESSION_CYCLES = 2
 
 
-class ProbeFence(NamedTuple):
-    """The Stop counters read before the canary probe ran.
-
-    Generations only ever count up on a Stop initiation, so a counter that moved
-    means a Stop began while the probe ran, even one that already resolved and
-    left the slot idle again -- which re-reading the stop state cannot see.
-    """
-
-    stop_generation: int
-    session_stop_generation: int
-
-    def stopped_since(self, *, stop_generation: int, session_stop_generation: int) -> bool:
-        """True when either Stop counter moved since the fence was taken."""
-        return (
-            stop_generation != self.stop_generation
-            or session_stop_generation != self.session_stop_generation
-        )
-
-
 class PoisonedConversationEscalation:
-    """The streak, one-shot and canary-veto transitions over one slot's two cells.
+    """The streak and one-shot transitions over one slot's two cells.
 
     Holds no state of its own: it reads and writes the slot it was built over, so
     a value built anywhere sees the same escalation.
@@ -141,14 +127,6 @@ class PoisonedConversationEscalation:
         """
         return self.exhausted_cycles >= POISONED_SESSION_CYCLES and not self.one_shot_spent
 
-    def begin_probe(self, *, stop_generation: int, session_stop_generation: int) -> ProbeFence:
-        """Snapshot the Stop counters before the canary runs.
-
-        A Stop pressed while the probe runs must veto the discard and the requeue:
-        the user cancelled this work, and replaying it would run cancelled tools.
-        """
-        return ProbeFence(stop_generation, session_stop_generation)
-
     def arm_discard(self, *, clear_streak: bool) -> None:
         """Spend the one-shot for a discard the caller is about to perform.
 
@@ -159,3 +137,12 @@ class PoisonedConversationEscalation:
         self._slot._poisoned_reset_used = True
         if clear_streak:
             self._slot._prestream_exhausted_cycles = 0
+
+    def refund_one_shot(self) -> None:
+        """Re-arm the one-shot for a discard whose replay was cancelled before it ran.
+
+        The recovery-replay ledger asks for this when a Stop, a newer message or a
+        rebind cancels an image-history or thinking-binding replay. The streak is
+        left as it is.
+        """
+        self._slot._poisoned_reset_used = False
