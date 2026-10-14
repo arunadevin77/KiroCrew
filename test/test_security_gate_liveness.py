@@ -317,7 +317,13 @@ def _url_payload_command(n: int) -> str:
 #: which now say the match is on the statement's text anywhere on the command line
 #: (heredoc bodies included) and name the file-editing tool for prose that mentions
 #: one. Six lines of catalog text: no pattern, matcher or floor change.
-_PACKAGE_LINE_BUDGET = 29_181
+#:
+#: Raised again, from 29,181, for the credential pre-filter's literal-led
+#: anchors: the Telegram, Discord and Authorization anchors are respelled to
+#: start with a literal ``re`` searches at memchr speed, which takes a second
+#: Authorization half and the comments that say why each spelling accepts
+#: exactly what the old one did. No credential branch, gate verdict or pass moved.
+_PACKAGE_LINE_BUDGET = 29_205
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

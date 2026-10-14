@@ -488,9 +488,25 @@ _CREDENTIAL_PREFILTER_LITERALS: tuple[str, ...] = (
 #   `://…:…@`         — URI userinfo. The scheme alternation is dropped, which is
 #                      what leaves a `://` literal prefix for `re` to search on;
 #                      a bare `://` would match every ordinary URL.
+#
+# Each anchor is written to START WITH A LITERAL, because that is the one shape
+# `re` searches at memchr speed; a pattern starting with a class or a
+# case-insensitive letter is tried at every position (measured 6-12 ns/char).
+# The literal is the rarest character every match must contain, and the rest of
+# the shape is checked around it with fixed-width look-behinds, so each anchor
+# accepts EXACTLY the strings its plain spelling does:
+#   Telegram `[0-9]{6,}:X{30}`     == `:` preceded by 6 digits, then X{30}.
+#   Discord  `[MNO]X{22,30}\.`     == `.` preceded by X{23} (cheap reject) and,
+#                                     for some n in 22..30, by [MNO]X{n}.
+# `test_rewritten_anchors_agree_with_their_plain_spelling` holds each one to
+# its plain spelling.
 _CREDENTIAL_PREFILTER_GH_RE = re.compile(r"gh[opsur]_")
-_CREDENTIAL_PREFILTER_TELEGRAM_RE = re.compile(r"[0-9]{6,}:[A-Za-z0-9_-]{30}")
-_CREDENTIAL_PREFILTER_DISCORD_RE = re.compile(r"[MNO][A-Za-z0-9_-]{22,30}\.")
+_CREDENTIAL_PREFILTER_TELEGRAM_RE = re.compile(r":(?<=[0-9]{6}:)[A-Za-z0-9_-]{30}")
+_CREDENTIAL_PREFILTER_DISCORD_RE = re.compile(
+    r"\.(?<=[A-Za-z0-9_-]{23}\.)(?:"
+    + "|".join(rf"(?<=[MNO][A-Za-z0-9_-]{{{n}}}\.)" for n in range(22, 31))
+    + ")"
+)
 _CREDENTIAL_PREFILTER_URI_RE = re.compile(r"://[^\s:/@]*:[^\s/]+@")
 
 # The `Authorization: Bearer` branch is the ONLY case-insensitive branch, and it is
@@ -509,7 +525,14 @@ _CREDENTIAL_PREFILTER_URI_RE = re.compile(r"://[^\s:/@]*:[^\s/]+@")
 # rather than one homoglyph: a case-insensitive branch is only safely anchored by
 # the SAME regex engine, never by a hand-rolled fold.
 # Pinned by `test_unicode_case_folding_cannot_bypass_the_prefilter`.
-_CREDENTIAL_PREFILTER_AUTHORIZATION_RE = re.compile(r"(?i:Authorization)")
+#
+# For speed the anchor is split on its `z`, the one letter `re.IGNORECASE` folds
+# onto nothing but `z` and `Z`: each half starts with that literal (searched at
+# memchr speed) and leaves every other letter to the same `(?i:…)` sub-pattern,
+# so the folding is still the engine's own. Together the two accept exactly what
+# `(?i:Authorization)` does.
+_CREDENTIAL_PREFILTER_AUTHORIZATION_RE = re.compile(r"z(?<=(?i:Authori)z)(?i:ation)")
+_CREDENTIAL_PREFILTER_AUTHORIZATION_UPPER_RE = re.compile(r"Z(?<=(?i:Authori)Z)(?i:ation)")
 
 
 def _might_contain_credential(text: str) -> bool:
@@ -529,6 +552,7 @@ def _might_contain_credential(text: str) -> bool:
         or _CREDENTIAL_PREFILTER_DISCORD_RE.search(text) is not None
         or _CREDENTIAL_PREFILTER_URI_RE.search(text) is not None
         or _CREDENTIAL_PREFILTER_AUTHORIZATION_RE.search(text) is not None
+        or _CREDENTIAL_PREFILTER_AUTHORIZATION_UPPER_RE.search(text) is not None
     )
 
 
