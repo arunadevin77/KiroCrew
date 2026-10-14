@@ -45,7 +45,7 @@ def _src_root() -> Path:
 
 
 def test_cap_matches_inner_acp_prompt_timeout() -> None:
-    """CHAT_TURN_TIMEOUT must match acp/client.py:_DEFAULT_PROMPT_TIMEOUT.
+    """CHAT_TURN_TIMEOUT must match acp/client_timeouts.py:_DEFAULT_PROMPT_TIMEOUT.
 
     The dashboard layer's outer wall-clock cap should never bound below the
     transport layer's promised "longest legitimate turn" budget, otherwise

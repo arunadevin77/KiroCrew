@@ -1983,10 +1983,13 @@ def test_the_client_converts_the_refusal_into_its_abort_type():
     would slip past every handler in ``ensure_ready``: the pre-spawn one aborting
     without the cleanup path, the post-load one leaving a live child behind."""
     import inspect
+    import sys
 
     from kiro_crew.acp import client
 
-    src = inspect.getsource(client)
+    src = "".join(
+        inspect.getsource(sys.modules[name]) for name in (client.__name__, *client._CLIENT_OWNERS)
+    )
     handlers = src.split("except DerivedSpecStale as exc:")[1:]
     assert len(handlers) == 3, (
         f"expected the pre-spawn gate, the post-initialize check and the post-session "

@@ -689,7 +689,9 @@ def test_discovery_agrees_with_an_independent_census_of_install_calls(tmp_path: 
 #: ``forwards`` table (a facade that adopted the mirror over a forwarding shape it had,
 #: and kept that shape's guard). The census here leaves those names to that guard; a
 #: facade not listed has every name it serves censused here, its forwards included.
-_OWN_CREATE_GUARDS: dict[str, str] = {}
+_OWN_CREATE_GUARDS: dict[str, str] = {
+    "kiro_crew.acp.client": "test/test_acp_refactor_create_guard.py",
+}
 
 
 def census_names(index: _facade_mirror.MirrorIndex, own_guard: str | None = None) -> frozenset[str]:

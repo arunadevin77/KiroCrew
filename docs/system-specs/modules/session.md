@@ -1867,7 +1867,7 @@ Two more reads on this area follow config without a restart:
   `live.snapshot().agent.bot_name`, falling back to the value captured at
   construction when there is no snapshot or the live one is blank.
 
-`acp/client.py`'s `resolve_prompt_timeout` already loads config per prompt
+`acp/client_timeouts.py`'s `resolve_prompt_timeout` already loads config per prompt
 (`_effective_prompt_timeout_async`), so `agent.chat_turn_timeout_secs` needed no
 applier — a raised turn budget is in force on the next prompt.
 
@@ -4899,7 +4899,7 @@ The layers read the schedule instead of holding literals:
 right time to read it — and every doubling goes through
 `GatewayManager._next_respawn_backoff` (doubled, capped, jittered). Two sites read
 the STATIC defaults at import and therefore do NOT follow the knobs:
-`acp/client.py::_ACP_RESPAWN_BACKOFF_S` is L3's default base, spent on the single
+`acp/client_timeouts.py::_ACP_RESPAWN_BACKOFF_S` is L3's default base, spent on the single
 permitted respawn delay, and `taskq/model.py`'s `recovery_backoff_secs` is the bare
 default schedule (deterministic -- the dispatcher jitters when it wakes a row, and
 the store orders rows by `next_run_at`, which wants a pure function).

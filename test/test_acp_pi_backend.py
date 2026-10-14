@@ -851,13 +851,19 @@ class TestGateTripwire:
 
     def test_the_tripwire_runs_on_every_reader(self):
         """The three loops that read session updates each run the tripwire."""
+        import sys
+
         for reader in (
             AcpClient.send_message_stream,
             AcpClient._dispatch_events,
             AcpClient._read_prompt_response,
         ):
             assert "await self._tripwire_pi_gate(msg)" in inspect.getsource(reader), reader
-        assert inspect.getsource(AcpClient).count("await self._tripwire_pi_gate(msg)") == 3
+        family = "".join(
+            inspect.getsource(sys.modules[name])
+            for name in (acp_client.__name__, *acp_client._CLIENT_OWNERS)
+        )
+        assert family.count("await self._tripwire_pi_gate(msg)") == 3
 
 
 # ── The read-back ────────────────────────────────────────────────────────────

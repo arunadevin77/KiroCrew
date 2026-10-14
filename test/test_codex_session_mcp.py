@@ -829,7 +829,10 @@ class TestTheSessionArraySeam:
 
         from kiro_crew.acp import client as client_mod
 
-        source = inspect.getsource(client_mod)
+        source = "".join(
+            inspect.getsource(sys.modules[name])
+            for name in (client_mod.__name__, *client_mod._CLIENT_OWNERS)
+        )
         assert "codex_withheld_servers" not in source
         assert "codex_projection" not in inspect.getsource(
             client_mod.AcpClient._resolve_session_mcp_servers
@@ -1507,7 +1510,10 @@ class TestSpecDisabledToolRefusal:
 
         from kiro_crew.acp import client as client_mod
 
-        source = inspect.getsource(client_mod)
+        source = "".join(
+            inspect.getsource(sys.modules[name])
+            for name in (client_mod.__name__, *client_mod._CLIENT_OWNERS)
+        )
         builds = source.count("self._build_permission_event(")
         # One per answering site; `_build_permission_event` is defined once more.
         assert builds == 2, "a site that answers a permission request was added or removed"

@@ -28,11 +28,44 @@ error chains and tracebacks still name the path callers import it from.
 | `acp/launch.py` | the launch tail both drivers hand their plan to (`launch`): pod bundle swap, scratch window, sandbox wrap with the host's credential mask, cgroup scope, the child's environment and the suspended spawn; plus what several per-process hosts share before it -- the Node-adapter and self-served binary ladders, the resolution-cache generation fence, the enforced-host preflight and the read-back child plumbing |
 | `acp/harness/{claude,opencode,goose,pi,deepseek}.py` | one `ProcessAdapter` per host the client starts one process per session for (`process_adapter_for`): its binary resolution and caches, argv and labels, credential mask, gate sealing and routing read-back, and its additions to the child's environment |
 
-`AcpClient`, `AcpRuntime` and `AcpSessionHandle` stay in their modules, as do
-kiro-cli and codex-acp executable resolution, kiro-cli's own spawn arm,
-`finish_suspended_spawn`, everything after the process exists, and the model-push
-ladder (`_push_model_via_effort_split`, `_is_config_value_rejection`) in
-`acp/client.py`.
+`AcpClient`'s own behaviour lives in `acp/client_*.py` owner modules, one
+responsibility each. A member's body is a module-level function there whose first
+parameter is `self` (annotated `AcpClient` for type checkers only), and the class
+binds it by name under one comment header per owner (`set_model =
+_client_model_selection.set_model`, `staticmethod(...)` for a static method). Every
+member therefore stays an attribute of the one class, so a patch of a method on the
+class or on an instance reaches every caller, an `AcpClient.__new__` build works, and
+the session's state stays on the instance; each owner's docstring names the instance
+fields its members write and read. A bound member's `__qualname__` and `__module__`
+name its owner (nothing reads them), and its `self: AcpClient` annotation is there so
+mypy checks the moved body: `AcpClient` is imported for type checkers only, so
+`typing.get_type_hints` on a bound member needs it passed in (`localns`). A class an
+owner defines keeps `kiro_crew.acp.client` as its `__module__`. `_CLIENT_OWNERS` lists
+the owners lowest layer first: an owner imports only owners listed before it. Owners log under the `kiro_crew.acp.client`
+logger, never import `acp/client.py` at run time, and read their globals in their own
+namespaces: `acp/client.py` keeps binding every name it bound before, and a write
+through it reaches every owner binding the same object (`kiro_crew._facade_mirror`).
+`test/test_client_bindings.py` pins the member inventory, the binding and the reach.
+
+| Client owner | Owns |
+|---|---|
+| `acp/client_timeouts.py` | every protocol timeout and turn budget of the direct client, the respawn backoff, and the resolution of a prompt's timeout from its ceiling or deadline |
+| `acp/client_spawn_env.py` | a spawn before the process exists: kiro-cli and codex-acp binary resolution, the child's environment repair (pod HOME remap, bundle swap, session identity), `finish_suspended_spawn` and the `_exit_origin` reading of how a child exited, the launch tools, and the workspace, `agent.env` and `--agent` argv staging |
+| `acp/client_claude_session.py` | the claude-agent-acp session contract: adapter version floors, leaving a project-owned settings file out of the setting sources, the `_meta` envelope, Side Chat read-deny rules and the starting-mode pin |
+| `acp/client_claude_seed.py` | the session's `settings.local.json` seed: render, create, adopt, re-seed, share and retract |
+| `acp/client_seed_ownership.py` | proving and handing back Crew's ownership of the seed on disk: bounded no-follow reads, move-aside and restore, settle, discard and release |
+| `acp/client_model_selection.py` | the session's model: advertised list and entitlement re-probe, served-default correction, `set_model`, the config-option push ladder (`_push_model_via_effort_split`, `_is_config_value_rejection`) and effort levels |
+| `acp/client_permissions.py` | permission requests and in-band tool restrictions: the permission event, approve and reject, the auto-approve identity gate, zero-tool and spec-disabled refusals, identity-drift refusals, the pi, DeepSeek and goose-mode tripwires and the routing read-back |
+
+`AcpClient` (its constructor, properties, class defaults and member table),
+`AcpRuntime` and `AcpSessionHandle` stay in their modules. `AcpClient` also keeps the
+three seed static methods that read the `AcpClient` global (`_settings_path_holds`,
+`_claim_pathname_if_ours`, `_restore_aside_without_clobber`), and, until the lifecycle
+owners land, `_foreign_settings_owner` and `_settle_claude_settings_seed_locked`. `acp/client.py` also keeps
+`_mise_which`, `_resolve_ssh_auth_sock` and `_resolve_spawn_env` (the spawn audit, the
+subprocess-encoding baseline and the cross-platform gate key them on this path),
+kiro-cli's own spawn arm, and everything after the process exists that no owner row
+above names yet.
 
 New module-level code goes to the owner whose row above names its
 responsibility, not to `acp/client.py` or `acp/runtime.py`: stdio framing and
@@ -43,7 +76,10 @@ model-catalog rules to `acp/runtime_models.py`; process-tree inspection to
 `acp/runtime_start.py`; a step of the launch both drivers take to `acp/launch.py`;
 one host's launch knowledge to that host's adapter under `acp/harness/`. A moved
 name a test patches through its facade is
-forwarded in `_EXPORTS_BY_OWNER`, which `test_acp_refactor_facade.py` pins.
+forwarded in `_EXPORTS_BY_OWNER`, which `test_acp_refactor_facade.py` pins. New
+`AcpClient` behaviour goes to the client owner whose row names its responsibility,
+bound in the class under that owner's header, and a new timeout or turn budget to
+`acp/client_timeouts.py`.
 
 ## Native skill startup views
 

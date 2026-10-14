@@ -4588,7 +4588,7 @@ SUBAGENT_MAX_TURNS_CEILING = 1000  # agent.subagent_max_turns — per-subagent t
 POOL_SIZE_MAX = 10  # session.pool_size — pre-warmed process pool
 
 # agent.chat_turn_timeout_secs — wall-clock ceiling for one chat turn. The ACP
-# transport's per-prompt wait follows this value (acp/client.py
+# transport's per-prompt wait follows this value (acp/client_timeouts.py
 # ``resolve_prompt_timeout``, which adds a margin so the dashboard's visible
 # card fires before the transport cut), so the max is not pinned to the
 # transport's default. The default is 4h: the longest single turn the shipped

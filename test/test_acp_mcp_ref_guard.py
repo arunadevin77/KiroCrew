@@ -883,7 +883,13 @@ class TestTheCallSitesAreWired:
         the omission this pins. It also pins the ORDER: the report clear runs first,
         and a guard that ran before it would have its row erased.
         """
-        lines = inspect.getsource(client_mod).splitlines()
+        import sys
+
+        lines = [
+            line
+            for name in (client_mod.__name__, *client_mod._CLIENT_OWNERS)
+            for line in inspect.getsource(sys.modules[name]).splitlines()
+        ]
         handoffs = [i for i, ln in enumerate(lines) if "self._begin_session_report(" in ln]
         assert len(handoffs) == 3, "a session-establishment handoff was added or removed"
         for i in handoffs:

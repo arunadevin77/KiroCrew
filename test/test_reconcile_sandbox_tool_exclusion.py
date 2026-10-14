@@ -197,10 +197,14 @@ def _referenced_names(relative: str) -> set[str]:
     bytes some of them carry, which would fail the scan for a reason unrelated to what
     it asserts.
     """
-    tree = ast.parse((_SRC / relative).read_text(encoding="utf-8"))
+    paths = [_SRC / relative]
+    if relative == "acp/client.py":
+        # client.py's owner modules (client_*.py) hold code that was its own.
+        paths += sorted((_SRC / "acp").glob("client_*.py"))
     return {
         node.attr if isinstance(node, ast.Attribute) else node.id
-        for node in ast.walk(tree)
+        for path in paths
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, (ast.Name, ast.Attribute))
     }
 

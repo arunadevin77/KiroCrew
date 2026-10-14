@@ -512,7 +512,7 @@ SKIP = _Skipped()
 # call races the load window. Written through fd 1, the bytes land in
 # /dev/null: no exception, no short write, the SEL audit still records
 # ``success`` -- and the client waits forever until the ACP tool-stall watchdog
-# (``acp/client.py::_TOOL_STALL_TIMEOUT``, 600s) kills the turn.
+# (``acp/client_timeouts.py::_TOOL_STALL_TIMEOUT``, 600s) kills the turn.
 #
 # ``snapshot_stdout_fd()`` takes an ``os.dup(1)`` at server startup, BEFORE any
 # tool can run. A dup'd descriptor keeps pointing at the original pipe no

@@ -274,7 +274,11 @@ def test_every_array_build_is_pruned_before_its_roster_handoff():
     the report must be preceded by a prune of the same params' array, so a fourth
     session-establishment path that forgets it fails here.
     """
-    lines = inspect.getsource(client_mod).splitlines()
+    lines = [
+        line
+        for name in (client_mod.__name__, *client_mod._CLIENT_OWNERS)
+        for line in inspect.getsource(sys.modules[name]).splitlines()
+    ]
     handoffs = [i for i, ln in enumerate(lines) if "self._begin_session_report(" in ln]
     prunes = [i for i, ln in enumerate(lines) if "await self._prune_unstartable_mcp(" in ln]
     assert len(handoffs) == 3

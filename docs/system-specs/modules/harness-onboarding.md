@@ -277,7 +277,7 @@ an enforced host's routing read-back child is wrapped inside its adapter, with
 the session's mask. The
 resolver ladder is shared either way:
 `CODEX_ACP_BIN`, `CODEX_ACP_NPM_PKG`, `_resolve_codex_acp_bin` and
-`codex_acp_not_found_message` sit in `client.py` with callers in the harness and in
+`codex_acp_not_found_message` sit in `client_spawn_env.py` with callers in the harness and in
 the install probe, so one wording answers "the adapter is not installed" wherever
 the question is asked.
 
@@ -551,7 +551,7 @@ The Codex onboarding ran every stage; it is selectable:
 |---|---|
 | 1 vocabulary | Done — `ACP_BACKEND_CODEX`, in `ACP_BACKENDS_KNOWN`, `PROVIDER_LABEL_CODEX`, policy name mapped. |
 | 2 capability sets | Decided for every set: in the transport set `ACP_BACKENDS_ACP_RUNTIME`, in `ACP_BACKENDS_SESSION_SHARING` (a codex thread survives close and `session/load` restores it), in `ACP_BACKENDS_SESSION_EVICTION` because the teardown Crew sends it is the standard `session/close`, which evicts (it was out while that verb was `session/cancel`, which does not), in the session MCP array, the advertised-model capture and the model and effort channels, out of every kiro-family set. All three channel sets were *created* by this work, which is why the tuning channels are three sets rather than one. |
-| 3 spawn path | Done — adapter, npm package, dep marker, env override, project-local resolution, and the spawn itself at Seam 1 of `acp/harness/codex.py` over the resolver `client.py` shares. |
+| 3 spawn path | Done — adapter, npm package, dep marker, env override, project-local resolution, and the spawn itself at Seam 1 of `acp/harness/codex.py` over the resolver `client_spawn_env.py` shares. |
 | 4 handshake | Done — `PROTOCOL_VERSION_CODEX`, its own literal at the same number as Claude's. |
 | 5 auth declaration | Done — `own_credential_file`, `~/.codex/auth.json` on the floor with `CODEX_HOME` re-anchored, that same leaf spared for its own child, `.aws/config` re-exposed read-only, not retired by a host logout, and a two-branch remedy every consumer renders verbatim. |
 | 6 install probe | Done — `_probe_codex` names `codex-acp` and the command that installs it. One component, not two: the adapter ships its own Codex binary. Credentials are deliberately NOT probed: a `missing` verdict disables the switch, and the checkable paths are not the only ones that authenticate a Codex. The sign-in answer is the Stage 5 declaration instead, and every consumer renders its remedy rather than carrying a string of its own. |

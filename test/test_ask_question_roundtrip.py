@@ -974,7 +974,7 @@ def test_broadcast_ws_owners_targets_the_owner_client_set() -> None:
 def test_question_window_stays_under_the_tool_stall_watchdog() -> None:
     """The wait must end before ACP declares the turn dead.
 
-    `acp/client.py::_TOOL_STALL_TIMEOUT` is armed once a tool call is dispatched,
+    `acp/client_timeouts.py::_TOOL_STALL_TIMEOUT` is armed once a tool call is dispatched,
     and a blocked ask_question emits no progress frames — so a window at or beyond
     that value lets the watchdog kill the turn, after which an answer has no turn
     left to return to. The ceiling was copied from the `wait` tool (1800s), which

@@ -488,7 +488,7 @@ session confined (`AcpClient._claude_session_meta`):
 - Inline `permissions.deny` rules fence the host's sensitive paths from the read
   tools: `Read(//<target>)` and `Read(//<target>/**)` for every entry of
   `security.sandbox_credential_targets()`, the set the sandbox mask denies
-  (`acp/client._claude_side_read_deny_rules`). Claude Code checks a deny rule from
+  (`acp/client_claude_session._claude_side_read_deny_rules`). Claude Code checks a deny rule from
   any source before an allow rule, applies Read rules to Grep and Glob (best
   effort, in its own words), and denies a symlink whose target a rule matches,
   so an inherited allow rule or

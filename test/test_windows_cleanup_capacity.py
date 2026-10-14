@@ -390,13 +390,19 @@ def test_both_physical_spawn_expressions_obey_admission(kernel, module_name, man
     # above would never run it. Each driver names its factory only to hand it over.
     import ast
     import inspect
+    import sys
 
     from kiro_crew.acp import launch as launch_mod
 
     def _reads(module, name):
-        tree = ast.parse(inspect.getsource(module))
+        modules = [module]
+        if module is sys.modules["kiro_crew.acp.client"]:
+            # client.py's owner modules hold code that was its own.
+            modules += [sys.modules[owner] for owner in module._CLIENT_OWNERS]
         found = []
-        for function in ast.walk(tree):
+        for function in (
+            node for source in modules for node in ast.walk(ast.parse(inspect.getsource(source)))
+        ):
             if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for node in ast.walk(function):

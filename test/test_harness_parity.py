@@ -1254,7 +1254,12 @@ def test_every_deny_set_enforcement_role_is_filled_on_both_drivers():
     must be either a declared role or declared bookkeeping, so a FOURTH role added there
     cannot ship without a row -- and adding the row forces naming the handle's site.
     """
-    client_readers = _deny_set_readers(acp_client.AcpClient, "_spec_denied_tools")
+    client_readers = set().union(
+        *(
+            _deny_set_readers(sys.modules[name], "_spec_denied_tools")
+            for name in (acp_client.__name__, *acp_client._CLIENT_OWNERS)
+        )
+    )
     handle_readers = _deny_set_readers(acp_runtime.AcpSessionHandle, "spec_denied_tools")
 
     missing: list[str] = []

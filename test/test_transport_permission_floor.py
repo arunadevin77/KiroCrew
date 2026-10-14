@@ -798,7 +798,7 @@ async def test_resolve_permission_counts_transport_rejection_as_refused(monkeypa
 
 _IDENTITY_GATED_APPROVAL_CALLERS = Counter(
     {
-        ("acp/client.py", "_handle_permission"): 1,
+        ("acp/client_permissions.py", "_handle_permission"): 1,
         ("apps/builtins/auto_improvement/spine/agent_runner.py", "_approve"): 1,
         ("apps/builtins/code_review_sage/sage_lib/review_pool.py", "send"): 1,
         ("channel.py", "_stream_task"): 4,

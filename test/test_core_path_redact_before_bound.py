@@ -196,6 +196,14 @@ _SCANNED_MODULES = [
     # redactor -- so the behavioural pin for it lives in
     # test_acp_client.py::test_credential_straddling_the_bound_is_still_redacted.
     "src/kiro_crew/acp/client.py",
+    # The client's owner modules.
+    "src/kiro_crew/acp/client_claude_seed.py",
+    "src/kiro_crew/acp/client_claude_session.py",
+    "src/kiro_crew/acp/client_model_selection.py",
+    "src/kiro_crew/acp/client_permissions.py",
+    "src/kiro_crew/acp/client_seed_ownership.py",
+    "src/kiro_crew/acp/client_spawn_env.py",
+    "src/kiro_crew/acp/client_timeouts.py",
     # The client's error formatter and classifiers, with their redactor calls.
     "src/kiro_crew/acp/transport_errors.py",
     "src/kiro_crew/dashboard/handlers/artifacts.py",

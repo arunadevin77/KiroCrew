@@ -159,7 +159,7 @@ loaded -- `agent-host-contract.md` records the version.
 
 ## What the id-reuse capture establishes
 
-The shared gate tripwire (`acp/client.py`, `_tripwire_pi_gate` and
+The shared gate tripwire (`acp/client_permissions.py`, `_tripwire_pi_gate` and
 `_note_pi_gate_asked`) consumes an id's ask and deny at that call's terminal frame,
 on the premise that a tool-call id is NOT unique for the life of a session.
 `tool-call-id-reuse-live.jsonl` is that premise captured rather than asserted. The

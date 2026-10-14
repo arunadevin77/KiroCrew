@@ -188,17 +188,6 @@ dead-identifier	website/docs/i18n-catalog.md	installReceipt
 dead-identifier	website/docs/narrow-viewport.md	ActionBar
 dead-identifier	website/docs/testing.md	CronNotificationButtons
 dead-identifier	website/docs/testing.md	webServer
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:2335-2346
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:2438
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:2742
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:2807-2820
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:3313-3332
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:3323
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:3408
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:3505
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:3513-3536
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:3521
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/client.py:4860-4920
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/types.py:177-181
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/worker_pool.py:49
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	chat_runner.py:6637

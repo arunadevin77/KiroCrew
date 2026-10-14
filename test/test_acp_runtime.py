@@ -7630,6 +7630,8 @@ class TestAcpRuntimeLoadSession:
             return out
 
         builders = {**_builders(rt_mod), **_builders(client_mod)}
+        for owner in client_mod._CLIENT_OWNERS:
+            builders.update(_builders(sys.modules[owner]))
         # Exempt: builders whose session exists only to read the session/new
         # response and is terminated before any prompt. Such a session never
         # calls a tool, so pooled broker stubs would add per-probe MCP boot

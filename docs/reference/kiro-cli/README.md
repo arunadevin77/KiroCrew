@@ -1,7 +1,7 @@
 # Kiro CLI Documentation
 
 Offline mirror of the `kiro-cli` documentation. Nothing constrains the CLI to a
-particular line at runtime. `acp/client.py` finds the binary with
+particular line at runtime. `acp/client_spawn_env.py` finds the binary with
 `kiro_cli.resolve_kiro_cli`: the `KIROCREW_KIRO_BIN` override first, then the
 desktop app's bundled directory, the known install directories, and the
 inherited `PATH`. Unattended spawns use `kiro_cli.pin_kiro_cli`, which drops the

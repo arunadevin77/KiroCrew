@@ -129,7 +129,7 @@ shared translation in `acp/session_mcp.py` (`session_mcp_projection`):
 Both call `AgentConfigMirror.session_projection` rather than `session_params`,
 because one spec parse CAN produce two things and only one of them is wire data:
 the `mcpServers` array, and the `(server, tool)` pairs the client refuses itself
-when the harness asks permission for them (`acp/client.py`,
+when the harness asks permission for them (`acp/client_permissions.py`,
 `_deny_spec_disabled_tool`). Only `codex.py` fills that second half —
 `claude_code.py` puts its deny rules in the settings file instead,
 `opencode.py` hands its rules back as `harness_deny_rules` for the client to seed

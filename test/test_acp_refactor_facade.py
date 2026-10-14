@@ -1747,6 +1747,7 @@ _UNRESOLVED_FACADE_PATCHES: dict[tuple[str, str], int] = {
     ("test/acp_launch_capture.py", "_capture_runtime_served"): 2,
     ("test/acp_launch_capture.py", "_stub_common"): 4,
     ("test/test_acp_pod_home_remap.py", "_remap_calls"): 1,
+    ("test/test_facade_mirror_guards.py", "patch_reach_failures"): 2,
     ("test/test_harness_parity.py", "test_is_kiro_cli_is_positive"): 2,
     **{
         ("test/test_acp_dynamic_config.py", f"TestUpdateReasoningEffortValues.{test}"): 1

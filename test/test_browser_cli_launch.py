@@ -379,6 +379,7 @@ def test_the_session_name_does_not_travel_as_extra_env() -> None:
     browser isolation. The pool decision must never see this.
     """
     import inspect
+    import sys
 
     from kiro_crew import session_allocation
 
@@ -386,8 +387,10 @@ def test_the_session_name_does_not_travel_as_extra_env() -> None:
 
     from kiro_crew.acp import client, runtime
 
-    for module in (client, runtime):
-        source = inspect.getsource(module)
+    family = "".join(
+        inspect.getsource(sys.modules[name]) for name in (client.__name__, *client._CLIENT_OWNERS)
+    )
+    for source in (family, inspect.getsource(runtime)):
         assert "extra_env.update(browser_session_env" not in source
         assert "browser_session_env" in source
 

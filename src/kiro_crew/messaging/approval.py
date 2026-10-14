@@ -17,7 +17,7 @@ silently fails to act.
 
 * **Deny on silence.** The wait resolves to DENY on timeout. There is no path
   where not answering means yes. :data:`TEXT_APPROVAL_TIMEOUT_S` is held well
-  under ``acp/client.py``'s ``_TOOL_STALL_TIMEOUT`` because no provider frame
+  under ``acp/client_timeouts.py``'s ``_TOOL_STALL_TIMEOUT`` because no provider frame
   arrives while a permission is pending, so a longer window here would let the
   harness's own stall watchdog fire first and tear down a turn the operator was
   still deciding on.
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 #: How long a pending approval waits for a typed answer before DENYING.
 #:
-#: Must stay comfortably below ``acp/client.py``'s ``_TOOL_STALL_TIMEOUT``
+#: Must stay comfortably below ``acp/client_timeouts.py``'s ``_TOOL_STALL_TIMEOUT``
 #: (600s): while a permission request is outstanding the provider emits no
 #: frames, so that watchdog is armed against this wait. Five minutes is the
 #: window for someone answering from a phone; the cost of it being too short is

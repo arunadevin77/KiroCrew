@@ -3969,7 +3969,16 @@ class TestTheGrantIsATransaction:
         PID untracking and the pipe closes entirely. Any call site that reaches both
         must therefore pair them.
         """
-        tree = ast.parse(Path(acp_client.__file__).read_text(encoding="utf-8"))
+        tree = ast.Module(
+            body=[
+                stmt
+                for name in (acp_client.__name__, *acp_client._CLIENT_OWNERS)
+                for stmt in ast.parse(
+                    Path(sys.modules[name].__file__).read_text(encoding="utf-8")
+                ).body
+            ],
+            type_ignores=[],
+        )
 
         paired: set[int] = set()
         for node in ast.walk(tree):
@@ -4153,19 +4162,20 @@ class TestPostCaptureModelResolution:
         sets are independent opt-ins, so the caller's gate is not a substitute.
         """
         import inspect
+        import textwrap
 
-        source = inspect.getsource(AcpClient._initialize_session)
+        source = textwrap.dedent(inspect.getsource(AcpClient._initialize_session))
         assert "if self._seeds_local_settings:" not in source
         assert source.count("await self._reseed_after_capture()") == 2
         rode_along = (
             "if self._uses_advertised_model_selection:\n"
-            "                await self._persist_advertised_models_if_changed()\n"
-            "                await self._reseed_after_capture()"
+            "            await self._persist_advertised_models_if_changed()\n"
+            "            await self._reseed_after_capture()"
         )
         assert rode_along in source
 
-        method = inspect.getsource(AcpClient._reseed_after_capture)
-        assert "if not self._seeds_local_settings:\n            return" in method
+        method = textwrap.dedent(inspect.getsource(AcpClient._reseed_after_capture))
+        assert "if not self._seeds_local_settings:\n        return" in method
 
     @pytest.mark.asyncio
     async def test_a_harness_that_seeds_no_settings_file_writes_nothing(

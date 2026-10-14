@@ -571,9 +571,8 @@ def test_no_chunk_path_drops_the_text_on_a_notice() -> None:
     pinned. Skipping the chunk means a misclassified line is discarded rather than
     discounted, and nothing downstream can recover it.
     """
-    src = (
-        pathlib.Path(__file__).resolve().parents[1] / "src" / "kiro_crew" / "acp" / "client.py"
-    ).read_text(encoding="utf-8")
+    acp = pathlib.Path(__file__).resolve().parents[1] / "src" / "kiro_crew" / "acp"
+    src = "".join(p.read_text(encoding="utf-8") for p in sorted(acp.glob("client*.py")))
     lines = src.splitlines()
     calls = [i for i, ln in enumerate(lines) if "_claude_compaction_event(chunk)" in ln]
     assert len(calls) == 3, f"expected the three chunk paths, found {len(calls)}"
