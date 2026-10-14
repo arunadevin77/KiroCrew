@@ -194,7 +194,6 @@
  1 test_gateway_lock_diagnosis.py
  8 test_gatewayd_more_coverage.py
 10 test_gatewayd_self_exit.py
- 1 test_handlers_mcp_coverage.py
  2 test_handlers_memory_coverage.py
  1 test_handlers_taskrunner_coverage.py
  1 test_hang_resilience_metrics.py

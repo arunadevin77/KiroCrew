@@ -32,6 +32,7 @@ from dashboard_owner_helpers import owner_claims
 from conftest import host_abs
 from kiro_crew.dashboard.handlers import mcp as mcp_mod
 from kiro_crew.mcp_discovery import McpServerInfo
+from kiro_crew.testing.wait import await_until
 
 # ── harness ─────────────────────────────────────────────────────────────
 
@@ -3328,7 +3329,7 @@ class TestMeasureProgressPayload:
         assert body["error"] == "", body
 
         # Let the stubbed task run so it does not outlive the test.
-        await asyncio.wait_for(started.wait(), timeout=1)
+        await await_until(started, what="the stubbed measure-all body starting")
         await asyncio.gather(*state._background_tasks, return_exceptions=True)
 
     @pytest.mark.asyncio
