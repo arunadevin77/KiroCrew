@@ -182,7 +182,9 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 "learned rather than restating the whole dashboard. Every refusal "
                 "is recorded in your mistake book, which dashboard_fields hands "
                 "back -- so the same wrong guess next cycle is one you were "
-                "already told about."
+                "already told about. To EMPTY an array field, pass `clear: true` "
+                "and no `value`: an MCP client can drop `value: []` from the call "
+                "before it reaches this tool, while a boolean arrives intact."
             ),
             "inputSchema": {
                 "type": "object",
@@ -200,11 +202,18 @@ def _tool_definitions() -> list[dict[str, Any]]:
                             "field takes a number and not a string holding one; a "
                             "`boolean` field takes true or false and not 1; an "
                             "`array` field takes the whole series and the page's own "
-                            "script walks it."
+                            "script walks it. Required unless `clear` is true."
+                        ),
+                    },
+                    "clear": {
+                        "type": "boolean",
+                        "description": (
+                            "true empties an `array` field: it writes `[]`. Use it "
+                            "instead of `value: []`, and leave `value` out."
                         ),
                     },
                 },
-                "required": ["field", "value"],
+                "required": ["field"],
             },
         },
         {
@@ -505,14 +514,23 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         field = args.get("field")
         if not isinstance(field, str) or not field.strip():
             return "Error: `field` must name the dashboard field to fill"
-        if "value" not in args:
+        to_write: Any
+        if args.get("clear") is True:
+            # The empty list is spelled HERE, not by the caller: an MCP client that
+            # drops an empty container from a call's arguments delivers a boolean
+            # intact. The gateway type-checks it like any other write, so a field
+            # that is not an array refuses it with the type it wants.
+            to_write = []
+        elif "value" not in args:
             return "Error: `value` is required -- there is nothing to write without it"
+        else:
+            to_write = args["value"]
         sk, err = _strict_session_key()
         if err:
             return err
         d = _post(
             "/api/agent-panel/dashboard/write",
-            {"field": field, "value": args["value"]},
+            {"field": field, "value": to_write},
             session_key=sk,
         )
         api_err = d.get("error")

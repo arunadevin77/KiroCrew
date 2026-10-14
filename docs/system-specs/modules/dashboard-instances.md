@@ -15,6 +15,14 @@ The instance store is two modules and one route, each with one job:
 
 The agent-facing surface is separate and MCP-only: `dashboard/handlers/agent_panel.py` serves the `/api/agent-panel/dashboard/{fields,write,templates,preview,apply,rollback}` routes, `dashboard_agentic.py` checks and records agentic field writes and the mistake book, and `dashboard_feed.py` is the O(fields) subscription channel a filled page reads fold values through.
 
+An array field is emptied with `dashboard_write` `clear: true` and no `value`. The MCP
+server (`mcp_panel.py`) posts that as `value: []`, so the write route and its body
+schema (`DASHBOARD_WRITE_SCHEMA`) see an ordinary write and type-check it the same
+way; the tool's own argument schema is `DASHBOARD_WRITE_TOOL_SCHEMA`. The flag exists
+because an MCP client can drop an empty list, an empty object or a top-level null
+from a tool call's arguments before the server reads them, so `value: []` arrives as
+no value at all and is refused as missing; a boolean arrives intact.
+
 The sharing and snapshot modules are designed in the RFC and built behind the surface
 that calls each -- a chooser, an export button -- because a module with no caller is
 one nobody can review against a use. Neither is in the tree yet, so this table names

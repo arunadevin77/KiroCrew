@@ -4854,6 +4854,57 @@ DASHBOARD_WRITE_SCHEMA = ToolSchema(
     ],
 )
 
+#: Why a ``dashboard_write`` call with nothing to write is refused at the MCP entry.
+#: It opens with the ``value: required`` text any missing required field gets, then
+#: names the remedy for the case that produces it most: an MCP client that drops an
+#: empty list, an empty object or a top-level null from the arguments before they
+#: reach this server, so ``value: []`` arrives as no value at all.
+DASHBOARD_WRITE_NO_VALUE = (
+    "required -- nothing reached this tool to write. An empty list, an empty object "
+    "or null can be dropped by the MCP client before it arrives; to empty an array "
+    "field, call dashboard_write with clear: true and no value"
+)
+
+
+def _validate_dashboard_write_tool(cleaned: dict[str, Any]) -> None:
+    """``value`` is required unless ``clear`` is true, and the two do not mix.
+
+    ``clear: true`` stands for the empty list, so a ``value`` beside it is accepted
+    only when it says the same thing (``[]``). Any other value contradicts it, and
+    which of the two the caller meant is not this check's to guess.
+    """
+    value = cleaned.get("value")
+    if cleaned.get("clear") is True:
+        if value is not None and value != []:
+            # Reads as "clear: true writes an empty list, ..." once the field
+            # name is put in front of it.
+            raise ValidationError("clear", "true writes an empty list, so pass it without a value")
+        return
+    if value is None:
+        raise ValidationError("value", DASHBOARD_WRITE_NO_VALUE)
+    if isinstance(value, str) and not value:
+        # The refusal a REQUIRED string spec gives a value that sanitizes to nothing,
+        # kept word for word: ``value`` is optional in this schema only so that
+        # ``clear`` can stand in for it.
+        raise ValidationError("value", "required (empty after sanitization)")
+
+
+#: ``dashboard_write`` as the MCP server accepts it. The gateway route validates its
+#: body with ``DASHBOARD_WRITE_SCHEMA``, where ``value`` is required: the server
+#: turns ``clear: true`` into ``value: []`` before it posts, so the route sees an
+#: ordinary write. ``clear`` exists because a boolean survives the MCP clients that
+#: drop an empty container from a tool call's arguments, and an array field has no
+#: other way to be emptied through them.
+DASHBOARD_WRITE_TOOL_SCHEMA = ToolSchema(
+    tool_name="dashboard_write",
+    fields=[
+        FieldSpec("field", str, required=True, max_len=64),
+        FieldSpec("value", (bool, int, float, str, list, dict)),
+        FieldSpec("clear", bool),
+    ],
+    custom_validator=_validate_dashboard_write_tool,
+)
+
 #: Empty and registered, for ``PANEL_TEMPLATES_SCHEMA``'s reason. The catalog is the
 #: same for every caller except for the seq numbers, and those come from the calling
 #: session's own identity -- so there is no argument that could narrow or widen it, and
@@ -4932,7 +4983,7 @@ MCP_PANEL_SCHEMAS: dict[str, ToolSchema] = {
     "panel_templates": PANEL_TEMPLATES_SCHEMA,
     "dashboard_fields": DASHBOARD_FIELDS_SCHEMA,
     "dashboard_types": DASHBOARD_TYPES_SCHEMA,
-    "dashboard_write": DASHBOARD_WRITE_SCHEMA,
+    "dashboard_write": DASHBOARD_WRITE_TOOL_SCHEMA,
     "dashboard_save": DASHBOARD_SAVE_SCHEMA,
     "dashboard_templates": DASHBOARD_TEMPLATES_SCHEMA,
     "dashboard_preview": DASHBOARD_PREVIEW_SCHEMA,

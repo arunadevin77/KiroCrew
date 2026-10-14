@@ -485,6 +485,100 @@ class TestDashboardWrite:
         assert "open_items" in out
 
 
+class TestDashboardWriteClear:
+    """``clear: true`` empties an array field, through the server's whole entry.
+
+    An MCP client can drop an empty list, an empty object or a top-level null from a
+    call's arguments, so ``value: []`` reaches this server as no value at all. A
+    boolean arrives intact, which is why emptying a field is spelled as one. Every
+    case goes through ``_call_tool``, the schema included, because the schema is
+    where a call with nothing to write is answered.
+    """
+
+    WRITTEN = {"ok": True, "written": {"field": "for_you", "type": "array"}}
+
+    def test_clear_posts_an_empty_list(self) -> None:
+        with patch("kiro_crew.mcp_panel._post", return_value=self.WRITTEN) as mock_post:
+            out = _call_tool("dashboard_write", {"field": "for_you", "clear": True})
+
+        assert not out.startswith("Error:"), out
+        assert mock_post.call_args[0][0] == "/api/agent-panel/dashboard/write"
+        assert mock_post.call_args[0][1] == {"field": "for_you", "value": []}
+
+    def test_clear_beside_an_empty_list_is_the_same_write(self) -> None:
+        """A client that does deliver ``value: []`` next to the flag says one thing."""
+        with patch("kiro_crew.mcp_panel._post", return_value=self.WRITTEN) as mock_post:
+            _call_tool("dashboard_write", {"field": "for_you", "clear": True, "value": []})
+
+        assert mock_post.call_args[0][1] == {"field": "for_you", "value": []}
+
+    @pytest.mark.parametrize("value", [[1], {"a": 1}, "x", 0, False])
+    def test_clear_beside_another_value_is_refused_before_the_gateway(self, value: Any) -> None:
+        with patch("kiro_crew.mcp_panel._post") as mock_post:
+            out = _call_tool("dashboard_write", {"field": "for_you", "clear": True, "value": value})
+
+        assert out == "Error: clear: true writes an empty list, so pass it without a value", out
+        mock_post.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            {"field": "for_you"},
+            {"field": "for_you", "value": None},
+            {"field": "for_you", "clear": False},
+        ],
+    )
+    def test_nothing_to_write_is_refused_and_names_clear(self, args: dict[str, Any]) -> None:
+        """What a dropped ``value: []`` looks like on arrival, answered with the remedy.
+
+        The refusal leads with ``value: required``, the text a caller matches on.
+        """
+        with patch("kiro_crew.mcp_panel._post") as mock_post:
+            out = _call_tool("dashboard_write", args)
+
+        assert out.startswith("Error: value: required"), out
+        assert "clear: true" in out
+        mock_post.assert_not_called()
+
+    def test_an_empty_string_is_refused_word_for_word_as_before(self) -> None:
+        """``value`` is optional only so ``clear`` can stand in for it; a string that
+        sanitizes to nothing gets the refusal a required field gives it."""
+        with patch("kiro_crew.mcp_panel._post") as mock_post:
+            out = _call_tool("dashboard_write", {"field": "risk_note", "value": ""})
+
+        assert out == "Error: value: required (empty after sanitization)", out
+        mock_post.assert_not_called()
+
+    def test_clear_false_leaves_an_ordinary_write_alone(self) -> None:
+        with patch("kiro_crew.mcp_panel._post", return_value=self.WRITTEN) as mock_post:
+            _call_tool("dashboard_write", {"field": "open_items", "clear": False, "value": 3})
+
+        assert mock_post.call_args[0][1] == {"field": "open_items", "value": 3}
+
+    def test_a_clear_that_is_not_a_boolean_is_refused(self) -> None:
+        with patch("kiro_crew.mcp_panel._post") as mock_post:
+            out = _call_tool("dashboard_write", {"field": "for_you", "clear": "yes"})
+
+        assert out.startswith("Error: clear:"), out
+        mock_post.assert_not_called()
+
+    @pytest.mark.parametrize("value", [3, [{"text": "x"}], [], {}, False, "phrase"])
+    def test_a_write_with_a_value_posts_it_unchanged(self, value: Any) -> None:
+        """A call that passes a value posts that value unchanged."""
+        with patch("kiro_crew.mcp_panel._post", return_value=self.WRITTEN) as mock_post:
+            _call_tool("dashboard_write", {"field": "open_items", "value": value})
+
+        assert mock_post.call_args[0][1] == {"field": "open_items", "value": value}
+
+    def test_the_tool_advertises_clear_and_requires_only_the_field(self) -> None:
+        tool = next(t for t in _list_tools() if t["name"] == "dashboard_write")
+        schema = tool["inputSchema"]
+
+        assert schema["required"] == ["field"]
+        assert schema["properties"]["clear"]["type"] == "boolean"
+        assert "clear" in tool["description"]
+
+
 # ------------------------------------------------------------ field rendering
 
 

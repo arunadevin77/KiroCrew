@@ -9,6 +9,7 @@ operator can trust whose state they are reading.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -33,6 +34,10 @@ from kiro_crew.crew_log import emit as crew_log_emit
 from kiro_crew.crew_log import projection as crew_log_projection
 from kiro_crew.dashboard.handlers import agent_panel as routes
 from kiro_crew.dashboard_templates.instance import preview_url as instance_preview_url
+
+# Bound at collection, before conftest's autouse ``gateway_posts`` swaps
+# ``mcp_core._post`` for its recorder in each test.
+from kiro_crew.mcp_core import _post as _real_mcp_post
 
 pytestmark = pytest.mark.asyncio
 
@@ -2800,6 +2805,57 @@ async def test_an_unadopted_conductor_writes_needs_you_to_its_own_board(vetted):
         )
         assert refused.status == 400, await refused.text()
         assert (await refused.json())["code"] == "unknown_field"
+
+
+async def test_clear_through_the_panel_server_empties_an_array_field(vetted, monkeypatch):
+    """``dashboard_write`` ``clear: true`` empties a field, end to end past the client.
+
+    An MCP client can drop ``value: []`` from a call before the panel server reads it,
+    so ``clear: true`` is how a crewmate empties its board. This drives the server's
+    own entry point (argument schema, handler, and its real loopback POST) into this
+    route, the real registry and the real instance store, then reads the field back
+    through the field list. Two writes, so the read proves the clear REPLACED a
+    value rather than finding a field nobody wrote.
+    """
+    from kiro_crew import mcp_core, mcp_panel
+
+    # ``mcp_panel`` binds ``_post`` by name on its first import. When that import
+    # happens inside a test, it binds conftest's recorder and no write leaves the
+    # process, so the real client is bound here: the test passes run alone and
+    # beside files that import the server at collection.
+    monkeypatch.setattr(mcp_panel, "_post", _real_mcp_post)
+
+    async with _client("kirocrew-conductor") as c:
+        monkeypatch.setattr(mcp_core, "_API", f"http://127.0.0.1:{c.server.port}")
+        monkeypatch.setattr(mcp_core, "_API_UNIX_SOCKET", "")
+        monkeypatch.setattr(mcp_core, "_internal_secret", lambda: "unused-by-this-app")
+        monkeypatch.setattr(mcp_core, "_resolve_session_key_strict", lambda: "dashboard:chat-1")
+
+        filled = await asyncio.wait_for(
+            asyncio.to_thread(
+                mcp_panel._call_tool,
+                "dashboard_write",
+                {"field": "needs_you", "value": ["approve the plan"]},
+            ),
+            timeout=30,
+        )
+        assert filled.startswith("Wrote `needs_you` (array)"), filled
+
+        cleared = await asyncio.wait_for(
+            asyncio.to_thread(
+                mcp_panel._call_tool, "dashboard_write", {"field": "needs_you", "clear": True}
+            ),
+            timeout=30,
+        )
+        assert cleared.startswith("Wrote `needs_you` (array)"), cleared
+
+        crew_log_projection.forget_slot_folds()
+        listed = await c.get(FIELDS_PATH, headers={"X-Session-Key": "dashboard:chat-1"})
+        assert listed.status == 200, await listed.text()
+        rows = {row["field"]: row for row in (await listed.json())["fields"]}
+
+    assert rows["needs_you"]["written"] is True, rows["needs_you"]
+    assert rows["needs_you"]["value"] == [], rows["needs_you"]
 
 
 async def test_an_unadopted_crewmate_is_refused_when_the_registry_ships_no_default(
