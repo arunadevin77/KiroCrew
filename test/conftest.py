@@ -1402,7 +1402,7 @@ def _reset_runtime_ownership_tables(request):
     so a test that raises mid-lease cannot hand its pid to the next one.
 
     A file whose last test READS the table to prove the file left it clean -- the
-    positive control beside ``test_runtime_reconcile``'s leak scan -- must see the
+    positive control beside ``test_runtime_reconcile_tenancy``'s leak scan -- must see the
     table as its own tests left it, or that read passes vacuously against a table
     the predecessor's teardown wiped. Such a file opts out MODULE-WIDE with
     ``pytestmark = pytest.mark.keep_runtime_ownership_tables`` and carries its own

@@ -216,7 +216,7 @@
 5489 test/test_apps_backend_coverage.py
 5277 test/test_apps_registry.py
 2094 test/test_apps_registry_composition_contract.py
-4797 test/test_apps_registry_coverage.py
+3597 test/test_apps_registry_coverage.py
 5531 test/test_apps_routes_coverage.py
 2956 test/test_artifacts.py
 3299 test/test_artifacts_handlers.py
@@ -357,7 +357,6 @@
 8519 test/test_pod.py
 3225 test/test_portability.py
 4068 test/test_prepare_pr_status.py
-4858 test/test_prompts.py
 2673 test/test_publish_personal_drive.py
 2215 test/test_publish_sync.py
 2016 test/test_push_branch_gate.py
@@ -365,7 +364,6 @@
 2968 test/test_queue_depth_reconcile.py
 2147 test/test_recovery_l1_chat_runner.py
 5775 test/test_remote_crew_chaining.py
-4825 test/test_runtime_reconcile.py
 3193 test/test_sandbox_absent_ceiling_seal.py
 4933 test/test_sandbox_argv.py
 2356 test/test_sandbox_governance_mask.py

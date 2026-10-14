@@ -62,7 +62,7 @@
  1 test_approval_and_update_task.py
  3 test_approval_decide_owner_bound.py
  1 test_apps_backend_coverage.py
- 2 test_apps_registry_coverage.py
+ 2 test_apps_registry_coverage_characterization.py
  2 test_apps_routes_coverage.py
  2 test_apps_worker_slots.py
  1 test_artifacts_refactor_store_contract.py
