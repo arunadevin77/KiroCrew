@@ -95,6 +95,15 @@ class TestSameBytesAsTheUnmemoizedRender:
             _actual(rows)
         assert wire_render.render_memo_info()[0] == 0
 
+    @pytest.mark.parametrize("role", [["user"], {"k": "v"}])
+    def test_a_row_with_an_unhashable_role_renders_like_the_unmemoized_path(
+        self, role: object
+    ) -> None:
+        rows = [*_rows(), {"role": role, "content": f"hand edited {SECRET}", "ts": "t9"}]
+        expected = _expected(rows)
+        assert _actual(rows) == expected
+        assert _actual(rows) == expected
+
     def test_an_edited_row_is_rendered_again(self) -> None:
         rows = _rows()
         _actual(rows)

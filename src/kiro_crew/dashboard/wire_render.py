@@ -204,7 +204,9 @@ def prepare_messages_json(
         for m in _cu._collapse_wire_rows(messages):
             # Streaming changes every delta. OAuth URLs depend on revocable
             # endpoint approvals, so neither role is safe or useful to memoize.
-            if not memo or m.get("role", "") in {"chunk", "mcp_oauth"}:
+            # Compare with ==: a hand-edited row may carry an unhashable role.
+            role = m.get("role", "")
+            if not memo or role == "chunk" or role == "mcp_oauth":
                 fragment = _render_row(m, running, live_child)
             else:
                 fragment = _memo_row(m, running, live_child, context)
