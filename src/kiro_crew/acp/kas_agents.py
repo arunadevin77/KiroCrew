@@ -63,7 +63,6 @@ the field absent, which is the all-``ask`` case above.
 
 from __future__ import annotations
 
-import copy
 import logging
 import os
 import re
@@ -107,6 +106,7 @@ from kiro_crew.platform.tool_names import (
 )
 from kiro_crew.security import is_sensitive_path
 from kiro_crew.sel import sel
+from kiro_crew.user_json import copy_json_document
 
 logger = logging.getLogger(__name__)
 
@@ -1094,10 +1094,11 @@ def load_agent_spec(agents_dir: Path, agent_id: str) -> dict[str, Any]:
     convention use, and it is what keeps a misnamed ``<agent_id>.json`` that
     declares some other agent from being projected under this id, with that
     other agent's tools and prompt, while the spec that does declare the id
-    sits beside it unread. Two specs declaring *agent_id* are refused, as
-    :func:`kiro_crew.agent.agent_spec_path` refuses them: which is live is
-    undefined, and picking either would project an agent the operator did not
-    name.
+    sits beside it unread. Two DIFFERING specs declaring *agent_id* are
+    refused, as :func:`kiro_crew.agent.agent_spec_path` refuses them: which is
+    live is undefined, and picking either would project an agent the operator
+    did not name. Two identical ones are one spec, and the scan projects it:
+    whichever the backend runs, the projection is the same.
 
     The scan's parsed spec is what the projection uses: it was read under the hardened
     reader's guards, labelled ``kas_agent_projection`` so a denial is
@@ -1118,9 +1119,11 @@ def load_agent_spec(agents_dir: Path, agent_id: str) -> dict[str, Any]:
     spec is never memoized (:func:`kiro_crew.agent_discovery.agents_dir_revision`,
     which also refuses a spec entry whose kind cannot be read and a young
     entry it cannot hash). The answer handed
-    back is a deep copy, so it is still a parse the caller owns and a caller's
-    mutation cannot reach a later session. The fallback read below is one file
-    and is not memoized.
+    back is a deep copy (:func:`kiro_crew.user_json.copy_json_document`, which
+    walks an explicit stack so a deeply nested spec cannot raise
+    ``RecursionError`` out of session start), so it is still a parse the
+    caller owns and a caller's mutation cannot reach a later session. The
+    fallback read below is one file and is not memoized.
 
     The scan and the fallback read raise :class:`KasAgentTranslationError` on
     an ``OSError`` for the same reason: every caller of this module handles the
@@ -1140,7 +1143,11 @@ def load_agent_spec(agents_dir: Path, agent_id: str) -> dict[str, Any]:
     except OSError as exc:
         raise KasAgentTranslationError(f"agent spec {path} is unreadable: {exc}") from exc
     if declared is not None:
-        return copy.deepcopy(declared)
+        # An iterative copy, not ``copy.deepcopy``: the reader admits a spec
+        # nested hundreds of levels deep, and a recursive copy of it would
+        # raise ``RecursionError`` out of session start instead of projecting
+        # or refusing it.
+        return copy_json_document(declared)
     # ``<id>.json`` first: beside an ``<id>.md`` twin the JSON wins, the same
     # rule the directory scan applies (see ``agent_spec_format``).
     present = [p for p in candidates if p.is_file()]

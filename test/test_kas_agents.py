@@ -1983,7 +1983,7 @@ class TestSpecLookup:
 
         assert spec["description"] == "what the reader vetted"
 
-    def test_two_specs_declaring_one_name_are_refused(self, tmp_path):
+    def test_two_differing_specs_declaring_one_name_are_refused(self, tmp_path):
         """`agent_spec_path` refuses this ambiguity because which spec is live is
         undefined. Picking one here would project an agent the operator did not
         name, with its tools and its prompt, and say nothing about it.
@@ -1997,6 +1997,37 @@ class TestSpecLookup:
         message = str(exc.value)
         assert "AlphaPackage-kirocrew.json" in message
         assert "BetaPackage-kirocrew.json" in message
+
+    def test_two_identical_specs_declaring_one_name_are_projected(self, tmp_path):
+        """A package installer that flattens dependencies writes the same spec
+        under two package prefixes. Both parse to one dict, so whichever the
+        backend runs, the projection is the same, and the session starts."""
+        self._write(tmp_path, "AlphaPackage-kirocrew.json", description="shared", tools=["read"])
+        self._write(tmp_path, "BetaPackage-kirocrew.json", description="shared", tools=["read"])
+
+        spec = load_agent_spec(tmp_path, "kirocrew")
+
+        assert spec["description"] == "shared"
+        assert spec["tools"] == ["read"]
+
+    def test_a_deeply_nested_declared_spec_is_handed_back_without_a_recursion_error(self, tmp_path):
+        """The reader admits a spec nested hundreds of levels deep, and the
+        copy handed to the caller must not recurse through it: a
+        ``RecursionError`` here aborts session start with neither a projection
+        nor the typed refusal. Twins or a single file alike."""
+        deep = "leaf"
+        for _ in range(600):
+            deep = {"m": [deep]}
+        self._write(tmp_path, "AlphaPackage-kirocrew.json", tools=["read"], metadata=deep)
+        self._write(tmp_path, "BetaPackage-kirocrew.json", tools=["read"], metadata=deep)
+
+        spec = load_agent_spec(tmp_path, "kirocrew")
+
+        assert spec["tools"] == ["read"]
+        assert "metadata" in spec
+        # Still the caller's own parse: a mutation does not reach the memo.
+        spec["tools"].append("shell")
+        assert load_agent_spec(tmp_path, "kirocrew")["tools"] == ["read"]
 
     def test_a_direct_file_does_not_settle_a_duplicate_declared_name(self, tmp_path):
         """Two specs declaring the id are refused even when `<agent_id>.json`

@@ -241,3 +241,80 @@ def exceeds_nesting(value: object, limit: int = MAX_DOCUMENT_NESTING) -> bool:
             return True
         stack.extend((child, depth) for child in children)
     return False
+
+
+def strict_json_equal(a: object, b: object) -> bool:
+    """Type-strict equality over two decoded JSON documents: ``1 != True``,
+    ``1 != 1.0``.
+
+    Python's ``==`` conflates ``bool`` with ``int`` and ``int`` with ``float``,
+    so a plain compare of two decoded documents calls ``true`` and ``1`` the
+    same value. A reader that parses the file itself does not, so a caller
+    deciding whether two documents are ONE document (an unchanged stored value,
+    two spec files claiming one name) must require identical types. Erring
+    toward "different" is the safe side for every such caller: an update or a
+    conflict instead of a silent skip, a refusal instead of an arbitrary pick.
+    Containers are compared member by member, scalars by type then value.
+
+    Iterative, like :func:`exceeds_nesting`: the documents come from files a
+    person or a tool wrote, and a recursive walk over one nested a few hundred
+    levels deep would raise ``RecursionError`` out of the caller, which is
+    neither of the answers a comparison has. An explicit stack makes depth cost
+    memory the document already paid for, never interpreter frames.
+    """
+    stack: list[tuple[object, object]] = [(a, b)]
+    while stack:
+        x, y = stack.pop()
+        if type(x) is not type(y):
+            return False
+        if isinstance(x, dict):
+            assert isinstance(y, dict)
+            if x.keys() != y.keys():
+                return False
+            stack.extend((x[k], y[k]) for k in x)
+        elif isinstance(x, list):
+            assert isinstance(y, list)
+            if len(x) != len(y):
+                return False
+            stack.extend(zip(x, y))
+        elif x != y:
+            return False
+    return True
+
+
+def copy_json_document(value: Any) -> Any:
+    """A deep copy of a decoded JSON document the caller may mutate freely.
+
+    ``copy.deepcopy`` recurses several frames per nesting level, so a document
+    a few hundred levels deep (well inside the size caps the spec readers
+    apply) raises ``RecursionError`` out of whoever hands a memoized parse to
+    a caller. This walks an explicit stack instead, like :func:`exceeds_nesting`
+    and :func:`strict_json_equal`. Containers (``dict``, ``list``) are rebuilt;
+    scalars are shared, which is safe because every JSON scalar is immutable.
+    """
+    if isinstance(value, dict):
+        root: Any = {}
+    elif isinstance(value, list):
+        root = []
+    else:
+        return value
+    stack: list[tuple[Any, Any]] = [(value, root)]
+    while stack:
+        src, dst = stack.pop()
+        if isinstance(src, dict):
+            for key, item in src.items():
+                if isinstance(item, (dict, list)):
+                    child: Any = {} if isinstance(item, dict) else []
+                    dst[key] = child
+                    stack.append((item, child))
+                else:
+                    dst[key] = item
+        else:
+            for item in src:
+                if isinstance(item, (dict, list)):
+                    child = {} if isinstance(item, dict) else []
+                    dst.append(child)
+                    stack.append((item, child))
+                else:
+                    dst.append(item)
+    return root

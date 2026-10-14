@@ -9,7 +9,6 @@ the first prompt. Bounding only the Crew prompt cannot bound that native cost.
 from __future__ import annotations
 
 import asyncio
-import copy
 import errno
 import fnmatch
 import hashlib
@@ -41,6 +40,7 @@ from kiro_crew.atomic_write import atomic_write, on_event_loop
 from kiro_crew.config.paths import data_home, kiro_agents_dir, kiro_home, project_agents_dir
 from kiro_crew.hooks import FileTooLargeError, safe_read_file_bytes
 from kiro_crew.security import _PATH_RESOLVE_TIMEOUT_SECS
+from kiro_crew.user_json import copy_json_document
 from kiro_crew.validation import is_registered_agent_name
 from kiro_crew.workspace_cli_settings import workspace_cli_settings_lock
 
@@ -3098,7 +3098,10 @@ def prepare_native_skill_projection(
             # between the two reads; skip it, exactly as an absent spec is skipped.
             continue
         display_sizes[agent.name] = (_display_text_bytes(spec), source.absolute().as_posix())
-        view = copy.deepcopy(spec)
+        # An iterative copy, not ``copy.deepcopy``: the reader admits a spec
+        # nested hundreds of levels deep, and a recursive copy of it would
+        # raise ``RecursionError`` out of the projection.
+        view = copy_json_document(spec)
         _strip_alias_display_text(view)
         resources = view.get("resources", [])
         resources = resources if isinstance(resources, list) else []
