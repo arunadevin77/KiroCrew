@@ -11078,6 +11078,33 @@ async def _run_chat(
                 state, slot, force=True, expected_history_key=_pick_history_key
             ):
                 slot._dirty = True
+        # An inheriting slot (no slot pin, no crew pin: only then is
+        # ``default_model`` non-empty) follows a change to the inherited default.
+        # A settings write rebuilds the factory but leaves live sessions alone, so
+        # the session this slot already holds can still be on the previous
+        # default. Its allocation stamp says which model it was started on; when
+        # that differs from what the slot inherits now, queue the same reset a
+        # model pick queues. The consume below runs it with ``skip_if_busy``, so a
+        # turn another surface is streaming on the session is never cut: the flag
+        # stays armed and lands at a later consume. An empty stamp is unknown, not
+        # stale, and is left alone.
+        if default_model:
+            _live_key = effective_session_key(slot)
+            _stamped = state.sessions.allocation_requested_model(_live_key)
+            if (
+                isinstance(_stamped, str)
+                and _stamped
+                and _stamped != default_model
+                and state.sessions.get_provider(_live_key) is not None
+            ):
+                logger.info(
+                    "Slot %s inherits %s but its live session started on %s; "
+                    "resetting it onto the new default",
+                    slot.key,
+                    default_model,
+                    _stamped,
+                )
+                arm_model_switch_reset(state, slot)
         # Consume a deferred project-change reset queued while idle, before
         # get_or_create or we'd reuse the stale session for one turn. Safe here:
         # no session lock is held yet, so reset() can't self-kill.
@@ -11451,6 +11478,7 @@ async def _run_chat(
             resumed=resumed,
             _is_refusal_retry_turn=_is_refusal_retry_turn,
             _synthetic_recovery_turn=_synthetic_recovery_turn,
+            inherited_model=default_model,
         )
         # Append-only the session's log (flag-gated, fail-soft). Written HERE rather
         # than at session acquisition, because `model` has to name what the session
@@ -11542,7 +11570,12 @@ async def _run_chat(
         # effective model rather than `slot.model` — the pin is kept, so reading it
         # here would print the withheld model on the activity line directly beside
         # the notice card explaining that it is not what is running.
-        model_label = "auto" if withheld_pin else (slot.model or "auto")
+        # An inheriting slot keeps `slot.model` empty, so it names the model the
+        # session serves, which differs from the inherited default when startup
+        # withheld that default; the default is the fallback when nothing was read.
+        model_label = (
+            "auto" if withheld_pin else (slot.model or slot.served_model or default_model or "auto")
+        )
         # `spawned` marks the frames where a session was actually (re)started, so
         # consumers can act on a real session boundary. The frame itself is also
         # emitted on warm turns, where nothing was spawned and the advertised
@@ -16765,7 +16798,10 @@ async def _run_chat(
                     ):
                         _canonical = _backfill_canonical_model(client, _provider_name)
                         if _canonical:
-                            slot.model = _canonical
+                            # Same rule as the pre-turn backfill: a slot that
+                            # inherits a default is recorded but never pinned.
+                            if not default_model:
+                                slot.model = _canonical
                             _record_model = _canonical
                     await asyncio.shield(
                         persist_token_record_async(

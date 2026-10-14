@@ -660,12 +660,16 @@ async def _settle_session_model(
     resumed: bool,
     _is_refusal_retry_turn: bool,
     _synthetic_recovery_turn: bool,
+    inherited_model: str = "",
 ) -> bool:
     """Settle the model a turn's session runs on before anything model-dependent.
 
     Restores a refusal fallback the previous turn left, backfills an unpinned slot
     from the provider, records the pinned-model verdict a fresh or reloaded session
     gives and the model it serves. True when the session withheld the slot's pin.
+
+    ``inherited_model`` is the default an unpinned slot inherits this turn
+    (``_default_session_model``); while it is set, nothing is backfilled.
     """
     # ── Refusal-fallback restore (agent.refusal_fallback_model) ──
     # A refusal retry swapped the live session for ONE message; at the
@@ -712,7 +716,13 @@ async def _settle_session_model(
         # here). An unpinned slot simply stays unpinned for the
         # fallback's duration; the next non-fallback turn backfills as
         # before.
-        slot.model = _backfill_canonical_model(client, provider_name) or slot.model
+        #
+        # A slot that inherits a resolved default is not written either:
+        # storing the served model would turn "inherit" into a pin, and the
+        # slot would stop following a later change to the default. The chip
+        # reads the served model through ``_sync_served_model`` instead.
+        if not inherited_model:
+            slot.model = _backfill_canonical_model(client, provider_name) or slot.model
     elif is_new or resumed:
         # Record the verdict for BOTH answers, not only the withhold: it is
         # carried in the slots payload so the composer reads the

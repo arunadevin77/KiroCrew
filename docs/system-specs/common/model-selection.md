@@ -452,6 +452,20 @@ its own once the cache refreshes with a list that carries it.
   model, or a default the surface cannot read carries no marker. When the config
   read or the agent-pin read fails (`useSettingsDefaultModel` reports `failed`),
   the composer shows an inline "failed to load config" notice instead.
+- **A dashboard chat slot with an empty `slot.model` inherits**, and keeps inheriting
+  across turns. When neither the slot nor its crewmate pins a model, the turn resolves
+  the default the slot inherits (`_default_session_model`). While that default is
+  non-empty, neither `slot.model` backfill site writes the provider's served model
+  into the slot; the composer chip reads it from `served_model`. The backfill still
+  runs when every tier defers to the backend. A settings change to the default
+  rebuilds the provider factory but leaves live sessions alone, so the next turn of an
+  inheriting slot compares its live session's allocation stamp
+  (`allocation_requested_model`) with the default it inherits now. When they differ
+  it queues the same reset a model pick queues, consumed with `skip_if_busy`, so a
+  turn already streaming on that session is never cut. An empty stamp is unknown and
+  triggers nothing. A slot or crewmate pin never triggers it. A `slot.model` an
+  earlier backfill stored is indistinguishable from a person's pick and stays until
+  the user picks Auto.
 - Codex advertises `model[effort]` pairs, but its `model` config option accepts the
   base ID and its `reasoning_effort` option accepts the level. The live capability
   marks only backends in `ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS` for pair grouping;
