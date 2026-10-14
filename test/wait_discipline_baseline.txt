@@ -314,7 +314,9 @@
 43 test_queue_depth_reconcile.py
  3 test_queue_receipt.py
  6 test_queued_prompt_durability.py
-11 test_registry_store_art_prewarm.py
+ 1 test_registry_store_art_prewarm.py
+ 9 test_registry_store_art_prewarm_batch.py
+ 1 test_registry_store_art_prewarm_rewarm.py
  1 test_remote_crew_chaining.py
  1 test_resource_pressure_notify.py
  9 test_resume_publishes_hydrated_slot.py
