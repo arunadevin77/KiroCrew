@@ -49,7 +49,7 @@
 4064 src/kiro_crew/apps/builtins/ops_mission_control/tests/test_routes.py
 3730 src/kiro_crew/apps/builtins/ops_mission_control/tests/test_store_and_gate.py
 2449 src/kiro_crew/apps/builtins/spec_builder/backend/repository.py
-17296 src/kiro_crew/apps/builtins/spec_builder/tests/test_routes.py
+8147 src/kiro_crew/apps/builtins/spec_builder/tests/test_routes.py
 2212 src/kiro_crew/apps/job_sdk.py
 4665 src/kiro_crew/apps/manager.py
 3455 src/kiro_crew/apps/manifest.py
