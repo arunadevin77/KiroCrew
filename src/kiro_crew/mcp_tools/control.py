@@ -1920,9 +1920,9 @@ def monitor_start(name: str, args: dict[str, Any]) -> str:
     # Before the payload is built, so the emitted dict is byte-identical to what
     # it was (its shape is asserted by exact equality in the contract test) and a
     # certain refusal is reported instead of acknowledged.
-    retained_stop_refusal = _retained_stop_refusal("monitor_start", sk)
-    if retained_stop_refusal:
-        return retained_stop_refusal
+    preflight_refusal = _arming_preflight_refusal("monitor_start", sk)
+    if preflight_refusal:
+        return preflight_refusal
     payload: dict[str, Any] = {
         "message": message,
         "idle_secs": interval_secs,
@@ -2008,8 +2008,15 @@ def _monitor_context_refusal(
     return f"Error: {message}"
 
 
-def _retained_stop_refusal(tool_name: str, session_key: str) -> str:
-    """Refuse IN BAND when a retained stop makes this call certain to be refused.
+def _arming_preflight_refusal(tool_name: str, session_key: str) -> str:
+    """Refuse IN BAND when the turn boundary is certain to refuse this call.
+
+    Two causes are certain from one reading: the session cannot host a loop at
+    all (its memory mode, reported as ``hosting_refusal`` by the authorizer's own
+    :func:`kiro_crew.autonudge_authz.loop_hosting_refusal`, so the text here is
+    the text the authorizer denies with), or a retained stop holds the binding.
+    The memory-mode half skips ``monitor_update`` on a legacy timer loop, whose
+    authorizer has no memory-mode rule.
 
     An arming tool answers the model over its own pipe DURING the turn, while
     ``apply_session_directive`` runs after the turn's result is processed. A
@@ -2034,8 +2041,8 @@ def _retained_stop_refusal(tool_name: str, session_key: str) -> str:
     benign: a record cleared just after the read costs one retryable refusal, and
     one written just after it is still caught authoritatively.
 
-    Scope is the STRUCTURED record, the only one the endpoint reports an outcome
-    for. A paused legacy timer loop reads as ``autonudge_loop`` with no outcome
+    The retained-stop half covers the STRUCTURED record, the only one the endpoint
+    reports an outcome for. A paused legacy timer loop reads as ``autonudge_loop`` with no outcome
     and is left to the existing create-only refusal.
     """
     if mcp_core.directive_capture_active():
@@ -2044,7 +2051,28 @@ def _retained_stop_refusal(tool_name: str, session_key: str) -> str:
         reading = mcp_core._get("/api/autonudge/session-monitor", session_key=session_key)
     except Exception:
         return ""
-    if not isinstance(reading, dict) or reading.get("error") or reading.get("active"):
+    if not isinstance(reading, dict) or reading.get("error"):
+        return ""
+    hosting_refusal = reading.get("hosting_refusal")
+    # A legacy timer loop is updated through ``authorize_and_update_nudge``,
+    # which applies no memory-mode rule (it also carries pause), so an update to
+    # one is not refused at the turn boundary and must not be refused here. A
+    # slot tightened to temporary after the loop was armed can still shrink or
+    # pause it.
+    legacy_update = tool_name == "monitor_update" and isinstance(
+        reading.get("autonudge_loop"), dict
+    )
+    if isinstance(hosting_refusal, str) and hosting_refusal.strip() and not legacy_update:
+        not_done = (
+            "no monitor was changed" if tool_name == "monitor_update" else "no loop was armed"
+        )
+        return (
+            f"{tool_name}: NOT applied — {hosting_refusal.strip()}. This session's "
+            "memory mode cannot be relaxed, so the same call will be refused every "
+            f"time. Tell the user in this turn that {not_done}, and do NOT report "
+            "monitoring as started or changed. A persistent session can host the loop."
+        )
+    if reading.get("active"):
         return ""
     monitor = reading.get("monitor")
     if not isinstance(monitor, dict):
@@ -2112,9 +2140,9 @@ def monitor_watch(name: str, args: dict[str, Any]) -> str:
     # AFTER target validation so a malformed target keeps its own specific error,
     # and before the directive is emitted so the model is never handed a
     # success-shaped ack for an arm a retained stop guarantees will be refused.
-    retained_stop_refusal = _retained_stop_refusal("monitor_watch", sk)
-    if retained_stop_refusal:
-        return retained_stop_refusal
+    preflight_refusal = _arming_preflight_refusal("monitor_watch", sk)
+    if preflight_refusal:
+        return preflight_refusal
     payload = {
         "kind": args["kind"],
         "target": target,
@@ -2394,9 +2422,9 @@ def monitor_update(name: str, args: dict[str, Any]) -> str:
     # or already terminal" at the turn boundary, and unlike the two arming
     # directives a refused monitor_update gets no transcript notice at all — so
     # without this the retarget failure is invisible to both the model and the user.
-    retained_stop_refusal = _retained_stop_refusal("monitor_update", sk)
-    if retained_stop_refusal:
-        return retained_stop_refusal
+    preflight_refusal = _arming_preflight_refusal("monitor_update", sk)
+    if preflight_refusal:
+        return preflight_refusal
     return _emit_directive(
         "monitor_update",
         {"patch": patch},

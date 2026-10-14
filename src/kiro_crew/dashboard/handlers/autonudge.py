@@ -12,7 +12,7 @@ from aiohttp import web
 
 from kiro_crew.autonudge import binding_key_for
 from kiro_crew.autonudge import get_instance as _autonudge_get
-from kiro_crew.autonudge import is_structured_monitor_loop
+from kiro_crew.autonudge import is_channel_key, is_structured_monitor_loop
 
 # The security chokepoint lives in the transport-agnostic module (see its
 # docstring); re-exported here so existing importers keep working. This file
@@ -24,6 +24,7 @@ from kiro_crew.autonudge_authz import (  # noqa: F401 - re-exported
     authorize_and_stop_monitor,
     authorize_and_update_monitor,
     authorize_and_update_nudge,
+    loop_hosting_refusal,
     resolve_stop_sentinel,
 )
 from kiro_crew.dashboard.handlers import source_providers
@@ -614,6 +615,23 @@ async def api_session_monitor_get(request: web.Request) -> web.Response:
     svc = _autonudge_get()
     if svc is None:
         return web.json_response({"enabled": False, "monitor": None})
+    # Why the authorizer will refuse ANY arm on this session, judged by its own
+    # predicate on the live slot, so the arming tools can say so in band instead
+    # of acknowledging a request the turn boundary is certain to deny. Only a
+    # dashboard slot carries a memory mode; the key is added only when it
+    # refuses, so every other reading keeps its exact shape.
+    hosting_refusal = ""
+    if not is_channel_key(binding):
+        slots = getattr(request.app.get("state"), "_slots", None)
+        slot = slots.get(binding) if isinstance(slots, dict) else None
+        if slot is not None:
+            hosting_refusal = loop_hosting_refusal(slot)
+
+    def _reading(payload: dict[str, Any]) -> web.Response:
+        if hosting_refusal:
+            payload["hosting_refusal"] = hosting_refusal
+        return web.json_response(payload)
+
     loop = svc.get_by_slot(binding)
     if loop is None:
         # Nothing is armed on this session. This is the ONLY case that reads as
@@ -621,7 +639,7 @@ async def api_session_monitor_get(request: web.Request) -> web.Response:
         # Collapsing the two into an identical ``monitor: None`` would leave a
         # caller unable to tell an accepted-and-armed loop from an
         # accepted-and-dropped request.
-        return web.json_response({"enabled": True, "monitor": None, "autonudge_loop": None})
+        return _reading({"enabled": True, "monitor": None, "autonudge_loop": None})
     if not is_structured_monitor_loop(loop):
         # A plain auto-nudge loop IS armed. ``monitor`` stays None because a
         # structured monitor genuinely does not exist, but ``autonudge_loop``
@@ -629,12 +647,12 @@ async def api_session_monitor_get(request: web.Request) -> web.Response:
         # can verify arming instead of being told "do not assume" with no
         # instrument. The loop's free-text ``message`` is deliberately omitted:
         # this reading answers "is it armed and firing", not "what does it say".
-        return web.json_response(
+        return _reading(
             {"enabled": True, "monitor": None, "autonudge_loop": _autonudge_loop_reading(loop)}
         )
     monitor = loop.monitor
     assert monitor is not None
-    return web.json_response(
+    return _reading(
         {
             "enabled": True,
             "active": bool(loop.active),

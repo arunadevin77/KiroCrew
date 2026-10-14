@@ -101,6 +101,25 @@ def external_arm_refusal(mode: str) -> str:
     )
 
 
+#: Why a dashboard slot in a non-persistent memory mode cannot host a loop. The
+#: authorizer denies with this text, and the arming MCP tools quote it back in
+#: band (through :func:`loop_hosting_refusal` on the session-monitor reading), so
+#: the agent sees the same reason in its arming turn that the turn boundary uses.
+LOOP_HOSTING_REFUSED_ERROR = "incognito and temporary sessions cannot host automation loops"
+
+
+def loop_hosting_refusal(slot: Any) -> str:
+    """Return why ``slot`` cannot host an automation loop, or ``""`` if it can.
+
+    The ONE predicate for the memory-mode rule. Every authorizer path and the
+    in-band preflight call it, so the check that refuses an arm and the reading
+    that warns about the refusal cannot disagree.
+    """
+    if str(getattr(slot, "memory_mode", "persistent")) != "persistent":
+        return LOOP_HOSTING_REFUSED_ERROR
+    return ""
+
+
 @runtime_checkable
 class NudgeAuthzState(Protocol):
     """The narrow slice of gateway state the authorizer needs.
@@ -186,10 +205,10 @@ async def authorize_and_update_monitor(
             # grant would be an unaudited relaxation of the ceiling.
             if not await _audit("self_armed"):
                 return None, "audit log unavailable — monitor not updated", 503
-        if str(getattr(current, "memory_mode", "persistent")) != "persistent":
-            error = "incognito and temporary sessions cannot host automation loops"
-            await _audit("denied", error)
-            return None, error, 403
+        hosting_refusal = loop_hosting_refusal(current)
+        if hosting_refusal:
+            await _audit("denied", hosting_refusal)
+            return None, hosting_refusal, 403
     prior_loop = None
     credential_update_needs_rollback = grant_owner_provider_credentials or "target" in safe_patch
     if credential_update_needs_rollback:
@@ -1088,8 +1107,9 @@ async def authorize_and_add_nudge(
             str(getattr(authorized_slot, "agent", "") or "") in WAKE_RESET_AGENTS
             and is_self_arm(slot_key, initiator_slot_key)
         )
-        if str(getattr(authorized_slot, "memory_mode", "persistent")) != "persistent":
-            return _deny("incognito and temporary sessions cannot host automation loops", 403)
+        hosting_refusal = loop_hosting_refusal(authorized_slot)
+        if hosting_refusal:
+            return _deny(hosting_refusal, 403)
 
         def _dashboard_admission() -> bool:
             current = state._slots.get(slot_key)
@@ -1107,7 +1127,7 @@ async def authorize_and_add_nudge(
                 current is authorized_slot
                 and mode_ok
                 and not bool(getattr(authorized_slot, "is_closing", False))
-                and str(getattr(current, "memory_mode", "persistent")) == "persistent"
+                and not loop_hosting_refusal(current)
             )
 
         admission_check = _dashboard_admission

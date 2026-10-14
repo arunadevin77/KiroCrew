@@ -187,7 +187,7 @@ re-arm the bound legacy loop. The binding-key and collision tests in
 
 A retained stop is refused at the turn boundary, and the three tools say so
 before the turn ends **whenever the retained record is readable**.
-`mcp_tools.control._retained_stop_refusal` reads the same
+`mcp_tools.control._arming_preflight_refusal` reads the same
 `/api/autonudge/session-monitor` endpoint `monitor_inspect` reads and, when the
 binding holds an inactive record whose outcome is retained evidence, returns a
 refusal naming the retained outcome, its target, and the owner-only clear —
@@ -223,6 +223,21 @@ covers all three tools, the fail-open paths, the system-imposed outcomes that
 must still arm, and the endpoint wire contract the refusal depends on — dropping
 `outcome` from `MONITOR_PUBLIC_FIELDS` would make the preflight fail open
 silently.
+
+The same preflight also refuses when the session cannot host a loop at all. An
+incognito or temporary dashboard slot is denied by the authorizer on every arm
+and on every update of a structured monitor, and that denial is as certain as a
+retained stop (a slot's memory mode only tightens). A `monitor_update` of a
+legacy timer loop is not refused: `authorize_and_update_nudge` applies no
+memory-mode rule, so a loop armed before the slot tightened can still be shrunk
+or paused. The session-monitor
+reading carries `hosting_refusal` when
+`autonudge_authz.loop_hosting_refusal` refuses the live slot. That is the one
+predicate both authorizer paths and the commit-time admission check call, so the
+tools quote the exact text the authorizer denies with and emit no directive.
+The key is present only when it refuses, so every other reading keeps its shape.
+`test_monitor_temporary_session_false_ack.py` covers the three tools, the
+endpoint and the authorizer.
 
 `NudgeLoop.next_due_ts`, `notify_user_input`, and `notify_turn_complete` make
 dashboard-loop cadence deadline-preserving: user activity cancels a pending
