@@ -26,12 +26,14 @@ import struct
 import tempfile
 import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 from kiro_crew.knowledge import retrieval
 from kiro_crew.knowledge.retrieval import ANY_EMBEDDING_SPACE, HybridRetriever
 from kiro_crew.knowledge.store import KnowledgeStore
+
+# Row timestamps play no part in what is timed.
+_STAMP = "2026-01-01T00:00:00"
 
 
 def _vec(rng: random.Random, dim: int) -> list[float]:
@@ -39,7 +41,7 @@ def _vec(rng: random.Random, dim: int) -> list[float]:
 
 
 def _populate(store: KnowledgeStore, n: int, dim: int, rng: random.Random) -> None:
-    now = datetime.now().isoformat()
+    now = _STAMP
     pack = struct.Struct(f"<{dim}f").pack
     db = store.db
     db.execute("BEGIN IMMEDIATE")
@@ -53,7 +55,7 @@ def _populate(store: KnowledgeStore, n: int, dim: int, rng: random.Random) -> No
 
 
 def _write_job(store: KnowledgeStore) -> None:
-    now = datetime.now().isoformat()
+    now = _STAMP
     store.db.execute(
         "INSERT INTO ingestion_jobs (id, status, created_at, updated_at) VALUES (?, 'pending', ?, ?)",
         (str(uuid.uuid4()), now, now),
@@ -79,7 +81,9 @@ def main() -> None:
         store = KnowledgeStore(str(Path(tmp) / "kb.db"))
         _populate(store, args.items, args.dim, rng)
         pack = struct.Struct(f"<{args.dim}f").pack
-        times: dict[str, list[float]] = {k: [] for k in ("uncached", "warm", "after_job", "after_item")}
+        times: dict[str, list[float]] = {
+            k: [] for k in ("uncached", "warm", "after_job", "after_item")
+        }
         mismatches = 0
         real_cached = retrieval._cached_matrix
         for _ in range(args.rounds):
@@ -102,7 +106,7 @@ def main() -> None:
             t, after_job = _timed(run)
             times["after_job"].append(t)
 
-            now = datetime.now().isoformat()
+            now = _STAMP
             store.db.execute(
                 "INSERT INTO items (id, title, content, item_type, embedding, created_at, updated_at) "
                 "VALUES (?, 'new', 'x', 'doc', ?, ?, ?)",
@@ -120,7 +124,11 @@ def main() -> None:
         store.close()
 
     summary = {
-        k: {"p50_ms": round(statistics.median(v), 1), "min_ms": round(min(v), 1), "max_ms": round(max(v), 1)}
+        k: {
+            "p50_ms": round(statistics.median(v), 1),
+            "min_ms": round(min(v), 1),
+            "max_ms": round(max(v), 1),
+        }
         for k, v in times.items()
     }
     summary["ranking_mismatches"] = mismatches

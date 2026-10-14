@@ -167,7 +167,9 @@ class TestVectorMatrixCache:
         while not floats_to_bytes([lead]).startswith(b"["):
             lead = rng.gauss(0.0, 1.0)
         for i in range(10):
-            store.add_item(f"doc {i}", "c", "doc", embedding=floats_to_bytes([lead, *_vec(rng)[1:]]))
+            store.add_item(
+                f"doc {i}", "c", "doc", embedding=floats_to_bytes([lead, *_vec(rng)[1:]])
+            )
             store.add_item(f"plain {i}", "c", "doc", embedding=floats_to_bytes(_vec(rng)))
         q = _vec(rng)
         cached = _retriever(store, q)._vector_search("q", limit=20)
