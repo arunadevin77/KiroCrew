@@ -1769,6 +1769,18 @@ exclusive flex siblings of the artifact body, icon-toggled from the toolbar
 comment-count auto-reveal never switches away from an open chat panel, since the
 chat panel opens only on explicit action.
 
+**Leaving with unsaved edits (frontend)** — a dirty edit buffer registers a
+guard with the app shell's leave registry (`useRegisterNavigationLeaveGuard`)
+and publishes its stake (`usePublishNavigationStake`), so the global sidebar,
+the command palette and browser Back cannot discard it; `beforeunload` covers
+only a real unload. The registry needs a synchronous answer, so the guard
+refuses the exit and opens the page's async discard dialog (`useConfirm`, not
+`window.confirm`); after a discard the user repeats the navigation, since the
+registry does not pass its target. A navigation intent forwarded from a popout
+("Ask agent to address", timeline session links) runs that same check in the
+main window before `applyNavIntentInMain` stages a prefill, switches slot or
+navigates, and a refusal drops the whole intent.
+
 **Session resolution (frontend)** — the active bound session is resolved from
 the Redux slots snapshot (`slot.artifact === slug`), so no extra endpoint exists:
 the WS `slots` event already carries the binding. The flow keeps it to at most

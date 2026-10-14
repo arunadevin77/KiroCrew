@@ -49,17 +49,28 @@ export function chatDeepLinkSlot(path: string): string {
  * dashboard window. Order matters: the prefill must be in sessionStorage
  * before the slot switch + route change so ChatPage's slot-restore effect
  * finds it when the target slot activates.
+ *
+ * `mayLeave` is the page-on-screen leave check (`useMayLeaveForNavigation`).
+ * An intent that leaves the page asks it first, like every wired in-app exit,
+ * and a veto drops the whole intent: no prefill is staged and no slot switches
+ * for a navigation the user refused.
  */
 export function applyNavIntentInMain(
   intent: NavIntent,
-  deps: { navigate: (path: string) => void; switchSlot: (slotKey: string) => void },
+  deps: {
+    navigate: (path: string) => void
+    switchSlot: (slotKey: string) => void
+    mayLeave?: () => boolean
+  },
 ): void {
-  if (intent.prefill) writePrefill(intent.prefill.slotKey, intent.prefill.prompt)
-  if (intent.slotKey) deps.switchSlot(intent.slotKey)
-  deps.navigate(intent.path)
   // Best-effort raise — a channel-delivered intent has no user activation, so
   // browsers may veto this; the opener-focus on the popout side is the
   // reliable path and this is just the assist for the claimed-but-not-opener
-  // main.
+  // main. Raised before the leave check so its confirm shows on a window the
+  // user can see.
   try { window.focus() } catch { /* vetoed — non-fatal */ }
+  if (deps.mayLeave && !deps.mayLeave()) return
+  if (intent.prefill) writePrefill(intent.prefill.slotKey, intent.prefill.prompt)
+  if (intent.slotKey) deps.switchSlot(intent.slotKey)
+  deps.navigate(intent.path)
 }
