@@ -37,6 +37,10 @@ from kiro_crew import platform_compat as pc
 from kiro_crew import windows_acl
 from kiro_crew.testing.ids import UNALLOCATABLE_PID
 
+# This file replaces ctypes.CDLL, find_library or a cached libc handle for a test,
+# so the shared macOS handle caches are put back after each one (see conftest.py).
+pytestmark = pytest.mark.usefixtures("fresh_darwin_libc_handles")
+
 
 @pytest.mark.skipif(
     sys.platform not in {"win32", "linux", "darwin"}, reason="supported kernel identity contract"
@@ -8998,8 +9002,6 @@ class TestMemoryPressureLevel:
         ``kern.memorystatus_vm_pressure_level``: a wrong name or size would read
         as None here, which in production only shows as the hold quietly off."""
         monkeypatch.setattr(pc, "memory_pressure_level", _REAL_MEMORY_PRESSURE_LEVEL)
-        monkeypatch.setattr(pc, "_darwin_libc_sysctl", None)
-        monkeypatch.setattr(pc, "_darwin_libc_sysctl_loaded", False)
         assert pc.memory_pressure_level() in (
             pc.MEMORY_PRESSURE_NORMAL,
             pc.MEMORY_PRESSURE_WARN,
@@ -9027,8 +9029,6 @@ class TestMemoryPressureLevel:
             built.append(object())
             return _Libc()
 
-        monkeypatch.setattr(pc, "_darwin_libc_sysctl", None)
-        monkeypatch.setattr(pc, "_darwin_libc_sysctl_loaded", False)
         monkeypatch.setattr(pc.ctypes.util, "find_library", lambda _name: "libc.fake")
         monkeypatch.setattr(pc.ctypes, "CDLL", _cdll)
         answers: list[object] = []

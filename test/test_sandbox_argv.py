@@ -54,7 +54,12 @@ from kiro_crew.sandbox import (
 # Several tests spawn real child interpreters (subprocess.run([sys.executable, ...]));
 # pin the module to a dedicated xdist worker so concurrent cold-starts under -n auto
 # don't starve each other / blow the 30s timeout. Requires --dist loadgroup.
-pytestmark = pytest.mark.xdist_group(name="subprocess_spawn")
+pytestmark = [
+    pytest.mark.xdist_group(name="subprocess_spawn"),
+    # This file replaces ctypes.CDLL, find_library or a cached libc handle for a test,
+    # so the shared macOS handle caches are put back after each one (see conftest.py).
+    pytest.mark.usefixtures("fresh_darwin_libc_handles"),
+]
 
 # ``_build_launcher_script`` calls POSIX-only ``os.getuid``/``os.getgid`` (the
 # namespace launcher is Linux-only), so any test that builds the launcher script

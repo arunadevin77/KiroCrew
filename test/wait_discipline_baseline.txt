@@ -142,7 +142,6 @@
  1 test_cron_wake_budget.py
  7 test_cross_surface_stop_gate.py
  6 test_darwin_native_provider_reap.py
- 1 test_darwin_spawn_marker.py
  4 test_dashboard_approval.py
  5 test_dashboard_chat_rewind.py
  1 test_dashboard_cron_run_guard.py

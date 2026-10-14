@@ -57,11 +57,16 @@ from kiro_crew.sandbox import _PROBE_SHIM_CODE
 
 program = sandbox_launcher_program
 
-pytestmark = pytest.mark.skipif(
-    sys.platform != "linux",
-    reason="the namespace launcher is Linux-only: it binds unshare() (absent on macOS "
-    "libc) and its payload carries os.getuid() (absent on Windows)",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        sys.platform != "linux",
+        reason="the namespace launcher is Linux-only: it binds unshare() (absent on macOS "
+        "libc) and its payload carries os.getuid() (absent on Windows)",
+    ),
+    # This file replaces ctypes.CDLL, find_library or a cached libc handle for a test,
+    # so the shared macOS handle caches are put back after each one (see conftest.py).
+    pytest.mark.usefixtures("fresh_darwin_libc_handles"),
+]
 
 
 #: Labels for every pre-confinement script. Both run with a caller-supplied

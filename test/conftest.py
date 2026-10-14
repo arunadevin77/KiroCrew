@@ -664,6 +664,48 @@ def _fresh_reexec_environment(_floor_monkeypatch):
     _floor_monkeypatch.setattr(platform_compat, "_KEPT_FOR_REEXEC", {})
 
 
+@pytest.fixture
+def fresh_darwin_libc_handles(_floor_monkeypatch):
+    """Start the test with both macOS libc handle caches unbuilt, and put them back after.
+
+    ``platform_compat`` builds its ``libc`` (``sysctl``) and ``libproc`` handles
+    once per process, from whatever ``ctypes.CDLL`` and
+    ``ctypes.util.find_library`` are at the first call, and keeps the result,
+    ``None`` included. A first build that lands while a test has either one
+    replaced caches ``None`` or a fake for the rest of the worker, so a later
+    real-kernel read reports "unreadable" and a refusal assertion passes because
+    ``None`` collapses to ``False``.
+
+    Two kinds of test request it:
+
+    * every test in a file that replaces ``ctypes.CDLL``, ``find_library`` or one
+      of the cached handle names below, through the file's module
+      ``pytestmark``, so whatever a test builds in that window is
+      dropped at its teardown instead of leaking into the next test. Requested
+      per file, not autouse, because only those files can damage the cache;
+      ``test_darwin_libc_handle_ratchet.py`` fails a file that patches without
+      requesting it.
+    * every test that reads or builds either handle, so it starts unbuilt
+      whatever ran before it in the worker.
+
+    The tree-walk and fd prototype flags belong to the ``libproc`` handle they
+    were declared on, so they are reset with it. Patched through
+    ``_floor_monkeypatch`` so a test's ``monkeypatch.undo()`` cannot lift it, and
+    every value is put back at teardown.
+    """
+    from kiro_crew import platform_compat
+
+    for name, unbuilt in (
+        ("_darwin_libc_sysctl", None),
+        ("_darwin_libc_sysctl_loaded", False),
+        ("_darwin_libproc", None),
+        ("_darwin_libproc_loaded", False),
+        ("_darwin_libproc_tree_bound", False),
+        ("_darwin_libproc_fd_bound", False),
+    ):
+        _floor_monkeypatch.setattr(platform_compat, name, unbuilt)
+
+
 @pytest.fixture(autouse=True)
 def _a_shared_monkeypatch_first(monkeypatch):  # flake-ok: patches nothing; only fixes setup order
     """Build the test's shared ``monkeypatch`` before every other autouse fixture here.
