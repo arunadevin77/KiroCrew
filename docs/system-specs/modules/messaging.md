@@ -6453,7 +6453,7 @@ the group's `chat_id` appearing in
 (`denied_group_not_allowed`). Inside an allowed group a message is served only
 when its `mentions` list names this app's bot by `open_id`
 (`LarkInbound.bot_mentioned`, computed by `LarkClient._handle_receive_v1`
-against `LarkClient.bot_open_id`). The bot id is resolved after `start()` by a
+against `LarkClient._bot_open_id`). The bot id is resolved after `start()` by a
 background task (`_resolve_bot_open_id`, `GET /open-apis/bot/v3/info` on a
 probe client carrying a request timeout, retried with capped backoff, one
 WARNING on the first failure); until it resolves, every group message reads as

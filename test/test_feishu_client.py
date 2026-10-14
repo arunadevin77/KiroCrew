@@ -1740,7 +1740,7 @@ class TestBotIdentity:
         client = client_mod.LarkClient(app_id="a", app_secret="s")
         await client.start()
         try:
-            await async_wait_until(lambda: client.bot_open_id == "ou_bot")
+            await async_wait_until(lambda: client._bot_open_id == "ou_bot")
         finally:
             await client.close()
             client._thread.join(timeout=5.0)
@@ -1775,7 +1775,7 @@ class TestBotIdentity:
         ):
             await client.start()
             try:
-                await async_wait_until(lambda: client.bot_open_id == "ou_bot")
+                await async_wait_until(lambda: client._bot_open_id == "ou_bot")
             finally:
                 await client.close()
                 client._thread.join(timeout=5.0)
@@ -1806,7 +1806,7 @@ class TestBotIdentity:
             client._thread.join(timeout=5.0)
             await async_wait_until(task.done)
 
-        assert client.bot_open_id == ""
+        assert client._bot_open_id == ""
 
 
 class TestParseBotOpenId:

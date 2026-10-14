@@ -285,11 +285,6 @@ class LarkClient:
 
     # -- Outbound -----------------------------------------------------------
 
-    @property
-    def bot_open_id(self) -> str:
-        """This app's bot open_id, or "" while it is unresolved."""
-        return self._bot_open_id
-
     def set_message_handler(self, handler: MessageHandler) -> None:
         self._on_message = handler
 
