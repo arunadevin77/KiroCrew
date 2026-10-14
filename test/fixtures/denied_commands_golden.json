@@ -507,13 +507,13 @@
     "id": "sql-drop-database",
     "pattern": "(?i:DROP\\s+DATABASE.*)",
     "category": "sql",
-    "description": "Blocks SQL DROP DATABASE statements, which irreversibly delete an entire database and all its tables and data."
+    "description": "Blocks SQL DROP DATABASE statements, which irreversibly delete an entire database and all its tables and data. Matches the statement's text anywhere on the command line, quoted text and heredoc bodies included; prose that mentions it is written with the file-editing tool and passed by path."
   },
   {
     "id": "sql-drop-table",
     "pattern": "(?i:DROP\\s+TABLE.*)",
     "category": "sql",
-    "description": "Blocks SQL DROP TABLE statements, which permanently delete a table and every row it contains."
+    "description": "Blocks SQL DROP TABLE statements, which permanently delete a table and every row it contains. Matches the statement's text anywhere on the command line, quoted text and heredoc bodies included; prose that mentions it is written with the file-editing tool and passed by path."
   },
   {
     "id": "credential-exfil-export-aws-access",
@@ -633,7 +633,7 @@
     "id": "sql-truncate-table",
     "pattern": "(?i:TRUNCATE\\s+TABLE.*)",
     "category": "sql",
-    "description": "Blocks SQL TRUNCATE TABLE statements, which delete all rows in a table in one unrecoverable operation."
+    "description": "Blocks SQL TRUNCATE TABLE statements, which delete all rows in a table in one unrecoverable operation. Matches the statement's text anywhere on the command line, quoted text and heredoc bodies included; prose that mentions it is written with the file-editing tool and passed by path."
   },
   {
     "id": "pipe-to-shell-wget-bash",

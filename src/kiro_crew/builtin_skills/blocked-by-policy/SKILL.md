@@ -1,6 +1,6 @@
 ---
 name: blocked-by-policy
-description: What to do when a Kiro Crew safety policy blocks a tool call — tell a policy block from a user refusal, then take the sanctioned path for that class (AWS creds, SSO, key files, trust root, exfiltration, self-protection). Load on any 'command denied' result or refused credential/AWS access.
+description: What to do when a Kiro Crew safety policy blocks a tool call — tell a policy block from a user refusal, then take the sanctioned path for its class (AWS creds, SSO, key files, trust root, exfiltration, self-protection, SQL text in a heredoc). Load on a 'command denied' result or refused AWS access.
 triggers: blocked by security policy, user denied tool execution, access to sensitive path, sensitive credential path, data-exfiltration pattern, governance trust-root, permission denied by policy, cannot access aws, no aws credentials, aws access denied, sso login, credential path, credential tool not available
 ---
 
@@ -182,6 +182,34 @@ What to do instead depends on what you were actually after:
   instead of a shell reader, a CLI subcommand's own output instead of importing
   its internals, or an ordinary package query. If nothing else will do, hand that
   one step to the user rather than re-spelling it.
+
+### A destructive SQL statement matched as text
+
+The `sql` rules (`DROP DATABASE`, `DROP TABLE`, `TRUNCATE TABLE`) match the
+statement's **text** wherever it appears on the command line — quoted, as an
+`echo` or `printf` argument, inside a heredoc body, in a `python -c` program.
+A command line cannot tell a statement a database client is about to run from
+one that is only being written down, so the rule refuses rather than guess. That
+means a shell command writing release notes that mention the statement is refused
+exactly like one that runs it, and the refusal names the SQL pattern even though
+you ran no SQL.
+
+It is a matter of what the line carries, not how it is spelled: re-spelling the
+statement, splitting its keywords, or moving it to another shell writer meets the
+same rule. What to do depends on what you were doing:
+
+- **The statement was going to run against a database.** That is exactly what is
+  refused. Name the statement and let the user run it themselves; no other door
+  to that effect is open to you.
+- **The statement is prose or data you are writing** — notes, a document, a
+  comment or commit body, a fixture a linter must reject. The shell was never
+  needed: the file-editing tool is not a shell command, so this rule does not
+  read what it writes. Write the document with that tool, then hand its path to
+  a prose reader such as `gh … --body-file <path>` or `git commit -F <path>`. A
+  database client (`psql`, `mysql`, `sqlite3` or any other) must never be handed
+  that document: that is the refused statement by another route.
+- **The text was not yours to write and the command line merely carried it.**
+  Say so plainly and report it as an over-block.
 
 ## Reading the refusal
 

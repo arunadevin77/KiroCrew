@@ -1182,7 +1182,9 @@ BUILTIN_DENIED_RULES: list[DeniedCommandRule] = [
         category="sql",
         description=(
             "Blocks SQL DROP DATABASE statements, which irreversibly delete an entire database "
-            "and all its tables and data."
+            "and all its tables and data. Matches the statement's text anywhere on the command "
+            "line, quoted text and heredoc bodies included; prose that mentions it is written "
+            "with the file-editing tool and passed by path."
         ),
     ),
     DeniedCommandRule(
@@ -1191,7 +1193,9 @@ BUILTIN_DENIED_RULES: list[DeniedCommandRule] = [
         category="sql",
         description=(
             "Blocks SQL DROP TABLE statements, which permanently delete a table and every row "
-            "it contains."
+            "it contains. Matches the statement's text anywhere on the command line, quoted "
+            "text and heredoc bodies included; prose that mentions it is written with the "
+            "file-editing tool and passed by path."
         ),
     ),
     DeniedCommandRule(
@@ -1379,7 +1383,9 @@ BUILTIN_DENIED_RULES: list[DeniedCommandRule] = [
         category="sql",
         description=(
             "Blocks SQL TRUNCATE TABLE statements, which delete all rows in a table in one "
-            "unrecoverable operation."
+            "unrecoverable operation. Matches the statement's text anywhere on the command "
+            "line, quoted text and heredoc bodies included; prose that mentions it is written "
+            "with the file-editing tool and passed by path."
         ),
     ),
     DeniedCommandRule(

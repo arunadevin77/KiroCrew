@@ -1589,7 +1589,17 @@ default-ON catalog spanning the categories `aws-destructive`,
 category: a row matching a credential-store path in command text duplicates the
 sandbox's bind-mask and `is_sensitive_path`, and refuses read-only work.
 `BUILTIN_DENY_PATTERNS` is retained as a derived alias
-(`[r.pattern for r in BUILTIN_DENIED_RULES]`).
+(`[r.pattern for r in BUILTIN_DENIED_RULES]`). The three `sql` rows are plain text
+matches over the whole command line (`is_denied` parses no heredoc body specially),
+so they refuse the statement inside a heredoc body, a `printf` argument or an
+inline program exactly as they refuse one handed to a database client. That reach
+is deliberate and is not narrowed here — which prose consumers would be safe to
+exempt is a decision on a built-in deny rule and belongs to a maintainer — so the
+rows say it in their `description`, and `deny_guidance` routes the category to
+`DENY_CLASS_STATEMENT_TEXT`, whose remediation explains the text match, forbids
+re-spelling, hands a statement meant to run back to the user, and names the
+file-editing tool (not a shell command, so not a subject of this rule) for prose
+or data, referenced by path afterwards.
 
 **Effective-set resolver** — `compute_effective_denied(rules, disabled_ids,
 disable_all, user_added, governance_pins)` is a pure, order-preserving, deduped

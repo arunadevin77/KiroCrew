@@ -5739,7 +5739,18 @@ catalog rule — the regex tier and the argv-structural self-protection floor le
 with the rule's pattern, the git-publish gated floor with its id — yields the
 class from that rule's identity (`_RULE_CLASSES`, else its category via
 `_CATEGORY_CLASSES`), and nothing else is consulted for such a refusal, including
-when the rule has no guidance to offer. A producer that refuses generically — the
+when the rule has no guidance to offer. Three categories route: `credential-exfil`
+and `self-protection` because the refused thing has a sanctioned path, and `sql`
+(`DENY_CLASS_STATEMENT_TEXT`) for the opposite reason — its rules are plain text
+matches over the whole command line, so they refuse the statement inside a heredoc
+body, a `printf` argument or an inline program exactly as they refuse one handed
+to a database client, and the bare pattern line reads as a verdict on SQL the agent
+never ran. That guidance keeps the refusal and explains its reach: the match is
+deliberately not narrowed (which prose consumers would be safe is a maintainer
+decision on a deny rule, tracked separately), re-spelling meets the same rule, a
+statement meant to run is the user's step, and prose or data is written with the
+file-editing tool — which is not a shell command and is not a subject of this
+rule — then referenced by path. A producer that refuses generically — the
 un-weakenable fnmatch overlay, the sensitive-path floor, the exfiltration-shape
 audit — yields it from anchor phrases in the refusal text plus the subject, which
 is the only signal those have. Inferring the class from a rule's REGEX SOURCE

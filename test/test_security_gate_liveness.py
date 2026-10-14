@@ -312,7 +312,12 @@ def _url_payload_command(n: int) -> str:
 #: ``launcher.terminate``. Ten lines, of which four are the comprehension and six the
 #: reason every entry in that list carries. No matching rule, no threshold and no pass
 #: moved -- a target was added to a list the gate already walks.
-_PACKAGE_LINE_BUDGET = 29_175
+#:
+#: Raised again, from 29,175, for the three ``sql`` catalog rows' descriptions,
+#: which now say the match is on the statement's text anywhere on the command line
+#: (heredoc bodies included) and name the file-editing tool for prose that mentions
+#: one. Six lines of catalog text: no pattern, matcher or floor change.
+_PACKAGE_LINE_BUDGET = 29_181
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
