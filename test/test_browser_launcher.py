@@ -466,6 +466,7 @@ class TestOpenUrlArgv:
 
     def test_missing_cli_is_an_honest_error(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(launcher, "cli_path", lambda: None)
+        monkeypatch.setattr(launcher, "legacy_launcher_refused", lambda: False)
         fake, calls = _runs([])
         with patch.object(launcher, "_run_cli", fake):
             result = launcher.open_url(URL, "chat-1")
