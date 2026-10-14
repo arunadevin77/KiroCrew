@@ -15,11 +15,14 @@ from typing import Any, Literal, overload
 from kiro_crew import platform_compat, windows_acl
 from kiro_crew.atomic_write import atomic_write, fsync_dir, read_bytes_with_retry
 from kiro_crew.execution_context import (
+    MEMBER_ON_GLOBAL_REASON,
+    MEMBER_WITHOUT_IDENTITY_REASON,
     ExecutionContext,
     MemoryStoreRef,
     bind_session_execution,
     execution_from_record,
     stricter_memory_mode,
+    unavailable_reason,
     validate_execution,
 )
 
@@ -429,7 +432,7 @@ def admission_errors(function):
             code = "workflow_allocator_unavailable"
         except (WorkflowMemoryError, UnknownMemoryStore) as exc:
             _log_refusal("Workflow admission refused", exc)
-            message = "Workflow memory is unavailable; no Global fallback was used."
+            message = memory_refusal_message(exc)
             code = "workflow_memory_unavailable"
         return {
             "ok": False,
@@ -442,8 +445,42 @@ def admission_errors(function):
     return guarded
 
 
+_GENERIC_MEMORY_REFUSAL = "Workflow memory is unavailable; no Global fallback was used."
+_MEMBER_BINDING_REASONS = frozenset({MEMBER_ON_GLOBAL_REASON, MEMBER_WITHOUT_IDENTITY_REASON})
+_MEMBER_BINDING_REMEDY = (
+    "To run workflows here, start a chat with no crewmate picked, or pick a crewmate "
+    "that has its own memory (every new crewmate gets one)."
+)
+
+
+def memory_refusal_message(exc: BaseException) -> str:
+    """The caller-facing text of a memory-class admission refusal.
+
+    Names the refusal's own reason, then the no-Global-fallback guarantee. A
+    memory-store refusal it wraps adds its reason in parentheses, so a wrapper
+    such as "malformed execution context" still says what was wrong underneath;
+    any other cause (an ``OSError`` and its path) stays in the log only. A
+    refusal caused by the crewmate's own memory binding also names the two ways
+    to run a workflow. A refusal that names no reason keeps the generic text.
+    """
+    from kiro_crew.memory_stores import UnknownMemoryStore
+
+    reasons = [unavailable_reason(exc)]
+    if isinstance(exc.__cause__, UnknownMemoryStore):
+        reasons.append(unavailable_reason(exc.__cause__))
+    named = [reason for reason in dict.fromkeys(reasons) if reason]
+    if not named:
+        return _GENERIC_MEMORY_REFUSAL
+    reason = named[0] if len(named) == 1 else f"{named[0]} ({named[1]})"
+    message = f"Workflow memory is unavailable: {reason}. No Global fallback was used."
+    if _MEMBER_BINDING_REASONS.intersection(named):
+        message = f"{message} {_MEMBER_BINDING_REMEDY}"
+    return message
+
+
 def _log_refusal(what: str, exc: BaseException) -> None:
-    """Keep the original refusal text in the log; the caller sees a summary."""
+    """Log the refusal with its cause; the caller's text never carries the cause's
+    own detail unless it is a memory-store refusal."""
     cause = exc.__cause__
     if cause is not None:
         logger.warning("%s: %s (%s: %s)", what, exc, type(cause).__name__, cause)

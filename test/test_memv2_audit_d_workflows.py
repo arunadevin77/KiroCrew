@@ -261,8 +261,18 @@ async def test_global_parent_still_runs_when_private_members_exist(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("damage", ["corrupt-context", "missing-context"])
-async def test_unreadable_canonical_identity_never_falls_back(private_parent, damage):
+@pytest.mark.parametrize(
+    ("damage", "reason"),
+    [
+        ("corrupt-context", "malformed execution context"),
+        ("missing-context", "session has no canonical member identity"),
+        (
+            "member-on-global",
+            "malformed execution context (a member cannot use the Global store)",
+        ),
+    ],
+)
+async def test_unreadable_canonical_identity_never_falls_back(private_parent, damage, reason):
     log = ConversationLog()
     path = log._path(PARENT)
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -271,6 +281,8 @@ async def test_unreadable_canonical_identity_never_falls_back(private_parent, da
     row = json.loads(lines[0])
     if damage == "corrupt-context":
         row["execution_context"] = {"broken": True}
+    elif damage == "member-on-global":
+        row["execution_context"]["store"]["store_id"] = "default"
     else:
         row.pop("execution_context")
     lines[0] = json.dumps(row)
@@ -279,6 +291,11 @@ async def test_unreadable_canonical_identity_never_falls_back(private_parent, da
     svc = service.WorkflowService(sessions=sessions, persist=False)
     result = await svc.start(SCRIPT, session_key=PARENT)
     assert result["code"] == "workflow_memory_unavailable"
+    assert result["error"].startswith(f"Workflow memory is unavailable: {reason}")
+    assert "No Global fallback was used." in result["error"]
+    assert ("start a chat with no crewmate picked" in result["error"]) is (
+        damage == "member-on-global"
+    )
     assert not sessions.acquired
     assert svc.list_runs() == []
 

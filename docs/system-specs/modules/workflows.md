@@ -1756,7 +1756,20 @@ subclass. `admission_errors` logs the original refusal text (and its cause) at
 warning level, then answers an allocator refusal with code
 `workflow_allocator_unavailable` and the refusal's own text -- no memory store
 was consulted, so the memory wording would misname it. Every other
-`WorkflowMemoryError` keeps code `workflow_memory_unavailable` and the text
+`WorkflowMemoryError` or `UnknownMemoryStore` keeps code
+`workflow_memory_unavailable` and the guarantee "No Global fallback was used.",
+and names its own reason first: "Workflow memory is unavailable: <reason>. No
+Global fallback was used." `memory_refusal_message` builds that text with
+`execution_context.unavailable_reason`, which strips the shared "Execution memory
+is unavailable: ...; Global was not used" framing so the wording never doubles. A
+memory-store refusal the error wraps adds its reason in parentheses ("malformed
+execution context (a member cannot use the Global store)"); any other cause, such
+as an `OSError` and its path, stays in the log only. When either reason is one of
+the two a crewmate's own binding produces (`MEMBER_ON_GLOBAL_REASON`,
+`MEMBER_WITHOUT_IDENTITY_REASON`), the text adds the two ways to run a workflow:
+a chat with no crewmate picked (the default template on Global), or a crewmate
+with its own memory. A crewmate on Global V1 is still refused: member memory
+never substitutes Global. A refusal that names no reason keeps the generic text
 "Workflow memory is unavailable; no Global fallback was used."
 
 Saved task-plan execution passes its captured execution context to TaskRunner,

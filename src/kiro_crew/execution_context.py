@@ -229,10 +229,40 @@ def clear_session_execution(
         forget_durable_vouch(session_key, only_if=expected.to_record())
 
 
+_UNAVAILABLE_PREFIXES = ("Execution memory is unavailable: ", "Workflow memory is unavailable: ")
+_UNAVAILABLE_SUFFIXES = ("; Global was not used", "; no Global fallback was used")
+_UNAVAILABLE_HEADLINES = ("Execution memory is unavailable", "Workflow memory is unavailable")
+
+#: The two refusals a crewmate's own memory binding produces. Callers that turn
+#: a refusal into user-facing text key a remedy on these exact reasons.
+MEMBER_ON_GLOBAL_REASON = "a member cannot use the Global store"
+MEMBER_WITHOUT_IDENTITY_REASON = "member has no persisted identity"
+
+
 def _unavailable(message: str):
     from kiro_crew.memory_stores import UnknownMemoryStore
 
-    return UnknownMemoryStore(f"Execution memory is unavailable: {message}; Global was not used")
+    return UnknownMemoryStore(f"{_UNAVAILABLE_PREFIXES[0]}{message}{_UNAVAILABLE_SUFFIXES[0]}")
+
+
+def unavailable_reason(exc: BaseException) -> str:
+    """The specific reason a memory refusal names, without its shared wrapper.
+
+    Strips the "Execution memory is unavailable: ...; Global was not used"
+    framing (and the workflow spelling of it) so a caller can put the reason in
+    its own sentence without the wording doubling up. Answers ``""`` when the
+    refusal is only the wrapper and names no reason of its own.
+    """
+    text = str(exc).strip().rstrip(".").strip()
+    for suffix in _UNAVAILABLE_SUFFIXES:
+        if text.endswith(suffix):
+            text = text[: -len(suffix)].rstrip()
+            break
+    for prefix in _UNAVAILABLE_PREFIXES:
+        if text.startswith(prefix):
+            text = text[len(prefix) :].lstrip()
+            break
+    return "" if text in _UNAVAILABLE_HEADLINES else text
 
 
 def canonical_memory_mode(mode: object) -> str:
@@ -269,7 +299,7 @@ class MemoryStoreRef:
 
             validate_slug(self.member_id)
             if self.store_id == "default":
-                raise _unavailable("a member cannot use the Global store")
+                raise _unavailable(MEMBER_ON_GLOBAL_REASON)
 
     @property
     def legacy_name(self) -> str:
@@ -494,7 +524,7 @@ def resolve_member_execution(
     declaration = config.memory_stores.get(store)
     member_id = getattr(agent, "member_id", "") or None
     if getattr(declaration, "memory_version", 1) == 2 and not member_id:
-        raise _unavailable("member has no persisted identity")
+        raise _unavailable(MEMBER_WITHOUT_IDENTITY_REASON)
     return ExecutionContext(
         member_id=member_id,
         store=MemoryStoreRef(store, member_id),
