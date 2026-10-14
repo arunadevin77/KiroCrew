@@ -214,6 +214,7 @@ choice blob makes the usage line unreadable.
 | `kirocrew chat -m "msg"` | Send a single message, print streaming response |
 | `kirocrew chat` | Interactive chat mode (readline, exit with Ctrl+D) |
 | `kirocrew chat --model X` | Override model for this session |
+| `kirocrew chat --agent <name>` | Chat as a crew member or a kiro agent. A `config.agents` key is a crew member and is resolved first through `resolve_agent_bindings`, as the dashboard and cron do: the session starts the member's bound kiro agent (the built-in `kirocrew` when it binds none) under the member's crew identity, with `--model` first and then the member's model pin. A member whose memory store is unusable is refused with a one-line error before anything spawns. Any other name is passed to kiro-cli as a kiro agent, unchanged. `agent.default_agent` is a template name and is never member-resolved. The tool gate keeps the name typed. The member's private memory store is not bound: every CLI chat shares the `cli_chat` session key. |
 | `kirocrew gateway` | Start the Kiro Crew server (dashboard + messaging channels) |
 | `kirocrew gateway --slack-only` | Start without dashboard or SSH tunnel instructions |
 | `kirocrew gateway --no-crons` | Start without cron scheduler (use when another instance handles crons) |

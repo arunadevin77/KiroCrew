@@ -20,6 +20,7 @@ from kiro_crew.config.loader import (
     build_provider_factory,
     config_path,
     crew_autocompact_pct,
+    resolve_agent_bindings,
     resolve_crew_identity,
     update_config_locked,
 )
@@ -39,6 +40,7 @@ from kiro_crew.hooks import (
     target_paths,
 )
 from kiro_crew.llm_helpers import _steer_host_deny, unfinished_turn_error
+from kiro_crew.memory_stores import UnknownMemoryStore
 from kiro_crew.messaging.commands import compact_unsupported_backend
 from kiro_crew.permission_floor import (
     OUTCOME_PENDING_APPROVAL,
@@ -284,6 +286,24 @@ def _build_tool_gate(agent: str = "") -> _ToolGate:
     )
 
 
+def _resolve_cli_agent(cfg: KiroCrewConfig, name: str) -> tuple[str, str | None, str]:
+    """Map ``--agent``'s name to ``(kiro_agent, crew_agent, member_model)``.
+
+    ``--agent`` takes a crew member or a kiro agent. A ``config.agents`` key is a
+    member, checked first as the dashboard and the cron path do: it starts its
+    bound kiro agent under its own crew identity, with its model pin. A member
+    bound to no kiro agent runs the built-in one. Any other name is a kiro agent
+    and passes through with no crew identity and no model pin.
+
+    Blocking: resolving a member's bound agent may scan the agents directory, so
+    an ``async`` caller runs this on a worker thread.
+    """
+    if name not in cfg.agents:
+        return name, None, ""
+    bindings = resolve_agent_bindings(cfg, name, validate_memory_files=False)
+    return bindings.kiro_agent or _DEFAULT_KIRO_AGENT, name, bindings.model
+
+
 async def _chat(message: str | None, model: str | None, agent: str | None = None) -> None:
     """Run a single message or interactive chat session."""
     cfg = KiroCrewConfig.load()
@@ -294,8 +314,24 @@ async def _chat(message: str | None, model: str | None, agent: str | None = None
     # resolves an omitted agent to ``kirocrew``; passing an empty string only to
     # the gate would therefore run that agent while bypassing its task profile.
     agent_name = agent or cfg.agent.default_agent or _DEFAULT_KIRO_AGENT
+    # Only ``--agent`` names a member: ``agent.default_agent`` is a template name.
+    kiro_agent, crew_agent, member_model = agent_name, None, ""
+    if agent:
+        try:
+            kiro_agent, crew_agent, member_model = await asyncio.to_thread(
+                _resolve_cli_agent, cfg, agent
+            )
+        except UnknownMemoryStore as exc:
+            print(f"\n❌ {safe_terminal_line(str(exc))}", file=sys.stderr)
+            sys.exit(1)
     provider: LLMProvider = build_provider_factory(cfg)(
-        _CLI_SESSION_KEY, agent=agent_name, channel_id=channel_id
+        _CLI_SESSION_KEY,
+        agent=kiro_agent,
+        crew_agent=crew_agent,
+        channel_id=channel_id,
+        # A member's session takes ``--model`` first, then the member's pin, as a
+        # dashboard session does; a plain kiro agent keeps the global model path.
+        model_override=(model or member_model or None) if crew_agent else None,
     )
     # The person at the terminal waits on every start (kiro_crew.start_priority).
     provider.start_priority = StartPriority.FOREGROUND
