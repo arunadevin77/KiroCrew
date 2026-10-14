@@ -631,6 +631,30 @@ def read_pid(port: int) -> int | None:
     return _read_pid_path(path)
 
 
+def read_pid_record(port: int) -> tuple[int, str] | None:
+    """``(pid, start_token)`` the gateway serving *port* recorded, or ``None``.
+
+    :func:`read_pid` with the start identity that proves the pid still names the
+    process that wrote it (:func:`read_pid_record_path`). Read-only: never
+    creates ``run/``.
+    """
+    return read_pid_record_path(config_dir() / RUN_DIR_NAME / pid_file_name(port))
+
+
+def is_recorded_gateway(peer: int | None, record: tuple[int, str] | None) -> bool:
+    """Whether *peer* (a socket listener's kernel-reported pid) is the gateway in *record*.
+
+    The one check every owner-credential client runs before sending a byte over
+    the dashboard socket: the pid must equal the recorded one AND still carry the
+    recorded start identity, so a recycled pid cannot pass. Deny by default -- an
+    unknown peer, a missing record or an empty start token all refuse.
+    """
+    if peer is None or record is None:
+        return False
+    pid, start = record
+    return bool(start) and pid == peer and pid_start_token(peer) == start
+
+
 def read_launcher(port: int) -> str | None:
     """Launcher path recorded by the gateway serving *port*, or ``None``.
 

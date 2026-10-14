@@ -87,8 +87,7 @@ def _gateway_peer_verifier(port: int):
         )
 
     def _verify(sock: socket.socket) -> None:
-        pid, start = record
-        if get_peer_pid(sock) != pid or run_marker.pid_start_token(pid) != start:
+        if not run_marker.is_recorded_gateway(get_peer_pid(sock), record):
             raise ForgetRefused(
                 "the dashboard socket is not answered by the recorded gateway; "
                 "nothing was forgotten."

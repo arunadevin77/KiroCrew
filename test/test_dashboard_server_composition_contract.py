@@ -1438,7 +1438,7 @@ _DASHBOARD_BOOT = tuple("""
     _register_workflow_lifecycle _register_crewmate_prune_gate _register_change_card_hook
     _register_unix_socket_cleanup build_hardened_runner on_gateway_startup
     init_hook_reconciler async_safe_context_call current_context _arm_listener_guard
-    _kick_crewmate_prune subprocess_executor _start_unix_site _resolved_bound_port
+    _kick_crewmate_prune subprocess_executor _resolved_bound_port _start_unix_site
     _start_secondary_loopback_site subprocess_executor _note_listener_sidecar
     _reconcile_listener_publication _kick_workflow_initialization
     _kick_connections_warm_scavenge _kick_session_search_index _kick_config_watch
@@ -1491,8 +1491,8 @@ _API_BOOT = tuple("""
     _register_listener_guard_shutdown _register_browser_install_cleanup
     _register_connections_warm_lifecycle _register_workflow_lifecycle
     _register_unix_socket_cleanup build_hardened_runner bind_address_for _start_site
-    _arm_listener_guard _export_bound_port _resolved_bound_port _start_unix_site
-    _resolved_bound_port _resolved_bound_host _start_secondary_loopback_site
+    _arm_listener_guard _export_bound_port _resolved_bound_port _resolved_bound_port
+    _start_unix_site _resolved_bound_host _start_secondary_loopback_site
     subprocess_executor _resolved_bound_host _resolved_bound_host _note_listener_sidecar
     _resolved_bound_host _reconcile_listener_publication _kick_workflow_initialization
     _kick_connections_warm_scavenge _kick_session_search_index _kick_config_watch
@@ -1699,8 +1699,8 @@ def _routes(app: web.Application) -> list[tuple[str, str, str]]:
 #: SHA-256 of the MCP route table's ``"<method> <path> <handler>"`` rows in
 #: registration order, and their count. The table is shared by both entrypoints, so a
 #: route added to it on purpose updates these with it.
-_MCP_TABLE_ROWS = 287
-_MCP_TABLE_DIGEST = "614c842f1da22d1f83aa586e09ece85839236adfba48bda05c1c0251b6bce948"
+_MCP_TABLE_ROWS = 289
+_MCP_TABLE_DIGEST = "a20acd62f56d80e5276c8069ad837585bd0a0f9ab180c29219a7f684fee18052"
 
 
 def test_the_mcp_route_table_keeps_its_rows_and_order() -> None:
