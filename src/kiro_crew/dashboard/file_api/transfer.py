@@ -93,7 +93,6 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
     resp.content_type = "text/event-stream"
     resp.headers["Cache-Control"] = "no-cache"
     resp.headers["X-Accel-Buffering"] = "no"
-    await resp.prepare(request)
 
     poll_interval = 1.0
     read_cap = 512_000
@@ -105,6 +104,7 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
             return f.read(cap)
 
     try:
+        await resp.prepare(request)
         while not (request.transport is None or request.transport.is_closing()):
             # Each poll tick is a probe on the watched path. A refused tick is
             # skipped, not fatal: the stream is already open, the pool is busy
