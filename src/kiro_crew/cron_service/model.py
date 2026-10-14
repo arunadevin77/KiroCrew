@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from kiro_crew.credential_errors import is_auth_error_message
 from kiro_crew.cron_service.schedule import _job_tz
 
 # The cron subsystem logs on one channel whichever owner emits the record, so an
@@ -377,7 +378,7 @@ class CronJob:
         except Exception:
             logger.debug("SEL logging failed in cron auto-pause transition", exc_info=True)
 
-    def record_failure(self) -> None:
+    def record_failure(self, *, auth_expiry: bool = False) -> None:
         """Count one consecutive failure and auto-pause once the threshold is hit.
 
         Auto-pause is execution-owned: it sets both `enabled` (so the in-memory
@@ -393,9 +394,36 @@ class CronJob:
         (:meth:`record_success`) clears the stamp, so it is not mistaken for
         that resume. ``failure_recorded`` is still set, so the
         timeout arm and the reaper treat this run's failure as handled.
+
+        A failure whose ``last_error`` is a terminal auth/credential error
+        (expired session, rejected Bedrock token) is counted as a run that
+        occurred but not toward the auto-pause tally: the failure is
+        environmental and self-heals once the user re-authenticates. The
+        counter still moves on a permanent credential break because
+        ``is_auth_error_message`` excludes IAM-propagation races whose retries
+        exhaust at a permanently bad key.
         """
         self.failure_recorded = True
         if self.auto_paused_at_start and not self.auto_paused:
+            return
+        # Credential/auth failures are environmental: the job is healthy and
+        # will succeed once the user re-authenticates. Counting them toward
+        # auto-pause would silence a whole job after one overnight session
+        # expiry. ``failure_recorded`` is already set so the timeout arm and
+        # the reaper see this run as handled; the consecutive counter and the
+        # auto-pause gate are the only steps skipped.
+        # Agent jobs only: script/command jobs set last_error from the process
+        # stderr tail, which can contain third-party text that matches the
+        # vocabulary but that a Kiro Crew re-auth cannot fix.
+        # ``auth_expiry=True`` is passed by the gateway when the exception is
+        # a typed ``AcpAuthRequired``; the text fallback handles Bedrock-error
+        # paths that the gateway cannot classify by type.
+        if auth_expiry or (
+            not self.command
+            and not self.script
+            and self.last_error
+            and is_auth_error_message(self.last_error)
+        ):
             return
         self.consecutive_failures += 1
         if self.consecutive_failures >= _AUTO_PAUSE_THRESHOLD and not self.auto_paused:

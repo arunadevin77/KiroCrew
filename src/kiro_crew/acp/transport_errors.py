@@ -27,7 +27,7 @@ from kiro_crew.acp.runtime_models import (
 )
 from kiro_crew.acp.types import ACP_BACKENDS_HOST_AUTH_CALLBACK, ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS
 from kiro_crew.agent_sdk import host_auth
-from kiro_crew.credential_errors import is_credential_propagation_delay
+from kiro_crew.credential_errors import _RE_INVALID_BEARER, is_credential_propagation_delay
 from kiro_crew.sandbox import (
     LAUNCHER_EXIT_PREFIXES,
     SANDBOX_LAYER_CREW,
@@ -718,12 +718,9 @@ _RE_SESSION_EXPIRED = re.compile(
 # _RE_SESSION_EXPIRED matches it and the failure reaches the user as the raw
 # upstream string with no sign-in affordance. Grouped with session expiry
 # because the remedy is identical — sign in again; no retry can make a rejected
-# credential valid. The gap between the two words is fenced to one sentence and
-# one line so the pattern cannot span unrelated errors in a combined haystack.
-_RE_INVALID_BEARER = re.compile(
-    r"\b(?:bearer\s+token\b[^.\n]{0,80}?\binvalid|invalid\s+bearer\s+token)\b",
-    re.IGNORECASE,
-)
+# credential valid.
+# Defined in ``credential_errors`` (imported above) so the cron auto-pause
+# carve-out and this module share one spelling rather than two that can drift.
 
 
 def _is_session_expired(haystack: str) -> bool:

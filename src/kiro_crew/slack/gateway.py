@@ -122,6 +122,7 @@ from kiro_crew.constants import (
 )
 from kiro_crew.context import ContextBuilder, session_store_for_turn
 from kiro_crew.context_management import summarize_result
+from kiro_crew.credential_errors import is_auth_error_message
 from kiro_crew.cron import (  # noqa: F401
     _AUTO_PAUSE_THRESHOLD,
     _SUBPROC_CLEANUP_ALLOWANCE_SECS,
@@ -6062,7 +6063,7 @@ class GatewayOrchestrator:
                             job.consecutive_failures, _AUTO_PAUSE_THRESHOLD - 1
                         )
                         runtime_death.clear_shared_deaths(f"cron:{job.id}")
-                    job.record_failure()
+                    job.record_failure(auth_expiry=_auth_expiry)
 
                 if not _job_owns_failure:
                     # Not charging is not the same as never charging. A job whose
@@ -6164,6 +6165,38 @@ class GatewayOrchestrator:
                 # selects the "still failing" wording on an alert that DOES go out
                 # because the reminder window has expired.
                 is_dup = fh == job.last_failure_hash
+                # For agent (LLM) jobs the gateway exception handler is the only
+                # place that knows the failure text before record_failure() runs;
+                # command/script paths already set last_error before their own
+                # record_failure() call. Setting it here (if not already set by an
+                # earlier branch) lets record_failure()'s credential-error carve-out
+                # work for agent failures. The _execute() catcher overwrites it with
+                # str(exc) after the callback raises, so the final stored value is
+                # unchanged; the intermediate value is only read by record_failure().
+                if not job.last_error:
+                    job.last_error = _exc_text
+                # One predicate drives both the display and the charge. Typed signal
+                # first: AcpError + hasattr(auth_required) identifies AcpAuthRequired
+                # (the only subclass that sets it) without a new ACP boundary import.
+                # Text fallback covers AWS/Bedrock vocab too specific for third-party
+                # output; scoped to agent jobs so script/command stderr is exempt.
+                # _display_bump and _charge_failure(auth_expiry=...) both read this.
+                # auth_required=True on an AcpError marks it as a Kiro credential
+                # expiry that a re-auth will fix. AcpError.__init__ sets it False by
+                # default; AcpAuthRequired overrides it True only for the Kiro host-auth
+                # backend. Text fallback catches Bedrock ExpiredToken and session-expiry
+                # wording that does not surface as AcpAuthRequired.
+                _auth_expiry = (
+                    isinstance(exc, AcpError)
+                    and getattr(exc, "auth_required", False)
+                    and not job.command
+                    and not job.script
+                ) or (
+                    not job.command
+                    and not job.script
+                    and isinstance(job.last_error, str)
+                    and is_auth_error_message(job.last_error)
+                )
                 if self._failure_alert_is_duplicate(job, fh):
                     # record_failure() is the counter's sole owner: a suppressed
                     # duplicate is still a failed run, so it must count toward
@@ -6258,17 +6291,27 @@ class GatewayOrchestrator:
                 safe_reason = self._slack_safe_fenced(exc_detail)
                 # +1 only when the charge below will actually land. This run's
                 # failure is recorded after the awaited Slack attempt, so the
-                # display count has to add it explicitly -- but it is now gated on
-                # _job_owns_failure, and an exempted run that still claimed
-                # "N+1 consecutive failures" would report a number the counter
-                # driving auto-pause never reached.
-                _display_bump = 1 if (_job_owns_failure and not _gate_counted) else 0
+                # display count has to add it explicitly -- but only when the same
+                # conditions hold as in record_failure(): _job_owns_failure, not
+                # _gate_counted, and not an auth/credential expiry that
+                # record_failure() skips. One predicate governs both.
+                _display_bump = (
+                    1 if (_job_owns_failure and not _gate_counted and not _auth_expiry) else 0
+                )
                 if is_dup:
-                    fail_msg = (
-                        f"⏰ *Cron: {safe_name}* ❌ _Job still failing on {escape_mrkdwn(host)}"
-                        f" ({job.consecutive_failures + _display_bump} consecutive failures)"
-                        f" — check logs._\n```{safe_reason}```"
-                    )
+                    # When auth_expiry is set, the counter did not move: omit the
+                    # count clause so the alert does not say '(0 consecutive failures)'.
+                    if _auth_expiry:
+                        fail_msg = (
+                            f"⏰ *Cron: {safe_name}* ❌ _Job still failing on {escape_mrkdwn(host)}"
+                            f" (credential expired) — check logs._\n```{safe_reason}```"
+                        )
+                    else:
+                        fail_msg = (
+                            f"⏰ *Cron: {safe_name}* ❌ _Job still failing on {escape_mrkdwn(host)}"
+                            f" ({job.consecutive_failures + _display_bump} consecutive failures)"
+                            f" — check logs._\n```{safe_reason}```"
+                        )
                 else:
                     fail_msg = (
                         f"⏰ *Cron: {safe_name}* ❌ "
@@ -6287,11 +6330,17 @@ class GatewayOrchestrator:
                 # separately from ``render_for_slack`` is how the success leg
                 # composes its own channel string too.
                 if is_dup:
-                    channel_fail_msg = (
-                        f"⏰ Cron: {job.name} ❌ Job still failing on {host}"
-                        f" ({job.consecutive_failures + _display_bump} consecutive failures)"
-                        f" — check logs.\n{exc_detail}"
-                    )
+                    if _auth_expiry:
+                        channel_fail_msg = (
+                            f"⏰ Cron: {job.name} ❌ Job still failing on {host}"
+                            f" (credential expired) — check logs.\n{exc_detail}"
+                        )
+                    else:
+                        channel_fail_msg = (
+                            f"⏰ Cron: {job.name} ❌ Job still failing on {host}"
+                            f" ({job.consecutive_failures + _display_bump} consecutive failures)"
+                            f" — check logs.\n{exc_detail}"
+                        )
                 else:
                     channel_fail_msg = (
                         f"⏰ Cron: {job.name} ❌ Job failed on {host} — check logs.\n"
