@@ -504,7 +504,7 @@ jobs:
           # (`runner.temp` does exist, so it is used). That is a real weakness worth
           # naming: on a runner image that moves the actions directory this deny
           # stops matching, and it fails OPEN rather than closed. The pin in
-          # `test_ai_review_workflows.py` asserts both denies are present, which
+          # `test_ai_review_workflows_scope_isolation.py` asserts both denies are present, which
           # catches a deletion but cannot catch a layout change underneath.
           #
           # `Edit`, `MultiEdit` and `NotebookEdit` are DENIED rather than merely

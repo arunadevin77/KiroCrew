@@ -1501,7 +1501,7 @@ measures, never above.
   somebody chose on purpose.
 
 - **A child must use the tool the fixture discovered.** In
-  `test_ai_review_workflows.py`, keep the temporary `gh`/`sleep` stub directory
+  `ai_review_workflows_helpers.py`, keep the temporary `gh`/`sleep` stub directory
   first, the directory of `shutil.which("jq")` next, and Unix defaults last.
   Putting defaults before the discovered directory can select an older system
   jq that misparses adjacent JSON pages. Keep the adversarial input and the
@@ -3693,7 +3693,7 @@ assertion for the host fact it depends on before reading the test for a bug.
   measured instance and asserts the recorded schedule is `5 10 15 20 25` -- an event
   record, not a stopwatch; with the override removed it fails on "no sleep reached the
   override" after 151 s. Both files: 444 tests in 54 s at `-n 4`.
-  `test_ai_review_workflows.py` carries the same shim at five sites and already skips
+  `test_ai_review_workflows_comment_writes.py` carries the same shim at five sites and already skips
   them on Windows outright; un-skipping them through the same function is a follow-up
   that needs a host with `jq`.
 - **A process ceiling of one refuses the venv redirector's own spawn.**

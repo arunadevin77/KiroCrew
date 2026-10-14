@@ -2863,7 +2863,8 @@ failed run, which would make a recorded judgment look rejected.
 freshness checks, and `test_fable_consumes_only_a_bot_authored_sha_scoped_record` plus
 `test_gpt_has_clear_verdict_banner_and_human_override` for the consumer side, so an
 untrusted PR comment or a decision for an earlier push cannot turn a gate green.
-`TestForkLaneConsumesTheOverrideRecord` runs each fork lane's resolve step against
+`TestForkLaneConsumesTheOverrideRecord` (`test/test_ai_review_workflows_fork_verdict.py`)
+runs each fork lane's resolve step against
 every failing condition and a failed read, and
 `TestOverrideHandlerReRunsTheBoundForkLaneRun` runs the handler's fork re-run against
 a stubbed API.
@@ -3584,7 +3585,7 @@ Nothing the fork controls can influence these reviews:
   incomplete` as a *neutral* check, which is how three reviewers can stop reviewing
   every fork PR without turning anything red (#12099). The endpoints for both that
   bootstrap and the bun release asset are pinned by tests in
-  `test/test_ai_review_workflows.py`, because a `workflow_run` lane always executes
+  `test/test_ai_review_workflows_credential_isolation.py`, because a `workflow_run` lane always executes
   the default branch's yaml and so cannot exercise its own change pre-merge.
 - The fork GPT lane is the one fork reviewer whose model drives a shell
   (`codex exec`), so its Bedrock credential sits behind a UID boundary rather than
