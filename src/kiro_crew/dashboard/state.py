@@ -2138,6 +2138,13 @@ COMPACTION_RECOVERY_PREFIX = "[Context compacted — automatic recovery]"
 # say "automatic recovery" like the automatic-recovery markers: a person pressed
 # the button, and the card must not claim the system recovered by itself.
 MANUAL_RESUME_RECOVERY_PREFIX = "[Continue — requested by the user]"
+# The gateway pressing Resume on the person's behalf (``restart_resume``, behind
+# ``dashboard.resume_interrupted_turns``). Its own prefixes, not the manual one:
+# the model must not read a press that never happened as an answer, and the
+# card must say neither "requested by the user" nor claim an in-turn recovery.
+# Mirrored in ``website/src/pages/chat/RecoveryCard.tsx`` ``PREFIXES``.
+AUTO_RESUME_RESTART_RECOVERY_PREFIX = "[Continue — automatic after a restart]"
+AUTO_RESUME_ERROR_RECOVERY_PREFIX = "[Continue — automatic after an error]"
 # Prefix on the continuation injected when a content-filter refusal landed AFTER
 # the turn had already dispatched tool calls and agent.refusal_fallback_model
 # names a different model. The user's message is NOT replayed there -- the
@@ -3103,6 +3110,12 @@ class _ChatSlot:
         "remote_slot",
         "_turn_in_flight_generation",
         "_turn_in_flight_prompt",
+        "_auto_resume_stamps",
+        "_auto_resume_reset_pending",
+        "_auto_resume_task",
+        "_auto_resume_epoch",
+        "_restart_cut_turn",
+        "_approval_mode_recorded",
         "_active_turn_session_key",
         "_responsive",
         "_side",
@@ -3294,6 +3307,38 @@ class _ChatSlot:
         # put it back before the interruption is judged. None when no turn is
         # in flight.
         self._turn_in_flight_prompt: dict[str, Any] | None = None
+        # Wall-clock stamps of the automatic resumes ``restart_resume`` dispatched
+        # for this chat, persisted on the metadata line so a gateway that
+        # restarts, resumes, dies on the resumed turn and restarts again still
+        # counts the earlier ones. Reset by a person's own action on the chat
+        # (a send, a Resume press). Bounded by ``restart_resume.MAX_STAMPS``.
+        self._auto_resume_stamps: list[float] = []
+        # True from a person's reset of a non-empty budget until a save that
+        # carries the empty list has completed: the turn marker then writes the
+        # empty list instead of omitting it, so a gateway that dies before the
+        # periodic flush does not read the spent budget back off the line.
+        self._auto_resume_reset_pending = False
+        # The one armed error-pass retry for this chat (``restart_resume``), or
+        # None. Cancelled by anything that makes it moot: a send, a press, a
+        # Stop, a close.
+        self._auto_resume_task: asyncio.Task[Any] | None = None
+        # Moves on every person's action that supersedes an automatic resume (a
+        # send, a Resume press, a Stop, a close). An automatic dispatch re-reads
+        # it under the slot lock right before its queue insert and refuses when
+        # it moved, so a cancel that lands after the backoff but before the
+        # insert cannot leave a gateway-authored entry at the head of the queue.
+        self._auto_resume_epoch: int = 0
+        # Set for THIS process by the restore when the metadata line carried a
+        # turn-in-flight marker (the previous process admitted a turn it never
+        # finished); never persisted. The boot pass resumes only flagged chats, so
+        # an interruption row left by an earlier boot is not resumed on a later one.
+        self._restart_cut_turn: bool = False
+        # The approval mode this chat's PERSON last saw it hold -- ``"trust"``,
+        # ``"trust_reads"`` or ``"normal"`` -- recorded on the metadata line by
+        # the periodic flush, never read back INTO the mode. The restore compares
+        # it with the mode the slot comes back holding and tells the person when
+        # they differ; see ``restart_resume.approval_mode_dropped_notice``.
+        self._approval_mode_recorded: str = ""
         self.created_at: str = datetime.now(timezone.utc).isoformat()
         self._messages: list[dict[str, Any]] = []
         # A restored sidebar row whose transcript window has not been loaded yet:

@@ -16,7 +16,7 @@ import secrets
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -34,6 +34,8 @@ from kiro_crew.dashboard import display_verdicts as _display_verdicts
 from kiro_crew.dashboard.display_battery import display_battery
 from kiro_crew.dashboard.slot_queue_repository import ATTACHMENT_META_KEYS
 from kiro_crew.dashboard.state import (
+    AUTO_RESUME_ERROR_RECOVERY_PREFIX,
+    AUTO_RESUME_RESTART_RECOVERY_PREFIX,
     BUSY_RECOVERY_PREFIX,
     COMPACTION_RECOVERY_PREFIX,
     CONN_RECOVERY_PREFIX,
@@ -50,6 +52,7 @@ from kiro_crew.dashboard.state import (
     append_and_surface,
     parse_cls_meta,
 )
+from kiro_crew.dashboard.system_notices import is_system_notice
 from kiro_crew.execution_context import (
     ExecutionContext,
     canonical_memory_mode,
@@ -2743,6 +2746,26 @@ _COMPACTION_CONTINUE_MSG = (
     "successfully — the summary records what was done. If the summary left you "
     "without something you need, say what is missing instead of guessing."
 )
+# Injected by ``restart_resume`` when the GATEWAY presses Resume on the person's
+# behalf (``dashboard.resume_interrupted_turns``): the same instruction as the
+# manual resume, with the one difference the model must hear -- nobody has looked
+# at the partial output, so a question the previous turn asked is still
+# unanswered. Two prefixes for one body, because the card names the cause.
+_AUTO_RESUME_BODY = (
+    "The previous turn was interrupted before it finished and the gateway has "
+    "resumed it automatically; no person has looked at the partial output "
+    "above, so do not read this as an answer to anything you asked. Look at "
+    "the conversation above, work out what was already completed, and finish "
+    "the user's most recent request from there. Do NOT re-run steps or tools "
+    "that already completed successfully, and do NOT assume any particular "
+    "progress was made -- if nothing was done yet, simply start the request "
+    "now. Some work may have taken effect without appearing above, so check "
+    "the current state (files, commands, external systems) before repeating "
+    "any step. If the request cannot be finished without the user, say so and "
+    "stop."
+)
+_AUTO_RESUME_RESTART_MSG = f"{AUTO_RESUME_RESTART_RECOVERY_PREFIX}\n{_AUTO_RESUME_BODY}"
+_AUTO_RESUME_ERROR_MSG = f"{AUTO_RESUME_ERROR_RECOVERY_PREFIX}\n{_AUTO_RESUME_BODY}"
 _SYNTHETIC_RECOVERY_MSGS = (
     _CONN_RECOVER_MSG,
     _BUSY_RECOVER_MSG,
@@ -2751,6 +2774,8 @@ _SYNTHETIC_RECOVERY_MSGS = (
     _ACTIVITY_NO_REPLY_CONTINUE_MSG,
     _PROMISE_ONLY_CONTINUE_MSG,
     _COMPACTION_CONTINUE_MSG,
+    _AUTO_RESUME_RESTART_MSG,
+    _AUTO_RESUME_ERROR_MSG,
 )
 
 # High-confidence "I will do it right now" endings. Kept deliberately NARROW: a
@@ -3815,6 +3840,34 @@ _MANUAL_RESUME_MSG = (
     "assume any particular progress was made — if nothing was done yet, simply "
     "start the request now."
 )
+#: Every continuation body that picks up an INTERRUPTED turn: the Resume press,
+#: the two automatic resumes (``restart_resume``) and the in-turn connection /
+#: busy recoveries. ``_run_chat`` re-injects the lost turn from the slot window
+#: (``build_interrupted_turn_preamble``) for exactly these on a session this
+#: turn natively resumed -- kiro-cli logs a prompt only once it is answered, so
+#: ``session/load`` restored a history that lacks the turn the process died on.
+#: A body that asks the model to finish the interrupted request belongs here, or
+#: on such a session the model is told to finish a request it cannot see.
+_INTERRUPTED_TURN_RESUME_MSGS: tuple[str, ...] = (
+    _MANUAL_RESUME_MSG,
+    _AUTO_RESUME_RESTART_MSG,
+    _AUTO_RESUME_ERROR_MSG,
+    _CONN_RECOVER_MSG,
+    _BUSY_RECOVER_MSG,
+)
+
+
+def interrupted_turn_rows(messages: Iterable[dict]) -> list[dict]:
+    """The slot rows ``build_interrupted_turn_preamble`` may read, same objects, in order.
+
+    The builder quotes every assistant row between the opener and the resume row
+    as the model's partial answer. The gateway's own assistant-role system
+    notices (a compaction note, the restart's permissions notice) can sit in
+    that span and are not the model's words, so they are left out here.
+    """
+    return [row for row in messages if not is_system_notice(row.get("role"), row.get("meta"))]
+
+
 # Injected when the user presses Continue on a slot whose last turn ended
 # NORMALLY. Continue is offered on any idle slot with a transcript (a killed
 # gateway writes no error row, so an interrupted turn can be shape-identical to
@@ -3962,6 +4015,13 @@ FALSE_TOOL_BLOCKER_REPLAY_KIND = "false_tool_blocker_replay"
 #: Row-level kind for the `error` notice appended when a recovery has ALREADY
 #: been queued, so the frontend can tell a pending retry from a terminal failure.
 TRANSIENT_RETRY_KIND = "transient_retry"
+#: Row-level kind for a TERMINAL ``error`` row whose writer invites a retry (the
+#: "please retry" rows the runner appends when its own recovery gave up on a
+#: dead process, a stalled turn or a busy session). The structural form of that
+#: invitation: the restart-resume error pass retries a row carrying this kind
+#: and no untagged row, so a new terminal error is never retried unattended
+#: until its writer says so here.
+RETRY_INVITED_KIND = "retry_invited"
 #: ``meta.kind`` of the runner's empty-response recovery notice cards (the
 #: continue and give-up rungs of the ladder, and the post-compaction resume).
 #: They are the runner talking about its own machinery, so a surface that draws
@@ -4042,6 +4102,14 @@ USAGE_LIMIT_KIND = "usage_limit"
 #: (restart the gateway). Decided from the exception's tag, never from the
 #: prose, which a reword or a translation moves.
 SESSION_START_FAILED_KIND = "session_start_failed"
+
+#: Meta key on the error row of a turn that raised before its main ``try``
+#: (``chat_runner._note_failed_before_the_try``). The cycle still ends with a
+#: ``done`` row, so an HTTP reader that waits for ``done`` reads this key to
+#: report the failure instead of an empty reply, and ``restart_resume`` reads it
+#: as a row no retry can cure. One definition, so the writer and the readers
+#: cannot drift apart.
+TURN_FAILED_META = "turn_failed"
 
 #: Row-level kind for the terminal `error` row a CONTEXT OVERFLOW produces: the
 #: provider refused the turn because the conversation does not fit in one
