@@ -244,6 +244,23 @@ LESSON_LIST_LIMIT_MAX = 500
 # empty anyway.
 LESSON_LIST_OFFSET_MAX = 100_000_000
 
+
+def clamp_query_offset(offset: int) -> int:
+    """``offset`` folded into ``[0, LESSON_LIST_OFFSET_MAX]``.
+
+    The one clamp every dashboard route applies before it hands a query
+    ``offset`` to a store that binds it as a SQLite parameter. The bind, not
+    the query, is what makes the ceiling necessary: ``sqlite3`` raises
+    ``OverflowError`` on an int past the signed 64-bit range, which a route
+    that only parsed ``int(...)`` surfaces as a 500 where the caller asked for
+    a page that is simply empty. A negative value is folded to ``0`` for the
+    same reason -- a list route would slice from the end, a bound one would
+    error. Routes that slice a Python list need no clamp: slicing already
+    treats an out-of-range index as the empty tail.
+    """
+    return max(0, min(offset, LESSON_LIST_OFFSET_MAX))
+
+
 # Allowed cron schedule kinds
 ALLOWED_SCHEDULE_KINDS = frozenset({"every", "cron", "at"})
 

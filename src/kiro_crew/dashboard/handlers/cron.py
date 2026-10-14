@@ -90,13 +90,13 @@ from kiro_crew.validation import (
     LEARN_ADD_SCHEMA,
     LESSON_LIST_LIMIT,
     LESSON_LIST_LIMIT_MAX,
-    LESSON_LIST_OFFSET_MAX,
     MAX_CRON_MESSAGE,
     MAX_SHORT_STRING,
     SLACK_THREAD_TS_RE,
     WORKSPACE_NAME_RE,
     FieldSpec,
     ValidationError,
+    clamp_query_offset,
     normalize_lesson_category,
     validate_string_field,
     validate_tool_args,
@@ -3694,10 +3694,10 @@ async def api_cron_folders_delete(request: web.Request) -> web.Response:
 def _lesson_list_page(query: Mapping[str, str]) -> tuple[int, int] | web.Response:
     """``(limit, offset)`` from the ``GET /api/lessons`` query, or the 400.
 
-    ``limit`` is clamped into ``[1, LESSON_LIST_LIMIT_MAX]`` and ``offset`` into
-    ``[0, LESSON_LIST_OFFSET_MAX]`` rather than refused, because the body echoes
-    both effective values back and the clamp is therefore never silent. The
-    offset ceiling matters: the vector tier binds the offset as a SQLite
+    ``limit`` is clamped into ``[1, LESSON_LIST_LIMIT_MAX]`` and ``offset`` by
+    the shared ``clamp_query_offset`` rather than refused, because the body
+    echoes both effective values back and the clamp is therefore never silent.
+    The offset ceiling matters: the vector tier binds the offset as a SQLite
     parameter, and a value past the 64-bit range raises there instead of
     yielding an empty page. A non-integer is refused: the caller asked for a
     page it did not get, and defaulting would return the first page under a
@@ -3710,10 +3710,7 @@ def _lesson_list_page(query: Mapping[str, str]) -> tuple[int, int] | web.Respons
         return web.json_response(
             {"error": "limit/offset must be integers", "code": "invalid_pagination"}, status=400
         )
-    return (
-        max(1, min(limit, LESSON_LIST_LIMIT_MAX)),
-        max(0, min(offset, LESSON_LIST_OFFSET_MAX)),
-    )
+    return (max(1, min(limit, LESSON_LIST_LIMIT_MAX)), clamp_query_offset(offset))
 
 
 def _lesson_scope_selector(stored: object) -> str | None:

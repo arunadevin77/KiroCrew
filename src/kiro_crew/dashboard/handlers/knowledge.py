@@ -80,6 +80,7 @@ from kiro_crew.knowledge.sync import SyncScheduler
 from kiro_crew.knowledge.watcher import KnowledgeWatcher
 from kiro_crew.security import is_sensitive_path
 from kiro_crew.sel import sel
+from kiro_crew.validation import clamp_query_offset
 from kiro_crew.zip_vet import ZipInventoryRejected, vet_zip_inventory
 
 logger = logging.getLogger(__name__)
@@ -644,7 +645,10 @@ async def list_items(request: web.Request) -> web.Response:
             where.append("i.source_id = ?")
             params.append(source_id)
         where_clause = ' AND '.join(where)
-        offset = (page - 1) * limit
+        # The derived offset is bound as a SQLite parameter below, so it takes
+        # the same ceiling every offset-binding route applies; the search branch
+        # above slices a Python list and needs none.
+        offset = clamp_query_offset((page - 1) * limit)
         total, items = await asyncio.to_thread(
             _items_page, store, where_clause, params, limit, offset)
         return web.json_response({"items": items, "total": total, "page": page, "limit": limit})
