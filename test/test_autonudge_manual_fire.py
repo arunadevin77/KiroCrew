@@ -84,7 +84,7 @@ async def _run_armed_cycle(svc: AutoNudgeService, loop_id: str) -> None:
     """Await the timer task ``fire_now`` just armed, to completion.
 
     The suite's established shape (``await svc._timers[loop.id]`` in
-    ``test_autonudge.py``). Captured by REFERENCE before any await, because the
+    ``test_autonudge_firing.py``). Captured by REFERENCE before any await, because the
     gates inside ``_timer`` reach ``update``/``remove``, which pop the entry from
     ``_timers`` — reading the dict afterwards would raise KeyError on exactly
     the paths this file is here to test. Draining "until no tasks remain"

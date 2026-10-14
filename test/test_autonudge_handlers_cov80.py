@@ -1,6 +1,6 @@
 """Coverage tests for the auto-nudge HTTP mapping (``dashboard/handlers/autonudge.py``).
 
-``test_autonudge.py`` drives ``AutoNudgeService`` itself and ``test_autonudge_stop_auth.py``
+``test_autonudge*.py`` drives ``AutoNudgeService`` itself and ``test_autonudge_stop_auth.py``
 drives the transport-agnostic authorizer. What neither touches is the thin HTTP layer
 between them: the read routes (list / get), the "service is absent" 503+``enabled: false``
 shapes, the malformed-body 400s, and the DELETE route's audit record — which has to name

@@ -326,7 +326,7 @@ person-wait hold hands back the span it held, measured on the monotonic clock
 from the hold's start, while `created_ts` moves by the wall-clock span, which
 is what a restart reads. A step before or during a hold therefore changes the
 budget only across a restart.
-`test_autonudge.py::test_a_released_hold_hands_back_the_time_it_really_held`
+`test_autonudge_budget.py::test_a_released_hold_hands_back_the_time_it_really_held`
 pins the hold cases. The
 budget is awake time while the gateway runs, the clock the loop's own
 `asyncio` waits use: `time.monotonic()` stops while the host is suspended on
@@ -334,7 +334,7 @@ Linux and macOS, so a suspend there spends none of the budget, and it keeps
 counting on Windows, where a suspend is spent. Time before a restart is read
 back from the stored `created_ts` on the wall clock, so a suspend or a step that
 came before a restart counts in full.
-`test_autonudge.py::test_a_suspend_spends_no_runtime_budget_until_a_restart`
+`test_autonudge_budget.py::test_a_suspend_spends_no_runtime_budget_until_a_restart`
 pins both readings.
 
 A work-ledger watch also HOLDS while every open item waits on a person: each is

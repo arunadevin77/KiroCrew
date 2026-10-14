@@ -265,7 +265,7 @@ loop and emits
 measures a configured wall-clock
 budget from the persisted creation time. `_timer` checks it before a fire and
 `_run_fire_cycle` checks it after a delivered turn, so a running turn is not
-cancelled but an expired loop is not re-armed. `test_autonudge.py` pins budget
+cancelled but an expired loop is not re-armed. `test_autonudge_budget.py` pins budget
 persistence across restart and the post-delivery check.
 
 `monitor_update` resolves the loop only by the calling session's binding and
