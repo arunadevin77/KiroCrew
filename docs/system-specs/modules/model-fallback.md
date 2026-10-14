@@ -343,5 +343,5 @@ state, story handling, and unattended restore. `test/test_dashboard_chat.py`
 covers dashboard fallback and slot restore. `test/test_subagent_turn_resilience.py`
 and `test/test_cron_gateway_integration_llm.py` cover sub-agent and gateway wiring.
 `test/test_config_loader.py`, `test/test_role_models.py`, and
-`test/test_dashboard_handlers_core_coverage.py` cover configuration loading and
-PATCH validation.
+`test/test_dashboard_handlers_core_coverage_agent_settings.py` cover configuration
+loading and PATCH validation.

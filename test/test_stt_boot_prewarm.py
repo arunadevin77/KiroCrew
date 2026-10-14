@@ -79,7 +79,7 @@ def _patch_stt(
     # leaves the original behind as a REAL attribute on teardown, which from then on
     # shadows `__getattr__` -- so every later test that patches `stt.session.prewarm`
     # is silently ignored. This file did exactly that, and it broke
-    # `test_dashboard_handlers_core_coverage.py::TestSttPrewarm` in any run where the
+    # `test_dashboard_handlers_core_coverage_stt_runtime.py::TestSttPrewarm` in any run where the
     # two files shared a worker: order-dependent, silent, and nothing to do with the
     # code under test. The boot prewarm reads `stt.prewarm`, which resolves through
     # `__getattr__` to this same object, so patching here is visible to it.

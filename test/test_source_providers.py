@@ -6088,8 +6088,8 @@ def _pin_local_owner_gate(monkeypatch) -> None:
     and every ``/proc/<pid>/fd``) and fails closed with 403 whenever that table is
     changing or ambiguous. Under xdist, sibling workers churn that table, so the
     host is an input to the test. The tests below pin the token's subject and
-    claims, not provenance; the gate's own verdicts are pinned in
-    ``test_member_memory_auth.py`` and ``test_dashboard_handlers_core_coverage.py``.
+    claims, not provenance; the gate's own verdicts are pinned in ``test_member_memory_auth.py`` and
+    ``test_dashboard_handlers_core_coverage_security_endpoints.py``.
     Patched on its defining module, which the handler imports at call time.
     """
     from kiro_crew.member_memory_auth import LocalOwnerProvenance

@@ -204,7 +204,6 @@
 2909 test/test_acp_session_mcp.py
 2780 test/test_admission_gate.py
 9493 test/test_agent.py
-3718 test/test_agent_capabilities.py
 2896 test/test_agent_home_isolation.py
 3538 test/test_agent_panel_routes.py
 14106 test/test_ai_review_workflows.py
@@ -269,7 +268,6 @@
 3175 test/test_dashboard_approval.py
 26845 test/test_dashboard_chat.py
 2347 test/test_dashboard_chat_pins.py
-3742 test/test_dashboard_handlers_core_coverage.py
 2718 test/test_dashboard_server_composition_contract.py
 3002 test/test_dashboard_source_link_unlink.py
 2430 test/test_dashboard_state_ws.py
@@ -388,7 +386,6 @@
 2032 test/test_skill_browser.py
 2396 test/test_skill_trust_store.py
 3082 test/test_skills.py
-3656 test/test_slack_events_coverage.py
 11406 test/test_slack_gateway.py
 2824 test/test_slack_gateway_coverage.py
 2303 test/test_slack_gateway_cron_exec_coverage.py
@@ -437,7 +434,6 @@
 2006 test/test_webhooks_api.py
 2238 test/test_wheel_engine.py
 4130 test/test_work_ledger_projection.py
-3664 test/test_worker_agent.py
 2944 website/electron/gateway-supervisor.js
 2903 website/scripts/lib/ui-index.mjs
 2967 website/src/App.tsx
