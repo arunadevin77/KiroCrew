@@ -1386,6 +1386,11 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # rewrites the process identity would answer wrongly.
         "dashboard/handlers/computer_use.py::_probe_permissions",
         "dashboard/handlers/files.py::_run",
+        # The file panel diff: fixed list-argv `git diff --no-index -- a b`
+        # (no shell) with the same textconv/attributes/fsmonitor hardening as
+        # `_run`, over two files the gateway itself wrote into a fresh private
+        # temp dir. No argument, path or cwd comes from the request.
+        "dashboard/handlers/files.py::_diff_redacted_bodies",
         "dashboard/handlers/files.py::api_screenshot",
         "dashboard/handlers/files.py::api_upload",
         "dashboard/handlers/knowledge.py::_run_folder_dialog",
