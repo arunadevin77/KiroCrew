@@ -366,6 +366,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
+      max-parallel: 4
       fail-fast: false
       matrix:
         machine: [x86_64, aarch64]
@@ -485,6 +486,7 @@ jobs:
     # and bundle-size already run on, and leaves headroom for runner variance.
     timeout-minutes: 25
     strategy:
+      max-parallel: 4
       matrix:
         python-version: ["3.12"]
     steps:
@@ -637,6 +639,7 @@ jobs:
     # 120 seconds. File sharding reduces repeated collection, not test coverage.
     timeout-minutes: 60
     strategy:
+      max-parallel: 4
       # Don't cancel sibling shards when one fails -- we want the full failure
       # picture across the suite, not just the first shard to break.
       fail-fast: false
@@ -871,6 +874,7 @@ jobs:
     # Retain the existing Windows budget and coverage-free run.
     timeout-minutes: 60
     strategy:
+      max-parallel: 4
       # Full failure picture across shards, same as backend-test.
       fail-fast: false
       matrix:
@@ -985,6 +989,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
+      max-parallel: 4
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -2758,6 +2763,7 @@ jobs:
     # ways each shard is well under this, and a hung shard fails fast.
     timeout-minutes: 25
     strategy:
+      max-parallel: 4
       # Don't cancel sibling shards when one fails -- we want the full failure
       # picture across the suite, not just the first shard to break.
       fail-fast: false
@@ -3499,6 +3505,7 @@ jobs:
           || (needs.changes.result == 'success'
               && needs.await-fast-gate.result == 'success')) }}
     strategy:
+      max-parallel: 4
       # Each OS is its own verdict. A Windows-only regression must not hide
       # behind a cancelled macOS leg, which is exactly the shape of the escape
       # this job exists for.

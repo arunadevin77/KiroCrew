@@ -105,6 +105,7 @@ jobs:
     #     that import twice over for tests it then threw away.
     timeout-minutes: 40
     strategy:
+      max-parallel: 4
       # Full failure picture across shards, same as backend-test.
       fail-fast: false
       matrix:

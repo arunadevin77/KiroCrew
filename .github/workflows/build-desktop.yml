@@ -194,6 +194,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
+      max-parallel: 4
       fail-fast: false
       matrix:
         include:
@@ -397,6 +398,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     strategy:
+      max-parallel: 4
       fail-fast: false
       matrix:
         include:

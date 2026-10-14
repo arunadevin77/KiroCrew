@@ -128,8 +128,9 @@ Three structural facts explain most of the rest:
   did. `merge-queue-readiness.yml` -- a `merge_group`-only workflow whose
   single job is named `PR Readiness`, the ruleset's required check -- waits for
   those six runs on the group's commit and passes only when all six did, within
-  a 120-minute budget covering `ci.yml`'s 100-minute longest chain of job caps
-  plus pickup slack. The first verdict is final: a run that concludes without
+  a 180-minute budget covering `ci.yml`'s 160-minute longest chain of job caps
+  (`backend-test` counts twice: `max-parallel: 4` runs its 8 shards in two
+  rounds) plus pickup slack. The first verdict is final: a run that concludes without
   success fails the check on the tick that reads it, with no rerun and no wait
   for the lanes still running, and the job holds only `actions: read`. A rerun
   inside the queue would hold every group queued behind this one for the
@@ -180,7 +181,7 @@ Three structural facts explain most of the rest:
   variable. Enabling the queue is a
   ruleset change (`protected-branches`, "Require merge queue"), not a workflow
   change, with `max_entries_to_build` 40, `max_entries_to_merge` 1 (one PR per
-  main commit) and a status-check timeout of 180 minutes (the 120-minute poll
+  main commit) and a status-check timeout of 240 minutes (the 180-minute poll
   plus a slow hosted pickup). The poll never reruns a lane, for the reason
   given above: a rerun holds every group queued behind the failing one, and a
   build depth beyond ~40 does not shorten the queue.

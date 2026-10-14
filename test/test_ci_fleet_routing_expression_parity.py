@@ -449,12 +449,29 @@ def test_merge_queue_readiness_budget_covers_ci_critical_path() -> None:
     ci = yaml.safe_load((_WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
     jobs = ci["jobs"]
 
+    def rounds(spec: dict) -> int:
+        # A matrix capped by max-parallel runs its legs in rounds, so its
+        # worst case is that many back-to-back timeout-minutes, not one.
+        strategy = spec.get("strategy") or {}
+        matrix = strategy.get("matrix")
+        cap = strategy.get("max-parallel")
+        if not isinstance(matrix, dict) or not isinstance(cap, int):
+            return 1
+        axes = [v for k, v in matrix.items() if k not in ("include", "exclude")]
+        if not axes or not all(isinstance(v, list) for v in axes):
+            return 1
+        legs = 1
+        for values in axes:
+            legs *= len(values)
+        legs -= len(matrix.get("exclude") or [])
+        return max(1, -(-legs // cap))
+
     def longest_path(job_id: str) -> int:
         spec = jobs[job_id]
         needs = spec.get("needs", [])
         needs = [needs] if isinstance(needs, str) else list(needs)
         upstream = max((longest_path(n) for n in needs), default=0)
-        return upstream + int(spec["timeout-minutes"])
+        return upstream + rounds(spec) * int(spec["timeout-minutes"])
 
     critical_path = max(longest_path(job_id) for job_id in jobs)
     assert budget_minutes >= critical_path, (
@@ -475,7 +492,7 @@ def _readiness_job() -> dict:
 def test_merge_queue_readiness_rollout_values() -> None:
     """The poll's budget and job cap are the rollout's numbers.
 
-    The ruleset's status-check timeout (180 minutes) is set from these, so a
+    The ruleset's status-check timeout (240 minutes) is set from these, so a
     change here is a change to the documented rollout and must move with it.
     The poll has no rerun cap because it never reruns: a rerun inside the queue
     holds every group behind this one for the rerun's whole duration.
@@ -485,8 +502,8 @@ def test_merge_queue_readiness_rollout_values() -> None:
     job = _readiness_job()
     (step,) = job["steps"]
     values = dict(re.findall(r"^\s*(TOTAL_BUDGET|MAX_RERUNS)=(\d+)\s*$", step["run"], re.MULTILINE))
-    assert values == {"TOTAL_BUDGET": "7200"}
-    assert job["timeout-minutes"] == 125
+    assert values == {"TOTAL_BUDGET": "10800"}
+    assert job["timeout-minutes"] == 185
 
 
 def test_merge_queue_readiness_reads_runs_and_never_reruns_them() -> None:

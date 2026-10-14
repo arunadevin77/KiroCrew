@@ -202,6 +202,7 @@ def test_workflow_routes_every_scope_without_changing_local_defaults(jobs):
     assert hosted["needs"] == ["changes", "await-fast-gate"]
     assert hosted["runs-on"] == "${{ matrix.os }}"
     assert hosted["strategy"] == {
+        "max-parallel": 4,
         "fail-fast": False,
         "matrix": {"os": ["ubuntu-latest", "windows-latest"]},
     }

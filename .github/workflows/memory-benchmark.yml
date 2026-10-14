@@ -88,6 +88,7 @@ jobs:
     # genuine hang burn hours.
     timeout-minutes: 90
     strategy:
+      max-parallel: 4
       # One arm's failure must not cancel the other: a partial result is still
       # worth reading, and the accept job below tolerates a missing arm.
       fail-fast: false

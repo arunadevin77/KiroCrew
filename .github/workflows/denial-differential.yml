@@ -93,6 +93,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
+      max-parallel: 4
       # Every leg reports. One platform's regression is not evidence about
       # another's, so a fail-fast cancel would hide the rows an operator on the
       # cancelled runner is the only one who can see.
