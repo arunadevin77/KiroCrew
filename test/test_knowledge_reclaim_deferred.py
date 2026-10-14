@@ -265,6 +265,9 @@ class TestReclaimOrphansStillSweeps:
             finally:
                 release.set()
                 sweeper.join(5)
+        # ``_close_all_for_tests`` below closes the sweep thread's connection; a
+        # sweep still inside a statement would have it closed under a live query.
+        assert not sweeper.is_alive(), "the sweep outlived its join before the close"
         assert read_result and read_result[0] is not None
         assert not _source_exists(path, "orphan")
         # The sweep ran on its own thread and opened its own connection; ``close()``
