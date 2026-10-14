@@ -415,9 +415,9 @@ name>`, and deleted from there 14 days after the move (later, if something was
 written into it in the last hour). The gateway log names every move in one
 INFO line: `agent-scratch: moved <name> to <path in .quarantine> instead of
 deleting it`, with the date it will be deleted. To keep the work, move the
-directory out of `.quarantine` before that date, or commit and push it from
-there; to restore it for its session, move it back beside the others under its
-original name.
+directory out of `.quarantine` before that date (copying files out of it does
+not delay the delete), or commit and push it from there; to restore it for its
+session, move it back beside the others under its original name.
 
 One directory does not: the background runtime's tree is shared by every
 dashboard session and is handed on from one runtime to its replacement, so it

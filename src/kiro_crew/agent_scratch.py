@@ -1152,9 +1152,11 @@ def _expire_quarantine(now: float) -> int:
 
     Only a plain directory whose name this module wrote is judged, and one
     that something wrote into within the grace window is kept until it has
-    been idle that long, so a user recovering work inside it is not cut off
-    mid-copy. Anything else in the quarantine is left for a human. A partial
-    delete is retried on a later sweep.
+    been idle that long. Only a write defers the delete: reading or copying
+    files out of a tree leaves its mtimes alone, so the way to keep a tree
+    past its date is to move it out of the quarantine. Anything else in the
+    quarantine is left for a human. A partial delete is retried on a later
+    sweep.
 
     Returns the number of trees deleted.
     """

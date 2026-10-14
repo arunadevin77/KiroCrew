@@ -1273,14 +1273,15 @@ class TestGitTreesAreQuarantined:
     def test_a_write_in_the_quarantine_defers_its_expiry(
         self, scratch_root: Path, upstream: Path
     ) -> None:
-        # Someone copying the work out is not cut off at the deadline.
+        # Someone working inside a quarantined tree past its date keeps it
+        # until the tree has been idle for the grace window.
         path, _clone = self._local_feature(upstream)
         moved_at = time.time() + self.LATER
         assert sc.sweep_dead_scratch(now=moved_at) == 0
         moved = self._moved(path)
         expired = moved_at + sc.QUARANTINE_TTL_SECONDS + 1
         recovering = moved / "clone" / "notes.txt"
-        recovering.write_text("copying this out\n")
+        recovering.write_text("written during recovery\n")
         os.utime(recovering, (expired - 60, expired - 60))
 
         assert sc.sweep_dead_scratch(now=expired) == 0
