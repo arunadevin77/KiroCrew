@@ -2055,7 +2055,10 @@
         "untitled": "Untitled meeting",
         "renameFailed": "Could not rename the meeting.",
         "minutesSaveFailed": "Could not save your edits.",
-        "minutesRevertFailed": "Could not discard your edits."
+        "minutesRevertFailed": "Could not discard your edits.",
+        "anotherMeetingActiveNamed": "\"{{title}}\" is already running. End it first.",
+        "anotherMeetingReviewing": "Close the “{{title}}” review to start another meeting.",
+        "sttStreamingDisabled": "Enable streaming in Voice settings for live transcription."
       },
       "settings": {
         "addTerm": "Add",

@@ -3564,7 +3564,10 @@
         "untitled": "Встреча без названия",
         "renameFailed": "Не удалось переименовать встречу.",
         "minutesSaveFailed": "Не удалось сохранить твои правки.",
-        "minutesRevertFailed": "Не удалось сбросить твои правки."
+        "minutesRevertFailed": "Не удалось сбросить твои правки.",
+        "anotherMeetingActiveNamed": "“{{title}}” уже идёт. Сначала заверши её.",
+        "anotherMeetingReviewing": "Закрой проверку «{{title}}», чтобы начать другую встречу.",
+        "sttStreamingDisabled": "Включи стриминг в настройках голоса для живой транскрибации."
       },
       "settings": {
         "addTerm": "Добавить",

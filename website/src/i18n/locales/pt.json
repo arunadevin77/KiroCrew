@@ -3494,7 +3494,10 @@
         "untitled": "Reunião sem título",
         "renameFailed": "Não foi possível renomear a reunião.",
         "minutesSaveFailed": "Não foi possível salvar suas edições.",
-        "minutesRevertFailed": "Não foi possível descartar suas edições."
+        "minutesRevertFailed": "Não foi possível descartar suas edições.",
+        "anotherMeetingActiveNamed": "\"{{title}}\" já está a decorrer. Termine-a primeiro.",
+        "anotherMeetingReviewing": "Feche a revisão de “{{title}}” para iniciar outra reunião.",
+        "sttStreamingDisabled": "Ative o streaming nas definições de Voz para transcrição ao vivo."
       },
       "settings": {
         "addTerm": "Adicionar",

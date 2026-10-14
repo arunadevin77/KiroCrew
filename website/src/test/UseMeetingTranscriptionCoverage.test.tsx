@@ -192,6 +192,7 @@ describe('useMeetingTranscription — starting up', () => {
   it('opens the STT socket, arms capture and reports itself active', async () => {
     const h = await mount()
     const ws = await startCapture(h)
+    await act(async () => { ws.becomeReady() })
 
     expect(ws.url).toBe(`ws://${window.location.host}/api/ws/stt`)
     expect(ws.binaryType).toBe('arraybuffer')
@@ -277,6 +278,7 @@ describe('useMeetingTranscription — starting up', () => {
   it('surfaces a post-open transport error without tearing capture down', async () => {
     const h = await mount()
     const ws = await startCapture(h)
+    await act(async () => { ws.becomeReady() })
 
     await act(async () => { ws.onerror?.() })
     expect(h.errors()).toEqual(['connection'])
@@ -440,6 +442,7 @@ describe('useMeetingTranscription — server frames', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(25_000) })
     await flush()
     expect(sockets).toHaveLength(2)
+    await act(async () => { lastSocket().becomeReady() })
     const errorsBefore = h.errors().length
 
     await act(async () => { staleClose?.() })
@@ -457,6 +460,7 @@ describe('useMeetingTranscription — watchdog and stop', () => {
     await flush()
 
     expect(sockets).toHaveLength(2)
+    await act(async () => { lastSocket().becomeReady() })
     expect(h.hook.result.current.active).toBe(true)
   })
 
@@ -513,6 +517,7 @@ describe('useMeetingTranscription — watchdog and stop', () => {
     await act(async () => { first.close() })
     const second = await startCapture(h)
     expect(second).not.toBe(first)
+    await act(async () => { second.becomeReady() })
 
     await act(async () => { await vi.advanceTimersByTimeAsync(8_000) })
     expect(second.readyState).toBe(MockSocket.OPEN)

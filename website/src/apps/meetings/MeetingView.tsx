@@ -66,6 +66,9 @@ export default function MeetingView({
     enabledIds,
     mutedAgents,
     outputs,
+    startError,
+    startErrorMessage,
+    transcriptionErrorMessage,
     outputEdits,
     editingOutput,
     tasks,
@@ -301,6 +304,27 @@ export default function MeetingView({
           </div>
         </div>
 
+        {/* Start-failure inline notice — mirrors the banner toast with an in-page
+             error surface so users without live notification access still see the
+             reason. No agent hand-off: the fix is to end the blocking meeting or
+             enable Speech-to-Text, and the toast already names the next action. */}
+        {/* Inline start-failure notice — surfaces the same error as the live
+             banner to the page body per the AUTOSDE errors-use-error-notice rule;
+             askAgent lets the user hand the refusal to the agent for help. */}
+        {transcriptionErrorMessage && (
+          <ErrorNotice
+            message={transcriptionErrorMessage}
+            askAgent
+            className="mx-4 mt-2 animate-rise"
+          />
+        )}
+        {startError && startErrorMessage && (
+          <ErrorNotice
+            message={startErrorMessage}
+            askAgent
+            className="mx-4 mt-2 animate-rise"
+          />
+        )}
         <AgentPillBar
           agents={agents}
           enabledIds={enabledIds}

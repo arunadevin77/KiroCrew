@@ -3424,7 +3424,10 @@
         "untitled": "बिना शीर्षक मीटिंग",
         "renameFailed": "मीटिंग का नाम नहीं बदला जा सका।",
         "minutesSaveFailed": "तुम्हारे बदलाव सहेजे नहीं जा सके।",
-        "minutesRevertFailed": "तुम्हारे बदलाव छोड़े नहीं जा सके।"
+        "minutesRevertFailed": "तुम्हारे बदलाव छोड़े नहीं जा सके।",
+        "anotherMeetingActiveNamed": "\"{{title}}\" पहले से चल रही है। पहले उसे समाप्त करें।",
+        "anotherMeetingReviewing": "“{{title}}” की समीक्षा बंद करो दूसरी मीटिंग शुरू करने के लिए।",
+        "sttStreamingDisabled": "लाइव ट्रांसक्रिप्शन के लिए वॉयस सेटिंग्स में स्ट्रीमिंग चालू करो।"
       },
       "settings": {
         "addTerm": "जोड़ें",

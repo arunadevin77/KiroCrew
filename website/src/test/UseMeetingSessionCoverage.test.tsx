@@ -75,7 +75,7 @@ vi.mock('../apps/meetings/hooks/useMeetingTranscription', async importOriginal =
       stt.onCaption = opts.onCaption
       stt.onFinal = opts.onFinal
       stt.onError = opts.onError
-      return { active: stt.active, start: stt.start, stop: stt.stop, supported: true }
+      return { active: stt.active, connecting: false, start: stt.start, stop: stt.stop, supported: true }
     },
   }
 })
@@ -425,6 +425,9 @@ describe('useMeetingSession transcription binding', () => {
     ['worklet', 'apps.meetings.session.sttWorkletFailed'],
     ['connection', 'apps.meetings.session.sttConnectionFailed'],
     ['disconnected', 'apps.meetings.session.sttDisconnected'],
+    // The gateway sends this when streaming is disabled (raises no HTTP error
+    // but sends a typed error frame after completing the WebSocket upgrade).
+    ['stt_streaming_disabled', 'apps.meetings.session.sttStreamingDisabled'],
   ] as const)('reports the %s transcription failure with its own message', async (code, key) => {
     const view = await mountLoaded()
 
@@ -842,7 +845,7 @@ describe('useMeetingSession failure reporting', () => {
       expect(view.notify).toHaveBeenCalledWith(i18nT(key), { type: 'error' }))
   })
 
-  it('explains a 409 as another meeting already running', async () => {
+  it('explains a 409 without context as another meeting already running (generic)', async () => {
     apiMocks.start.mockRejectedValue(new MeetingsApiError('conflict', 409))
     const view = await mountLoaded()
 
@@ -855,6 +858,41 @@ describe('useMeetingSession failure reporting', () => {
       { type: 'error' },
     ))
   })
+
+  it('names the blocking meeting in the 409 toast when the server includes its title', async () => {
+    apiMocks.start.mockRejectedValue(
+      new MeetingsApiError('conflict', 409, 'meeting_already_active', {
+        blocking_meeting_title: 'Weekly sync',
+        blocking_meeting_status: 'active',
+      }),
+    )
+    const view = await mountLoaded()
+
+    await act(async () => { view.result.current.actions.start() })
+
+    await waitFor(() => expect(view.notify).toHaveBeenCalledWith(
+      i18nT('apps.meetings.session.anotherMeetingActiveNamed', { title: 'Weekly sync' }),
+      { type: 'error' },
+    ))
+  })
+
+  it('shows a review-specific message when the blocker is in reviewing state', async () => {
+    apiMocks.start.mockRejectedValue(
+      new MeetingsApiError('conflict', 409, 'meeting_already_active', {
+        blocking_meeting_title: 'Standup',
+        blocking_meeting_status: 'reviewing',
+      }),
+    )
+    const view = await mountLoaded()
+
+    await act(async () => { view.result.current.actions.start() })
+
+    await waitFor(() => expect(view.notify).toHaveBeenCalledWith(
+      i18nT('apps.meetings.session.anotherMeetingReviewing', { title: 'Standup' }),
+      { type: 'error' },
+    ))
+  })
+
 
   it('keeps the generic message for a non-conflict api error', async () => {
     apiMocks.start.mockRejectedValue(new MeetingsApiError('server on fire', 500))

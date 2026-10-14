@@ -392,6 +392,31 @@ class TestMeetingLifecycleRoutes:
             assert resp.status == 409
 
     @pytest.mark.asyncio
+    async def test_start_409_carries_blocking_meeting_details(self, app, root: Path, fake_sessions):
+        """The 409 body must name the blocking meeting so the UI can display it.
+
+        Before this fix the body was ``{error, code}`` only. Now it also includes
+                ``blocking_meeting_status``, so the frontend can show an actionable toast
+        (''\"Weekly sync\" is already running…') instead of a generic one.
+        """
+        async with client_for(app) as client:
+            await _start(client, "first")
+            # Rename the first meeting so its title is stable.
+            await client.patch(f"{BASE}/meetings/first", json={"title": "Weekly sync"})
+            await client.post(f"{BASE}/meetings/second/init", json={})
+            resp = await client.post(f"{BASE}/meetings/second/start", json={})
+            assert resp.status == 409
+            body = await resp.json()
+            assert body["code"] == "meeting_already_active"
+            assert body["blocking_meeting_title"] == "Weekly sync"
+            # status is one of the terminal/live values; active here
+            assert body["blocking_meeting_status"] in (
+                k.STATUS_ACTIVE,
+                k.STATUS_PAUSED,
+                k.STATUS_REVIEWING,
+            )
+
+    @pytest.mark.asyncio
     async def test_start_releases_an_abandoned_meeting_holding_the_latch(
         self, app, root: Path, fake_sessions
     ):

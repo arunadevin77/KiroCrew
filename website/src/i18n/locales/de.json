@@ -3513,7 +3513,10 @@
         "untitled": "Besprechung ohne Titel",
         "renameFailed": "Die Besprechung konnte nicht umbenannt werden.",
         "minutesSaveFailed": "Deine Änderungen konnten nicht gespeichert werden.",
-        "minutesRevertFailed": "Deine Änderungen konnten nicht verworfen werden."
+        "minutesRevertFailed": "Deine Änderungen konnten nicht verworfen werden.",
+        "anotherMeetingActiveNamed": "\"{{title}}\" läuft schon. Beende sie zuerst.",
+        "anotherMeetingReviewing": "Schließe die „{{title}}“-Überprüfung, um eine andere Besprechung zu starten.",
+        "sttStreamingDisabled": "Aktiviere Streaming in den Spracheinstellungen für Live-Transkription."
       },
       "settings": {
         "addTerm": "Hinzufügen",

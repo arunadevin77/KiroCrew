@@ -3354,7 +3354,10 @@
         "untitled": "未命名会议",
         "renameFailed": "无法重命名会议。",
         "minutesSaveFailed": "无法保存你的修改。",
-        "minutesRevertFailed": "无法放弃你的修改。"
+        "minutesRevertFailed": "无法放弃你的修改。",
+        "anotherMeetingActiveNamed": "\"{{title}}\" 正在进行，请先结束它。",
+        "anotherMeetingReviewing": "关闭“{{title}}”的审核即可开始另一场会议。",
+        "sttStreamingDisabled": "请在语音设置中开启流式传输以获得实时转写。"
       },
       "settings": {
         "addTerm": "添加",

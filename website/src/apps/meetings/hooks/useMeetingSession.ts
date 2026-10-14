@@ -57,6 +57,9 @@ const STT_ERROR_KEY = {
   worklet: 'apps.meetings.session.sttWorkletFailed',
   connection: 'apps.meetings.session.sttConnectionFailed',
   disconnected: 'apps.meetings.session.sttDisconnected',
+  // Gateway sends this code when the streaming gate refuses the upgrade (sst.streaming=false
+  // or provider not in _STREAMING_PROVIDERS). The error frame carries the actionable copy.
+  stt_streaming_disabled: 'apps.meetings.session.sttStreamingDisabled',
 } as const
 
 /** True when *text* repeats, contains, or is contained by the previous segment. */
@@ -251,7 +254,11 @@ export function useMeetingSession({ eventId, fallbackTitle, config, notify }: Op
   const meetingId = useMemo(() => safeMeetingId(eventId), [eventId])
   const scope = ['meetings', meetingId] as const
 
+
   const [caption, setCaption] = useState('')
+  /** Retained last transcription error message for the in-page ErrorNotice.
+   *  Cleared when status leaves 'active' or when a new meeting starts. */
+  const [transcriptionErrorMessage, setTranscriptionErrorMessage] = useState<string | null>(null)
   const [partialTranscript, setPartialTranscript] = useState('')
   const [fullMeetingId, setFullMeetingId] = useState('')
   const transcriptFullNoticeRef = useRef('')
@@ -550,14 +557,15 @@ export function useMeetingSession({ eventId, fallbackTitle, config, notify }: Op
       // Indexed INSIDE the `i18nT(...)` call rather than via a local `const key`:
       // the gate collects only file-scope consts, so a function-local binding is
       // opaque to it however resolvable its initializer is.
-      notify(
-        i18nT(
-          code in STT_ERROR_KEY
-            ? STT_ERROR_KEY[code as keyof typeof STT_ERROR_KEY]
-            : 'apps.meetings.session.sttUnavailable',
-        ),
-        { type: 'error' },
+      const localizedMessage = i18nT(
+        code in STT_ERROR_KEY
+          ? STT_ERROR_KEY[code as keyof typeof STT_ERROR_KEY]
+          : 'apps.meetings.session.sttUnavailable',
       )
+      notify(localizedMessage, { type: 'error' })
+      // Retain the error so MeetingView can render an in-page ErrorNotice in
+      // addition to the live banner toast (AUTOSDE errors-use-error-notice rule).
+      setTranscriptionErrorMessage(localizedMessage)
     },
     [markTranscriptFull, notify],
   )
@@ -584,21 +592,42 @@ export function useMeetingSession({ eventId, fallbackTitle, config, notify }: Op
   // reconnects a STALLED socket, but a socket that closes cleanly and unexpectedly
   // lands here instead.
   //
-  // Safe against a restart loop: `start()` sets `active` true, which is the
-  // condition that stops this branch firing, and a `start()` that fails reports
-  // through `onError` rather than flipping `active`.
+  // Safe against a restart loop: `start()` sets `active` true (via the server's
+  // 'ready' frame), which is the condition that stops this branch firing. A
+  // `start()` that fails reports through `onError` rather than flipping `active`.
+  //
+  // Also guarded on `connecting`: pausing the meeting between the worklet loading
+  // and the server's 'ready' frame leaves `active` false, so without the `connecting`
+  // check the stop() branch never fires and buffered PCM is flushed after 'ready',
+  // persisting pause-window speech into the notes and tasks.
   const transcriptionRef = useRef(transcription)
   transcriptionRef.current = transcription
   const transcriptionActive = transcription.active
+  const transcriptionConnecting = transcription.connecting
   useEffect(() => {
     const mayOpen = canOpenTranscription({ status, ingressReady, transcriptFull })
-    if (mayOpen && !transcriptionRef.current.active) {
+    if (mayOpen && !transcriptionRef.current.active && !transcriptionRef.current.connecting) {
       void transcriptionRef.current.start()
     }
-    if (!mayOpen && transcriptionRef.current.active) {
+    if (!mayOpen && (transcriptionRef.current.active || transcriptionRef.current.connecting)) {
       transcriptionRef.current.stop()
     }
-  }, [status, ingressReady, transcriptFull, transcriptionActive])
+  }, [status, ingressReady, transcriptFull, transcriptionActive, transcriptionConnecting])
+
+  // Clear any retained transcription error when the meeting is no longer active
+  // (it ended, paused, or the session was closed) or when transcription comes back
+  // alive (a reconnect succeeded). This makes the ErrorNotice transient: it
+  // disappears as soon as transcription is healthy again, not just on the next
+  // Start click.
+  //
+  // The startMutation.onMutate path handles the "next Start click" case; this
+  // effect handles the in-meeting recovery case that onMutate never sees.
+  useEffect(() => {
+    if (transcriptionActive) setTranscriptionErrorMessage(null)
+  }, [transcriptionActive])
+  useEffect(() => {
+    if (status !== 'active') setTranscriptionErrorMessage(null)
+  }, [status])
 
   // ── mutations ─────────────────────────────────────────────────────────────
 
@@ -614,11 +643,18 @@ export function useMeetingSession({ eventId, fallbackTitle, config, notify }: Op
    */
   const failureNotice = useCallback(
     (error: unknown, fallback: string) => {
-      const message =
-        error instanceof MeetingsApiError && error.status === 409
-          ? i18nT('apps.meetings.session.anotherMeetingActive')
-          : fallback
-      notify(message, { type: 'error' })
+      if (error instanceof MeetingsApiError && error.status === 409) {
+        const blockingTitle = error.blockingMeetingTitle
+        const blockingStatus = error.blockingMeetingStatus
+        const message = blockingTitle
+          ? blockingStatus === 'reviewing'
+            ? i18nT('apps.meetings.session.anotherMeetingReviewing', { title: blockingTitle })
+            : i18nT('apps.meetings.session.anotherMeetingActiveNamed', { title: blockingTitle })
+          : i18nT('apps.meetings.session.anotherMeetingActive')
+        notify(message, { type: 'error' })
+        return
+      }
+      notify(fallback, { type: 'error' })
     },
     [notify],
   )
@@ -638,7 +674,11 @@ export function useMeetingSession({ eventId, fallbackTitle, config, notify }: Op
       }),
     // Opens the polling window BEFORE the request goes out, so the status is
     // observable for the entire time the server spends initializing agents.
-    onMutate: () => setStartInFlight(true),
+    onMutate: () => {
+      setStartInFlight(true)
+      // Clear any retained transcription error when a new start is attempted.
+      setTranscriptionErrorMessage(null)
+    },
     // `onSettled`, not `onSuccess`: a start that 409s or fails must close the window
     // too, or a meeting that never started would be polled forever. This flag only
     // drives poll cadence — the microphone follows the polled
@@ -882,6 +922,30 @@ export function useMeetingSession({ eventId, fallbackTitle, config, notify }: Op
       unarchiveTask: (taskId: string) =>
         reviewTaskMutation.mutate({ taskId, reviewStatus: 'pending' }),
     },
+    /** The last start attempt's actionable error, surfaced by an inline ErrorNotice
+     *  beside the meeting controls so a refused start is visible in the page body
+     *  (complementing the live banner from useNotifier and satisfying
+     *  the AUTOSDE `errors-use-error-notice` rule). */
+    startError: (startMutation.error ?? null) as Error | null,
+    /** The same localized message failureNotice shows in the toast, so the
+     *  inline ErrorNotice carries a helpful string rather than the raw server text. */
+    /** Retained localized transcription error for the in-page ErrorNotice. */
+    transcriptionErrorMessage,
+    startErrorMessage: (() => {
+      const err = startMutation.error
+      if (!err) return null
+      if (err instanceof MeetingsApiError && err.status === 409) {
+        const blockingTitle = err.blockingMeetingTitle
+        const blockingStatus = err.blockingMeetingStatus
+        if (blockingTitle) {
+          return blockingStatus === 'reviewing'
+            ? i18nT('apps.meetings.session.anotherMeetingReviewing', { title: blockingTitle })
+            : i18nT('apps.meetings.session.anotherMeetingActiveNamed', { title: blockingTitle })
+        }
+        return i18nT('apps.meetings.session.anotherMeetingActive')
+      }
+      return i18nT('apps.meetings.session.startFailed')
+    })(),
     pending: {
       starting: startMutation.isPending,
       stopping: stopMutation.isPending,

@@ -144,6 +144,16 @@ export function useMeetingTranscription({
   onError,
 }: Options) {
   const [active, setActive] = useState(false)
+  /**
+   * True from when the worklet is ready and start() is awaiting the server's
+   * 'ready' frame, until the frame arrives (or cleanup runs).
+   *
+   * The session effect uses this to stop the mic if the meeting is paused during
+   * the connect phase. Without it, pausing between the worklet loading and 'ready'
+   * arriving leaves active=false so the effect never calls stop(), and the buffered
+   * PCM is flushed once 'ready' arrives — dispatching audio from the paused window.
+   */
+  const [connecting, setConnecting] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const ctxRef = useRef<AudioContext | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -249,6 +259,7 @@ export function useMeetingTranscription({
     startingRef.current = false
     onPartialRef.current?.('')
     setActive(false)
+    setConnecting(false)
   }, [clearWatchdog])
 
   // Never leave the microphone open when the page unmounts.
@@ -301,13 +312,22 @@ export function useMeetingTranscription({
     ws.onmessage = ev => {
       if (typeof ev.data !== 'string') return
       lastFrameRef.current = Date.now()
-      let msg: { type?: string; text?: string; message?: string }
+      let msg: { type?: string; text?: string; message?: string; code?: string }
       try {
         msg = JSON.parse(ev.data)
       } catch {
         return
       }
       if (msg.type === 'ready') {
+        // Activate only when the server confirms the stream is open — never
+        // while still awaiting. If we set active earlier (after addModule),
+        // a terminal error frame later causes cleanup() to flip active false,
+        // which the session effect reads as a dropped socket and restarts
+        // transcription in a loop. Moving setActive here ensures active is
+        // never true on the error path, so cleanup() is a no-op on the flag
+        // and the session effect never sees the transition.
+        setConnecting(false)
+        setActive(true)
         resolveReady()
         return
       }
@@ -346,11 +366,20 @@ export function useMeetingTranscription({
         return
       }
       if (msg.type === 'error') {
-        onErrorRef.current?.(msg.message || 'error')
+        // Pass the machine-readable `code` so STT_ERROR_KEY can route to the right
+        // user-facing copy. Fall back to the human message, then a generic sentinel.
+        onErrorRef.current?.(msg.code || msg.message || 'error')
+        // Mark as stopping so the onclose handler does not emit a second 'disconnected'
+        // error that would overwrite the code-specific message with a generic one.
+        setConnecting(false)
+        stoppingRef.current = true
         resolveReady()
       }
     }
     ws.onclose = () => {
+      // Unblock start() if it is still awaiting readyPromise when the socket
+      // closes (e.g. a clean server shutdown before the stream was confirmed).
+      resolveReady()
       // Ignore a close for a socket we have already replaced. `close` is
       // delivered asynchronously, so the watchdog's reconnect and a
       // stop()-then-start() both create the NEW socket before the OLD one's
@@ -412,8 +441,23 @@ export function useMeetingTranscription({
     }
     source.connect(node)
     // The worklet's output is never heard — do NOT connect it to the destination.
+    //
+    // Guard: the socket may have been closed while addModule was loading. If the
+    // watchdog fired a reconnect, or if onclose ran during the await, wsRef will
+    // no longer point to this socket and cleanup() will already have run. Calling
+    // setting connecting after cleanup leaves connecting stuck true with no live
+    // socket, blocking future start() calls via the session effect's !connecting
+    // guard.
+    if (wsRef.current !== ws) return
     startingRef.current = false
-    setActive(true)
+    // Active state is deferred to the 'ready' message handler — see the
+    // comment there for why calling setActive earlier leads to a reconnect loop.
+    // Mark the hook as connecting so the session effect can call stop() if the
+    // meeting is paused or ended before the server sends 'ready'. Without this,
+    // pause between worklet-load and 'ready' leaves active=false, the stop()
+    // branch never fires, and the buffered PCM is flushed after 'ready' — persisting
+    // pause-window speech into the notes.
+    setConnecting(true)
 
     lastFrameRef.current = Date.now()
     clearWatchdog()
@@ -428,7 +472,10 @@ export function useMeetingTranscription({
     }, WATCHDOG_INTERVAL_MS)
 
     await readyPromise
-    if (ws.readyState === WebSocket.OPEN) {
+    // Do not flush if stop() was called while we were waiting (e.g. the meeting
+    // was paused during the connect window). stoppingRef was set by stop() or by
+    // the error-frame handler — either way the capture should be discarded.
+    if (!stoppingRef.current && ws.readyState === WebSocket.OPEN) {
       for (const chunk of buffer) {
         try { ws.send(chunk) } catch { break }
       }
@@ -456,5 +503,5 @@ export function useMeetingTranscription({
     }, CLOSE_GRACE_MS)
   }, [cleanup, clearWatchdog])
 
-  return { active, start, stop, supported: transcriptionSupported }
+  return { active, connecting, start, stop, supported: transcriptionSupported }
 }

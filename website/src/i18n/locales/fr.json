@@ -3584,7 +3584,10 @@
         "untitled": "Réunion sans titre",
         "renameFailed": "Impossible de renommer la réunion.",
         "minutesSaveFailed": "Impossible d'enregistrer tes modifications.",
-        "minutesRevertFailed": "Impossible d'abandonner tes modifications."
+        "minutesRevertFailed": "Impossible d'abandonner tes modifications.",
+        "anotherMeetingActiveNamed": "“{{title}}” est déjà en cours. Termine-la d’abord.",
+        "anotherMeetingReviewing": "Ferme la révision de « {{title}} » pour démarrer une autre réunion.",
+        "sttStreamingDisabled": "Active le streaming dans les paramètres Voix pour la transcription en direct."
       },
       "settings": {
         "addTerm": "Ajouter",

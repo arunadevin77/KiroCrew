@@ -395,7 +395,8 @@
         "pausedPlaceholder": "Agents paused — resume to send",
         "pausingPlaceholder": "Pausing — sending is unavailable",
         "resumingPlaceholder": "Resuming — sending will be available shortly"
-      }
+      },
+      "session": {}
     },
     "autoResearch": {
       "grillTree": {

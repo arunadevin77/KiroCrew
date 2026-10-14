@@ -3442,7 +3442,10 @@
         "taskAddFailed": "そのアクションアイテムを追加できませんでした。",
         "taskFileFailed": "そのアクションアイテムをファイルできませんでした。",
         "taskFiled": "アクションアイテムがファイルされました。",
-        "untitled": "無題のミーティング"
+        "untitled": "無題のミーティング",
+        "anotherMeetingActiveNamed": "「{{title}}」は既に実行中です。先に終了してください。",
+        "anotherMeetingReviewing": "「{{title}}」のレビューを閉じて別のミーティングを開始してください。",
+        "sttStreamingDisabled": "ライブ文字起こしには設定 → 音声でストリーミングを有効にしてください。"
       },
       "settings": {
         "addTerm": "追加",
