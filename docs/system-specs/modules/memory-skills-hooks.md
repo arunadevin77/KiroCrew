@@ -241,6 +241,33 @@ replacement while a writer retains a handle. Startup recovery runs before memory
 consumers open the selected generation. Failures retain the old data and report
 unavailability; no read creates a replacement database.
 
+A reader whose view of `memory_stores/` refuses writes (a read-only mount, or a
+script cron's sandbox that binds the tree read-only) still takes both locks:
+`hold_stores_for_read` opens the existing `.namespace.lock` and each store's
+`.store-use.lock` read-only and takes the same `flock`, which contends on the
+inode the gateway's writers lock. A lock file absent from such a view is read
+without, with a warning; a namespace lock that appears during that read refuses
+it, and nested namespace operations on the reading thread share that lockless
+hold. A lock file this process's user does not own is refused. On the same view
+a closed WAL store database (no `-wal`, no `-journal`) cannot get the `-shm` an
+ordinary `mode=ro` open creates. When that open fails with SQLite's read-only,
+cannot-open or permission result, the snapshot copies it `immutable=1` while
+holding the POSIX read lock an ordinary SQLite reader holds on the file, from
+before the copy until after its check: a rollback-journal writer cannot change
+the file meanwhile, and a WAL writer's last close cannot remove its `-wal`. A
+writer already holding a conflicting lock refuses the copy, and where the lock
+cannot be taken (Windows, or a filesystem without record locks) the open's own
+refusal stands. The copy is refused if the file's identity (size, mtime or
+ctime) moved, a `-wal` or `-journal` appeared beside it, or the staged copy
+fails `quick_check`.
+A store the gateway holds open keeps its `-wal` and `-shm`, and the ordinary
+`mode=ro` open reads it through a read-only `-shm`. A lock file the read
+refuses (redirected, not a private regular file, or a namespace lock that
+appeared mid-read) ends `kirocrew snapshot` with exit 1 and its reason,
+audited as `snapshot_rejected` with `reason=memory_store_refused`.
+Allocation, replacement and restore keep the writable open and fail on such a
+view.
+
 `MemoryStore` keeps Global V1 index placement unchanged:
 `MemoryStore()` uses `<home>/memory_index.db`, while an explicitly supplied
 workspace retains its existing workspace-relative path. V1 FTS supports literal
