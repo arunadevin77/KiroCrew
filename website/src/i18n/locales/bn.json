@@ -13600,7 +13600,9 @@
           "error": "ত্রুটি",
           "paused": "থামানো",
           "synced": "হালনাগাদ আছে"
-        }
+        },
+        "added_by_agent": "○ এজেন্ট যোগ করেছে",
+        "updates_when_the_agent_adds_a_document": "এজেন্ট কোনো নথি যোগ করলে আপডেট হয়; সিঙ্ক করার কিছু নেই"
       },
       "settings": {
         "title": "Ingestion Settings",

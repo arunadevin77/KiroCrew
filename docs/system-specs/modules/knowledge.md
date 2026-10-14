@@ -265,6 +265,16 @@ redacted before they cross into the store. Adds are serialised by a module lock,
 new items are attributed to a document by diffing the source's item ids around the
 ingest.
 
+**The Auto-added row has nothing to sync.** Kiro Crew fetches nothing for it: its
+documents arrive only when the agent submits text. Its uri `agent://` is a control uri,
+not a URL, so `POST /api/knowledge/sources/{id}/sync` never hands it to the agent
+URL-fetch fallback, whose failure would leave the row in a sticky `error`. The request
+answers 409 `source_not_syncable` and the row's status is unchanged. `GET
+/api/knowledge/sources` carries the same rule as a per-row `syncable` flag (false only
+for this row), and the Sources list offers Sync from that flag, so the button and the
+refusal cannot drift apart. In place of the "manual" hint, which points at the Sync
+button, the row says "added by agent", with a tooltip saying there is nothing to sync.
+
 **Ownership is recorded from inside the ingest, not after it returns.** The items become
 durable during `ingest_file`; `ingest_file` therefore takes an `on_committed` callback and
 invokes it in its finalize hop, on the success branch, right after the superseded group is

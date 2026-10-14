@@ -13813,7 +13813,9 @@
           "error": "Error",
           "paused": "En pausa",
           "synced": "Actualizado"
-        }
+        },
+        "added_by_agent": "○ añadido por el agente",
+        "updates_when_the_agent_adds_a_document": "Se actualiza cuando el agente añade un documento; no hay nada que sincronizar"
       },
       "settings": {
         "title": "Ingestion Settings",

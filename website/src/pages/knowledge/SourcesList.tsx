@@ -576,6 +576,11 @@ export default function SourcesList({ onIngest, uploadNamespace, setUploadNamesp
                     ? <span className="inline-flex items-center gap-0.5 text-ok shrink-0" title={i18nT('pages.knowledge.sourcesList.auto_watches_for_file_changes_every_5_min')}>{i18nT('pages.knowledge.sourcesList.auto')}</span>
                     : isFolderType
                     ? <span className={`inline-flex items-center gap-0.5 shrink-0 ${isPaused ? 'text-warn' : isPending ? 'text-muted' : 'text-ok'}`} title={isPaused ? i18nT('pages.knowledge.sourcesList.paused') : isPending ? i18nT('pages.knowledge.sourcesList.awaiting_confirmation') : i18nT('pages.knowledge.sourcesList.watching_folder')}>● {isPaused ? i18nT('pages.knowledge.sourcesList.paused_2') : isPending ? i18nT('pages.knowledge.sourcesList.pending') : i18nT('pages.knowledge.sourcesList.folder')}</span>
+                    : s.source_type === 'agent'
+                    // Like "auto" and "folder", the label names how the row updates,
+                    // so it comes from the row's type; "manual" would point at a Sync
+                    // button the gateway does not offer here.
+                    ? <span className="inline-flex items-center gap-0.5 text-muted shrink-0" title={i18nT('pages.knowledge.sourcesList.updates_when_the_agent_adds_a_document')}>{i18nT('pages.knowledge.sourcesList.added_by_agent')}</span>
                     : <span className="inline-flex items-center gap-0.5 text-muted shrink-0" title={i18nT('pages.knowledge.sourcesList.use_sync_button_to_update')}>{i18nT('pages.knowledge.sourcesList.manual')}</span>}
                   {/* The count names a problem whose detail (which files, and why)
                       lives in the row's expanded view, so on folder rows it is the
@@ -642,7 +647,9 @@ export default function SourcesList({ onIngest, uploadNamespace, setUploadNamesp
                   </button>
                 )
               )}
-              {!isFolderType && (
+              {/* The gateway marks a row it would refuse Sync on (the Auto-added
+                  source: its documents arrive only when the agent submits them). */}
+              {!isFolderType && s.syncable !== false && (
                 <button aria-label={i18nT('pages.knowledge.sourcesList.sync_source')} onClick={() => syncSource(s.id)} disabled={isDeleting || syncingIds.has(s.id)}
                   className="px-2 py-1 text-[11px] border border-border rounded hover:bg-bg-elevated disabled:opacity-50 flex items-center gap-1">
                   {syncingIds.has(s.id)

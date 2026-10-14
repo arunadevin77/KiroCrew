@@ -42,7 +42,7 @@ from kiro_crew.dashboard.origin import is_direct_local_request
 from kiro_crew.dashboard.upload_limits import bytes_to_mb_figure, knowledge_upload_max_bytes
 from kiro_crew.executors import run_in_embed_pool
 from kiro_crew.knowledge.agent_fetch import fetch_url_content
-from kiro_crew.knowledge.agent_source import add_agent_document
+from kiro_crew.knowledge.agent_source import AGENT_SOURCE_URI, add_agent_document
 from kiro_crew.knowledge.artifact_ingest import ARTIFACT_SOURCE_URI, ArtifactKnowledgeSync
 from kiro_crew.knowledge.chunker import HeadingAwareChunker
 from kiro_crew.knowledge.connectors.base import BaseConnector
@@ -1235,7 +1235,16 @@ async def list_sources(request: web.Request) -> web.Response:
     spend = await asyncio.to_thread(source_spend, store, sources)
     for source in sources:
         source["spend"] = spend.get(source["id"], {})
+        # Whether POST /sources/{id}/sync can do anything for this row. The
+        # Sources list offers Sync from this flag, so the button and the 409
+        # source_not_syncable refusal in _sync_source_body share one rule.
+        source["syncable"] = _is_syncable(source)
     return web.json_response(sources)
+
+
+def _is_syncable(source) -> bool:  # type: ignore[no-untyped-def]
+    """False for the aggregate Auto-added source, whose uri is a control uri."""
+    return source["uri"] != AGENT_SOURCE_URI
 
 
 # Max wall-clock the native folder dialog may stay open before we give up.
@@ -1685,6 +1694,20 @@ async def _sync_source_body(request: web.Request) -> web.Response:
     # URL, and the agent URL-fetch fallback below can only fail on it.
     if source["uri"] == ARTIFACT_SOURCE_URI:
         return await _sync_artifact_source(request, store, source)
+
+    # The aggregate Auto-added source has nothing to fetch: its documents arrive
+    # only when the agent submits text through knowledge_add_document. 'agent://'
+    # is a control uri, so the URL-fetch fallback below could only fail and leave
+    # the row in a sticky 'error'. Refuse, and leave the status as it is.
+    if not _is_syncable(source):
+        return web.json_response(
+            {
+                "error": "this source has nothing to sync",
+                "code": "source_not_syncable",
+                "source_id": source_id,
+            },
+            status=409,
+        )
 
     # local_file sources carry a filesystem path, not a URL -- re-ingest the file
     # directly through the FileReader pipeline (same path as add_source), never the

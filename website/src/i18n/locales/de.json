@@ -13600,7 +13600,9 @@
           "error": "Fehler",
           "paused": "Pausiert",
           "synced": "Aktuell"
-        }
+        },
+        "added_by_agent": "○ vom Agenten hinzugefügt",
+        "updates_when_the_agent_adds_a_document": "Wird aktualisiert, wenn der Agent ein Dokument hinzufügt; nichts zu synchronisieren"
       },
       "settings": {
         "title": "Ingestion Settings",

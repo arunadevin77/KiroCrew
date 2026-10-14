@@ -14026,7 +14026,9 @@
           "error": "Ошибка",
           "paused": "Приостановлено",
           "synced": "Актуально"
-        }
+        },
+        "added_by_agent": "○ добавлено агентом",
+        "updates_when_the_agent_adds_a_document": "Обновляется, когда агент добавляет документ; синхронизировать нечего"
       },
       "settings": {
         "title": "Ingestion Settings",

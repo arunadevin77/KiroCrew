@@ -13387,7 +13387,9 @@
           "error": "エラー",
           "paused": "一時停止中",
           "synced": "最新"
-        }
+        },
+        "added_by_agent": "○ エージェントが追加",
+        "updates_when_the_agent_adds_a_document": "エージェントがドキュメントを追加すると更新されます。同期するものはありません"
       },
       "settings": {
         "title": "Ingestion Settings",
