@@ -21,7 +21,7 @@ async def test_internal_request_captures_one_member_before_other_work(env):
     req = request(env, internal=True)
     scope = await _shared.member_request_scope(req)
     assert scope.store == "member-alice"
-    env.bind_session("dashboard:bob", "member-bob")
+    await env.bind_session_async("dashboard:bob", "member-bob")
     bind_session_execution(
         "dashboard:alice", read_session_execution("dashboard:bob"), replace_existing=True
     )

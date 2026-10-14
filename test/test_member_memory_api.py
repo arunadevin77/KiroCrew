@@ -196,7 +196,7 @@ async def test_taskrunner_status_uses_ordinary_internal_transport(env):
         ("taskrunner:alice-run:runtime", "member-alice"),
         ("taskrunner:bob-run:runtime", "member-bob"),
     ):
-        env.bind_session(key, store)
+        await env.bind_session_async(key, store)
     runner = SimpleNamespace(
         status=lambda: {
             "runs": [
@@ -1892,7 +1892,7 @@ async def test_markdown_recall_is_bound_to_named_v1_not_global(env, monkeypatch)
     env.state._slots["legacy"] = SimpleNamespace(is_restricted=False, blocks_reads=False)
     # Internal recall resolves the store from the session's recorded execution,
     # never from transcript metadata alone.
-    env.bind_session("dashboard:legacy", "legacy-notebook")
+    await env.bind_session_async("dashboard:legacy", "legacy-notebook")
     monkeypatch.setattr(member_memory_auth, "_request_peer_pid", lambda request: os.getpid())
     response = await memory_member.api_memory_recall(
         request(
