@@ -1421,13 +1421,14 @@ ones the packager never reads). The body is optional JSON:
 
 A marker without `updateCommand` turns the updater off, and About shows the
 "updates are managed by …" message naming `managedBy`. A marker with
-`updateCommand` runs the managed lane below instead, and About shows the normal
-update card, with no managed-by message and no copyable command. That lane also
-needs `checkCommand`: without it every check fails with "this managed install
-has no checkCommand", so no update is ever offered or applied
-([#15799](https://github.com/kirodotdev/KiroCrew/issues/15799)). An empty or unparsable body still counts as managed — an
+`updateCommand` (and a `checkCommand`) runs the managed lane below instead, and
+About shows the "managed by …" notice and the copyable command above the regular
+update controls. An empty or unparsable body still counts as managed — an
 operator who dropped the file gets the safe behavior even when the metadata is
-wrong.
+wrong. The build script (`KIROCREW_MANAGED_INSTALL_MARKER`) rejects a marker
+with `updateCommand` but no `checkCommand`: every managed-lane check would fail
+with "this managed install has no checkCommand" and no update would ever be
+offered or applied.
 
 The body is only read when the marker's **provenance** can be established:
 neither the marker nor its directory may be owned by the account the app runs

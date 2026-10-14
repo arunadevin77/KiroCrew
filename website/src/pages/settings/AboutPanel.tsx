@@ -1050,6 +1050,10 @@ export function AboutPanel() {
   // its owner reads and no self-update lane, so both the switcher and the
   // channel row disappear rather than describing a control that changes nothing.
   const isExternallyManaged = updatesDisabled === 'externally-managed'
+  // A marker with updateCommand routes to the managed lane: the external
+  // package manager handles discovery and apply, but the managed-by notice
+  // and the copyable command still apply alongside the regular update controls.
+  const isManagedLane = !isExternallyManaged && !updatesDisabled && !!info?.updateCommand
   const checking = checkMutation.isPending || updateState?.state === 'checking'
 
   // "What's the difference?" disclosure next to the channel switcher. Collapsed
@@ -1971,38 +1975,15 @@ export function AboutPanel() {
           {isExternallyManaged ? (
             // The marker's owner (a distro/enterprise package manager) replaces
             // the whole install, so there is no Check button and no channel —
-            // just the fact, plus the owner's own update command when the
-            // marker carries one. Same command-box + copy pattern as the
-            // gateway's manual-update instructions below.
+            // just the "updates are managed by …" fact. A marker that ALSO
+            // carries an updateCommand routes to the managed lane instead and
+            // shows the notice + copyable command above the update controls.
             <div className="flex flex-col gap-2" data-testid="externally-managed-updates">
               <p className="text-sm text-muted">
                 {info?.managedBy
                   ? i18nT('pages.settings.aboutPanel.updates_managed_externally_by', { managedBy: info.managedBy })
                   : i18nT('pages.settings.aboutPanel.updates_managed_externally')}
               </p>
-              {info?.updateCommand && (
-                <>
-                  <div className="p-2.5 bg-bg rounded-lg border border-border font-mono text-[12px] text-text break-all"
-                    data-testid="managed-update-command">
-                    {info.updateCommand}
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Btn onClick={() => copyCommand(info.updateCommand!, setManagedCmdCopied, setManagedCmdCopyFailed)}>
-                      <Copy size={13} className="lucide-inline" /> {managedCmdCopied
-                        ? i18nT('pages.settings.aboutPanel.copied')
-                        : i18nT('pages.settings.aboutPanel.copy_command')}
-                    </Btn>
-                    {/* askAgent on: the command is still on screen above. */}
-                    {managedCmdCopyFailed && (
-                      <ErrorNotice
-                        variant="inline"
-                        message={i18nT('pages.settings.aboutPanel.copy_failed_select_the_command_and_copy_it_manually')}
-                        askAgent
-                      />
-                    )}
-                  </div>
-                </>
-              )}
             </div>
           ) : updatesDisabled ? (
             <p className="text-sm text-muted">
@@ -2024,6 +2005,36 @@ export function AboutPanel() {
             </p>
           ) : (
             <div className="flex flex-col gap-2.5">
+              {/* Managed lane: the marker names an external owner even though
+                  the updater is armed; show the managed-by notice and the
+                  copyable command above the regular update controls. */}
+              {isManagedLane && (
+                <div className="flex flex-col gap-2" data-testid="externally-managed-updates">
+                  <p className="text-sm text-muted">
+                    {info?.managedBy
+                      ? i18nT('pages.settings.aboutPanel.updates_managed_lane_by', { managedBy: info.managedBy })
+                      : i18nT('pages.settings.aboutPanel.updates_managed_lane')}
+                  </p>
+                  <div className="p-2.5 bg-bg rounded-lg border border-border font-mono text-[12px] text-text break-all"
+                    data-testid="managed-update-command">
+                    {info.updateCommand}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Btn onClick={() => copyCommand(info.updateCommand!, setManagedCmdCopied, setManagedCmdCopyFailed)}>
+                      <Copy size={13} className="lucide-inline" /> {managedCmdCopied
+                        ? i18nT('pages.settings.aboutPanel.copied')
+                        : i18nT('pages.settings.aboutPanel.copy_command')}
+                    </Btn>
+                    {managedCmdCopyFailed && (
+                      <ErrorNotice
+                        variant="inline"
+                        message={i18nT('pages.settings.aboutPanel.copy_failed_select_the_command_and_copy_it_manually')}
+                        askAgent
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
               <p className="text-sm text-muted">
                 {botName || 'Kiro Crew'} {i18nT('pages.settings.aboutPanel.checks_for_updates_automatically_you_can_also_ch')}
               </p>

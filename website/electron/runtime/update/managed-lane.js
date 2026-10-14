@@ -1,6 +1,6 @@
 /**
  * The marker-driven update lane: an EXTERNALLY-MANAGED marker that carries an
- * `updateCommand` (and optionally a `checkCommand`) owns this install's
+ * `updateCommand` (and a required `checkCommand`) owns this install's
  * lifecycle, so updates are discovered and applied by running those commands
  * instead of arming electron-updater or contacting the feed.
  *

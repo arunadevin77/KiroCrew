@@ -984,6 +984,7 @@ if [ -n "${KIROCREW_MANAGED_INSTALL_MARKER:-}" ]; then
       if (parsed[k].length > caps[k]) { console.error(`marker field "${k}" is ${parsed[k].length} chars; the reader caps at ${caps[k]} and would truncate the command`); process.exit(1); }
     }
     if (!parsed.updateCommand) { console.error("marker has no updateCommand: it would disable updates without offering any"); process.exit(1); }
+    if (!parsed.checkCommand) { console.error("marker has updateCommand but no checkCommand: every managed-lane check will fail; no update will ever be offered"); process.exit(1); }
   ' "$MARKER_SRC" || { echo "❌ KIROCREW_MANAGED_INSTALL_MARKER rejected: $MARKER_SRC" >&2; exit 1; }
   # Staged for THIS build only: electron-builder packs it below, and the copy
   # must not outlive the run -- a later build of a different edition from the
