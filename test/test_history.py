@@ -4698,18 +4698,22 @@ class TestConsolidateSession:
         def gated(k):
             calls.append(k)
             entered.set()
-            release.wait()
+            assert release.wait(timeout=60), "eligibility worker was not released"
             return real(k)
 
         with (
             patch.object(consolidator, "_session_end_eligibility", side_effect=gated),
             patch.object(consolidator, "_consolidate", new_callable=AsyncMock) as run,
         ):
-            consolidator.consolidate_session(key)
-            await asyncio.to_thread(entered.wait)
-            consolidator.consolidate_session(key)
-            release.set()
-            await asyncio.gather(*list(consolidator._tasks))
+            try:
+                consolidator.consolidate_session(key)
+                assert await asyncio.to_thread(entered.wait, timeout=60), (
+                    "eligibility worker did not enter"
+                )
+                consolidator.consolidate_session(key)
+            finally:
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*list(consolidator._tasks)), timeout=60)
 
         assert calls == [key]
         run.assert_awaited_once_with(key, include_history=True)
