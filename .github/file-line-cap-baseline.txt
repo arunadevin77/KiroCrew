@@ -267,7 +267,7 @@
 3125 test/test_cron_script.py
 2247 test/test_cron_secret_env.py
 3175 test/test_dashboard_approval.py
-26845 test/test_dashboard_chat.py
+18576 test/test_dashboard_chat.py
 2347 test/test_dashboard_chat_pins.py
 3742 test/test_dashboard_handlers_core_coverage.py
 2718 test/test_dashboard_server_composition_contract.py
