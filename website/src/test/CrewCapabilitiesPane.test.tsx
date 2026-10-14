@@ -263,7 +263,7 @@ describe('crew capability draft editor with mocked HTTP', () => {
     expect(screen.getByRole('combobox', { name: 'Source for Search' })).toBeDisabled()
     expect(screen.getByTestId('capability-enroll-to-edit')).toHaveTextContent('Checked: edit overrides below. Unchecked: read-only.')
     expect(screen.queryByText('Tick “Follow the parent template” above to edit.')).toBeNull()
-    expect(screen.getByText('Not following parent (independent legacy snapshot)')).toBeInTheDocument()
+    expect(screen.getByText('Not following parent (own copy)')).toBeInTheDocument()
     const enroll = screen.getByRole('checkbox', { name: 'Follow the parent template' })
     // The guarantee is next to the checkbox, not buried in a long helper.
     expect(enroll.closest('label')).toHaveTextContent('Nothing changes until you save. Following keeps your values and empty fields.')
@@ -275,7 +275,7 @@ describe('crew capability draft editor with mocked HTTP', () => {
     // The badge names the SAVED state, so a ticked Follow box beside it reads
     // as a draft, not as a contradiction.
     expect(enroll).toBeChecked()
-    expect(screen.getByText('Not following parent (independent legacy snapshot)')).toBeInTheDocument()
+    expect(screen.getByText('Not following parent (own copy)')).toBeInTheDocument()
     // The pane calls its pending edits a draft everywhere (footer, confirm, stale
     // notice), so the badge uses the same word instead of the editor's generic one.
     expect(screen.getByText('Unsaved draft')).toBeInTheDocument()
@@ -284,6 +284,138 @@ describe('crew capability draft editor with mocked HTTP', () => {
     await review()
     expect(previewBodies[0].enroll).toBe(true)
     expect(previewBodies[0].operations).toEqual([])
+  })
+
+  it('lets a following member stop following the parent after a confirm', async () => {
+    const detachBodies: unknown[] = []
+    server.use(http.post(`${endpoint}/detach`, async ({ request }) => {
+      detachBodies.push(await request.json())
+      view = { ...view, mode: 'legacy_snapshot', revision: 'r2', parent_changes: [] }
+      return HttpResponse.json(view)
+    }))
+    const { saved } = mount(); await ready()
+    const stop = screen.getByRole('button', { name: 'Stop following the parent' })
+    // The help names the way back, so the button does not read as a one-way door.
+    expect(stop).toHaveAccessibleDescription("Keeps the current values as this member's own. Parent changes stop arriving. You can follow the parent again any time.")
+    // Keep following closes the confirm and sends nothing.
+    fireEvent.click(stop)
+    expect(await screen.findByText('Stop following the parent for crewA?')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Keep following' }))
+    await waitFor(() => expect(screen.queryByText('Stop following the parent for crewA?')).toBeNull())
+    expect(detachBodies).toEqual([])
+    fireEvent.click(stop)
+    // The confirm names where the kept copy is edited afterwards: the crew editor's template pane.
+    // The dialog names the way back and where the values are edited afterwards.
+    expect(await screen.findByText(/crewA keeps every value it uses now, as its own copy\. Changes to atlas will no longer reach it\. To edit those values later, open the “Built from” tab of this same editor\. Afterwards a “Follow the parent template” checkbox appears on this page, so you can follow atlas again any time\./)).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('capability-detach-confirm'))
+    await waitFor(() => expect(detachBodies).toEqual([{ revision: 'r1' }]))
+    await waitFor(() => expect(saved).toHaveBeenCalled())
+    // Back to an independent copy: the way back in is the enroll checkbox again.
+    expect(await screen.findByRole('checkbox', { name: 'Follow the parent template' })).not.toBeChecked()
+    expect(screen.queryByRole('button', { name: 'Stop following the parent' })).toBeNull()
+    expect(saveBodies).toEqual([])
+  })
+
+  it('offers stop following only on a clean pane, and never to a member that does not follow', async () => {
+    mount(); await ready()
+    await pickState('Search', 'Inherited')
+    expect(screen.getByRole('button', { name: 'Stop following the parent' })).toBeDisabled()
+    expect(screen.getByText('Save or discard your draft first.')).toBeInTheDocument()
+  })
+
+  it.each([
+    { code: 'detach_tool_limits_unkept' as const, text: 'crewA launches a server with single-tool limits, which only a saved setup can enforce. Remove the limit (set the whole server to allowed), save, then stop following.' },
+  ])('disables stop following up front and says why when the view reports $code', async ({ code, text }) => {
+    view.detach_blocked = code
+    mount(); await ready()
+    const stop = screen.getByRole('button', { name: 'Stop following the parent' })
+    expect(stop).toBeDisabled()
+    expect(stop).toHaveAccessibleDescription(text)
+  })
+
+  it('asks the owner to confirm turning the global mcp.json off, and sends the confirmation', async () => {
+    view.detach_mcp_json_loss = true
+    const detachBodies: unknown[] = []
+    server.use(http.post(`${endpoint}/detach`, async ({ request }) => {
+      detachBodies.push(await request.json())
+      view = { ...view, mode: 'legacy_snapshot', revision: 'r2', detach_mcp_json_loss: false }
+      return HttpResponse.json(view)
+    }))
+    mount(); await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop following the parent' }))
+    expect(await screen.findByTestId('capability-detach-mcp-json')).toHaveTextContent('crewA also loads servers from the global mcp.json. Stopping turns that off for its own copy, so it stops loading them.')
+    fireEvent.click(screen.getByTestId('capability-detach-confirm'))
+    await waitFor(() => expect(detachBodies).toEqual([{ revision: 'r1', accept_mcp_json: true }]))
+  })
+
+  it('sends no confirmation, and shows no warning, for a member that does not read the global mcp.json', async () => {
+    const detachBodies: unknown[] = []
+    server.use(http.post(`${endpoint}/detach`, async ({ request }) => {
+      detachBodies.push(await request.json())
+      view = { ...view, mode: 'legacy_snapshot', revision: 'r2' }
+      return HttpResponse.json(view)
+    }))
+    mount(); await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop following the parent' }))
+    await screen.findByTestId('capability-detach-confirm')
+    expect(screen.queryByTestId('capability-detach-mcp-json')).toBeNull()
+    fireEvent.click(screen.getByTestId('capability-detach-confirm'))
+    await waitFor(() => expect(detachBodies).toEqual([{ revision: 'r1' }]))
+  })
+
+  it('disables stop following after a refusal that names a save, with the reason as its help', async () => {
+    server.use(http.post(`${endpoint}/detach`, () => HttpResponse.json({ error: 'detach_removal_unkept', code: 'detach_removal_unkept' }, { status: 409 })))
+    mount(); await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop following the parent' }))
+    fireEvent.click(await screen.findByTestId('capability-detach-confirm'))
+    const text = 'crewA removed something from a template Crew owns, and the copy would get it back. Set each removed row back to Inherited, save, then stop following.'
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop following the parent' })).toBeDisabled())
+    expect(await screen.findByText(text)).toBeInTheDocument()
+    // The help line ("follow again any time") would contradict the notice, so it steps aside.
+    expect(screen.queryByText(/follow the parent again any time/)).toBeNull()
+  })
+
+  it('shows no stop following control on an independent member', async () => {
+    view.mode = 'shared'
+    mount(); await ready()
+    expect(screen.queryByRole('button', { name: 'Stop following the parent' })).toBeNull()
+  })
+
+  it('says a refused stop following changed nothing, without a raw code, and keeps the member following', async () => {
+    server.use(http.post(`${endpoint}/detach`, () => HttpResponse.json({ error: 'materialization_pending', code: 'materialization_pending' }, { status: 409 })))
+    mount(); await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop following the parent' }))
+    fireEvent.click(await screen.findByTestId('capability-detach-confirm'))
+    expect(await screen.findByText('Stopping was refused. Nothing changed and the member still follows the parent. Reload and try again.')).toBeInTheDocument()
+    expect(screen.queryByText(/materialization_pending/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Stop following the parent' })).toBeInTheDocument()
+  })
+
+  it.each(['materialization_changed', 'foreign_private_copy', 'stale_revision'])('shows no draft advice for a refused stop following with %s', async (code) => {
+    server.use(http.post(`${endpoint}/detach`, () => HttpResponse.json({ error: code, code }, { status: 409 })))
+    mount(); await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop following the parent' }))
+    fireEvent.click(await screen.findByTestId('capability-detach-confirm'))
+    expect(await screen.findByText('Stopping was refused. Nothing changed and the member still follows the parent. Reload and try again.')).toBeInTheDocument()
+    expect(screen.queryByText(new RegExp(code))).toBeNull()
+    expect(screen.queryByText(/Your draft is kept/)).toBeNull()
+  })
+
+  it.each([
+    { code: 'detach_tool_limits_unkept', text: 'crewA launches a server with single-tool limits, which only a saved setup can enforce. Remove the limit (set the whole server to allowed), save, then stop following.' },
+    { code: 'detach_removal_unkept', text: 'crewA removed something from a template Crew owns, and the copy would get it back. Set each removed row back to Inherited, save, then stop following.' },
+  ])('names the save that clears a $code refusal instead of draft advice', async ({ code, text }) => {
+    server.use(http.post(`${endpoint}/detach`, () => HttpResponse.json({ error: code, code }, { status: 409 })))
+    mount(); await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop following the parent' }))
+    fireEvent.click(await screen.findByTestId('capability-detach-confirm'))
+    // The reason is shown once, in the error notice; error text stays out of the help line.
+    expect(await screen.findByText(text)).toBeInTheDocument()
+    // No draft exists when stopping is refused, so the draft-refusal copy must not show.
+    expect(screen.queryByText(/Your draft is kept/)).toBeNull()
+    expect(screen.queryByText(new RegExp(code))).toBeNull()
+    // The reason names a save, so the button waits for it instead of inviting a second refusal.
+    expect(screen.getByRole('button', { name: 'Stop following the parent' })).toBeDisabled()
   })
 
   it('keeps tool exposure, agent approvals and MCP approvals separate', async () => {

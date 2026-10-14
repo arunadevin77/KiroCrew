@@ -12,6 +12,7 @@ import fnmatch
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from contextlib import ExitStack
 from pathlib import Path
@@ -45,6 +46,8 @@ from kiro_crew.platform import redact_via_context
 from kiro_crew.platform.governance import sanitize_agent_config_governance
 from kiro_crew.platform.governance_profiles import governance_answer_generation
 from kiro_crew.validation import is_registered_agent_name
+
+logger = logging.getLogger(__name__)
 
 SECTIONS = agent_state.CAPABILITY_SECTIONS
 MAX_OPERATIONS = 300
@@ -681,6 +684,57 @@ def _parent_is_owned(snap: dict) -> bool:
     return True
 
 
+def _fork_refresh_failed_for(name: str) -> bool:
+    """Did the last fork refresh record a failure for *name* (or for every fork)?"""
+    import kiro_crew.agent as agent_facade
+
+    failed: frozenset[str] = getattr(agent_facade, "_fork_refresh_failed", frozenset())
+    return bool(name) and (name in failed or "*" in failed)
+
+
+def _detach_owned(snap: dict) -> bool:
+    """Would the fork refresh re-apply owned plumbing to this member's copy?
+
+    Asks the refresh's own rule (origin NAME, any scope) as well as
+    ``_parent_is_owned`` (global scope only): a project-scoped parent at an
+    owned name is refreshed as owned too.
+    """
+    from kiro_crew.agent import fork_origin_is_owned
+
+    return _parent_is_owned(snap) or fork_origin_is_owned(snap["target"])
+
+
+def _detach_blocker(snap: dict, intent: dict, owned: bool) -> str | None:
+    """The code that refuses Stop following for this saved setup, else None.
+
+    Once the intent is gone the member runs as an independent copy, so a
+    setup that copy could not keep is refused: single-tool limits (chat
+    start checks them against the backend only for a saved setup) and a
+    removal under a template Crew owns (the refresh restores it).
+    """
+    spec = snap["spec"]
+    if tool_limited_servers(spec):
+        return "detach_tool_limits_unkept"
+    if owned and any(
+        override.get("action") == "remove"
+        for section in SECTIONS
+        for override in intent["overrides"].get(section, {}).values()
+    ):
+        return "detach_removal_unkept"
+    return None
+
+
+def _detach_loses_mcp_json(snap: dict) -> bool:
+    """Does the copy also read the global mcp.json (``includeMcpJson`` unset)?
+
+    The fork refresh pins that merge off for a private copy with no saved
+    intent, so stopping turns it off. That is the state such a copy had
+    before it was enrolled, but it changes which servers the member loads, so
+    the owner confirms it (``accept_mcp_json``) instead of it happening silently.
+    """
+    return snap["spec"].get("includeMcpJson", True) is not False
+
+
 def _unvouched(snap: dict, spec: dict) -> list[str]:
     """Top-level keys of *spec* the review cannot show and this funnel cannot vouch for.
 
@@ -1140,9 +1194,20 @@ class CapabilityService:
         # intent) spec is gated at chat start; an unenrolled member runs its
         # template as before and gets no warning.
         backend_warning = member_backend_warning(selected) if intent else None
+        detach_blocked = None
+        detach_mcp_json_loss = False
+        if intent and isinstance(snap.get("spec"), dict) and snap.get("target"):
+            try:
+                detach_blocked = _detach_blocker(snap, intent, _detach_owned(snap))
+                detach_mcp_json_loss = _detach_loses_mcp_json(snap)
+            except Exception:
+                detach_blocked = None
+                detach_mcp_json_loss = False
         return safe_view(
             {
                 "backend_warning": backend_warning,
+                "detach_blocked": detach_blocked,
+                "detach_mcp_json_loss": detach_mcp_json_loss,
                 "schema_version": 1,
                 "member": snap["member"],
                 "mode": "inherited" if intent else snap["mode"],
@@ -1290,6 +1355,124 @@ class CapabilityService:
         return self.put(
             member, {**body, "preview_token": preview["preview_token"]}, reset_parent=True
         )
+
+    def detach(self, member: str, body: Any) -> dict:
+        """Stop following the Parent: the member keeps its saved values as its own.
+
+        The member's private copy already holds the materialized effective spec,
+        so dropping the inheritance intent leaves an independent private copy
+        (``legacy_snapshot``) with exactly the values the member runs today. No
+        value is recomputed or loosened. Only verified saved bytes are kept: a
+        pending save or a drifted file is refused, so the member never keeps
+        bytes nobody reviewed. The only write is the sidecar entry, so a failure
+        changes nothing; a governance answer newer than the save is applied by
+        the fork refresh that follows. The Parent itself need not be readable: a
+        missing Parent is a reason to leave.
+        """
+        if (
+            not isinstance(body, dict)
+            or "revision" not in body
+            or not set(body) <= {"revision", "accept_mcp_json"}
+        ):
+            raise CapabilityError("invalid_request", 400)
+        if not isinstance(body["revision"], str):
+            raise CapabilityError("invalid_revision", 400)
+        accept_mcp_json = body.get("accept_mcp_json", False)
+        if not isinstance(accept_mcp_json, bool):
+            raise CapabilityError("invalid_request", 400)
+        snap = self._snapshot(member)
+        if body["revision"] != snap["revision"]:
+            raise CapabilityError("stale_revision")
+        if not snap["intent"]:
+            raise CapabilityError("not_inherited")
+        root = kiro_agents_dir_path()
+        from kiro_crew.agent import hold_spawn_gate
+
+        stale_governance = [False]
+        mcp_json_pinned = [False]
+        target_name = [""]
+        # Hold the spawn gate across the write and the refresh it triggers, so a
+        # session cannot start on not-yet-refiltered grants between them.
+        with hold_spawn_gate():
+            with ExitStack() as locks:
+
+                def mutate(document: dict) -> None:
+                    locks.enter_context(agents_spec_lock(root))
+                    locks.enter_context(agent_state._locked())
+                    fresh = self._snapshot(member, document, snap)
+                    if fresh["revision"] != snap["revision"]:
+                        raise CapabilityError("stale_revision")
+                    intent = fresh["intent"]
+                    if not intent:
+                        raise CapabilityError("not_inherited")
+                    if intent.get("status") != "saved":
+                        raise CapabilityError("materialization_pending")
+                    lineage = agent_state.get_fork_info(fresh["target"], strict=True)
+                    if not lineage or lineage["private_to"] != member:
+                        raise CapabilityError("foreign_private_copy")
+                    if _digest(fresh["spec"]) != intent.get("materialized"):
+                        raise CapabilityError("materialization_changed")
+                    # Refusals decided by the saved setup alone (the pane also gets them
+                    # in the view, so it can say so before the user opens the dialog).
+                    owned = _detach_owned(fresh)
+                    blocker = _detach_blocker(fresh, intent, owned)
+                    if blocker:
+                        raise CapabilityError(blocker)
+                    # Turning the global mcp.json merge off changes which servers the
+                    # member loads, so the owner confirms it first.
+                    loses_mcp_json = _detach_loses_mcp_json(fresh)
+                    if loses_mcp_json and not accept_mcp_json:
+                        raise CapabilityError("detach_mcp_json_unkept")
+                    # One write: the spec file is never touched, so a failure
+                    # leaves the intent and the reviewed bytes exactly as they
+                    # were. A governance answer newer than the save is applied by
+                    # the fork refresh below, which governs every private copy
+                    # that has no saved intent.
+                    target_name[0] = fresh["target"]
+                    mcp_json_pinned[0] = loses_mcp_json
+                    stale_governance[0] = intent.get("governance_generation") != (
+                        governance_answer_generation()
+                    )
+                    state = agent_state._read(strict=True)
+                    entry = state[fresh["target"]]
+                    entry.pop("capabilities")
+                    # A copy of a template Crew owns can still track the shipped
+                    # model (``model_managed``); the fork refresh would then
+                    # replace a model the member chose. The member's own copy
+                    # keeps the model it runs, so stop tracking it, in this write.
+                    if (
+                        owned
+                        and entry.get("model_managed") is True
+                        and any(
+                            override.get("action") == "set"
+                            for override in intent["overrides"].get("model", {}).values()
+                        )
+                    ):
+                        entry["model_managed"] = False
+                    agent_state._write(state)
+                    return None
+
+                self._write_bindings({member: snap}, mutate)
+            from kiro_crew.agent_discovery import clear_list_agents_cache
+
+            clear_list_agents_cache()
+            if (
+                stale_governance[0]
+                or mcp_json_pinned[0]
+                or _fork_refresh_failed_for(target_name[0])
+            ):
+                # The kept copy was last governed under an older answer, or an
+                # earlier refresh failed for it while it still had an intent (a
+                # missing Parent makes that refresh fail). Re-run the refresh that
+                # filters every intent-free private copy; if it fails the copy's
+                # sessions stay blocked (fail closed), as for any fork.
+                try:
+                    from kiro_crew.agent import _refresh_forked_templates
+
+                    _refresh_forked_templates()
+                except Exception:
+                    logger.warning("fork refresh after stop following failed", exc_info=True)
+        return self.get(member)
 
     def _finish_publish(self, member: str, expected_template: str, name: str) -> dict:
         """Clear only this publication's lineage, with normal config-first locks."""

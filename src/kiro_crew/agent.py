@@ -159,6 +159,8 @@ if TYPE_CHECKING:  # served by ``__getattr__`` at runtime; named here for mypy
         _fork_refresh_settled,
         _refresh_forked_templates,
         _refresh_forked_templates_locked,
+        fork_origin_is_owned,
+        hold_spawn_gate,
     )
     from kiro_crew.agent_materialization.guide_platform import (  # noqa: F401
         grant_guide_platform_once,
@@ -2219,6 +2221,8 @@ _EXPORTS_BY_OWNER: dict[str, tuple[str, ...]] = {
         "_FORK_REFRESH_WAIT_SECS",
         "_refresh_forked_templates",
         "_refresh_forked_templates_locked",
+        "fork_origin_is_owned",
+        "hold_spawn_gate",
     ),
     "kiro_crew.agent_materialization.service_agents": (
         "_install_guest_agent",

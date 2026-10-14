@@ -10,6 +10,7 @@ a session on. The boot path defers the refresh to a thread
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import re
 import stat
@@ -187,21 +188,19 @@ def _refresh_forked_templates(*, gated_off: "frozenset[str] | None" = None) -> N
     included, not just the boot deferral — and is re-set only when the LAST
     pending pass finishes, so overlapping passes cannot re-open the gate on
     grants the queued pass has not yet re-filtered."""
-    global _fork_refresh_failed, _fork_refresh_pending, _shared_template_held
+    global _fork_refresh_failed, _shared_template_held
     global _shared_template_hold_record
-    # Registered BEFORE the pass lock: a queued pass must drop the settled
-    # event immediately, otherwise the pass currently finishing would set it
-    # and open a window where a spawn consumes grants the queued pass — the
-    # one carrying the policy change that triggered it — has not re-filtered.
-    with _fork_refresh_count_lock:
-        _fork_refresh_pending += 1
-        _fork_refresh_settled.clear()
-    try:
+    # Registered BEFORE the pass lock (``hold_spawn_gate`` does the accounting): a
+    # queued pass must drop the settled event immediately, otherwise the pass
+    # currently finishing would set it and open a window where a spawn consumes
+    # grants the queued pass -- the one carrying the policy change that triggered
+    # it -- has not re-filtered.
+    with hold_spawn_gate():
         with _fork_refresh_lock:
             try:
                 _refresh_forked_templates_locked(gated_off=gated_off)
             except Exception:
-                # The pass died before per-fork accounting — including a STRICT
+                # The pass died before per-fork accounting -- including a STRICT
                 # sidecar read refusing a corrupt file. No fork can be trusted as
                 # refreshed, so all fork-backed spawns stay blocked; recorded HERE
                 # so synchronous callers (rebind, setup) fail closed exactly like
@@ -210,6 +209,24 @@ def _refresh_forked_templates(*, gated_off: "frozenset[str] | None" = None) -> N
                 _shared_template_hold_record = None
                 _shared_template_held = True
                 raise
+
+
+@contextlib.contextmanager
+def hold_spawn_gate():
+    """Keep fork-backed session starts waiting while the caller changes a copy.
+
+    The one place the spawn gate is accounted: a pending count and a cleared
+    settled event, set again only when the LAST holder leaves. A refresh pass
+    holds it, and so does a writer that drops a private copy's saved intent
+    (across the write and the refresh it triggers), so a session cannot start
+    in between on grants the refresh has not yet re-filtered.
+    """
+    global _fork_refresh_pending
+    with _fork_refresh_count_lock:
+        _fork_refresh_pending += 1
+        _fork_refresh_settled.clear()
+    try:
+        yield
     finally:
         with _fork_refresh_count_lock:
             _fork_refresh_pending -= 1
@@ -255,6 +272,38 @@ def _owned_spec_has_its_own_writer(name: str, owned_names: "set[str]") -> bool:
 
         spec_path = agent_mod.kiro_agents_dir_path() / (name + ".json")
         return worker_agent._managed_dashboard_author_install_lands(spec_path)
+    return True
+
+
+def fork_origin_is_owned(name: str, forks: "dict | None" = None) -> bool:
+    """Would the fork refresh re-apply owned plumbing to the fork *name*?
+
+    Follows the lineage in *forks* (``agent_state.all_fork_info()`` when omitted)
+    to its origin and asks whether that origin's NAME is an owned template. Name
+    alone decides, whatever scope the origin was read from: this is the rule
+    ``_refresh_forked_templates_locked`` applies, and any writer that drops a
+    member's inheritance intent must ask the same question, or the refresh
+    restores plumbing the member removed. The dashboard-author stem was a
+    user-creatable template name before it became owned, so a pre-upgrade fork
+    can descend from a USER template at this stem. Treating that origin as
+    owned here would overwrite the fork's hooks and MCP plumbing with the
+    managed set. Count it as an owned origin ONLY when the on-disk origin spec
+    reproduces the installer-recorded ownership digest -- the same gate the
+    installer, the capability-parent check and the home probe apply. Other
+    owned origins keep the plain check.
+    """
+    if forks is None:
+        forks = agent_state.all_fork_info()
+    owned_names = {Path(f).stem for f in OWNED_KIRO_AGENT_FILES}
+    seen: set[str] = set()
+    while name in forks and name not in seen:
+        seen.add(name)
+        name = forks[name]["forked_from"]
+    if name not in owned_names:
+        return False
+    if name == _DASHBOARD_AUTHOR_STEM:
+        origin_path = agent_mod.kiro_agents_dir_path() / (name + ".json")
+        return _dashboard_author_file_is_installers(origin_path)
     return True
 
 
@@ -319,23 +368,7 @@ def _refresh_forked_templates_locked(*, gated_off: "frozenset[str] | None" = Non
         return bound is not None and bound.kiro_agent == name
 
     def _origin_is_owned(name: str) -> bool:
-        seen: set[str] = set()
-        while name in forks and name not in seen:
-            seen.add(name)
-            name = forks[name]["forked_from"]
-        if name not in owned_names:
-            return False
-        # The dashboard-author stem was a user-creatable template name before it became
-        # owned, so a pre-upgrade fork can descend from a USER template at this stem.
-        # Treating that origin as owned here would overwrite the fork's hooks and MCP
-        # plumbing with the managed set. Count it as an owned origin ONLY when the on-disk
-        # origin spec reproduces the installer-recorded ownership digest -- the same gate the
-        # installer, the capability-parent check and the home probe apply. Other owned
-        # origins keep the plain check.
-        if name == _DASHBOARD_AUTHOR_STEM:
-            origin_path = agent_mod.kiro_agents_dir_path() / (name + ".json")
-            return _dashboard_author_file_is_installers(origin_path)
-        return True
+        return fork_origin_is_owned(name, forks)
 
     agents_dir = agent_mod.kiro_agents_dir_path()
     failures: set[str] = set()

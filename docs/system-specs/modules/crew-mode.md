@@ -611,6 +611,43 @@ Duplicate affordance, so the three duplicate entry points read as one flow.
 routes at `/api/agents/{name}/capabilities` use schema version 1. Preview ends
 in `/preview`; PUT requires its opaque preview token and the GET revision.
 Unknown fields, null sets, stale sources and ambiguous names are refused.
+Following is reversible: POST `/detach` with only the GET revision drops the
+inheritance intent and leaves the member on its private copy
+(`legacy_snapshot`), whose bytes are the saved effective spec, unchanged, so
+no value is dropped or loosened and later Parent changes stop reaching it.
+It works with the Parent missing, and refuses `not_inherited`, a stale
+revision, a pending save (`materialization_pending`) and a hand-edited file
+(`materialization_changed`), so only reviewed bytes become the member's own.
+It also refuses a setup an independent copy cannot keep:
+`detach_tool_limits_unkept` when a launched server turns single tools off
+(chat start checks that against the backend only for a saved setup), and
+`detach_removal_unkept` when the Parent is a template Crew owns and the
+member removed something (the fork refresh re-applies that template's
+plumbing). Owned is judged the way the fork refresh judges it
+(`fork_origin_is_owned`: the lineage's origin NAME, whatever scope the
+Parent came from), not only by the global-scope parent check, so a
+project-scoped Parent at an owned name is refused too. A copy that still reads the global mcp.json (`includeMcpJson` unset) needs the owner's confirmation (`accept_mcp_json` in the request; without it
+`detach_mcp_json_unkept`), because the refresh pins that merge off once no
+intent is saved; the view reports it as `detach_mcp_json_loss` and the confirm
+dialog says so. The view carries the refusal that
+would apply as `detach_blocked`, so the pane disables the button and shows the reason before the dialog opens. The pane renders
+these refusals as the save that clears them (drop the limit, or set the
+removed rows back to Inherited, save, then stop), not as draft advice: no
+draft can be open when stopping is offered. The only write is the sidecar
+entry (the spec file is never touched), so a failed write leaves the intent
+and the reviewed bytes in place. A governance answer newer than the save is
+not refused, since a member whose Parent is gone could never reconcile it:
+the fork refresh that follows governs the kept copy like any private copy
+without a saved intent, and fails closed if it cannot. The spawn gate
+(`hold_spawn_gate`) is held from before the write until that refresh ends, so
+a fork-backed session cannot start on grants the refresh has not re-filtered. For a copy of an
+owned template that still tracks the shipped model and chose its own, the
+same write turns that tracking off so the refresh keeps the chosen model.
+The pane's **Stop following the parent** button
+sits beside the mode badge while a member follows, with a confirm dialog that
+names the crew editor's template pane as where the kept copy is edited (this
+pane shows an independent member read-only); enrolling again keeps every
+local choice, as a legacy enrollment does.
 The pane shows its stale notice ("The saved version changed ... Reload from
 server") only for the 409 codes a reload can resolve, which the backend names
 `stale_*` or `*_changed` (`stale_revision`, `stale_binding`,

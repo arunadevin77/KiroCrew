@@ -620,6 +620,7 @@ async def test_http_owner_boundary(editor, caller, app_id, expected):
         if expected != 200:
             for method, path in (
                 ("post", "/api/agents/A/capabilities/preview"),
+                ("post", "/api/agents/A/capabilities/detach"),
                 ("put", "/api/agents/A/capabilities"),
             ):
                 response = await getattr(client, method)(path, json={})
@@ -642,6 +643,12 @@ async def test_http_owner_boundary(editor, caller, app_id, expected):
             "/api/agents/detail/" + prepared["template"], json={"model": "auto"}
         )
         assert response.status == 409
+        current = await (await client.get("/api/agents/A/capabilities")).json()
+        response = await client.post(
+            "/api/agents/A/capabilities/detach", json={"revision": current["revision"]}
+        )
+        assert response.status == 200
+        assert (await response.json())["mode"] == "legacy_snapshot"
 
 
 def test_whole_reset_restores_parent_and_keeps_member_metadata(editor):
@@ -3716,3 +3723,451 @@ def test_unenrolled_member_gets_no_backend_warning(editor):
     service, home, specs, parent = editor
     _set_member_backend(home, "codex")
     assert service.get("A")["backend_warning"] is None
+
+
+def _detach(service, member="A"):
+    return service.detach(member, {"revision": service.get(member)["revision"]})
+
+
+def test_stop_following_keeps_the_saved_values_as_the_members_own(editor):
+    """Following the Parent is reversible. The member keeps exactly the bytes
+    it runs today, and a later Parent change does not reach it."""
+    service, home, specs, parent = editor
+    save(
+        service,
+        [
+            {"section": "prompt", "id": "prompt", "action": "set", "value": "mine"},
+            {"section": "tools", "id": "read", "action": "remove"},
+        ],
+        enroll=True,
+    )
+    before = spec_for(home, specs)
+    assert service.get("A")["detach_blocked"] is None
+    target = json.loads((home / "config.json").read_text())["agents"]["A"]["kiro_agent"]
+    # The agents directory is shared with the Kiro CLI and IDE: stopping
+    # adds, renames and removes no agent file there.
+    agent_files = sorted(p.name for p in specs.iterdir())
+
+    view = _detach(service)
+
+    assert sorted(p.name for p in specs.iterdir()) == agent_files
+    assert view["mode"] == "legacy_snapshot"
+    assert agent_state.get_capabilities(target) is None
+    assert agent_state.get_fork_info(target) == {"forked_from": "parent", "private_to": "A"}
+    assert json.loads((home / "config.json").read_text())["agents"]["A"]["kiro_agent"] == target
+    assert spec_for(home, specs) == before
+    parent["prompt"] = "upstream"
+    (specs / "parent.json").write_text(json.dumps(parent))
+    assert service.get("A")["parent_changes"] == []
+    assert spec_for(home, specs) == before
+    # The way back in stays open and keeps every local choice.
+    save(service, enroll=True)
+    assert spec_for(home, specs)["prompt"] == "mine"
+    assert spec_for(home, specs)["tools"] == []
+    assert service.get("A")["mode"] == "inherited"
+
+
+def test_stop_following_refuses_a_member_that_does_not_follow(editor):
+    service, home, specs, parent = editor
+    with pytest.raises(CapabilityError, match="not_inherited"):
+        _detach(service)
+    assert len(list(specs.glob("*.json"))) == 1
+
+
+@pytest.mark.parametrize("body", [{}, {"revision": 1}, {"revision": "r", "enroll": False}, []])
+def test_stop_following_rejects_a_malformed_request(editor, body):
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    with pytest.raises(CapabilityError) as exc:
+        service.detach("A", body)
+    assert exc.value.status == 400
+    assert service.get("A")["mode"] == "inherited"
+
+
+def test_stop_following_refuses_a_stale_revision(editor):
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    revision = service.get("A")["revision"]
+    save(service, [{"section": "prompt", "id": "prompt", "action": "set", "value": "x"}])
+    with pytest.raises(CapabilityError, match="stale_revision"):
+        service.detach("A", {"revision": revision})
+    assert service.get("A")["mode"] == "inherited"
+
+
+def test_stop_following_never_freezes_unreviewed_bytes(editor):
+    """A hand-edited private file is not what the owner reviewed, so it is
+    not made the member's own. The intent stays until the drift is resolved."""
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    spec = spec_for(home, specs)
+    spec["prompt"] = "untracked"
+    (specs / (spec["name"] + ".json")).write_text(json.dumps(spec))
+    with pytest.raises(CapabilityError, match="materialization_changed"):
+        _detach(service)
+    assert service.get("A")["mode"] == "inherited"
+
+
+def test_stop_following_refuses_a_pending_save(editor):
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    target = json.loads((home / "config.json").read_text())["agents"]["A"]["kiro_agent"]
+    state = json.loads((home / "agent_model_state.json").read_text())
+    state[target]["capabilities"]["status"] = "pending"
+    (home / "agent_model_state.json").write_text(json.dumps(state))
+    with pytest.raises(CapabilityError, match="materialization_pending"):
+        _detach(service)
+    assert agent_state.get_capabilities(target) is not None
+
+
+def test_stop_following_works_when_the_parent_is_gone(editor):
+    """A missing Parent is a reason to leave it, not a reason to be stuck."""
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    before = spec_for(home, specs)
+    (specs / "parent.json").unlink()
+    assert service.get("A")["template"]["available"] is False
+    view = _detach(service)
+    assert view["mode"] == "legacy_snapshot"
+    assert spec_for(home, specs) == before
+
+
+def test_stop_following_leaves_the_spec_alone_and_runs_the_fork_refresh_on_a_newer_answer(
+    editor, monkeypatch
+):
+    """With the Parent gone the member cannot reconcile a newer governance
+    answer. Stopping follow writes only the sidecar entry (the spec bytes are
+    untouched) and then runs the fork refresh, which governs every private
+    copy that has no saved intent."""
+    from kiro_crew import agent_capabilities as capabilities
+
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    (specs / "parent.json").unlink()
+    generation = capabilities.governance_answer_generation()
+    monkeypatch.setattr(capabilities, "governance_answer_generation", lambda: generation + 1)
+    monkeypatch.setattr(
+        capabilities,
+        "sanitize_agent_config_governance",
+        lambda *a, **k: pytest.fail("detach must not rewrite the spec itself"),
+    )
+    calls = []
+    monkeypatch.setattr(agent, "_refresh_forked_templates", lambda **kw: calls.append(kw))
+    before = spec_for(home, specs)
+    path = specs / (before["name"] + ".json")
+    raw = path.read_bytes()
+
+    assert _detach(service)["mode"] == "legacy_snapshot"
+
+    assert path.read_bytes() == raw
+    assert calls == [{}]
+
+
+def test_stop_following_reruns_the_fork_refresh_when_it_failed_for_the_copy(editor, monkeypatch):
+    """A missing Parent makes the refresh fail for a member that still has an
+    intent. The current governance answer would skip the refresh, leaving chat
+    start refusing, so a recorded failure for the copy triggers it too."""
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    target = json.loads((home / "config.json").read_text())["agents"]["A"]["kiro_agent"]
+    monkeypatch.setattr(agent, "_fork_refresh_failed", frozenset({target}))
+    calls = []
+    monkeypatch.setattr(agent, "_refresh_forked_templates", lambda **kw: calls.append(kw))
+    assert _detach(service)["mode"] == "legacy_snapshot"
+    assert calls == [{}]
+
+
+def test_stop_following_holds_the_spawn_gate_from_before_the_write_to_after_the_refresh(
+    editor, monkeypatch
+):
+    """Between dropping the intent and the refresh a fork-backed session start
+    must keep waiting, or it could run grants the refresh has not re-filtered."""
+    from kiro_crew import agent_capabilities as capabilities
+
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    generation = capabilities.governance_answer_generation()
+    monkeypatch.setattr(capabilities, "governance_answer_generation", lambda: generation + 1)
+    seen = {}
+    real_write = agent_state._write
+
+    def watching_write(state, *args, **kwargs):
+        seen["at_write"] = agent._fork_refresh_settled.is_set()
+        return real_write(state, *args, **kwargs)
+
+    def watching_refresh(**kwargs):
+        seen["at_refresh"] = agent._fork_refresh_settled.is_set()
+
+    monkeypatch.setattr(agent_state, "_write", watching_write)
+    monkeypatch.setattr(agent, "_refresh_forked_templates", watching_refresh)
+    _detach(service)
+    assert seen == {"at_write": False, "at_refresh": False}
+    assert agent._fork_refresh_settled.is_set()
+
+
+def test_stop_following_releases_the_spawn_gate_when_it_is_refused(editor):
+    service, home, specs, parent = editor
+    with pytest.raises(CapabilityError, match="not_inherited"):
+        _detach(service)
+    assert agent._fork_refresh_settled.is_set()
+
+
+def test_stop_following_survives_a_failing_fork_refresh(editor, monkeypatch):
+    """The refresh fails closed on its own (the copy's sessions stay blocked), so
+    its failure never undoes or fails the stop."""
+    from kiro_crew import agent_capabilities as capabilities
+
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    generation = capabilities.governance_answer_generation()
+    monkeypatch.setattr(capabilities, "governance_answer_generation", lambda: generation + 1)
+
+    def boom(**kwargs):
+        raise RuntimeError("refresh down")
+
+    monkeypatch.setattr(agent, "_refresh_forked_templates", boom)
+    assert _detach(service)["mode"] == "legacy_snapshot"
+
+
+def test_stop_following_leaves_the_file_untouched_on_a_current_governance_answer(
+    editor, monkeypatch
+):
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    before = spec_for(home, specs)
+    path = specs / (before["name"] + ".json")
+    raw = path.read_bytes()
+    monkeypatch.setattr(
+        agent,
+        "_refresh_forked_templates",
+        lambda **kw: pytest.fail("current governance needs no refresh"),
+    )
+    _detach(service)
+    assert path.read_bytes() == raw
+
+
+@pytest.mark.asyncio
+async def test_http_stop_following_maps_each_refusal(editor, monkeypatch):
+    """The detach route answers a bad body 400, a refusal by its code and an
+    unreadable source 503, never a raw 500."""
+    from types import SimpleNamespace
+
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from kiro_crew.dashboard.handlers.agent_capabilities import _SERVICE
+    from kiro_crew.dashboard.routes.agents import register
+
+    service, _, _, _ = editor
+
+    @web.middleware
+    async def identity(request, handler):
+        request["user"] = "owner"
+        request["app"] = ""
+        return await handler(request)
+
+    app = web.Application(middlewares=[identity])
+    app["state"] = SimpleNamespace(owner_id="owner", push_refresh=lambda _: None)
+    app[_SERVICE] = service
+    register(app)
+    path = "/api/agents/A/capabilities/detach"
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post(path, data="{", headers={"content-type": "application/json"})
+        assert (response.status, (await response.json())["code"]) == (400, "invalid_json")
+        revision = (await (await client.get("/api/agents/A/capabilities")).json())["revision"]
+        response = await client.post(path, json={"revision": revision})
+        assert (response.status, (await response.json())["code"]) == (409, "not_inherited")
+
+        def unreadable(*args, **kwargs):
+            raise OSError("disk")
+
+        monkeypatch.setattr(service, "detach", unreadable)
+        response = await client.post(path, json={"revision": revision})
+        assert (response.status, (await response.json())["code"]) == (
+            503,
+            "capabilities_unavailable",
+        )
+
+
+def test_a_detached_member_passes_the_chat_start_seam(editor):
+    """After stopping follow, chat start takes the unenrolled path: the start
+    seam names the member's own private copy and checks no saved intent."""
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    target = json.loads((home / "config.json").read_text())["agents"]["A"]["kiro_agent"]
+    _detach(service)
+    assert prepare_member_capabilities("A") == {
+        "template": target,
+        "revision": "",
+        "status": "unverified",
+    }
+    # A hand edit of the independent copy does not block a start.
+    spec = spec_for(home, specs)
+    spec["prompt"] = "edited by hand"
+    (specs / (target + ".json")).write_text(json.dumps(spec))
+    assert prepare_member_capabilities("A")["status"] == "unverified"
+
+
+def test_stop_following_refuses_single_tool_limits_an_independent_copy_cannot_keep(editor):
+    """Chat start enforces single-tool limits only for a saved setup, so a
+    detached copy would keep the limit in its file but lose the refusal."""
+    service, home, specs, parent = editor
+    save(
+        service,
+        [
+            {
+                "section": "mcpServers",
+                "id": "search",
+                "action": "set",
+                "value": {"command": "search", "disabledTools": ["wipe"]},
+            }
+        ],
+        enroll=True,
+    )
+    with pytest.raises(CapabilityError, match="detach_tool_limits_unkept"):
+        _detach(service)
+    assert service.get("A")["mode"] == "inherited"
+
+
+def test_stop_following_refuses_a_removal_an_owned_template_refresh_would_restore(
+    editor, monkeypatch
+):
+    from kiro_crew import agent_capabilities as capabilities
+
+    service, home, specs, parent = editor
+    save(service, [{"section": "tools", "id": "read", "action": "remove"}], enroll=True)
+    monkeypatch.setattr(capabilities, "_parent_is_owned", lambda snap: True)
+    with pytest.raises(CapabilityError, match="detach_removal_unkept"):
+        _detach(service)
+    assert service.get("A")["mode"] == "inherited"
+    # The same removal under a template Crew does not own is kept as is.
+    monkeypatch.setattr(capabilities, "_parent_is_owned", lambda snap: False)
+    assert _detach(service)["mode"] == "legacy_snapshot"
+    assert spec_for(home, specs)["tools"] == []
+
+
+def test_stop_following_needs_confirmation_for_a_copy_that_also_reads_the_global_mcp_json(
+    editor, monkeypatch
+):
+    """The fork refresh pins the global mcp.json merge off for a private copy
+    without a saved intent. That changes which servers the member loads, so it
+    needs the owner's confirmation; the spec itself is never touched."""
+    service, home, specs, parent = editor
+    del parent["includeMcpJson"]
+    (specs / "parent.json").write_text(json.dumps(parent), encoding="utf-8")
+    save(service, enroll=True)
+    assert "includeMcpJson" not in spec_for(home, specs)
+    view = service.get("A")
+    assert view["detach_mcp_json_loss"] is True
+    assert view["detach_blocked"] is None
+    revision = view["revision"]
+    with pytest.raises(CapabilityError, match="detach_mcp_json_unkept"):
+        service.detach("A", {"revision": revision})
+    assert service.get("A")["mode"] == "inherited"
+    with pytest.raises(CapabilityError, match="invalid_request"):
+        service.detach("A", {"revision": revision, "accept_mcp_json": "yes"})
+    path = specs / (spec_for(home, specs)["name"] + ".json")
+    raw = path.read_bytes()
+    calls = []
+    monkeypatch.setattr(agent, "_refresh_forked_templates", lambda **kw: calls.append(kw))
+    assert service.detach("A", {"revision": revision, "accept_mcp_json": True})["mode"] == (
+        "legacy_snapshot"
+    )
+    # The refresh, not the stop, pins the merge off.
+    assert path.read_bytes() == raw
+    assert calls == [{}]
+
+
+def test_a_member_that_does_not_read_the_global_mcp_json_needs_no_confirmation(editor):
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    assert service.get("A")["detach_mcp_json_loss"] is False
+    assert _detach(service)["mode"] == "legacy_snapshot"
+
+
+def test_stop_following_stops_tracking_the_shipped_model_for_a_chosen_model(editor, monkeypatch):
+    """A copy of an owned template can still track the shipped model. The fork
+    refresh would replace a model the member chose once the intent is gone, so
+    stopping follow turns the tracking off in the same write."""
+    from kiro_crew import agent_capabilities as capabilities
+    from kiro_crew.agent_materialization import fork_refresh
+
+    service, home, specs, parent = editor
+    save(
+        service,
+        [{"section": "model", "id": "model", "action": "set", "value": "mine-model"}],
+        enroll=True,
+    )
+    target = json.loads((home / "config.json").read_text())["agents"]["A"]["kiro_agent"]
+    agent_state.set_model_managed(target, True)
+    monkeypatch.setattr(capabilities, "_parent_is_owned", lambda snap: False)
+    monkeypatch.setattr(fork_refresh, "OWNED_KIRO_AGENT_FILES", frozenset({"parent.json"}))
+    before = spec_for(home, specs)
+
+    _detach(service)
+
+    assert agent_state.get_model_managed(target) is False
+    assert spec_for(home, specs) == before
+    assert spec_for(home, specs)["model"] == "mine-model"
+
+
+def test_stop_following_leaves_model_tracking_alone_without_a_chosen_model(editor, monkeypatch):
+    from kiro_crew import agent_capabilities as capabilities
+    from kiro_crew.agent_materialization import fork_refresh
+
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    target = json.loads((home / "config.json").read_text())["agents"]["A"]["kiro_agent"]
+    agent_state.set_model_managed(target, True)
+    monkeypatch.setattr(capabilities, "_parent_is_owned", lambda snap: False)
+    monkeypatch.setattr(fork_refresh, "OWNED_KIRO_AGENT_FILES", frozenset({"parent.json"}))
+    _detach(service)
+    assert agent_state.get_model_managed(target) is True
+
+
+def test_stop_following_refuses_a_removal_under_an_owned_name_the_parent_check_misses(
+    editor, monkeypatch
+):
+    """The fork refresh re-applies owned plumbing by origin NAME, whatever scope the
+    parent came from. ``_parent_is_owned`` counts only a global-scope parent, so the
+    refusal asks the refresh's own rule too, or a project-scoped parent at an owned
+    name slips through and the refresh restores what the member removed."""
+    from kiro_crew import agent_capabilities as capabilities
+    from kiro_crew.agent_materialization import fork_refresh
+
+    service, home, specs, parent = editor
+    save(service, [{"section": "tools", "id": "read", "action": "remove"}], enroll=True)
+    target = json.loads((home / "config.json").read_text())["agents"]["A"]["kiro_agent"]
+    monkeypatch.setattr(capabilities, "_parent_is_owned", lambda snap: False)
+    monkeypatch.setattr(fork_refresh, "OWNED_KIRO_AGENT_FILES", frozenset({"parent.json"}))
+    assert fork_refresh.fork_origin_is_owned(target) is True
+    with pytest.raises(CapabilityError, match="detach_removal_unkept"):
+        _detach(service)
+    assert service.get("A")["mode"] == "inherited"
+    # A set value is not a removal, so the same lineage detaches.
+    save(service, [{"section": "tools", "id": "read", "action": "set", "value": True}])
+    assert _detach(service)["mode"] == "legacy_snapshot"
+
+
+def test_stop_following_keeps_the_intent_and_the_bytes_when_the_sidecar_write_fails(
+    editor, monkeypatch
+):
+    """The sidecar entry is the only write, so a failed write leaves the saved
+    intent and the reviewed spec bytes exactly as they were and a retry works."""
+    service, home, specs, parent = editor
+    save(service, enroll=True)
+    target = json.loads((home / "config.json").read_text())["agents"]["A"]["kiro_agent"]
+    path = specs / (target + ".json")
+    raw = path.read_bytes()
+    real_write = agent_state._write
+
+    def failing_write(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(agent_state, "_write", failing_write)
+    with pytest.raises(OSError):
+        _detach(service)
+    assert agent_state.get_capabilities(target) is not None
+    assert path.read_bytes() == raw
+    monkeypatch.setattr(agent_state, "_write", real_write)
+    assert _detach(service)["mode"] == "legacy_snapshot"
+    assert path.read_bytes() == raw

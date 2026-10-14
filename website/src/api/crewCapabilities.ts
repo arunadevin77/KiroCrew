@@ -24,6 +24,10 @@ export interface CapabilityView {
   /** Set when a member chat on the backend `setting` resolves to would refuse
    * this spec. A warning only: the save still lands. */
   backend_warning?: CapabilityBackendWarning | null
+  /** Set when Stop following would be refused for this saved setup, so the pane can say so up front. */
+  detach_blocked?: 'detach_tool_limits_unkept' | 'detach_removal_unkept' | null
+  /** Stopping would turn the global mcp.json merge off for the kept copy; the owner confirms it. */
+  detach_mcp_json_loss?: boolean
 }
 export interface CapabilityBackendWarning {
   code: 'harness_unsupported' | 'tool_limits_unsupported'
@@ -55,6 +59,9 @@ export const crewCapabilitiesApi = {
     post(`${endpoint(member)}/preview`, draft).then(j) as Promise<CapabilityPreview>,
   save: (member: string, draft: CapabilityDraft & { preview_token: string }): Promise<CapabilityView> =>
     put(endpoint(member), draft).then(j) as Promise<CapabilityView>,
+  /** Stop following the Parent: the member keeps its saved values as its own. */
+  detach: (member: string, revision: string, acceptMcpJson = false): Promise<CapabilityView> =>
+    post(`${endpoint(member)}/detach`, acceptMcpJson ? { revision, accept_mcp_json: true } : { revision }).then(j) as Promise<CapabilityView>,
 }
 export const crewCapabilitiesKey = (member: string) => ['crew-capabilities', member] as const
 export const capabilityKey = (row: CapabilityRef) => JSON.stringify([row.section, row.id])

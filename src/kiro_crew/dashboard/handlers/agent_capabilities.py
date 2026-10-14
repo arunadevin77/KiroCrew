@@ -116,6 +116,45 @@ async def api_member_capabilities(request: web.Request) -> web.Response:
         )
 
 
+async def api_member_capabilities_detach(request: web.Request) -> web.Response:
+    """Stop following the Parent; the member keeps its saved values as its own."""
+    operation = "member_capabilities.detach"
+    denied = await require_owner_dashboard_request(request, operation)
+    if denied is not None:
+        return denied
+    service = request.app.get(_SERVICE)
+    if service is None:
+        service = CapabilityService(_catalog, _connections)
+        request.app[_SERVICE] = service
+    name = request.match_info["name"]
+    try:
+        try:
+            body = await request.json()
+        except ValueError:
+            raise CapabilityError("invalid_json", 400) from None
+        from kiro_crew.dashboard.handlers.agents import _get_config_lock
+
+        async with _get_config_lock():
+            result = await drained_to_thread(service.detach, name, body)
+        request.app["state"].push_refresh("agents")
+        from kiro_crew.sel import sel
+
+        sel().log_api_access(
+            caller="owner",
+            operation=operation,
+            outcome="success",
+            source="dashboard",
+            resources="member_capabilities",
+        )
+        return web.json_response(result)
+    except CapabilityError as exc:
+        return web.json_response({"error": exc.code, "code": exc.code}, status=exc.status)
+    except (OSError, ValueError):
+        return web.json_response(
+            {"error": "capabilities_unavailable", "code": "capabilities_unavailable"}, status=503
+        )
+
+
 async def inherited_template_action(
     request: web.Request, member: str, action: str, publish_name: str = ""
 ) -> web.Response | None:
