@@ -8981,17 +8981,30 @@ class AcpClient:
         ready: set[str] = set()
         failed: dict[str, str] = {}
         auth: set[str] = set()
-        for msg in self._mcp_notifications:
+        # Ready / failed count only THIS attempt's frames: a timed-out
+        # ``session/load`` leaves its ``server_initialized`` frames in the
+        # buffer (``_drain_notifications`` clears it only at the end of
+        # ``_initialize_session``), and the ``session/new`` fallback would
+        # otherwise report them as its own progress -- and, with a complete
+        # roster, assert the stall is not in those servers on stale evidence.
+        # ``_begin_session_report`` moves the floor at the start of every
+        # attempt. An OAuth request is NOT floored, the same rule
+        # ``_drain_notifications`` applies to its capture: an authorization the
+        # failed attempt asked for is still one the user has to answer.
+        floor = self._mcp_report_frame_floor
+        for idx, msg in enumerate(self._mcp_notifications):
             params = msg.params if isinstance(msg.params, dict) else {}
             name = clean(params.get("serverName") or params.get("name"))
             if not name:
                 continue
-            if msg.is_method(METHOD_MCP_SERVER_INITIALIZED):
+            if msg.is_method(METHOD_MCP_OAUTH_REQUEST):
+                auth.add(name)
+            elif idx < floor:
+                continue
+            elif msg.is_method(METHOD_MCP_SERVER_INITIALIZED):
                 ready.add(name)
             elif msg.is_method(METHOD_MCP_SERVER_INIT_FAILURE):
                 failed[name] = clean(params.get("error"), 120)
-            elif msg.is_method(METHOD_MCP_OAUTH_REQUEST):
-                auth.add(name)
 
         def names(values: list[str]) -> str:
             head = values[:8]
@@ -9002,18 +9015,27 @@ class AcpClient:
         # "session-injected", and a note once the roster is complete: the same
         # wording as AcpRuntime._mcp_init_progress, for the same reason -- a bare
         # ``N/N MCP server(s) reported`` read as an MCP verdict it never was.
-        parts = (
-            [f"{len(reported & set(roster))}/{len(roster)} session-injected MCP server(s) reported"]
-            if roster
-            else []
-        )
-        missing = [name for name in roster if name not in reported]
-        if missing:
-            parts.append(f"no report from {names(missing)}")
-        elif roster and not set(failed) & set(roster):
-            # Same rule as the runtime: the verdict is withheld when a roster
-            # member reported an init failure, which the ``failed:`` bucket names.
-            parts.append(MCP_ROSTER_COMPLETE_NOTE)
+        parts: list[str] = []
+        if roster:
+            parts.append(
+                f"{len(reported & set(roster))}/{len(roster)} session-injected "
+                "MCP server(s) reported"
+            )
+            missing = [name for name in roster if name not in reported]
+            if missing:
+                parts.append(f"no report from {names(missing)}")
+            elif not set(failed) & set(roster):
+                # Same rule as the runtime: the verdict is withheld when a roster
+                # member reported an init failure, which the ``failed:`` bucket
+                # names.
+                parts.append(MCP_ROSTER_COMPLETE_NOTE)
+        else:
+            # No roster to attribute against (an empty or absent ``mcpServers``):
+            # the reports belong to the agent spec's own servers, so the count is
+            # not labelled "session-injected" -- but it is still reported, the
+            # same way as the runtime, instead of the timeout reading as a bare
+            # budget.
+            parts.append(f"{len(reported)} MCP server report(s), roster unknown")
         if failed:
             parts.append(
                 "failed: "

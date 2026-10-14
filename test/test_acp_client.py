@@ -9073,6 +9073,79 @@ class TestWaitForResponseDeferral:
         assert "supersecret" not in progress
         assert "awaiting authorization: oauth" in progress
 
+    def test_session_timeout_progress_empty_roster_keeps_reports(self, tmp_path):
+        """An empty ``mcpServers`` roster must not drop the staged reports.
+
+        Mirrors ``AcpRuntime._mcp_init_progress``: with nothing to attribute
+        against, the count is reported as ``roster unknown`` instead of the
+        timeout reading as a bare budget.
+        """
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        client = AcpClient(work_dir=tmp_path)
+        client._mcp_notifications = [
+            JsonRpcMessage(
+                method="_kiro.dev/mcp/server_initialized", params={"serverName": "ready"}
+            ),
+            JsonRpcMessage(
+                method="_kiro.dev/mcp/server_init_failure",
+                params={"serverName": "broken", "error": "connection failed"},
+            ),
+            JsonRpcMessage(method="_kiro.dev/mcp/oauth_request", params={"serverName": "oauth"}),
+        ]
+
+        for expected in ([], None):
+            progress = client._mcp_timeout_progress(expected)
+            assert "2 MCP server report(s), roster unknown" in progress
+            assert "session-injected" not in progress
+            assert "failed: broken (connection failed)" in progress
+            assert "awaiting authorization: oauth" in progress
+
+    def test_session_timeout_progress_ignores_prior_attempt_frames(self, tmp_path):
+        """A timed-out ``session/load``'s frames are not this attempt's progress.
+
+        ``_drain_notifications`` clears the buffer only at the end of
+        ``_initialize_session``, so the load -> ``session/new`` fallback still
+        holds the previous attempt's ``server_initialized`` frames. The progress
+        summary must honour the per-attempt floor ``_begin_session_report`` sets,
+        or it asserts the stall is not in those servers on stale evidence.
+        """
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        client = AcpClient(work_dir=tmp_path)
+        roster = [{"name": "ready"}]
+        # Attempt 1 (session/load): the server reported and another asked for
+        # authorization, then the load timed out.
+        client._begin_session_report(roster)
+        client._mcp_notifications.append(
+            JsonRpcMessage(
+                method="_kiro.dev/mcp/server_initialized", params={"serverName": "ready"}
+            )
+        )
+        client._mcp_notifications.append(
+            JsonRpcMessage(method="_kiro.dev/mcp/oauth_request", params={"serverName": "oauth"})
+        )
+        # Attempt 2 (session/new fallback): nothing has reported yet.
+        client._begin_session_report(roster)
+
+        progress = client._mcp_timeout_progress(roster)
+
+        assert "0/1 session-injected MCP server(s) reported" in progress
+        assert "no report from ready" in progress
+        assert "not in those servers" not in progress
+        # The authorization the failed attempt asked for is still owed by the
+        # user, so it is not floored (same rule as _drain_notifications).
+        assert "awaiting authorization: oauth" in progress
+
+        # A frame that arrives during attempt 2 is counted.
+        client._mcp_notifications.append(
+            JsonRpcMessage(
+                method="_kiro.dev/mcp/server_initialized", params={"serverName": "ready"}
+            )
+        )
+        progress = client._mcp_timeout_progress(roster)
+        assert "1/1 session-injected MCP server(s) reported" in progress
+
 
 class TestWaitForResponseActivityDeadline:
     """Low-A: a steady stream of notifications keeps _wait_for_response alive
