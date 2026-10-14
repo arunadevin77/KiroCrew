@@ -330,7 +330,6 @@ def synthesize(
             if proc.returncode != 0 or not pathlib.Path(stage).exists():
                 raise SystemExit(f"polly failed: {(proc.stderr or proc.stdout)[-400:]}")
         return out
-        return out
     raise SystemExit(f"unknown provider {provider!r}; expected piper or polly")
 
 
