@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
 import types
 from collections import deque
@@ -48,6 +49,7 @@ from kiro_crew.acp.types import (
     AcpPromptStats,
 )
 from kiro_crew.agent_sdk import host_auth
+from kiro_crew.testing.clock import ManualClock
 
 # Windows lacks os.killpg and POSIX process-tree APIs (ps, /proc).
 # Tests that exercise these paths are skipped on Windows.
@@ -14404,6 +14406,16 @@ class TestCreateRaceLoserPoll:
     record for a file since gone, with a different digest -- and that entry
     proves nothing about the winner: only a record naming the loser's own
     bytes may end the poll early.
+
+    The poll is driven through a :class:`ManualClock` installed on
+    ``acp_client`` ALONE (testing-conventions rule D2), never by rebinding the
+    stdlib ``time.sleep``: ``acp_client.time`` IS the stdlib module, and the
+    seed-provenance sidecar lock (``platform_lock_compat``) backs off through
+    ``time.sleep`` whenever another holder has it. Under a stdlib patch that
+    backoff counts as a poll and runs the "winner records now" hook BEFORE the
+    loser's ``O_EXCL`` open, so the loser sees a live sibling owner and declines
+    without ever reaching the create -- a red that depends on who else holds the
+    lock, which on a loaded shard is anyone's persist.
     """
 
     _SERVED = ["global.anthropic.claude-opus-5[1m]"]
@@ -14473,6 +14485,63 @@ class TestCreateRaceLoserPoll:
         monkeypatch.setattr(os, "open", winner_created_the_file)
         return fired
 
+    class _PollClock(ManualClock):
+        """The loser's poll clock: ``on_poll(n)`` runs after the n-th poll sleep.
+
+        That is the winner's move between two probes. ``poll_cost`` is how far
+        the clock moves per poll on top of the sleep itself, so a bounded
+        deadline is reached in a handful of iterations. Installed on
+        ``acp_client`` alone, so the sidecar lock's backoff still sleeps on the
+        real clock and runs no hook.
+        """
+
+        def __init__(self, on_poll, *, poll_cost: float = 0.0) -> None:
+            super().__init__()
+            self._on_poll = on_poll
+            self._poll_cost = poll_cost
+
+        def sleep(self, seconds: float) -> None:
+            super().sleep(seconds)
+            self.advance(self._poll_cost)
+            self._on_poll(len(self.sleeps))
+
+    @classmethod
+    def _poll_clock(cls, monkeypatch, on_poll, *, poll_cost: float = 0.0) -> ManualClock:
+        clock = cls._PollClock(on_poll, poll_cost=poll_cost)
+        clock.install(monkeypatch, acp_client)
+        return clock
+
+    @staticmethod
+    def _hold_the_provenance_lock(
+        release: threading.Event, held: threading.Event
+    ) -> threading.Thread:
+        """Hold the seed-provenance sidecar lock on another thread until *release*.
+
+        The lock the loser's ``held_by_another`` probe takes before its create,
+        held the way a sibling's persist would hold it. ``held`` is set once the
+        lock is taken.
+        """
+        from kiro_crew import platform_lock_compat
+        from kiro_crew.acp import seed_provenance
+        from kiro_crew.config.paths import config_dir
+
+        lock_file = config_dir() / seed_provenance._LOCK_FILENAME
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+
+        def hold() -> None:
+            fd = os.open(os.fspath(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                platform_lock_compat.acquire_lock(fd, exclusive=True)
+                held.set()
+                release.wait(10)
+                platform_lock_compat.release_lock(fd)
+            finally:
+                os.close(fd)
+
+        holder = threading.Thread(target=hold, name="seed-lock-holder", daemon=True)
+        holder.start()
+        return holder
+
     def test_create_race_loser_waits_out_the_winners_record_not_a_stale_entry(
         self, tmp_path, monkeypatch
     ):
@@ -14494,19 +14563,17 @@ class TestCreateRaceLoserPoll:
         payload = loser._render_claude_settings_payload()
         self._stale_record_for_a_vanished_file(path)
         fired = self._winner_holds_the_name(monkeypatch, path, payload)
-        sleeps: list[float] = []
 
-        def winner_records_on_the_third_poll(secs: float) -> None:
-            sleeps.append(secs)
-            if len(sleeps) == 3:
+        def winner_records_on_the_third_poll(poll: int) -> None:
+            if poll == 3:
                 assert seed_provenance.record(path, payload, "winner-session") is True
 
-        monkeypatch.setattr(acp_client.time, "sleep", winner_records_on_the_third_poll)
+        clock = self._poll_clock(monkeypatch, winner_records_on_the_third_poll)
 
         loser._write_claude_local_settings()
 
         assert fired, "the race window must have been exercised"
-        assert len(sleeps) == 3, "the poll must have outlasted the stale entry"
+        assert len(clock.sleeps) == 3, "the poll must have outlasted the stale entry"
         assert loser._claude_settings_shared is True
         assert loser._permission_surface_governed is True
         assert loser._claude_settings_authored is False
@@ -14535,23 +14602,16 @@ class TestCreateRaceLoserPoll:
         )._render_claude_settings_payload()
         assert winners_payload != loser._render_claude_settings_payload()
         fired = self._winner_holds_the_name(monkeypatch, path, winners_payload)
-        clock = {"now": 1000.0}
-        sleeps: list[float] = []
         declines: list[Path] = []
 
-        def fake_monotonic() -> float:
-            return clock["now"]
-
-        def fake_sleep(secs: float) -> None:
-            sleeps.append(secs)
-            if len(sleeps) == 1:
+        def winner_records_on_the_first_poll(poll: int) -> None:
+            if poll == 1:
                 # The winner's record lands on the first poll and is settled from
                 # then on -- a record that never names the loser's bytes.
                 assert seed_provenance.record(path, winners_payload, "winner-session") is True
-            clock["now"] += 0.5
 
-        monkeypatch.setattr(acp_client.time, "monotonic", fake_monotonic)
-        monkeypatch.setattr(acp_client.time, "sleep", fake_sleep)
+        # Half a mocked second per poll: four polls reach the 2 s deadline.
+        clock = self._poll_clock(monkeypatch, winner_records_on_the_first_poll, poll_cost=0.45)
         monkeypatch.setattr(AcpClient, "_log_declined_share", lambda self, p: declines.append(p))
 
         loser._write_claude_local_settings()
@@ -14559,11 +14619,96 @@ class TestCreateRaceLoserPoll:
         assert fired, "the race window must have been exercised"
         # Four 50 ms polls at half a mocked second each reach the 2 s deadline;
         # the fifth probe breaks on it, and nothing polls past that.
-        assert sleeps == [0.05] * 4
+        assert clock.sleeps == (0.05,) * 4
         assert declines == [path]
         assert loser._claude_settings_shared is False
         assert loser._claude_settings_authored is False
         assert loser._permission_surface_governed is False
+        assert path.read_text(encoding="utf-8") == winners_payload
+
+    def test_a_contended_provenance_lock_is_waited_out_and_is_not_a_poll(
+        self, tmp_path, monkeypatch
+    ):
+        """The sidecar lock's backoff is real time, not the loser's poll.
+
+        Another holder has the seed-provenance lock when the loser's pre-create
+        ``held_by_another`` probe takes it -- what a sibling's persist on a
+        loaded shard looks like. The loser waits that out on the REAL clock,
+        then runs the same race as the deadline control above: the winner's
+        record lands on the first poll, four polls reach the deadline, one
+        decline. The lock backoff adds no entry to the poll schedule and runs no
+        poll hook, so the winner cannot be recorded before the create. With the
+        stdlib ``time.sleep`` patched instead, the backoff runs the hook, the
+        record lands first, and the loser declines under a live sibling owner
+        without ever opening the file.
+        """
+        from kiro_crew.acp import seed_provenance
+
+        loser = AcpClient(
+            work_dir=tmp_path,
+            acp_backend=ACP_BACKEND_CLAUDE,
+            permission_mode="bypassPermissions",
+        )
+        path = tmp_path / ".claude" / "settings.local.json"
+        winners_payload = AcpClient(
+            work_dir=tmp_path, acp_backend=ACP_BACKEND_CLAUDE, permission_mode="default"
+        )._render_claude_settings_payload()
+        fired = self._winner_holds_the_name(monkeypatch, path, winners_payload)
+        declines: list[Path] = []
+
+        def winner_records_on_the_first_poll(poll: int) -> None:
+            if poll == 1:
+                assert seed_provenance.record(path, winners_payload, "winner-session") is True
+
+        clock = self._poll_clock(monkeypatch, winner_records_on_the_first_poll, poll_cost=0.45)
+        monkeypatch.setattr(AcpClient, "_log_declined_share", lambda self, p: declines.append(p))
+
+        # The holder lets go only once the lock poll has BACKED OFF at least
+        # once, so the contention is certain and the release is a signal, not a
+        # timer. The backoff is seen at the seam the lock reads its clock through
+        # (``platform_compat.time``, a module-level name); the stdlib stays as is.
+        from kiro_crew import platform_compat
+
+        release, held, backed_off = threading.Event(), threading.Event(), threading.Event()
+        real_time = platform_compat.time
+        loser_thread = threading.current_thread()
+
+        class _BackoffSpy(types.ModuleType):
+            def __getattr__(self, name):
+                return getattr(real_time, name)
+
+            @staticmethod
+            def sleep(secs: float) -> None:
+                # Only the LOSER's own backoff counts: a sleep from any other
+                # thread would release the holder before the loser ever met it.
+                if threading.current_thread() is loser_thread:
+                    backed_off.set()
+                real_time.sleep(secs)
+
+        monkeypatch.setattr(platform_compat, "time", _BackoffSpy("time"))
+
+        def let_go_once_backed_off() -> None:
+            backed_off.wait(10)
+            release.set()
+
+        holder = self._hold_the_provenance_lock(release, held)
+        assert held.wait(10), "the contender never took the lock"
+        threading.Thread(target=let_go_once_backed_off, daemon=True).start()
+        try:
+            loser._write_claude_local_settings()
+        finally:
+            release.set()
+            holder.join(10)
+
+        assert backed_off.is_set(), "the loser never met the contended lock"
+        assert not holder.is_alive()
+        assert fired, "the race window must have been exercised"
+        # The backoff sleeps are not in the poll schedule, and the hook ran only
+        # after the create: the same four polls and one decline as uncontended.
+        assert clock.sleeps == (0.05,) * 4
+        assert declines == [path]
+        assert loser._claude_settings_shared is False
+        assert loser._claude_settings_authored is False
         assert path.read_text(encoding="utf-8") == winners_payload
 
 

@@ -47,6 +47,7 @@ from kiro_crew.acp import seed_provenance as sp
 from kiro_crew.acp.client import AcpClient
 from kiro_crew.acp.types import ACP_BACKEND_CLAUDE
 from kiro_crew.kiro_cli import SPEC_PERMISSIONS_MIN_VERSION
+from kiro_crew.testing.clock import ManualClock
 
 _SERVED = [
     "global.anthropic.claude-opus-5[1m]",
@@ -163,6 +164,20 @@ def _write_durable_holder(
 
 def _settings(tmp_path: Path) -> Path:
     return tmp_path / ".claude" / "settings.local.json"
+
+
+class _HalfSecondPolls(ManualClock):
+    """The create-race loser's poll clock: each poll sleep costs half a mocked second.
+
+    Four polls reach the poll's 2 s deadline. Installed on ``acp_client`` alone
+    (rule D2), so the seed-provenance sidecar lock's backoff -- which sleeps on
+    the stdlib clock when another holder has the lock -- stays real time and is
+    never counted as a poll.
+    """
+
+    def sleep(self, seconds: float) -> None:
+        super().sleep(seconds)
+        self.advance(0.5 - seconds)
 
 
 def _seed(tmp_path: Path) -> dict:
@@ -1949,13 +1964,8 @@ class TestSharedPermissionSurface:
         path = _settings(tmp_path)
         real_open = os.open
         fired: list[int] = []
-        sleeps: list[float] = []
         declines: list[Path] = []
-        clock = {"now": 1000.0}
-
-        def advance_the_clock(secs: float) -> None:
-            sleeps.append(secs)
-            clock["now"] += 0.5
+        clock = _HalfSecondPolls()
 
         def winner_wrote_and_persisted(p, flags, *args, **kwargs):
             if not fired and os.fspath(p) == os.fspath(path) and flags & os.O_EXCL:
@@ -1963,8 +1973,7 @@ class TestSharedPermissionSurface:
                 # The winner's file AND record are both settled before the
                 # loser's open -- the mismatch can never converge.
                 owner._write_claude_local_settings()
-                monkeypatch.setattr(acp_client.time, "monotonic", lambda: clock["now"])
-                monkeypatch.setattr(acp_client.time, "sleep", advance_the_clock)
+                clock.install(monkeypatch, acp_client)
             return real_open(p, flags, *args, **kwargs)
 
         monkeypatch.setattr(os, "open", winner_wrote_and_persisted)
@@ -1976,7 +1985,7 @@ class TestSharedPermissionSurface:
         assert loser._claude_settings_authored is False
         # Four 50 ms polls at half a mocked second each reach the deadline; the
         # fifth probe breaks on it, and the loser declines once, not per poll.
-        assert sleeps == [0.05] * 4
+        assert clock.sleeps == (0.05,) * 4
         assert declines == [path]
 
     def test_a_failed_validation_with_a_refused_unshare_leaves_no_phantom_lease(
@@ -2031,13 +2040,8 @@ class TestSharedPermissionSurface:
         path = _settings(tmp_path)
         real_open = os.open
         fired: list[int] = []
-        sleeps: list[float] = []
         declines: list[Path] = []
-        clock = {"now": 1000.0}
-
-        def advance_the_clock(secs: float) -> None:
-            sleeps.append(secs)
-            clock["now"] += 0.5
+        clock = _HalfSecondPolls()
 
         def cross_process_winner_landed(p, flags, *args, **kwargs):
             if not fired and os.fspath(p) == os.fspath(path) and flags & os.O_EXCL:
@@ -2049,8 +2053,7 @@ class TestSharedPermissionSurface:
                 sp._RECORDS.clear()
                 sp._LIVE.clear()
                 sp._SHARERS.clear()
-                monkeypatch.setattr(acp_client.time, "monotonic", lambda: clock["now"])
-                monkeypatch.setattr(acp_client.time, "sleep", advance_the_clock)
+                clock.install(monkeypatch, acp_client)
             return real_open(p, flags, *args, **kwargs)
 
         monkeypatch.setattr(os, "open", cross_process_winner_landed)
@@ -2063,7 +2066,7 @@ class TestSharedPermissionSurface:
         assert loser._claude_settings_authored is False
         # The differing record was on disk from the first probe and ended nothing:
         # the loser ran to its deadline and declined once.
-        assert sleeps == [0.05] * 4
+        assert clock.sleeps == (0.05,) * 4
         assert declines == [path]
 
     def test_a_recreate_is_refused_while_the_owner_is_still_live(self, tmp_path, monkeypatch):
