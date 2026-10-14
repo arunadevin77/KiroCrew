@@ -54,6 +54,12 @@ function createFeedLane({
   channelForVersion,
   launchCheckDelayMs,
   checkIntervalMs,
+  // Called before every discovery. When true the gateway's security policy
+  // owns updates on this install and the Electron feed lane stands down: no
+  // check, no download, no notification. The renderer notifies the main
+  // process via update:notify-policy-governed (ipc-registrar.js) when the
+  // gateway status reports a policy provider governs a bundled install.
+  isPolicyGoverned = () => false,
 }) {
   let updateReady = false;
   let downloading = false;
@@ -153,6 +159,27 @@ function createFeedLane({
       // handler's phase derivation, a feed failure would fire the host's
       // gateway recovery in the middle of the bundle swap.
       log.info("[update] check requested during install activity — skipping");
+      return;
+    }
+    // A security policy provider owns updates on this install. Checked after
+    // the installing/quitHandled guard so a governance signal arriving mid-
+    // handoff cannot emit not-available over an in-progress install or quit.
+    if (isPolicyGoverned()) {
+      log.info("[update] policy provider governs this install — feed lane stands down");
+      // Disarm any staged build. Without this a build already downloaded
+      // before governance was detected installs on quit while the provider
+      // also applies — violating the exclusive-owner goal. Mirrors the
+      // cleanup the update-not-available handler performs.
+      downloading = false;
+      foundVersion = null;
+      if (updateReady) {
+        log.info(`[update] policy stand-down: discarding staged ${stagedVersion}`);
+      }
+      updateReady = false;
+      stagedVersion = null;
+      stagedNotes = "";
+      app.removeListener("before-quit", deferredInstallOnQuit);
+      emit("not-available", {});
       return;
     }
     if (downloading) {
@@ -433,6 +460,12 @@ function createFeedLane({
   // preventDefault, stop the gateway, then quitAndInstall.
   function deferredInstallOnQuit(event) {
     if (quitHandled || !updateReady) return;
+    // Belt-and-suspenders: if policy governance arrived just before quit,
+    // skip the install. The provider will handle it.
+    if (isPolicyGoverned()) {
+      log.info("[update] policy stand-down: skipping deferred install on quit");
+      return;
+    }
     // The opt-out has to govern the update the user opted out BECAUSE OF.
     // Without this, the nudge says "downloading, will install on your next
     // quit", the user follows it to the toggle and switches it off, and the
@@ -615,6 +648,13 @@ function createFeedLane({
   // follows is OUR decision, made here from the preference, so the automatic
   // and the consent paths share one guarded entry point (startDownload).
   autoUpdater.on("update-available", (info) => {
+    // If policy governance is active while a check was in flight, discard the
+    // available build. The provider owns updates; the feed lane must not surface
+    // or auto-download. Governance arriving mid-check is the race this covers.
+    if (isPolicyGoverned()) {
+      log.info("[update] policy governed: ignoring update-available from in-flight check");
+      return;
+    }
     foundVersion = (info && info.version) || null;
     // What the followed lane publishes, recorded BEFORE the direction gate
     // below can null `foundVersion` out. The suppressed case is precisely the
@@ -724,6 +764,14 @@ function createFeedLane({
     });
   });
   autoUpdater.on("update-downloaded", (info) => {
+    // If policy governance arrived while this download was in flight, discard
+    // the build. The policy provider owns updates on this install; installing
+    // from the feed lane would violate the exclusive-owner goal.
+    if (isPolicyGoverned()) {
+      log.info(`[update] policy stand-down mid-download: discarding ${info && info.version}`);
+      downloading = false;
+      return;
+    }
     updateReady = true;
     downloading = false;
     stagedVersion = (info && info.version) || null;

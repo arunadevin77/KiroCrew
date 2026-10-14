@@ -15832,6 +15832,8 @@
         "commits_behind_many": "{{count}} commits por detrás",
         "commits_behind_other": "{{count}} commits por detrás",
         "updates_managed_by_policy": "Las actualizaciones de esta instalación las gestiona una política de actualización definida por el operador. Las nuevas versiones llegan por ese mecanismo.",
+
+        "updates_managed_by_policy_desktop": "Una política en este equipo gestiona las actualizaciones de esta app. Las nuevas versiones llegan a través de esa política, por lo que {{productName}} no las busca. Pide a quien la configuró que la cambie, o edita security_policy.json.",
         "updates_managed_externally": "Las actualizaciones de esta instalación las gestiona un gestor de paquetes externo. Usa ese gestor de paquetes para obtener nuevas versiones.",
         "updates_managed_externally_by": "Las actualizaciones de esta instalación las gestiona {{managedBy}}. Úsalo para obtener nuevas versiones.",
         "updates_managed_lane": "Las actualizaciones de esta instalación las gestiona un administrador de paquetes externo. Para actualizar manualmente, ejecute el siguiente comando en una terminal.",
@@ -15846,7 +15848,11 @@
         "automatic_updates": "Actualizar el gateway automáticamente",
         "gateway_auto_update_unknown_hint": "Sabrás si este interruptor se aplica aquí tras la primera búsqueda de actualizaciones, poco después del inicio.",
         "gateway_auto_update_mandatory_note": "Una política exige una versión más reciente que esta; cuando haya una disponible, se instala sin importar este interruptor.",
-        "gateway_auto_update_description": "Instala una versión nueva cuando no hay trabajo en curso y reinicia el gateway, si esta instalación puede actualizarse sola.",
+        "gateway_auto_update_description": "Reinicia el gateway para instalar una nueva versión cuando no hay trabajo en ejecución. Cuando está desactivado, permanece en su versión actual.",
+
+        "gateway_updates_heading": "Actualizaciones del gateway",
+
+        "gateway_auto_update_desktop_context": "El gateway ejecuta tus agentes y chats. Está instalado de forma independiente a {{productName}}, por lo que este interruptor lo actualiza.",
         "automatic_updates_are_unavailable_in_this_build": "Las actualizaciones automáticas no están disponibles en esta compilación",
         "automatic_updates_unavailable_dev_build": "Las actualizaciones automáticas no están disponibles en esta compilación (compilación de desarrollo).",
         "automatic_updates_unavailable_channel": "Las actualizaciones automáticas no están disponibles porque este canal de lanzamiento aún no tiene compilaciones para tu plataforma. Cambia de canal arriba para recibir actualizaciones.",

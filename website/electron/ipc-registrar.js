@@ -69,6 +69,13 @@ function createIpcRegistrar({
   let shellRegistered = false;
   let updaterRegistered = false;
   let updater = null;
+  // True when the gateway reports that a security policy provider owns this
+  // install's updates and the Electron feed lane must stand down. Set by the
+  // renderer via update:notify-policy-governed once the gateway status lands.
+  let policyGoverned = false;
+  // The webContents ID that last reported governance=true. Only this frame
+  // can clear it; other windows on non-policy gateways are ignored.
+  let governanceSourceId = null;
   // True while a native folder chooser is on screen, so a second request
   // answers "no choice" instead of stacking another dialog.
   let folderPickOpen = false;
@@ -565,6 +572,7 @@ function createIpcRegistrar({
         // electron-updater's AppUpdater, NOT Electron's built-in autoUpdater:
         // it generates/verifies feed metadata and also supports Linux.
         autoUpdater: require("electron-updater").autoUpdater,
+        isPolicyGoverned: () => policyGoverned,
         dialog: electron.dialog,
         Notification,
         getFlavor: () => "stable",
@@ -640,6 +648,34 @@ function createIpcRegistrar({
       disabled: updater.disabled,
     });
 
+    // One-way notification from the renderer: the gateway status reported that
+    // a security policy provider governs this install's updates. The feed lane
+    // stands down until notified the opposite. Fire-and-forget: no response
+    // expected; the lane reads policyGoverned on its next scheduled check.
+    ipcMain.on("update:notify-policy-governed", (_event, governed) => {
+      const prev = policyGoverned;
+      if (governed) {
+        // Record which frame reported governance. Uses optional chaining since
+        // tests may not carry a full electron event (no real webContents).
+        governanceSourceId = _event?.sender?.id ?? null;
+        policyGoverned = true;
+        if (!prev) {
+          // Governance just became active: trigger a check immediately so the
+          // feed lane emits not-available and clears any stale "found" state.
+          updater?.check?.();
+        }
+      } else {
+        // Only lift governance when the SAME frame that set it reports false.
+        // An unrelated window (connected to a non-policy gateway) sending false
+        // must not re-enable the feed lane for the bundled install.
+        const senderId = _event?.sender?.id ?? null;
+        if (governanceSourceId === null || senderId === null
+            || governanceSourceId === senderId) {
+          governanceSourceId = null;
+          policyGoverned = false;
+        }
+      }
+    });
     ipcMain.handle("update:get-info", () => updaterInfo());
     ipcMain.handle("update:check", () => {
       updater.check();
