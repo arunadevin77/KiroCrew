@@ -973,7 +973,7 @@ deferral, so at most what was left of the deferral counts (the wake brings
 forward only rows that now fit, so this is a re-check that lost a race). A row
 not waiting or not deferred is left alone. The subagent adapter fails each row it returns past
 `agent.subagent_queue_max_wait_secs` with a generation-fenced `finish` and
-reports `never started: waiting for memory`
+reports `never started: waiting for memory (not enough memory freed up in time); retry once memory frees up`
 ([subagent.md](subagent.md) § Durable task queue).
 
 That `finish` passes `report_owed=True`: the terminal `transition` event then

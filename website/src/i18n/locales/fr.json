@@ -11195,6 +11195,7 @@
         "logs": "Journaux",
         "no_issues_in_this_session_yet_mention_a_github_o": "Pas encore d’issues dans cette session. Mentionne un lien vers une issue GitHub ou GitLab et elle apparaîtra ici.",
         "no_links_yet": "Pas encore de liens dans cette session. Mentionne une URL dans le chat et elle apparaîtra ici.",
+        "no_output_never_started": "(aucune sortie : jamais démarré)",
         "no_matches": "Aucun résultat",
         "no_pull_requests_yet": "Aucune pull request dans cette session pour l'instant",
         "no_subagents_running": "Aucun sous-agent en cours",
@@ -11633,8 +11634,14 @@
       },
       "subagentQueued": {
         "low_memory": "en attente de démarrage — nécessite {{required}} de mémoire libre, {{available}} libres actuellement ; libère de la mémoire pour continuer",
+        "low_memory_limit": "en attente de démarrage — nécessite {{required}} de mémoire libre, {{available}} libres actuellement ; libère de la mémoire pour continuer ; ils s’arrêtent sans démarrer si la mémoire reste insuffisante pendant {{limit}}",
         "low_memory_no_figures": "en attente de démarrage — mémoire libre insuffisante ; libère de la mémoire pour continuer",
-        "memory_pressure": "en attente de démarrage — macOS signale une pression mémoire ; les démarrages reprennent d’eux-mêmes dès qu’elle diminue ou que les agents en cours se terminent ; les démarrages abandonnent dès que la pression dépasse la limite d’attente"
+        "low_memory_no_figures_limit": "en attente de démarrage — mémoire libre insuffisante ; libère de la mémoire pour continuer ; ils s’arrêtent sans démarrer si la mémoire reste insuffisante pendant {{limit}}",
+        "low_memory_no_figures_no_limit": "en attente de démarrage — mémoire libre insuffisante ; libère de la mémoire pour continuer ; ils attendent sans limite de temps",
+        "low_memory_no_limit": "en attente de démarrage — nécessite {{required}} de mémoire libre, {{available}} libres actuellement ; libère de la mémoire pour continuer ; ils attendent sans limite de temps",
+        "memory_pressure": "en attente de démarrage — macOS signale une pression mémoire ; ferme d’autres apps pour la réduire ; ils démarrent dès qu’elle diminue ou que d’autres agents se terminent",
+        "memory_pressure_limit": "en attente de démarrage — macOS signale une pression mémoire ; ferme d’autres apps pour la réduire ; ils démarrent dès qu’elle diminue ou que d’autres agents se terminent ; ils s’arrêtent sans démarrer si la mémoire reste insuffisante pendant {{limit}}",
+        "memory_pressure_no_limit": "en attente de démarrage — macOS signale une pression mémoire ; ferme d’autres apps pour la réduire ; ils démarrent dès qu’elle diminue ou que d’autres agents se terminent ; ils attendent sans limite de temps"
       },
       "subagentRunCard": {
         "agent_finished_many": "{{count}} agents terminés",

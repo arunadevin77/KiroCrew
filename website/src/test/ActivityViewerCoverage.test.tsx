@@ -247,6 +247,20 @@ describe('ActivityViewer — subagent transcript loading', () => {
     expect(screen.queryByRole('button', { name: 'Load output from disk' })).not.toBeInTheDocument()
   })
 
+  it('offers no disk read on a card whose run never started', () => {
+    const { container } = renderPanel(
+      <ActivityViewer
+        {...baseProps}
+        view="subagents"
+        subagents={{ s1: mkAgent('s1', { status: 'error', error: 'never started: waiting for memory (not enough memory freed up in time); retry once memory frees up' }) }}
+      />,
+    )
+    fireEvent.click(cardHeader(container))
+    expect(screen.getByText('(no output: it never started)')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Load output from disk' })).not.toBeInTheDocument()
+    expect(api.spawnStatus).not.toHaveBeenCalled()
+  })
+
   it('waits for output on a running agent instead of reading from disk', () => {
     renderPanel(
       <ActivityViewer

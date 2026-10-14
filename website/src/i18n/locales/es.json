@@ -11195,6 +11195,7 @@
         "logs": "Registros",
         "no_issues_in_this_session_yet_mention_a_github_o": "Todavía no hay issues en esta sesión. Menciona un enlace a un issue de GitHub o GitLab y aparecerá aquí.",
         "no_links_yet": "Todavía no hay enlaces en esta sesión. Menciona una URL en el chat y aparecerá aquí.",
+        "no_output_never_started": "(sin salida: nunca se inició)",
         "no_matches": "Sin coincidencias",
         "no_pull_requests_yet": "Aún no hay pull requests en esta sesión",
         "no_subagents_running": "No hay subagentes en ejecución",
@@ -11633,8 +11634,14 @@
       },
       "subagentQueued": {
         "low_memory": "esperando para iniciar — necesita {{required}} de memoria libre, ahora hay {{available}} libres; libera memoria para continuar",
+        "low_memory_limit": "esperando para iniciar — necesita {{required}} de memoria libre, ahora hay {{available}} libres; libera memoria para continuar; terminan sin iniciarse si la memoria sigue escasa durante {{limit}}",
         "low_memory_no_figures": "esperando para iniciar — no hay suficiente memoria libre; libera memoria para continuar",
-        "memory_pressure": "esperando para iniciar — macOS informa de presión de memoria; los inicios se reanudan solos cuando disminuya o terminen los agentes en ejecución; los inicios se abandonan cuando la presión supera el límite de espera"
+        "low_memory_no_figures_limit": "esperando para iniciar — no hay suficiente memoria libre; libera memoria para continuar; terminan sin iniciarse si la memoria sigue escasa durante {{limit}}",
+        "low_memory_no_figures_no_limit": "esperando para iniciar — no hay suficiente memoria libre; libera memoria para continuar; esperan sin límite de tiempo",
+        "low_memory_no_limit": "esperando para iniciar — necesita {{required}} de memoria libre, ahora hay {{available}} libres; libera memoria para continuar; esperan sin límite de tiempo",
+        "memory_pressure": "esperando para iniciar — macOS informa de presión de memoria; cierra otras apps para reducirla; se inician cuando disminuya o terminen otros agentes",
+        "memory_pressure_limit": "esperando para iniciar — macOS informa de presión de memoria; cierra otras apps para reducirla; se inician cuando disminuya o terminen otros agentes; terminan sin iniciarse si la memoria sigue escasa durante {{limit}}",
+        "memory_pressure_no_limit": "esperando para iniciar — macOS informa de presión de memoria; cierra otras apps para reducirla; se inician cuando disminuya o terminen otros agentes; esperan sin límite de tiempo"
       },
       "subagentRunCard": {
         "agent_finished_many": "{{count}} agentes finalizados",

@@ -10879,6 +10879,7 @@
         "logs": "로그",
         "no_issues_in_this_session_yet_mention_a_github_o": "이 세션에는 아직 이슈가 없습니다. GitHub 또는 GitLab 이슈 링크를 언급하면 여기에 표시됩니다.",
         "no_links_yet": "이 세션에는 아직 링크가 없습니다. 채팅에서 URL을 언급하면 여기에 표시됩니다.",
+        "no_output_never_started": "(출력 없음: 시작되지 않음)",
         "no_matches": "일치하는 항목 없음",
         "no_pull_requests_yet": "이 세션에는 아직 풀 리퀘스트가 없습니다",
         "no_subagents_running": "실행 중인 서브에이전트 없음",
@@ -11305,8 +11306,14 @@
       },
       "subagentQueued": {
         "low_memory": "시작 대기 중 — 여유 메모리 {{required}} 필요, 현재 {{available}} 여유. 계속하려면 메모리를 확보하세요",
+        "low_memory_limit": "시작 대기 중 — 여유 메모리 {{required}} 필요, 현재 {{available}} 여유. 계속하려면 메모리를 확보하세요. 메모리 부족이 {{limit}} 동안 계속되면 시작하지 않고 종료됩니다",
         "low_memory_no_figures": "시작 대기 중 — 여유 메모리가 부족합니다. 계속하려면 메모리를 확보하세요",
-        "memory_pressure": "시작 대기 중 — macOS가 메모리 압박을 보고하고 있습니다. 압박이 줄어들거나 실행 중인 에이전트가 끝나면 자동으로 다시 시작됩니다. 압박이 대기 한도를 넘겨 계속되면 시작은 중단됩니다"
+        "low_memory_no_figures_limit": "시작 대기 중 — 여유 메모리가 부족합니다. 계속하려면 메모리를 확보하세요. 메모리 부족이 {{limit}} 동안 계속되면 시작하지 않고 종료됩니다",
+        "low_memory_no_figures_no_limit": "시작 대기 중 — 여유 메모리가 부족합니다. 계속하려면 메모리를 확보하세요. 대기 시간 제한은 없습니다",
+        "low_memory_no_limit": "시작 대기 중 — 여유 메모리 {{required}} 필요, 현재 {{available}} 여유. 계속하려면 메모리를 확보하세요. 대기 시간 제한은 없습니다",
+        "memory_pressure": "시작 대기 중 — macOS가 메모리 압박을 보고하고 있습니다. 다른 앱을 닫으면 줄어듭니다. 압박이 줄어들거나 다른 에이전트가 끝나면 시작됩니다",
+        "memory_pressure_limit": "시작 대기 중 — macOS가 메모리 압박을 보고하고 있습니다. 다른 앱을 닫으면 줄어듭니다. 압박이 줄어들거나 다른 에이전트가 끝나면 시작됩니다. 메모리 부족이 {{limit}} 동안 계속되면 시작하지 않고 종료됩니다",
+        "memory_pressure_no_limit": "시작 대기 중 — macOS가 메모리 압박을 보고하고 있습니다. 다른 앱을 닫으면 줄어듭니다. 압박이 줄어들거나 다른 에이전트가 끝나면 시작됩니다. 대기 시간 제한은 없습니다"
       },
       "subagentRunCard": {
         "agent_finished_other": "에이전트 {{count}}개 완료",

@@ -524,7 +524,10 @@ from kiro_crew.subagent_completion_meta import (
     wave_chunk_meta,
     wave_final_meta,
 )
-from kiro_crew.subagent_wait_reasons import QUEUED_WAIT_EXPIRED_TEXT
+from kiro_crew.subagent_wait_reasons import (  # noqa: F401
+    NEVER_STARTED_MEMORY_PREFIX,
+    QUEUED_WAIT_EXPIRED_TEXT,
+)
 from kiro_crew.taskrunner import TaskRunner
 from kiro_crew.tunnel import set_publish_disabled
 from kiro_crew.validation import CHANNEL_ID_RE
@@ -7174,7 +7177,7 @@ class GatewayOrchestrator:
                     bp["stopped"] += 1
                 elif _oc == "failed":
                     bp["err"] += 1
-                    if (info.error or "").startswith(QUEUED_WAIT_EXPIRED_TEXT):
+                    if (info.error or "").startswith(NEVER_STARTED_MEMORY_PREFIX):
                         bp["not_run"] += 1
                 else:
                     bp["ok"] += 1

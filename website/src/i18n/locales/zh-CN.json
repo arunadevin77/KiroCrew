@@ -10879,6 +10879,7 @@
         "logs": "日志",
         "no_issues_in_this_session_yet_mention_a_github_o": "这个会话里还没有 issue。提到一个 GitHub 或 GitLab 的 issue 链接，它就会出现在这里。",
         "no_links_yet": "这个会话里还没有链接。在聊天中提到一个网址，它就会出现在这里。",
+        "no_output_never_started": "（无输出：从未开始）",
         "no_matches": "无匹配项",
         "no_pull_requests_yet": "此会话中还没有拉取请求",
         "no_subagents_running": "没有运行中的子代理",
@@ -11305,8 +11306,14 @@
       },
       "subagentQueued": {
         "low_memory": "等待开始 — 需要 {{required}} 可用内存，当前可用 {{available}}；请释放内存以继续",
+        "low_memory_limit": "等待开始 — 需要 {{required}} 可用内存，当前可用 {{available}}；请释放内存以继续；若内存持续不足 {{limit}}，将不启动而结束",
         "low_memory_no_figures": "等待开始 — 可用内存不足；请释放内存以继续",
-        "memory_pressure": "等待开始 — macOS 报告内存压力；压力缓解或正在运行的代理完成后会自动恢复启动；压力持续超过等待上限后启动会被放弃"
+        "low_memory_no_figures_limit": "等待开始 — 可用内存不足；请释放内存以继续；若内存持续不足 {{limit}}，将不启动而结束",
+        "low_memory_no_figures_no_limit": "等待开始 — 可用内存不足；请释放内存以继续；等待没有时间上限",
+        "low_memory_no_limit": "等待开始 — 需要 {{required}} 可用内存，当前可用 {{available}}；请释放内存以继续；等待没有时间上限",
+        "memory_pressure": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；压力缓解或其他代理完成后开始",
+        "memory_pressure_limit": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；压力缓解或其他代理完成后开始；若内存持续不足 {{limit}}，将不启动而结束",
+        "memory_pressure_no_limit": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；压力缓解或其他代理完成后开始；等待没有时间上限"
       },
       "subagentRunCard": {
         "agent_finished_other": "{{count}} 个代理已完成",

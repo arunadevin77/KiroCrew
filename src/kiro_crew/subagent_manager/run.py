@@ -18,6 +18,7 @@ from ..subagent_persistence import (
     remember_live_cleanup_identity,
     write_run_agent,
 )
+from ..subagent_wait_reasons import DEFERRED_QUEUED_REASONS
 from ..tool_permission import (
     GATE_GRANT,
     Ask,
@@ -1711,6 +1712,13 @@ class RunEventCoordinator(ManagerComponent):
             extra: dict[str, Any] = {"queued": depth}
         else:
             extra = {"queued": depth, **manager._queue_wait.get(parent_session_key, {})}
+            if extra.get("reason") in DEFERRED_QUEUED_REASONS:
+                # The live bound on a memory wait, read as the frame is sent so
+                # a config reload shows on the next frame (0 is no bound).
+                # One reader with the sweep and the pressure hold that end the wait.
+                extra["max_wait_secs"] = max(
+                    0, int(manager._admission.taskq_memory_wait_bound_secs())
+                )
         info = SubagentInfo(
             id="_queue", task="", parent_session_key=parent_session_key, batch_id=batch_id
         )

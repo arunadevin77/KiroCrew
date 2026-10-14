@@ -11037,6 +11037,7 @@
         "logs": "Protokolle",
         "no_issues_in_this_session_yet_mention_a_github_o": "In dieser Sitzung gibt es noch keine Issues. Erwähne einen GitHub- oder GitLab-Issue-Link, und er erscheint hier.",
         "no_links_yet": "In dieser Sitzung gibt es noch keine Links. Erwähne eine URL im Chat, und sie erscheint hier.",
+        "no_output_never_started": "(keine Ausgabe: nie gestartet)",
         "no_matches": "Keine Treffer",
         "no_pull_requests_yet": "Noch keine Pull Requests in dieser Sitzung",
         "no_subagents_running": "Keine Subagenten laufen",
@@ -11469,8 +11470,14 @@
       },
       "subagentQueued": {
         "low_memory": "wartet auf den Start — benötigt {{required}} freien Speicher, aktuell {{available}} frei; gib Speicher frei, um fortzufahren",
+        "low_memory_limit": "wartet auf den Start — benötigt {{required}} freien Speicher, aktuell {{available}} frei; gib Speicher frei, um fortzufahren; sie enden ohne Start, wenn der Speicher {{limit}} lang knapp bleibt",
         "low_memory_no_figures": "wartet auf den Start — nicht genug freier Speicher; gib Speicher frei, um fortzufahren",
-        "memory_pressure": "wartet auf den Start — macOS meldet Speicherdruck; die Starts laufen von selbst weiter, sobald er nachlässt oder die laufenden Agenten fertig sind; Starts geben auf, sobald der Druck länger als das Wartelimit anhält"
+        "low_memory_no_figures_limit": "wartet auf den Start — nicht genug freier Speicher; gib Speicher frei, um fortzufahren; sie enden ohne Start, wenn der Speicher {{limit}} lang knapp bleibt",
+        "low_memory_no_figures_no_limit": "wartet auf den Start — nicht genug freier Speicher; gib Speicher frei, um fortzufahren; sie warten ohne Zeitlimit",
+        "low_memory_no_limit": "wartet auf den Start — benötigt {{required}} freien Speicher, aktuell {{available}} frei; gib Speicher frei, um fortzufahren; sie warten ohne Zeitlimit",
+        "memory_pressure": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie starten, sobald er nachlässt oder andere Agenten fertig sind",
+        "memory_pressure_limit": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie starten, sobald er nachlässt oder andere Agenten fertig sind; sie enden ohne Start, wenn der Speicher {{limit}} lang knapp bleibt",
+        "memory_pressure_no_limit": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie starten, sobald er nachlässt oder andere Agenten fertig sind; sie warten ohne Zeitlimit"
       },
       "subagentRunCard": {
         "agent_finished_one": "{{count}} Agent abgeschlossen",

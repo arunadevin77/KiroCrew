@@ -20,6 +20,7 @@ from overload_fakes import settle_depth_emits
 
 import kiro_crew.subagent as subagent
 from conftest import absent_sysconf
+from kiro_crew.constants import DEFAULT_SUBAGENT_QUEUE_MAX_WAIT_SECS
 from kiro_crew.subagent import (
     compute_max_subagents,
     compute_memory_sized_parallel_cap,
@@ -738,6 +739,8 @@ class TestQueuedReasonOnTheEvent:
             "reason": "low_memory",
             "available_gb": 3.2,
             "required_gb": 4.5,
+            # A memory wait names its live bound (the default, on a fresh manager).
+            "max_wait_secs": DEFAULT_SUBAGENT_QUEUE_MAX_WAIT_SECS,
         }
         assert events[:3] == [low_memory, low_memory, {"queued": 0}]
         assert burst == [{"queued": 1, "reason": "posture_critical"}]

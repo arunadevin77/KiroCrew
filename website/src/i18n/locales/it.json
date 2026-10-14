@@ -11195,6 +11195,7 @@
         "logs": "Log",
         "no_issues_in_this_session_yet_mention_a_github_o": "Ancora nessuna issue in questa sessione. Cita il link a una issue di GitHub o GitLab e comparirà qui.",
         "no_links_yet": "Ancora nessun link in questa sessione. Cita una URL nella chat e comparirà qui.",
+        "no_output_never_started": "(nessun output: mai avviato)",
         "no_matches": "Nessuna corrispondenza",
         "no_pull_requests_yet": "Ancora nessuna pull request in questa sessione",
         "no_subagents_running": "Nessun subagente in esecuzione",
@@ -11633,8 +11634,14 @@
       },
       "subagentQueued": {
         "low_memory": "in attesa di avvio — richiede {{required}} di memoria libera, ora {{available}} liberi; libera memoria per continuare",
+        "low_memory_limit": "in attesa di avvio — richiede {{required}} di memoria libera, ora {{available}} liberi; libera memoria per continuare; terminano senza avviarsi se la memoria resta scarsa per {{limit}}",
         "low_memory_no_figures": "in attesa di avvio — memoria libera insufficiente; libera memoria per continuare",
-        "memory_pressure": "in attesa di avvio — macOS segnala pressione sulla memoria; gli avvii riprendono da soli quando si allenta o quando terminano gli agenti in esecuzione; gli avvii si interrompono quando la pressione supera il limite di attesa"
+        "low_memory_no_figures_limit": "in attesa di avvio — memoria libera insufficiente; libera memoria per continuare; terminano senza avviarsi se la memoria resta scarsa per {{limit}}",
+        "low_memory_no_figures_no_limit": "in attesa di avvio — memoria libera insufficiente; libera memoria per continuare; attendono senza limite di tempo",
+        "low_memory_no_limit": "in attesa di avvio — richiede {{required}} di memoria libera, ora {{available}} liberi; libera memoria per continuare; attendono senza limite di tempo",
+        "memory_pressure": "in attesa di avvio — macOS segnala pressione sulla memoria; chiudi altre app per ridurla; si avviano quando si allenta o quando terminano altri agenti",
+        "memory_pressure_limit": "in attesa di avvio — macOS segnala pressione sulla memoria; chiudi altre app per ridurla; si avviano quando si allenta o quando terminano altri agenti; terminano senza avviarsi se la memoria resta scarsa per {{limit}}",
+        "memory_pressure_no_limit": "in attesa di avvio — macOS segnala pressione sulla memoria; chiudi altre app per ridurla; si avviano quando si allenta o quando terminano altri agenti; attendono senza limite di tempo"
       },
       "subagentRunCard": {
         "agent_finished_many": "{{count}} agenti completati",

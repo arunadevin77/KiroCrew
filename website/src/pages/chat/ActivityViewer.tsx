@@ -35,7 +35,7 @@ import ErrorBoundary from '../../components/ErrorBoundary'
 const CrewLogTab = lazy(() => import('./CrewLogPanel').then(m => ({ default: m.CrewLogTab })))
 import SessionSummaryTab from './SessionSummaryTab'
 import { i18nT } from '../../i18n/t'
-import { queuedWaitText } from './subagentQueuedReason'
+import { isNeverStarted, queuedWaitText } from './subagentQueuedReason'
 import GitPanel from '../../components/GitPanel'
 import { fmtDateFields, fmtElapsed } from '../../i18n/format'
 import { isModelDowngrade } from './subagentCompletion'
@@ -404,7 +404,7 @@ function SubagentPane({ a, slot, onClick, selected }: { a: SubagentActivity; slo
             the way the transcript's completion card does. `streaming` holds a
             half-typed fence until it closes. */}
         <div ref={bodyRef} onScroll={onScroll} data-testid="subagent-output-body" className="px-2.5 py-2 bg-bg rounded-md text-[12px] break-words max-h-[240px] overflow-y-auto text-muted/80 leading-relaxed">
-          {(a.streaming || a.result) ? <MarkdownRenderer content={a.streaming || a.result || ''} streaming={isRunning && !!a.streaming} softBreaks readOnlyCode /> : (isDone ? (isNative ? <span className="text-muted/30 italic">{i18nT('pages.chat.activityViewer.output_shown_in_chat')}</span> : <DiskLoader id={a.id} autoLoad={selected} />) : <span className="text-muted/30 italic">{i18nT('pages.chat.activityViewer.waiting_for_output')}</span>)}
+          {(a.streaming || a.result) ? <MarkdownRenderer content={a.streaming || a.result || ''} streaming={isRunning && !!a.streaming} softBreaks readOnlyCode /> : (isDone ? (isNative ? <span className="text-muted/30 italic">{i18nT('pages.chat.activityViewer.output_shown_in_chat')}</span> : isNeverStarted(a.error) ? <span className="text-muted/70 italic">{i18nT('pages.chat.activityViewer.no_output_never_started')}</span> : <DiskLoader id={a.id} autoLoad={selected} />) : <span className="text-muted/30 italic">{i18nT('pages.chat.activityViewer.waiting_for_output')}</span>)}
           {a.lastTool && !a.toolCalls?.length && <div className="text-accent mt-1 font-mono"><Wrench className="lucide-inline" /> {sanitizeLlmOutput(a.lastTool)}</div>}
         </div>
       </div>

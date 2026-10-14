@@ -2585,30 +2585,50 @@ def test_the_user_docs_state_the_hold_bounds_the_code_uses() -> None:
     )
     assert "macOS memory-pressure hold" in row
     assert row.endswith(f"| `{DEFAULT_SUBAGENT_QUEUE_MAX_WAIT_SECS}` ({minutes} min) |")
-    # The chip is static copy and the gateway sends it no figure, while the key
-    # moves the bound live, so no catalog may name a number: one would be wrong
-    # on every install that set the key.
+    # The key moves the bound live and the frame carries it, so no catalog may
+    # name a number: the bound reaches each give-up clause as ``{{limit}}``, and
+    # the sentence without a bound (``0``) has no give-up clause at all.
     catalogs = sorted((root / "website/src/i18n/locales").glob("*.json"))
     # en.manual.json holds only hand-authored keys with no source literal.
     for path in (p for p in catalogs if p.name != "en.manual.json"):
         chip = json.loads(path.read_text(encoding="utf-8"))["pages"]["chat"]["subagentQueued"]
-        assert not re.search(r"\d", chip["memory_pressure"]), path.name
+        for key in ("low_memory", "low_memory_no_figures", "memory_pressure"):
+            assert "{{limit}}" not in chip[key], (path.name, key)
+            assert "{{limit}}" not in chip[f"{key}_no_limit"], (path.name, key)
+            assert "{{limit}}" in chip[f"{key}_limit"], (path.name, key)
+            if path.name != "en-XA.json":  # the pseudo-locale pads and brackets each string
+                assert chip[f"{key}_limit"].startswith(chip[key]), (path.name, key)
+                assert chip[f"{key}_no_limit"].startswith(chip[key]), (path.name, key)
+        for key in ("memory_pressure", "memory_pressure_limit", "memory_pressure_no_limit"):
+            assert not re.search(r"\d", chip[key]), (path.name, key)
     english = json.loads((root / "website/src/i18n/locales/en.json").read_text(encoding="utf-8"))
-    chip_en = english["pages"]["chat"]["subagentQueued"]["memory_pressure"]
-    assert chip_en.endswith("give up once the pressure outlasts the wait limit")
+    chip_en = english["pages"]["chat"]["subagentQueued"]
+    # A duration the memory must stay short for, not a deadline from now.
+    assert chip_en["memory_pressure_limit"].endswith(
+        "they end without starting if memory stays short for {{limit}}"
+    )
+    assert chip_en["memory_pressure_no_limit"].endswith("they wait with no time limit")
 
 
 def test_the_card_and_the_gate_agree_on_the_never_started_prefix() -> None:
     """The run card headlines a wholly never-started wave by matching the gate's
     terminal error, so the two spellings must not drift."""
-    from kiro_crew.subagent_wait_reasons import MEMORY_PRESSURE_NEVER_STARTED
+    from kiro_crew.subagent_wait_reasons import (
+        MEMORY_PRESSURE_NEVER_STARTED,
+        NEVER_STARTED_MEMORY_PREFIX,
+        QUEUED_WAIT_EXPIRED_TEXT,
+    )
 
     phrases = json.loads(
         (Path(__file__).resolve().parents[1] / "website/src/lib/backendPhrases.json").read_text(
             encoding="utf-8"
         )
     )
-    assert MEMORY_PRESSURE_NEVER_STARTED.startswith(phrases["neverStartedPrefix"])
+    assert phrases["neverStartedPrefix"] == NEVER_STARTED_MEMORY_PREFIX
+    # Both memory terminals open with it, and each ends with its next step.
+    for terminal in (MEMORY_PRESSURE_NEVER_STARTED, QUEUED_WAIT_EXPIRED_TEXT):
+        assert terminal.startswith(NEVER_STARTED_MEMORY_PREFIX)
+        assert "; retry once " in terminal
 
 
 def test_event_loop_spawns_validate_the_agent_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
