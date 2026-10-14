@@ -39,6 +39,7 @@ import { pathBasename } from '../../utils/pathBasename'
 import { useToolCallsStartExpanded } from '../../hooks/useToolCallsStartExpanded'
 import { InstantTip, useInstantTip } from '../../components/InstantTip'
 import { PILL_TIP_OPEN_CLASS, ToolCommandTip } from './ToolCommandTip'
+import { useReportRowActive } from './rowActivity'
 
 // Lazy so the rarely-shown answers card stays out of the App chunk.
 const AskAnswersResult = lazy(() => import('./AskAnswersCard').then(m => ({ default: m.AskAnswersResult })))
@@ -609,6 +610,9 @@ export default memo(function ToolCallLine({ message, running: _running, slot, on
     const key = disclosureKeyRef.current
     if (notify && key) notify(key, next)
   }, [])
+  // Set once the user opens or closes this pill themselves (a click or a jump),
+  // so an open state is theirs and not just the start-expanded default.
+  const [userChoseOpen, setUserChoseOpen] = useState(false)
   const [pendingAutoExpand, setPendingAutoExpand] = useState(() => hasPendingPerm && !startExpanded)
   const prevPendingRef = useRef(hasPendingPerm)
   useEffect(() => {
@@ -616,8 +620,10 @@ export default memo(function ToolCallLine({ message, running: _running, slot, on
     prevPendingRef.current = hasPendingPerm
     if (hasPendingPerm && !wasPending) {
       // Approval just became pending → auto-expand. Only mark it as ours to
-      // undo when the row would otherwise rest collapsed.
-      applyExpanded(true)
+      // undo when the row would otherwise rest collapsed. Local only: the
+      // host's disclosure holds the user's own choices, and an auto-open
+      // stored there would read as one (it never folds, see below).
+      setLocalExpanded(true)
       setPendingAutoExpand(!startExpanded)
     } else if (!hasPendingPerm && wasPending && pendingAutoExpand) {
       // Approval just resolved (approved/rejected/cancelled) and the user
@@ -628,12 +634,12 @@ export default memo(function ToolCallLine({ message, running: _running, slot, on
       // mid-flux height for the exit animation and the panel snaps shut
       // instead of animating cleanly.
       const raf = requestAnimationFrame(() => {
-        applyExpanded(false)
+        setLocalExpanded(false)
         setPendingAutoExpand(false)
       })
       return () => cancelAnimationFrame(raf)
     }
-  }, [hasPendingPerm, pendingAutoExpand, applyExpanded, startExpanded])
+  }, [hasPendingPerm, pendingAutoExpand, startExpanded])
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -647,6 +653,7 @@ export default memo(function ToolCallLine({ message, running: _running, slot, on
     if (focusToolCallId && effectiveId && focusToolCallId === effectiveId) {
       applyExpanded(true)
       setPendingAutoExpand(false)
+      setUserChoseOpen(true)
       requestAnimationFrame(() => containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }))
       dispatch(clearFocusToolCallId())
     }
@@ -894,7 +901,17 @@ export default memo(function ToolCallLine({ message, running: _running, slot, on
     if (hasPendingPerm) return
     applyExpanded(!expanded)
     setPendingAutoExpand(false)
+    setUserChoseOpen(true)
   }, [hasPendingPerm, expanded, applyExpanded])
+
+  // A live pill never folds into its turn's fold (see rowActivity): it is
+  // running (which covers awaiting approval: `hasPendingPerm` is false once
+  // `isDone`), hosting an MCP App, or open by a choice. The host's
+  // `disclosure` holds only choices (clicks and jumps); an open state that
+  // comes only from the "Tool calls start expanded" setting is not one, so
+  // with that setting on a finished pill still folds.
+  useReportRowActive(!isDone || !!mcpApp ||
+    (expanded && (disclosure === true || userChoseOpen || !startExpanded)))
 
   const fmtTime = (t: number) => t ? fmtDateFields(t, { hour: '2-digit', minute: '2-digit' }) : ''
 

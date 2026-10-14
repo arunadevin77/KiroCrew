@@ -51,6 +51,7 @@ import { fmtMessageTime, fmtMessageTimeFull } from '../pages/chat/messageTime'
 import { turnHadPolicyBlock } from './turnPolicyBlock'
 import { useLanguageGeneration } from '../i18n/useLanguageGeneration'
 import { isRejectedDecision } from '../utils/approvalDecision'
+import { useReportRowActive } from '../pages/chat/rowActivity'
 
 /** Everything a renderer may read. Passed per row so entries stay pure functions. */
 /** What a host that offers reply threads hands the rows: the footer data per
@@ -204,6 +205,8 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
   const isDone = message.role === 'tool_result' || message.meta?.output != null || !running
   const isRejected = isRejectedDecision(message.meta?.resolved)
   const hasPendingPerm = message.role === 'permission' && !message.meta?.resolved
+  // A running or opened pill never folds into its turn's fold (rowActivity).
+  useReportRowActive(!isDone || hasPendingPerm || expanded)
 
   // Prefer the backend-stamped purpose ("Add teams_data dict guard…") over the
   // raw command, matching the main chat. The raw label is the fallback, and is

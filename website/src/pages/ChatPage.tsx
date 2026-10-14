@@ -254,7 +254,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   }, [mcpAppPanel, activeSlot, appToolCallIds, dispatch, boundStore])
   const {
     messages, messagesRef, kiroCrewVersion, completedTurnCount, knowledgeFetch, knowledgeFetchRef, softStopAtMapRef, sentMessages, slotRunning, slotRunningRef, turnDisclosure, setTurnDisclosureFor,
-    toolDisclosure, setToolDisclosureFor, isTurnRowPinned, composerBusy, projectLocked, slotStopping, slotLoading, slotSwitchTarget, pendingQuestion, restoredQuestionNotice, pendingFollowup,
+    toolDisclosure, setToolDisclosureFor, turnRowMayBeLive, composerBusy, projectLocked, slotStopping, slotLoading, slotSwitchTarget, pendingQuestion, restoredQuestionNotice, pendingFollowup,
     folderSuggestion, followupTsBySlot, splitMode, setSplitMode, clearSplitOnSelect, crewWindow, openEmbeddedCrewWindow, navigateToEmbeddedSlot, splitAnchor, setSplitAnchor, activeTip, dismissTip,
     slotState, contextPct, contextTokens, activityOpen, slotHasMore, slotOldestIndex, cursorIsForActiveSlot, loadingOlder, olderFailed, activeViewIsBoundedPage, history, historyHasMore,
   } = useActiveSlotState({
@@ -2045,7 +2045,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                 // wrapper too, or each quiet cycle leaves an empty spacer row.
                 if (item.kind === 'single' && isHiddenInvisibleAssistantRow(item.msg)) return null
                 if (item.kind === 'turn') {
-                  return <div key={vi.key} ref={virt.measureRef(vi.index)} data-display-index={displayIdx}><TurnBlock turn={item} renderItem={renderTurnItem} collapseAll={chatConfig.collapseAllSteps} appToolCallIds={appToolCallIds} disclosure={turnDisclosure[vi.key]} liveDisclosure={turnDisclosure[`${vi.key}:live`]} disclosureKey={vi.key} isRowPinned={isTurnRowPinned} onDisclosureChange={setTurnDisclosureFor} /></div>
+                  return <div key={vi.key} ref={virt.measureRef(vi.index)} data-display-index={displayIdx}><TurnBlock turn={item} renderItem={renderTurnItem} collapseAll={chatConfig.collapseAllSteps} appToolCallIds={appToolCallIds} disclosure={turnDisclosure[vi.key]} disclosureKey={vi.key} onDisclosureChange={setTurnDisclosureFor} mayBeLive={turnRowMayBeLive} /></div>
                 }
                 // This row's bubble is the one the pinned banner is standing in for
                 // (identity rule below): hide the row and mark it for index.css. The

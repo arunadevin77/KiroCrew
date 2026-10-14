@@ -117,11 +117,11 @@ export function useActiveSlotState({
   const setToolDisclosureFor = useCallback((key: string, expanded: boolean) => {
     setToolDisclosure(prev => (prev[key] === expanded ? prev : { ...prev, [key]: expanded }))
   }, [])
-  // A tool pill the user expanded must not fold into a running turn's
-  // "N earlier steps" row under them: TurnBlock asks this, keyed exactly as the
-  // pill keys its own disclosure entry (toolDisclosureKey over messageRowKey).
-  const isTurnRowPinned = useCallback((it: TurnItem) =>
-    it.kind === 'single' && it.msg.role === 'tool' && !!toolDisclosure[toolDisclosureKey(it.msg, messageRowKey(it.msg, it.idx))],
+  // A pill the user opened may still report itself live, so a closed settled
+  // fold keeps it mounted (TurnBlock `mayBeLive`); keyed exactly as the
+  // transcript renderer keys the pill's own disclosure.
+  const turnRowMayBeLive = useCallback((it: TurnItem) =>
+    it.kind === 'single' && it.msg.role === 'tool' && toolDisclosure[toolDisclosureKey(it.msg, messageRowKey(it.msg, it.idx))] === true,
   [toolDisclosure])
   // Row keys are only unique within a slot, so carrying them across a slot
   // switch would apply one session's choices to another's turns.
@@ -242,7 +242,7 @@ export function useActiveSlotState({
   const historyHasMore = useAppSelector(s => s.chat.historyHasMore)
   return {
     messages, messagesRef, kiroCrewVersion, completedTurnCount, knowledgeFetch, knowledgeFetchRef, softStopAtMapRef, sentMessages, slotRunning, slotRunningRef, turnDisclosure, setTurnDisclosureFor,
-    toolDisclosure, setToolDisclosureFor, isTurnRowPinned, composerBusy, projectLocked, slotStopping, slotLoading, slotSwitchTarget, pendingQuestion, restoredQuestionNotice, pendingFollowup,
+    toolDisclosure, setToolDisclosureFor, turnRowMayBeLive, composerBusy, projectLocked, slotStopping, slotLoading, slotSwitchTarget, pendingQuestion, restoredQuestionNotice, pendingFollowup,
     folderSuggestion, followupTsBySlot, splitMode, setSplitMode, clearSplitOnSelect, crewWindow, openEmbeddedCrewWindow, navigateToEmbeddedSlot, splitAnchor, setSplitAnchor, activeTip, dismissTip,
     slotState, contextPct, contextTokens, activityOpen, slotHasMore, slotOldestIndex, cursorIsForActiveSlot, loadingOlder, olderFailed, activeViewIsBoundedPage, history, historyHasMore,
   }
