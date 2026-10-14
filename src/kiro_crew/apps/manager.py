@@ -1437,6 +1437,7 @@ def install_app(
         resources=f"name={name!r} version={manifest.version}",
     )
 
+    refresh_app_config_keys()
     logger.info("Installed app %s v%s from %s", name, manifest.version, source)
     return AppResult(
         ok=True,
@@ -1709,6 +1710,7 @@ def update_app(
 
     # Ensure data directory exists
     app_data_dir(name)
+    refresh_app_config_keys()
 
     logger.info(
         "Updated app %s: v%s -> v%s from %s",
@@ -2124,6 +2126,7 @@ def uninstall_app(name: str, *, keep_data: bool = True, retired_builtin: bool = 
             ok=False, name=name, error=f"failed to remove app: {exc}{restore_note}"
         )
 
+    refresh_app_config_keys()
     logger.info("Uninstalled app %s (keep_data=%s)", name, keep_data)
 
     # Withdraw the grant a SECOND time, now that the files are actually gone.
@@ -3122,6 +3125,57 @@ def get_app(name: str) -> dict[str, Any] | None:
         except Exception:
             pass
     return {**meta.to_dict(), **_approved_grants_row(name), "manifest": manifest_data}
+
+
+# Scan and central publication are one ordered operation. Lifecycle changes for
+# different apps can finish concurrently; without this lock an older scan can
+# publish after a newer scan and resurrect stale keys.
+_config_keys_refresh_lock = threading.Lock()
+
+
+def _scan_installed_app_config_keys(root: Path) -> frozenset[str]:
+    if not root.is_dir():
+        return frozenset()
+    keys: set[str] = set()
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            installed = _read_installed(entry.name)
+        except Exception:
+            # InstalledApp.from_dict performs real coercion and can raise for a
+            # malformed field. One damaged record must not freeze every other
+            # app's last published declarations.
+            logger.warning(
+                "Skipping malformed installed-app record for %s", entry.name, exc_info=True
+            )
+            continue
+        if installed is None:
+            continue
+        manifest = get_app_manifest(entry.name)
+        if manifest is not None and not manifest.config_keys_error:
+            keys.update(manifest.config_keys)
+    return frozenset(keys)
+
+
+def refresh_app_config_keys() -> frozenset[str]:
+    """Scan installed apps and atomically publish their config declarations.
+
+    Startup and lifecycle callers perform this synchronous filesystem work;
+    config validation only reads the published in-memory snapshot.
+    """
+    from kiro_crew.config.validation import (
+        extension_config_keys,
+        replace_extension_config_keys,
+    )
+
+    with _config_keys_refresh_lock:
+        try:
+            keys = _scan_installed_app_config_keys(apps_dir())
+        except Exception:
+            logger.debug("app config-key discovery failed", exc_info=True)
+            return extension_config_keys("apps")
+        return replace_extension_config_keys("apps", keys)
 
 
 def get_app_manifest(name: str) -> AppManifest | None:
@@ -4507,7 +4561,8 @@ def register_builtin_apps() -> int:
     if count:
         logger.info("Registered %d built-in app(s)", count)
 
-    # Warm the orphan cache after registration
+    # Publish declarations and warm the orphan cache after registration.
+    refresh_app_config_keys()
     detect_orphaned_builtins(force_refresh=True)
 
     return count
@@ -4654,7 +4709,8 @@ def cleanup_migrated_builtin(name: str) -> AppResult:
             error_code="io_error",
         )
 
-    # Invalidate orphan cache since we removed an orphaned entry
+    # Refresh declarations and orphan state after removing installed metadata.
+    refresh_app_config_keys()
     invalidate_orphan_cache()
 
     logger.info("Cleaned up migrated builtin %s (data preserved)", name)
