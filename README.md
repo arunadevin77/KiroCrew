@@ -54,12 +54,25 @@ that prerequisite and links to the official setup guide when it is missing.
 
 ### App downloads
 
-Use the Stable desktop package for [macOS](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew.dmg)
-or [Windows x64](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew-Setup.exe).
-On Linux, start with the one-line install below. The
-[install guide](docs/guides/install.md#install-paths) owns Insider and Nightly
-links, Linux `.deb` / `.rpm` / AppImage packages, architecture support, platform
-requirements, and sandbox setup.
+Each link fetches the newest build on that channel, and the app then updates
+itself on the same channel. Take Stable unless you have a reason not to; see
+[Release channels](#release-channels) below.
+
+| Download | Stable | Insider | Nightly |
+|---|---|---|---|
+| **macOS** (Apple Silicon/Intel) `.dmg` | [Stable](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew.dmg) | [Insider](https://download.crew.kiro.dev/desktop/insider/latest/KiroCrew.dmg) | [Nightly](https://download.crew.kiro.dev/desktop/nightly/latest/KiroCrew.dmg) |
+| **Windows** (x64) `.exe` | [Stable](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew-Setup.exe) | [Insider](https://download.crew.kiro.dev/desktop/insider/latest/KiroCrew-Setup.exe) | [Nightly](https://download.crew.kiro.dev/desktop/nightly/latest/KiroCrew-Setup.exe) |
+| **Linux** x86_64 `.deb` | [Stable](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew-x86_64.deb) | [Insider](https://download.crew.kiro.dev/desktop/insider/latest/KiroCrew-x86_64.deb) | [Nightly](https://download.crew.kiro.dev/desktop/nightly/latest/KiroCrew-x86_64.deb) |
+| **Linux** aarch64 `.deb` | [Stable](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew-aarch64.deb) | [Insider](https://download.crew.kiro.dev/desktop/insider/latest/KiroCrew-aarch64.deb) | [Nightly](https://download.crew.kiro.dev/desktop/nightly/latest/KiroCrew-aarch64.deb) |
+| **Linux** x86_64 `.rpm` | [Stable](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew-x86_64.rpm) | [Insider](https://download.crew.kiro.dev/desktop/insider/latest/KiroCrew-x86_64.rpm) | [Nightly](https://download.crew.kiro.dev/desktop/nightly/latest/KiroCrew-x86_64.rpm) |
+| **Linux** aarch64 `.rpm` | [Stable](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew-aarch64.rpm) | [Insider](https://download.crew.kiro.dev/desktop/insider/latest/KiroCrew-aarch64.rpm) | [Nightly](https://download.crew.kiro.dev/desktop/nightly/latest/KiroCrew-aarch64.rpm) |
+| **Linux** x86_64 AppImage | [Stable](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew-x86_64.AppImage) | [Insider](https://download.crew.kiro.dev/desktop/insider/latest/KiroCrew-x86_64.AppImage) | [Nightly](https://download.crew.kiro.dev/desktop/nightly/latest/KiroCrew-x86_64.AppImage) |
+| **Linux** aarch64 AppImage | [Stable](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew-aarch64.AppImage) | [Insider](https://download.crew.kiro.dev/desktop/insider/latest/KiroCrew-aarch64.AppImage) | [Nightly](https://download.crew.kiro.dev/desktop/nightly/latest/KiroCrew-aarch64.AppImage) |
+
+On Linux, start with the one-line install below and add a desktop package when
+you want a native window and in-app updates. The
+[install guide](docs/guides/install.md#installing-a-linux-desktop-package) owns
+which Linux package to pick, platform requirements, and sandbox setup.
 
 ### Release channels
 
