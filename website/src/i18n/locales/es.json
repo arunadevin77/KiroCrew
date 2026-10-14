@@ -298,7 +298,7 @@
       "reauth_command": "kirocrew token",
       "run_kirocrew_token_then_paste_sign_in_url": "Ejecuta kirocrew token en una terminal, pega abajo la URL de inicio de sesión y pulsa Intro.",
       "session_expired": "La sesión ha caducado.",
-      "session_expired_sign_in_again": "La sesión ha caducado. Ejecuta kirocrew token en una terminal y pega la URL de inicio de sesión en el banner de la parte superior de esta página para volver a iniciar sesión.",
+      "session_expired_sign_in_again": "Tu inicio de sesión ya no es válido. Ejecuta kirocrew token en una terminal y pega la URL de inicio de sesión en el banner de la parte superior de esta página para volver a iniciar sesión.",
       "stale_owner_session": "Esta sesión es anterior al propietario configurado. Vuelve a iniciar sesión.",
       "stale_owner_session_sign_in_again": "Esta sesión es anterior al propietario configurado (se inició antes de establecer KIROCREW_OWNER_ID). Ejecuta kirocrew token en una terminal y pega la URL de inicio de sesión en el banner de la parte superior de esta página para volver a iniciar sesión.",
       "stream_ended_without_completion": "La transmisión terminó sin completarse",
@@ -10274,8 +10274,7 @@
       "reload_failed_subagents": "Los subagentes siguen trabajando en esta sesión. Inténtalo de nuevo cuando terminen.",
       "duplicate_failed_reason": "No se pudo duplicar esta sesión. Motivo: {{reason}}. Inténtalo de nuevo en un momento.",
       "duplicate_guided_reason": "No se pudo duplicar esta sesión. {{reason}}",
-      "duplicate_not_found": "No se pudo duplicar esta sesión. Ya no está abierta. Recarga la página o vuelve a abrirla desde el Historial e inténtalo de nuevo.",
-      "duplicate_sign_in_required": "No se pudo duplicar esta sesión. Tu inicio de sesión ya no es válido. Ejecuta kirocrew token en una terminal y pega la URL de inicio de sesión en el banner de la parte superior de esta página para volver a iniciar sesión."
+      "duplicate_not_found": "No se pudo duplicar esta sesión. Ya no está abierta. Recarga la página o vuelve a abrirla desde el Historial e inténtalo de nuevo."
     },
     "useStreamingStt": {
       "audio_module_load_failed": "El dictado no terminó de cargarse. Revisa tu conexión y vuelve a dictar.",

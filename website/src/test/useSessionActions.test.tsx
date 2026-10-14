@@ -20,18 +20,16 @@ import { Provider } from 'react-redux'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import type { ChatSlot } from '../types'
+import enManual from '../i18n/locales/en.manual.json'
 
 const mocks = vi.hoisted(() => ({ setSlotPin: vi.fn(), forkChatSlot: vi.fn(), chatSlots: vi.fn() }))
 // The client mock re-exports the real ApiError, so the hook's instanceof check
-// and apiErrorCode's both see the refusals these tests build. isAuthExpiredError
-// mirrors the real predicate: a sign-in denial the gateway itself answered, not
-// an access-proxy challenge.
+// and apiErrorCode's both see the refusals these tests build.
 vi.mock('../api/client', async () => {
   const { ApiError } = await import('../api/apiError')
   return {
     SEARCH_MIN_CHARS: 2,
     ApiError,
-    isAuthExpiredError: (e: unknown) => e instanceof ApiError && e.authRequired && !e.edgeChallenge,
     api: new Proxy(mocks as Record<string, unknown>, {
       get: (t, p: string) => (p in t ? t[p] : vi.fn().mockResolvedValue([])),
     }),
@@ -197,12 +195,11 @@ describe('useSessionActions', () => {
     )
   })
 
-  it('duplicate names a sign-in denial as the sign-in, not the session, with no retry sentence', async () => {
-    // apiFailure sets authRequired and puts the shared "Session expired. ..."
-    // text on err.message; after "Couldn't duplicate this session." that reads
-    // as the chat having expired, so the alert uses its own sign-in copy, and no
+  it('duplicate follows a sign-in denial with the shared sign-in remedy and no retry sentence', async () => {
+    // apiFailure sets authRequired and puts the shared sign-in text on
+    // err.message; the alert carries that one copy after the subject, and no
     // retry succeeds until the user signs in, so there is no "Try again in a moment".
-    const signIn = 'Session expired. Run kirocrew token in a terminal, then paste the sign-in URL into the banner at the top of this page to sign back in.'
+    const signIn = enManual.api.client.session_expired_sign_in_again
     mocks.forkChatSlot.mockRejectedValueOnce(new ApiError(403, signIn, 'invalid signature', true))
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
@@ -210,10 +207,31 @@ describe('useSessionActions', () => {
     const a = renderActions()
     act(() => a.current.duplicate(SLOT))
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
-    expect(alertSpy.mock.calls[0][0]).toBe(
-      "Couldn't duplicate this session. Your sign-in is no longer valid. Run kirocrew token in a terminal, then paste the sign-in URL into the banner at the top of this page to sign back in.",
+    expect(alertSpy.mock.calls[0][0]).toBe(`Couldn't duplicate this session. ${signIn}`)
+    expect(alertSpy.mock.calls[0][0]).not.toContain('Try again in a moment')
+    // The shared text names the sign-in as what lapsed. "Session expired" right
+    // after "Couldn't duplicate this session." reads as the chat session having
+    // died, which sends the reader to History instead of to sign in again.
+    expect(alertSpy.mock.calls[0][0]).toContain('Your sign-in is no longer valid.')
+    expect(alertSpy.mock.calls[0][0]).not.toMatch(/session expired/i)
+  })
+
+  it('duplicate keeps the stale-owner explanation on a stale-owner sign-in denial', async () => {
+    // A stale-owner 401 is a gateway sign-in denial too; apiFailure puts the
+    // stale-owner text on err.message, and the alert keeps that explanation
+    // rather than a generic sign-in sentence.
+    const staleOwner = enManual.api.client.stale_owner_session_sign_in_again
+    mocks.forkChatSlot.mockRejectedValueOnce(
+      new ApiError(401, staleOwner, JSON.stringify({ error: 'stale session', code: 'stale_session_reauth' }), true),
     )
-    expect(alertSpy.mock.calls[0][0]).not.toContain('Session expired')
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    seed()
+    const a = renderActions()
+    act(() => a.current.duplicate(SLOT))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
+    expect(alertSpy.mock.calls[0][0]).toBe(`Couldn't duplicate this session. ${staleOwner}`)
+    expect(alertSpy.mock.calls[0][0]).toContain('predates the configured owner')
     expect(alertSpy.mock.calls[0][0]).not.toContain('Try again in a moment')
   })
 

@@ -298,7 +298,7 @@
       "reauth_command": "kirocrew token",
       "run_kirocrew_token_then_paste_sign_in_url": "Lance kirocrew token dans un terminal, colle l’URL de connexion ci-dessous, puis appuie sur Entrée.",
       "session_expired": "Session expirée.",
-      "session_expired_sign_in_again": "Session expirée. Exécutez kirocrew token dans un terminal, puis collez l'URL de connexion dans la bannière en haut de cette page pour vous reconnecter.",
+      "session_expired_sign_in_again": "Ta connexion n’est plus valide. Exécute kirocrew token dans un terminal, puis colle l’URL de connexion dans la bannière en haut de cette page pour te reconnecter.",
       "stale_owner_session": "Cette session est antérieure au propriétaire configuré. Reconnectez-vous.",
       "stale_owner_session_sign_in_again": "Cette session est antérieure au propriétaire configuré (elle a été ouverte avant la définition de KIROCREW_OWNER_ID). Exécutez kirocrew token dans un terminal, puis collez l'URL de connexion dans la bannière en haut de cette page pour vous reconnecter.",
       "stream_ended_without_completion": "Flux interrompu avant la fin",
@@ -10274,8 +10274,7 @@
       "reload_failed_subagents": "Des sous-agents travaillent encore sur cette session. Réessayez quand ils auront terminé.",
       "duplicate_failed_reason": "Impossible de dupliquer cette session. Raison : {{reason}}. Réessaie dans un instant.",
       "duplicate_guided_reason": "Impossible de dupliquer cette session. {{reason}}",
-      "duplicate_not_found": "Impossible de dupliquer cette session. Elle n’est plus ouverte. Recharge la page, ou rouvre-la depuis l’historique et réessaie.",
-      "duplicate_sign_in_required": "Impossible de dupliquer cette session. Ta connexion n’est plus valide. Exécute kirocrew token dans un terminal, puis colle l’URL de connexion dans la bannière en haut de cette page pour te reconnecter."
+      "duplicate_not_found": "Impossible de dupliquer cette session. Elle n’est plus ouverte. Recharge la page, ou rouvre-la depuis l’historique et réessaie."
     },
     "useStreamingStt": {
       "audio_module_load_failed": "La dictée n’a pas pu finir de se charger. Vérifie ta connexion, puis relance la dictée.",

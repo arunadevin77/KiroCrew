@@ -298,7 +298,7 @@
       "reauth_command": "kirocrew token",
       "run_kirocrew_token_then_paste_sign_in_url": "Esegui kirocrew token in un terminale, incolla qui sotto l'URL di accesso e premi Invio.",
       "session_expired": "Sessione scaduta.",
-      "session_expired_sign_in_again": "Sessione scaduta. Esegui kirocrew token in un terminale, quindi incolla l'URL di accesso nel banner in cima a questa pagina per accedere di nuovo.",
+      "session_expired_sign_in_again": "Il tuo accesso non è più valido. Esegui kirocrew token in un terminale, quindi incolla l’URL di accesso nel banner in cima a questa pagina per accedere di nuovo.",
       "stale_owner_session": "Questa sessione è precedente al proprietario configurato. Accedi di nuovo.",
       "stale_owner_session_sign_in_again": "Questa sessione è precedente al proprietario configurato (l'accesso è avvenuto prima che KIROCREW_OWNER_ID fosse impostato). Esegui kirocrew token in un terminale, quindi incolla l'URL di accesso nel banner in cima a questa pagina per accedere di nuovo.",
       "stream_ended_without_completion": "Lo stream è terminato senza completarsi",
@@ -10274,8 +10274,7 @@
       "reload_failed_subagents": "I sub-agenti stanno ancora lavorando su questa sessione. Riprova quando avranno finito.",
       "duplicate_failed_reason": "Impossibile duplicare questa sessione. Motivo: {{reason}}. Riprova tra un momento.",
       "duplicate_guided_reason": "Impossibile duplicare questa sessione. {{reason}}",
-      "duplicate_not_found": "Impossibile duplicare questa sessione. Non è più aperta. Ricarica la pagina, oppure riaprila dalla cronologia e riprova.",
-      "duplicate_sign_in_required": "Impossibile duplicare questa sessione. Il tuo accesso non è più valido. Esegui kirocrew token in un terminale, quindi incolla l’URL di accesso nel banner in cima a questa pagina per accedere di nuovo."
+      "duplicate_not_found": "Impossibile duplicare questa sessione. Non è più aperta. Ricarica la pagina, oppure riaprila dalla cronologia e riprova."
     },
     "useStreamingStt": {
       "audio_module_load_failed": "La dettatura non ha finito di caricarsi. Controlla la connessione, poi riprova a dettare.",

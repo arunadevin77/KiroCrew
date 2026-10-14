@@ -278,7 +278,7 @@
       "reauth_command": "kirocrew token",
       "run_kirocrew_token_then_paste_sign_in_url": "ターミナルで kirocrew token を実行し、下にサインイン URL を貼り付けて Enter を押してください。",
       "session_expired": "セッションの有効期限が切れました。",
-      "session_expired_sign_in_again": "セッションの有効期限が切れました。ターミナルで kirocrew token を実行し、このページ上部のバナーにサインイン URL を貼り付けて再度サインインしてください。",
+      "session_expired_sign_in_again": "サインインが無効になりました。ターミナルで kirocrew token を実行し、このページ上部のバナーにサインイン URL を貼り付けて再度サインインしてください。",
       "stale_owner_session": "このセッションはオーナー設定前のものです。再度サインインしてください。",
       "stale_owner_session_sign_in_again": "このセッションはオーナー設定前のものです（KIROCREW_OWNER_ID の設定前にサインインされました）。ターミナルで kirocrew token を実行し、このページ上部のバナーにサインイン URL を貼り付けて再度サインインしてください。",
       "stream_ended_without_completion": "ストリームが完了せずに終了しました",
@@ -9990,8 +9990,7 @@
       "reload_failed_subagents": "このセッションのサブエージェントがまだ動作中です。完了してから再試行してください。",
       "duplicate_failed_reason": "このセッションを複製できませんでした。理由: {{reason}}。しばらくしてからもう一度お試しください。",
       "duplicate_guided_reason": "このセッションを複製できませんでした。{{reason}}",
-      "duplicate_not_found": "このセッションを複製できませんでした。このセッションはもう開いていません。ページを再読み込みするか、履歴から開き直してもう一度お試しください。",
-      "duplicate_sign_in_required": "このセッションを複製できませんでした。サインインが無効になりました。ターミナルで kirocrew token を実行し、このページ上部のバナーにサインイン URL を貼り付けて再度サインインしてください。"
+      "duplicate_not_found": "このセッションを複製できませんでした。このセッションはもう開いていません。ページを再読み込みするか、履歴から開き直してもう一度お試しください。"
     },
     "useStreamingStt": {
       "audio_module_load_failed": "口述の読み込みを完了できませんでした。接続を確認してから、もう一度口述してください。",

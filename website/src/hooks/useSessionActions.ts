@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, ApiError, isAuthExpiredError } from '../api/client'
+import { api, ApiError } from '../api/client'
 import { apiErrorCode, isSlotCapError } from '../api/apiError'
 import { store, useAppDispatch } from '../store'
 import type { MuteFlag } from '../store/dashboardSlice'
@@ -257,15 +257,15 @@ export function useSessionActions(mode?: string): SessionActions {
     // message shares one shape: "Couldn't duplicate this session. <cause>.
     // <next step>." A non-ApiError means fetch itself rejected (nothing was
     // reached). An ApiError carries the human reason on err.message (apiFailure
-    // sets it to friendlyErrText(status, body) in api/client.ts). A gateway
-    // sign-in denial (isAuthExpiredError) gets its own keyed copy: the shared
-    // sign-in text opens with "Session expired.", which right after "Couldn't
-    // duplicate this session." reads as the chat having expired. For the
-    // slot-cap 429 the reason is the shared slot-cap guidance, and for an
-    // access-proxy challenge (authRequired without a gateway denial) it names the
-    // proxy and its own remedy; each is already a cause plus a next step, so it
-    // follows the subject unchanged and no retry sentence is added that cannot
-    // succeed before the user acts. The slot_not_found 404 is matched on the
+    // sets it to friendlyErrText(status, body) in api/client.ts). Three reasons
+    // are shared guidance that is already a cause plus a next step: a gateway
+    // sign-in denial carries the shared sign-in text (the stale-owner wording
+    // for a stale-owner denial, the no-longer-valid sign-in wording otherwise), the
+    // slot-cap 429 carries the shared slot-cap guidance, and an access-proxy
+    // challenge names the proxy and its own remedy. Each follows the subject
+    // unchanged, so the alert reads the same remedy every other surface shows
+    // for that denial, and no retry sentence is added that cannot succeed
+    // before the user acts. The slot_not_found 404 is matched on the
     // body's `code` and gets its own keyed copy, because its raw reason ("not
     // found") says neither what is wrong nor what to do.
     // Any other reason has its end punctuation (Latin, CJK or Devanagari) dropped
@@ -273,8 +273,6 @@ export function useSessionActions(mode?: string): SessionActions {
     onError: (err) => {
       if (!(err instanceof ApiError)) {
         alert(i18nT('hooks.useSessionActions.duplicate_unreachable'))
-      } else if (isAuthExpiredError(err)) {
-        alert(i18nT('hooks.useSessionActions.duplicate_sign_in_required'))
       } else if (err.authRequired || isSlotCapError(err.status, err.body)) {
         alert(i18nT('hooks.useSessionActions.duplicate_guided_reason', { reason: err.message }))
       } else if (err.status === 404 && apiErrorCode(err) === 'slot_not_found') {
