@@ -8,7 +8,7 @@
  * through their hooks with the pane flag on.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, render, act } from '@testing-library/react'
 import { createElement } from 'react'
 import { Provider } from 'react-redux'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -16,6 +16,7 @@ import { createTestStore } from './helpers'
 import { store as globalStore } from '../store'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useNativeNotification } from '../hooks/useNativeNotification'
+import EmbeddedHostBridge from '../components/EmbeddedHostBridge'
 import { CHAT_COMPLETE_NOTIFY_KEY } from '../hooks/chatCompleteNotify'
 import { readNotificationPermission } from '../hooks/useNotificationPermission'
 import { addNotification } from '../store/notificationsSlice'
@@ -113,6 +114,37 @@ describe('embedded instance pane relays native notifications to the parent', () 
       .filter(m => m && m.type === 'mc-native-notify')
   }
 
+  /** Mount the real bridge and deliver a host model from the (stubbed) parent,
+   *  the same way EmbeddedSwitcher.test drives it. Bridges the hub's Settings
+   *  opt-in down into this pane realm through the `mc-host-model` handshake. */
+  function deliverHostModel(extra: Record<string, unknown> = {}) {
+    render(createElement(EmbeddedHostBridge), {
+      wrapper: ({ children }) => createElement(Provider, { store: globalStore },
+        createElement(QueryClientProvider, { client: queryClient }, children)),
+    })
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: window.parent,
+        origin: 'http://127.0.0.1:8787',
+        data: {
+          type: 'mc-host-model', v: 1, tabs: [], activeId: null, self: null,
+          macInset: false, winInset: false, electron: false, pinnedCrews: [], stableOrder: null,
+          ...extra,
+        },
+      }))
+    })
+  }
+
+  function turnDone(slot: string) {
+    act(() => {
+      globalStore.dispatch(sseSlots([{ key: slot, title: 'Ship blog', messages: 1, running: false }]))
+    })
+    const { ws } = mountWs(globalStore)
+    act(() => {
+      ws.simulateMessage({ type: 'chat_done', data: { slot } })
+    })
+  }
+
   it('approval frame: no direct toast site remains; the feed still records the approval', () => {
     // Approvals reach the OS through the bell note path (useNativeNotification)
     // -- one toast per event -- so the socket handler itself relays nothing.
@@ -167,6 +199,63 @@ describe('embedded instance pane relays native notifications to the parent', () 
     })
 
     expect(relayed()).toHaveLength(0)
+  })
+
+  it('an older host model carries no opt-in: the pane keeps its own default-off -- nothing relayed', () => {
+    // The relay must not read absence as "the hub turned it off AND on" — a
+    // host whose mc-host-model predates the field leaves the pane exactly
+    // where it was: per-origin localStorage, absent here, so default OFF.
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    deliverHostModel()
+    expect(globalStore.getState().instances.host?.chatCompleteNotify).toBeNull()
+
+    turnDone('slot-older-host')
+
+    expect(relayed()).toHaveLength(0)
+  })
+
+  it('the host relays the hub opt-in down: the pane relays the turn-done with no pane-local key', () => {
+    // THE #20191 PATH: the user enabled the toast at the hub (Settings ›
+    // Notifications writes the HUB origin's localStorage), but this pane is a
+    // cross-origin iframe and could never read that key — so the toast gate
+    // sat default-off here forever and only the chime fired. The hub now
+    // relays its opt-in inside the mc-host-model it already broadcasts.
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    expect(localStorage.getItem(CHAT_COMPLETE_NOTIFY_KEY)).toBeNull()
+    deliverHostModel({ chatCompleteNotify: true })
+    expect(globalStore.getState().instances.host?.chatCompleteNotify).toBe(true)
+
+    turnDone('slot-remote')
+
+    expect(CONSTRUCTED).toHaveLength(0)
+    expect(relayed()).toEqual([
+      { type: 'mc-native-notify', v: 1, title: 'Ship blog', body: 'Response ready', tag: 'kirocrew-chat-done:slot-remote', silent: false },
+    ])
+  })
+
+  it('an explicit pane-local opt-out vetoes the hub opt-in', () => {
+    // The pane's own Settings toggle wrote this '0'; the relay must not read
+    // over it. Pinned so the hub value governs only what the pane never
+    // decided itself.
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    localStorage.setItem(CHAT_COMPLETE_NOTIFY_KEY, '0')
+    deliverHostModel({ chatCompleteNotify: true })
+
+    turnDone('slot-vetoed')
+
+    expect(relayed()).toHaveLength(0)
+  })
+
+  it('a pane-local opt-in survives a hub opt-out', () => {
+    // The inverse half of the same ladder: a toggle the user flipped inside
+    // this pane worked before the relay existed and keeps working.
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    localStorage.setItem(CHAT_COMPLETE_NOTIFY_KEY, '1')
+    deliverHostModel({ chatCompleteNotify: false })
+
+    turnDone('slot-local-on')
+
+    expect(relayed()).toHaveLength(1)
   })
 
   it('bell note (window focused): relays nothing -- the away gate is the pane\'s own', () => {

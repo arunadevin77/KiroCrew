@@ -321,6 +321,79 @@ describe('notificationsSlice', () => {
       expect(state.items[0].acked).toBe(false)
     })
 
+    describe('browser-owned rows (clientOnly, the relayed turn-done record)', () => {
+      const turnNote: Notification = { kind: 'turn', title: 'Zzq One: Ship blog', body: 'Response ready', ts: 'turn-1', clientOnly: true }
+
+      it('a refetch carries the row over instead of dropping it', () => {
+        // The server snapshot cannot name a row only this browser holds; the
+        // merge must not let "membership comes from the server" delete the
+        // hub's turn-done record on every reconnect refetch (reconnectCatchUp).
+        const state = reducer(
+          { items: [n1, turnNote], clearSeq: 0 },
+          fetchNotifications.fulfilled({ items: [n1], seq: 0 }, ''),
+        )
+        expect(state.items.map(n => n.ts)).toEqual(['1', 'turn-1'])
+        expect(state.items[1].clientOnly).toBe(true)
+        expect(state.items[1].title).toBe('Zzq One: Ship blog')
+      })
+
+      it('a refetch keeps the carried row\'s local ack state', () => {
+        // Ack state rides on the carried row itself: there is no server copy
+        // to re-assert a stale flag from.
+        const acked = reducer({ items: [turnNote], clearSeq: 0 }, ackNotificationByTs('turn-1'))
+        const state = reducer(
+          acked,
+          fetchNotifications.fulfilled({ items: [n1], seq: 0 }, ''),
+        )
+        const carried = state.items.find(n => n.ts === 'turn-1')
+        expect(carried?.acked).toBe(true)
+      })
+
+      it('an explicit delete still removes it — the merge carries only rows still held', () => {
+        const deleted = reducer(
+          { items: [n1, turnNote], clearSeq: 0 },
+          deleteNotification.fulfilled('turn-1', '', 'turn-1'),
+        )
+        const state = reducer(
+          deleted,
+          fetchNotifications.fulfilled({ items: [n1], seq: 0 }, ''),
+        )
+        expect(state.items.map(n => n.ts)).toEqual(['1'])
+      })
+
+      it('a WS remove keeps working the same way', () => {
+        const removed = reducer({ items: [turnNote], clearSeq: 0 }, removeNotificationByTs('turn-1'))
+        const state = reducer(
+          removed,
+          fetchNotifications.fulfilled({ items: [], seq: 0 }, ''),
+        )
+        expect(state.items).toEqual([])
+      })
+
+      it('a clear still empties it, and a stale pre-clear payload does not resurrect it', () => {
+        const cleared = reducer({ items: [turnNote], clearSeq: 0 }, clearAllNotifications())
+        expect(cleared.items).toEqual([])
+        // The fetch started before the clear (seq 0, clearSeq now 1), so its
+        // payload is dropped wholesale — the carried set is empty either way.
+        const state = reducer(
+          cleared,
+          fetchNotifications.fulfilled({ items: [n1], seq: 0 }, ''),
+        )
+        expect(state.items).toEqual([])
+      })
+
+      it('the ring cap still bounds the merged list', () => {
+        let state = { items: [turnNote], clearSeq: 0, ackSeq: 0, ackSeqByTs: {} } as ReturnType<typeof reducer>
+        const payload = Array.from({ length: NOTIFICATIONS_RING_CAP }, (_, i) => ({ kind: 'cron', title: `n${i}`, body: '', ts: `s-${i}` }) as Notification)
+        state = reducer(state, fetchNotifications.fulfilled({ items: payload, seq: 0 }, ''))
+        expect(state.items).toHaveLength(NOTIFICATIONS_RING_CAP)
+        // Oldest drop first: the server rows fill the window, the carried row
+        // (newest, appended last) survives.
+        expect(state.items.some(n => n.ts === 'turn-1')).toBe(true)
+        expect(state.items.some(n => n.ts === 's-0')).toBe(false)
+      })
+    })
+
     it('clearAllNotifications drops the ack stamps with the items', () => {
       const acked = reducer({ items: [n1], clearSeq: 0 }, ackNotificationByTs('1'))
       expect(Object.keys(acked.ackSeqByTs ?? {})).toEqual(['1'])

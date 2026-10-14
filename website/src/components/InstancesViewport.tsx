@@ -47,6 +47,7 @@ import { WARM_SET_CAP_AUTO_CEILING } from '../utils/remoteCrew'
 import { SettingsLink } from './SettingsLink'
 import { useAppDispatch, useAppSelector, useAppStore } from '../store'
 import { clearPaneReady, removeWarm, setActiveId, setPaneReady, setUnread, setWarm } from '../store/instancesSlice'
+import { addNotification } from '../store/notificationsSlice'
 import InstanceTabBar, { visibleInstanceTabs, chainRows, useCrewPins, toggleCrewPin, useCrewSwitcherStableOrder, setStableOrder } from './InstanceTabBar'
 import { isEmbeddableLoopbackOrigin, parseLoopbackOriginPort, resolveTunnelOrigin } from '../lib/tunnelOrigin'
 import {
@@ -56,7 +57,8 @@ import {
   CURSOR_AWAY_WATCH_TYPE,
   watchCursorAwayNative,
 } from '../lib/cursorAway'
-import { NATIVE_NOTIFY_TYPE, parseNativeNotifyEnvelope, postRelayedNativeNotification } from '../lib/nativeNotify'
+import { NATIVE_NOTIFY_TYPE, parseNativeNotifyEnvelope, postRelayedNativeNotification, TURN_DONE_TAG_PREFIX } from '../lib/nativeNotify'
+import { useChatCompleteNotify } from '../hooks/chatCompleteNotify'
 import {
   PANE_CLIPBOARD_IMAGE_TYPE, PANE_CLIPBOARD_RESULT_TYPE, PANE_CLIPBOARD_VERSION, parsePaneClipboardImageRequest,
 } from '../lib/paneClipboardRelay'
@@ -189,6 +191,13 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
   // bar does. Reactive like the pins: a change re-broadcasts the model, and an
   // embedded toggle routes back here via `mc-set-stable-order`.
   const [stableOrder] = useCrewSwitcherStableOrder()
+  // The chat-complete toast opt-in, relayed into every embedded pane below: a
+  // pane is a cross-origin document, so the hub's Settings toggle (written to
+  // THIS origin's localStorage) can never be read by the pane's own gate. A
+  // flip re-renders here and the model broadcast carries the new value to every
+  // warm pane, so a remote crew's gate follows the toggle without waiting for
+  // an unrelated unread/inset change.
+  const chatCompleteNotify = useChatCompleteNotify()
   // Focus mode is a property of the WINDOW, not of one pane: a remote crew shown
   // inside a focused window must hide its chrome too. Relayed down the host model
   // below, and it also gates the host drag strips (see their render site).
@@ -546,6 +555,27 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
         const note = parseNativeNotifyEnvelope(data)
         if (!note) return
         const name = instancesRef.current.find(i => i.id === id)?.name || id
+        // A turn-done is the one relayed note this frame must ALSO write into
+        // its bell feed: by design it produces no feed row anywhere
+        // (`TURN_DONE_KIND` is sound-only), and this frame has no other window
+        // into a pane's socket — so without this record a finished remote turn
+        // leaves no trace but the chime, and the hub bell never shows it.
+        // Every other relayed kind is out of scope here: approvals and bell
+        // notes banner off paths that own their own feed rows. The title is the
+        // same crew-prefixed string the OS banner carries, so the bell names
+        // the crew too. The row is `clientOnly` — no server copy backs it, so
+        // the toast hook must skip it (the banner posted below is this event's
+        // one toast; counting the row too would build a second, generic one)
+        // and a refetch must carry it over instead of dropping it.
+        if (note.tag.startsWith(TURN_DONE_TAG_PREFIX)) {
+          dispatch(addNotification({
+            kind: 'turn',
+            title: `${name}: ${note.title}`,
+            body: note.body,
+            ts: String(Date.now()),
+            clientOnly: true,
+          }))
+        }
         // Clicking the banner brings the named crew forward, not whichever tab
         // happened to be active; the id is a warm instance, so the switch is
         // the same one the inline switcher would honour.
@@ -1197,9 +1227,13 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
         // This host performs image copies for the pane (mc-clipboard-image).
         // Advertised so a pane relays only to a host that will answer.
         clipboardRelay: PANE_CLIPBOARD_VERSION,
+        // The device-level chat-complete toast opt-in. A pane's localStorage is
+        // a different origin's, so without this the pane's gate is default-off
+        // forever no matter what Settings › Notifications says (issue #20191).
+        chatCompleteNotify,
       }
     },
-    [instancesQuery.data, warm, unread, activeId, macInset, winInset, winCaptionReserve, focusMode, pinnedCrews, stableOrder],
+    [instancesQuery.data, warm, unread, activeId, macInset, winInset, winCaptionReserve, focusMode, pinnedCrews, stableOrder, chatCompleteNotify],
   )
 
   // Post the model into one embedded pane, addressed to its exact loopback
@@ -1256,7 +1290,7 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
   // to a loopback frame.
   useEffect(() => {
     for (const id of Object.keys(warm)) postModelTo(id)
-  }, [warm, activeId, unread, macInset, winInset, winCaptionReserve, instancesQuery.data, postModelTo, pinnedCrews, stableOrder])
+  }, [warm, activeId, unread, macInset, winInset, winCaptionReserve, instancesQuery.data, postModelTo, pinnedCrews, stableOrder, chatCompleteNotify])
 
   // Keep warm iframes mounted across Local<->remote switches (hide-not-unmount).
   // Also render when the active tab is a remote instance with no warm iframe

@@ -21,6 +21,7 @@ import { useAppDispatch } from '../store'
 import { setHostModel, type HostModel } from '../store/instancesSlice'
 import { isEmbeddedPane } from '../lib/embedded'
 import { setFocusModeEnabled } from '../hooks/useFocusMode'
+import { setHostChatCompleteNotify } from '../hooks/chatCompleteNotify'
 import { noteClipboardRelayHost, PANE_CLIPBOARD_VERSION } from '../lib/paneClipboardRelay'
 
 const MAC_INSET_CLASS = 'embedded-mac-inset'
@@ -119,6 +120,10 @@ export function parseHostModel(data: unknown): HostModel | null {
     // pre-relay default AND withhold a toggle that host could never honor;
     // coercing to `false` would make the two cases indistinguishable.
     stableOrder: typeof d.stableOrder === 'boolean' ? d.stableOrder : null,
+    // Tri-state for the same reason: an older host's model predates the field,
+    // and the pane must keep gating on its own localStorage then rather than
+    // read absence as "the user turned it off at the hub".
+    chatCompleteNotify: typeof d.chatCompleteNotify === 'boolean' ? d.chatCompleteNotify : null,
   }
 }
 
@@ -177,6 +182,10 @@ export default function EmbeddedHostBridge() {
       const model = parseHostModel(e.data)
       if (!model) return
       dispatch(setHostModel(model))
+      // The hub's chat-complete toast opt-in (see chatCompleteNotify.ts): a
+      // pane's localStorage is another origin's, so this relay is the only way
+      // the hub toggle governs a remote pane's turn-finished toast.
+      setHostChatCompleteNotify(model.chatCompleteNotify)
       // Whether this host performs image copies for us, and where to ask. Read
       // off the raw payload: it is a pane-side capability, not header state.
       noteClipboardRelayHost(
@@ -221,6 +230,7 @@ export default function EmbeddedHostBridge() {
       document.documentElement.style.removeProperty(WIN_CAPTION_RESERVE_PROP)
       setFocusModeEnabled(false, { echo: false })
       noteClipboardRelayHost(null, false)
+      setHostChatCompleteNotify(null)
       dispatch(setHostModel(null))
     }
   }, [dispatch])

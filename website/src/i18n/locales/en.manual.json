@@ -3004,6 +3004,7 @@
         "kind_subagent": "Subagent",
         "kind_task_runner": "Task Runner",
         "kind_terminal": "Terminal",
+        "kind_turn": "Turn finished",
         "kind_webhook": "Webhook"
       },
       "notificationBanner": {

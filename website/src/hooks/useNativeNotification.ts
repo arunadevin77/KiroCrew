@@ -27,6 +27,15 @@
  * latest-note pick, or a muted note still increments the count and fires the
  * native banner even though the in-app row correctly shows "muted".
  *
+ * A browser-owned note (`clientOnly`, `isClientOnlyNote`) is excluded for the
+ * mirror reason: its toast already came from the path that CREATED the row.
+ * The hub's relayed-turn-done record (#20191) is the one producer today — the
+ * pane relays the finished turn and the parent posts the banner itself, with
+ * the per-crew tag and the crew-switch click this hook cannot offer. Counting
+ * the row here too built a second, generic banner per finished remote turn —
+ * the same two-constructor defect the approval path once had, and the OS
+ * collapses only equal tags.
+ *
  * A shared hook so the regression tests in
  * `integration/AppNotification.integration.test.tsx` exercise *this* code —
  * if the effect regresses, tests and production break together.
@@ -36,7 +45,7 @@ import { useAppSelector } from '../store'
 // Shared with the tab-title attention count rather than kept file-local: two
 // attention surfaces that spell this rule separately can drift apart, and the
 // backend states it once for all of them.
-import { isSilencedNote } from '../store/notificationsSlice'
+import { isSilencedNote, isClientOnlyNote } from '../store/notificationsSlice'
 // A note's `body` is MARKDOWN by contract -- the detail panel renders it as
 // markdown and producers write `**name** -- description`, `_italics_`,
 // `**Triggers:**` (see `_pending_skill_notification`, dashboard/server.py).
@@ -54,10 +63,10 @@ import { i18nT } from '../i18n/t'
 
 export function useNativeNotification(botName: string, avatar: string) {
   const notifCount = useAppSelector(
-    (s) => s.notifications.items.filter((n) => !n.acked && !isSilencedNote(n)).length,
+    (s) => s.notifications.items.filter((n) => !n.acked && !isSilencedNote(n) && !isClientOnlyNote(n)).length,
   )
   const latestNotif = useAppSelector((s) => {
-    const unacked = s.notifications.items.filter((n) => !n.acked && !isSilencedNote(n))
+    const unacked = s.notifications.items.filter((n) => !n.acked && !isSilencedNote(n) && !isClientOnlyNote(n))
     return unacked.length > 0 ? unacked[unacked.length - 1] : null
   })
 

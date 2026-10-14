@@ -117,6 +117,16 @@ export interface HostModel {
    *  to `false` would leave the pane offering a toggle the host can never honor,
    *  so `null` orders by the pre-relay default AND hides the control instead. */
   stableOrder: boolean | null
+  /** The parent's chat-complete toast opt-in (Settings › Notifications),
+   *  relayed so a pane's turn-finished toast can gate on the device-level
+   *  switch: a pane is a separate cross-origin document, so the hub toggle
+   *  writing the HUB origin's localStorage could never reach the pane's own
+   *  storage and every pane stayed default-off. `null` means the host sent no
+   *  opinion — an older parent whose model predates the field — and the pane
+   *  falls back to its own localStorage verdict (see
+   *  `loadChatCompleteNotify`, which keeps an explicit pane-local opt-in and
+   *  opt-out ahead of this value). */
+  chatCompleteNotify: boolean | null
 }
 
 /**

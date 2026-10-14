@@ -1738,6 +1738,16 @@ export interface Notification {
    *  publishing session. Persisted rows are untrusted: read it through
    *  `noteMember`, which checks the shape. */
   member?: { slug: string; name: string }
+  /** The row exists only in this browser — no server copy will ever back it.
+   *  Produced today by the hub's relayed-turn-done record (#20191), which the
+   *  pane's socket owns and the gateway never sees. Two rules follow, stated
+   *  once here: the OS toast comes from the path that CREATED the row (the
+   *  relayed banner, which carries the crew-switch click), never from
+   *  `useNativeNotification` — a second constructor was the two-banners-per-
+   *  event defect once before — and a notifications refetch must carry the row
+   *  over instead of dropping it (see `isClientOnlyNote` in
+   *  `store/notificationsSlice.ts`), until an explicit ack, dismiss or clear. */
+  clientOnly?: boolean
 }
 
 /** One row from GET /api/notifications/channels. */

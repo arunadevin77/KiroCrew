@@ -7782,6 +7782,7 @@
         "kind_subagent": "সাবএজেন্ট",
         "kind_task_runner": "Task Runner",
         "kind_terminal": "টার্মিনাল",
+        "kind_turn": "টার্ন শেষ হয়েছে",
         "kind_webhook": "ওয়েবহুক",
         "this_week": "এই সপ্তাহ",
         "today": "আজ",

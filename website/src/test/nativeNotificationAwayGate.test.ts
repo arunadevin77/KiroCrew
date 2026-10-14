@@ -190,6 +190,24 @@ describe('useNativeNotification only toasts while the user is away', () => {
     expect(CONSTRUCTED).toHaveLength(0)
     expect(UndecidedNotification.requestPermission).toHaveBeenCalledTimes(1)
   })
+
+  it('a browser-owned note (clientOnly) never constructs a toast, even while hidden', () => {
+    // The relayed turn-done's toast belongs to the relayed banner that created
+    // the row (per-crew tag, crew-switch click). Counting the row here built a
+    // second, generically-tagged banner per finished remote turn — the OS
+    // collapses only equal tags, so both stayed up (#20191 review).
+    setHidden(true)
+    const store = mount()
+
+    act(() => { store.dispatch(addNotification(feedNote({ clientOnly: true, job_id: undefined }))) })
+    expect(CONSTRUCTED).toHaveLength(0)
+
+    // The skip must not wedge the count: a normal note after it still toasts
+    // once, tagged with its own id. (A distinct ts — addNotification dedupes.)
+    act(() => { store.dispatch(addNotification(feedNote({ ts: '2.0' }))) })
+    expect(CONSTRUCTED).toHaveLength(1)
+    expect(CONSTRUCTED[0].options?.tag).toBe('job-1')
+  })
 })
 
 describe('one approval frame yields exactly one OS toast', () => {

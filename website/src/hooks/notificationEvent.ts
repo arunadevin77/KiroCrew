@@ -30,6 +30,12 @@ export function dispatchMcNotification(kind: string): void {
  * Sound kind for a conversation handing the floor back to the user. The
  * persisted 'turn' key preserves per-category preferences. This sound-only
  * event adds no notification-feed record, toast, or badge.
+ *
+ * Scope: LOCAL sessions. A REMOTE crew's finished turn has no local websocket
+ * frame to synthesize from — the pane relays it to the hub frame instead
+ * (`TURN_DONE_TAG_PREFIX` → InstancesViewport), which posts the OS banner and
+ * writes the one bell-feed row this kind ever gets (#20191, marked
+ * `clientOnly`). Nothing here changes for local chats.
  */
 export const TURN_DONE_KIND = 'turn' as const
 

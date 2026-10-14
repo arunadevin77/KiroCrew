@@ -181,6 +181,44 @@ describe('InstancesViewport relay listener', () => {
       expect(CONSTRUCTED).toHaveLength(0)
       expect(N.requestPermission).not.toHaveBeenCalled()
     })
+
+    it('a relayed turn-done also lands in the bell feed, titled with the crew (#20191)', async () => {
+      // A turn-done produces no feed row anywhere else (TURN_DONE_KIND is
+      // sound-only by design) and this frame has no other window into a pane's
+      // socket, so the relayed banner is the one moment it can be recorded.
+      stubNotification('granted')
+      const store = warmStore()
+      renderWithProviders(<InstancesViewport />, { store })
+      await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull())
+      await waitFor(() => expect(api.listInstances).toHaveBeenCalled())
+
+      post({ type: 'mc-native-notify', v: 1, title: 'Ship blog', body: 'Response ready', tag: 'kirocrew-chat-done:slot-9', silent: false })
+      await waitFor(() => expect(CONSTRUCTED).toHaveLength(1))
+      expect(CONSTRUCTED[0]).toEqual({
+        title: 'Zzq One: Ship blog',
+        options: { body: 'Response ready', tag: 'cd-1:kirocrew-chat-done:slot-9', silent: false },
+      })
+      const items = store.getState().notifications.items
+      const row = items.find(n => n.kind === 'turn')
+      expect(row?.title).toBe('Zzq One: Ship blog')
+      expect(row?.body).toBe('Response ready')
+      // Browser-owned: the toast hook must skip it (the banner above is this
+      // event's one toast) and a refetch must carry the row over.
+      expect(row?.clientOnly).toBe(true)
+    })
+
+    it('a relayed note that is not a turn-done adds no feed row', async () => {
+      // Approvals and bell notes banner off paths that already own their feed
+      // rows; recording them here again would double the entry.
+      stubNotification('granted')
+      const store = warmStore()
+      renderWithProviders(<InstancesViewport />, { store })
+      await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull())
+
+      post(ENVELOPE)
+      await waitFor(() => expect(CONSTRUCTED).toHaveLength(1))
+      expect(store.getState().notifications.items).toHaveLength(0)
+    })
   })
 
   it('re-mints the token when the pane reports an expired session', async () => {

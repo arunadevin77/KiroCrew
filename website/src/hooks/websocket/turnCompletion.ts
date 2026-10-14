@@ -12,7 +12,7 @@ import { shouldNotifyOnChatComplete } from '../chatCompleteNotify'
 import { isSlotMuted } from '../sessionMute'
 import { takeTurnErrored } from '../turnError'
 import { isMemberThreadSlot, takeMemberThreadSpoke } from '../unreadOnAttention'
-import { postNativeNotification } from '../../lib/nativeNotify'
+import { postNativeNotification, TURN_DONE_TAG_PREFIX } from '../../lib/nativeNotify'
 import { normalizeRunSessionKey } from '../../apps/workflows/runModel'
 import { dashboardAutomationSlotKey } from '../../monitoring/automation'
 import { i18nT } from '../../i18n/t'
@@ -112,7 +112,7 @@ export function useTurnCompletion({ dispatch, queryClient, reconnectingRef }: Tu
         // Best-effort (same as approval): the helper swallows Android
         // Chrome's "Illegal constructor" and relays to the parent frame
         // when this dashboard is an embedded instance pane.
-        postNativeNotification(doneTitle, { body: doneBody, tag: `kirocrew-chat-done:${doneSlot}`, silent: questionPending })
+        postNativeNotification(doneTitle, { body: doneBody, tag: TURN_DONE_TAG_PREFIX + doneSlot, silent: questionPending })
       }
       // Off screen: badge the session, and warm its cache so switching to
       // it renders the finished answer instantly (no on-switch fetch). In

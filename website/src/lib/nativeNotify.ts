@@ -30,6 +30,14 @@ import { appPathname } from './basePath'
 export const NATIVE_NOTIFY_TYPE = 'mc-native-notify'
 export const NATIVE_NOTIFY_VERSION = 1
 
+/** Tag namespace a finished-turn toast carries; the pane's slot key rides
+ *  after it (`turnCompletion.ts`). The parent reads the PREFIX, not the slot,
+ *  to recognise a turn-done among relayed notes: it is the only kind the
+ *  parent must also record into its bell feed, because a turn-done produces
+ *  no feed row anywhere else (`TURN_DONE_KIND` is sound-only by design) and
+ *  the hub has no other window into a pane's socket. */
+export const TURN_DONE_TAG_PREFIX = 'kirocrew-chat-done:'
+
 /** Bounds on the relayed strings; a banner never needs more. */
 export const NATIVE_NOTIFY_MAX_TITLE = 200
 export const NATIVE_NOTIFY_MAX_BODY = 1000

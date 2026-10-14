@@ -7660,6 +7660,7 @@
         "kind_subagent": "서브에이전트",
         "kind_task_runner": "Task Runner",
         "kind_terminal": "터미널",
+        "kind_turn": "턴 완료",
         "kind_webhook": "웹훅",
         "this_week": "이번 주",
         "today": "오늘",

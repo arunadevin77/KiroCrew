@@ -1,4 +1,4 @@
-import { ClipboardList, Anchor, Heart, Bot, Lock, GitBranch, Bell, Clock, BookOpen, Terminal } from 'lucide-react'
+import { ClipboardList, Anchor, Heart, Bot, Lock, GitBranch, Bell, Clock, BookOpen, Terminal, CheckCheck } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { i18nT } from '../../i18n/t'
@@ -82,6 +82,10 @@ export const KIND_META: Record<string, { icon: ReactNode; color: string; label: 
   taskrunner: { icon: <ClipboardList className="lucide-inline" />, color: 'bg-accent/15 text-accent',  get label() { return i18nT('components.notifications.notifMeta.kind_task_runner') }, borderColor: 'border-l-accent' },
   skills:     { icon: <BookOpen className="lucide-inline" />, color: 'bg-warn/15 text-warn',      get label() { return i18nT('components.notifications.notifMeta.kind_skills') },       borderColor: 'border-l-warn' },
   terminal:   { icon: <Terminal className="lucide-inline" />, color: 'bg-warn/15 text-warn',      get label() { return i18nT('components.notifications.notifMeta.kind_terminal') },     borderColor: 'border-l-warn' },
+  // The finished-turn row a hub writes for a REMOTE crew's relayed turn-done
+  // (#20191). Local turn-dones stay sound-only — no producer writes this kind
+  // to the feed but InstancesViewport's relay handler.
+  turn:       { icon: <CheckCheck className="lucide-inline" />, color: 'bg-ok/15 text-ok',     get label() { return i18nT('components.notifications.notifMeta.kind_turn') },         borderColor: 'border-l-ok' },
 }
 export const DEFAULT_META = { icon: <Bell className="lucide-inline" />, color: 'bg-muted/15 text-muted', get label() { return i18nT('components.notifications.notifMeta.kind_notification') }, borderColor: 'border-l-muted' }
 

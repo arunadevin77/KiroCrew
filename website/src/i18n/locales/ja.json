@@ -7660,6 +7660,7 @@
         "kind_subagent": "サブエージェント",
         "kind_task_runner": "Task Runner",
         "kind_terminal": "ターミナル",
+        "kind_turn": "ターン完了",
         "kind_webhook": "Webhook",
         "this_week": "今週",
         "today": "今日",

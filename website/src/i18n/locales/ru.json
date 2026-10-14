@@ -8026,6 +8026,7 @@
         "kind_subagent": "Субагент",
         "kind_task_runner": "Task Runner",
         "kind_terminal": "Терминал",
+        "kind_turn": "Ход завершён",
         "kind_webhook": "Вебхук",
         "this_week": "На этой неделе",
         "today": "Сегодня",

@@ -7904,6 +7904,7 @@
         "kind_subagent": "Subagente",
         "kind_task_runner": "Task Runner",
         "kind_terminal": "Terminal",
+        "kind_turn": "Turno concluído",
         "kind_webhook": "Webhook",
         "this_week": "Esta semana",
         "today": "Hoje",

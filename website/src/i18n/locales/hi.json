@@ -7782,6 +7782,7 @@
         "kind_subagent": "सब-एजेंट",
         "kind_task_runner": "Task Runner",
         "kind_terminal": "टर्मिनल",
+        "kind_turn": "टर्न पूरा हुआ",
         "kind_webhook": "वेबहुक",
         "this_week": "इस हफ़्ते",
         "today": "आज",

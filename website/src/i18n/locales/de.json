@@ -7782,6 +7782,7 @@
         "kind_subagent": "Subagent",
         "kind_task_runner": "Task Runner",
         "kind_terminal": "Terminal",
+        "kind_turn": "Zug beendet",
         "kind_webhook": "Webhook",
         "this_week": "Diese Woche",
         "today": "Heute",

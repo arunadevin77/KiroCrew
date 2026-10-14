@@ -20,6 +20,7 @@ import { act, screen, waitFor } from '@testing-library/react'
 import { renderWithProviders, createTestStore } from './helpers'
 import InstancesViewport from '../components/InstancesViewport'
 import { setWarm } from '../store/instancesSlice'
+import { CHAT_COMPLETE_NOTIFY_KEY } from '../hooks/chatCompleteNotify'
 
 // Must run before src/lib/electron.ts is imported (module-level consts).
 vi.hoisted(() => {
@@ -106,6 +107,47 @@ describe('InstancesViewport under a Windows frameless shell', () => {
         expect.any(String),
       ),
     )
+  })
+
+  it('relays the chat-complete toast opt-in in the mc-host-model payload (#20191)', async () => {
+    // The pane is a cross-origin document and cannot read this origin's
+    // localStorage, where Settings › Notifications writes the toggle — so the
+    // hub relays its value down and the pane's gate follows the device switch.
+    localStorage.setItem(CHAT_COMPLETE_NOTIFY_KEY, '1')
+    try {
+      const store = createTestStore({
+        instances: {
+          warm: { 'cd-1': { port: 7778, token: 'tok' } },
+          activeId: 'cd-1',
+          mru: ['cd-1'],
+          unread: {},
+          ready: { 'cd-1': true },
+        },
+      })
+      renderWithProviders(<InstancesViewport />, { store })
+      await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
+      const post = vi.fn()
+      const frame = document.querySelector('iframe') as HTMLIFrameElement
+      Object.defineProperty(frame, 'contentWindow', {
+        get: () => ({
+          postMessage: post,
+          get location() {
+            throw new DOMException('blocked', 'SecurityError')
+          },
+        }),
+      })
+      act(() => {
+        store.dispatch(setWarm({ id: 'cd-1', conn: { port: 7778, token: 'tok' } }))
+      })
+      await waitFor(() =>
+        expect(post).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'mc-host-model', chatCompleteNotify: true }),
+          expect.any(String),
+        ),
+      )
+    } finally {
+      localStorage.removeItem(CHAT_COMPLETE_NOTIFY_KEY)
+    }
   })
 
   it('relays the live caption reserve and re-broadcasts when the main process changes it', async () => {

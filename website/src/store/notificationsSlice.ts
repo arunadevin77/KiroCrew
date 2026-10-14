@@ -60,6 +60,17 @@ export function isSilencedNote(n: Pick<Notification, 'silenced' | 'priority'>): 
   return !!n.silenced || n.priority === 'passive'
 }
 
+/** True when a row has no server copy and is owned by this browser alone
+ *  (`Notification.clientOnly`; the relayed-turn-done bell record, #20191).
+ *  Two consumers, one predicate so they cannot drift: `useNativeNotification`
+ *  skips such notes — their toast belongs to the path that created them — and
+ *  the fetch merge below carries them across a server snapshot that cannot
+ *  name them. Lives beside `isSilencedNote` because both gate the same
+ *  attention surfaces and a row can be neither, either, or both. */
+export function isClientOnlyNote(n: Pick<Notification, 'clientOnly'>): boolean {
+  return n.clientOnly === true
+}
+
 /** Stamp a local ack-state change on `ts`. Called for EVERY ack/unack signal
  *  that reaches an item, including one whose flag already matches: the backend
  *  broadcasts an ack to every socket with no originator exclusion, so the view
@@ -303,12 +314,25 @@ const notificationsSlice = createSlice({
         // server, so this narrows to ack state only.
         const requestAckSeq = action.payload.ackSeq ?? 0
         const stamps = state.ackSeqByTs ?? {}
-        state.items = capped(action.payload.items).map(item => {
+        const server = capped(action.payload.items).map(item => {
           const stamped = stamps[item.ts]
           if (stamped === undefined || stamped <= requestAckSeq) return item
           const local = state.items.find(n => n.ts === item.ts)
           return local ? { ...item, acked: local.acked } : item
         })
+        // Browser-owned rows (`isClientOnlyNote`) ride over the snapshot: the
+        // server cannot name them, so "membership comes from the server" would
+        // otherwise drop the hub's relayed-turn-done record on every refetch —
+        // a hub WebSocket reconnect refires this thunk (reconnectCatchUp), and
+        // the row the issue asked to persist "until acknowledged" would vanish
+        // without ever having been seen. They are appended after the server
+        // list, the same tail position a row delivered after the snapshot
+        // occupies via `addNotification`. The explicit write paths keep
+        // working unchanged: ack/unack stamps then re-assert locally, dismiss
+        // and WS remove filter the row out of `items` BEFORE this merge can
+        // carry it, and a clear empties `items` so nothing is carried.
+        const carried = state.items.filter(isClientOnlyNote)
+        state.items = capped(carried.length ? [...server, ...carried] : server)
         pruneAckStamps(state)
       })
       .addCase(clearNotifications.fulfilled, (state, action) => {
