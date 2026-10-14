@@ -2432,7 +2432,10 @@ applies it.
   admission when this call is the one that respawns it, and to the
   provider-backed entry's cold start on a backend with no shared runtime. A
   respawn runs under `_bg_runtime_lock` at the priority of the caller holding
-  the lock (see the residuals below).
+  the lock (see the residuals below). The persistent `_bg` session's cold start
+  (`_ensure_background`) is single-flight per priority: a BACKGROUND caller
+  waits for any start in flight, a FOREGROUND caller only for a FOREGROUND one,
+  so a person never queues behind a background start.
   Meeting translation is a per-line stream nobody waits on, so it claims nothing
   and takes the BACKGROUND default; so does STT polish, which the browser does
   not wait for.

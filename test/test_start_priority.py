@@ -1109,13 +1109,12 @@ def test_the_background_respawn_and_the_provider_path_take_the_same_priority():
         and n.func.value.id == "replacement"
     ]
     assert spawns == [["start_priority"], ["start_priority"]]
-    # The implementation, not the Protocol stub of the same name.
+    # The body that takes the cold-start permit, behind the single-flight
+    # wrapper ``_ensure_background``.
     ensure = next(
         n
         for n in ast.walk(tree)
-        if isinstance(n, ast.AsyncFunctionDef)
-        and n.name == "_ensure_background"
-        and "_start_sem" in ast.unparse(n)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "_ensure_background_single"
     )
     acquires = [
         ast.unparse(a)

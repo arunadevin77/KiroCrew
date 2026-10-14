@@ -37,6 +37,11 @@ def cfg():
     return c
 
 
+#: Ceiling for a wait that only fails on a hang: these steps finish in
+#: milliseconds, so a test fails by name instead of losing the xdist worker.
+_HANG_CEILING_S = 30
+
+
 async def _empty_provider_stream(_command: str):
     """An empty async iterator for provider methods consumed by ``async for``."""
     if False:  # pragma: no cover - establishes the async-generator protocol
@@ -569,6 +574,118 @@ class TestWarmPool:
         await mgr.get_or_create(BACKGROUND_KEY, agent=BACKGROUND_AGENT)
         assert calls, "first use with the background agent skipped _ensure_background"
         assert BACKGROUND_KEY in mgr._sessions
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_deferred_background_first_use_by_a_custom_agent(self, cfg):
+        """The task runner's lesson extraction asks for ``_bg`` with the run's own
+        agent. When it is the first user, ``_bg`` must still be created as the
+        background agent: the session is shared and persistent, so every later
+        background job would otherwise run on the custom agent."""
+        from kiro_crew.session import BACKGROUND_AGENT
+
+        created: list[object] = []
+        inner = _mock_provider_factory()
+
+        def factory(session_key=None, agent=None, **kwargs):
+            if session_key == BACKGROUND_KEY:
+                created.append(agent)
+            return inner(session_key, agent, **kwargs)
+
+        mgr = SessionManager(cfg, provider_factory=factory)
+        await mgr.start_pool()
+        assert BACKGROUND_KEY not in mgr._sessions
+
+        await mgr.get_or_create(BACKGROUND_KEY, agent="my-custom-agent")
+        mgr.release(BACKGROUND_KEY)
+
+        assert created == [BACKGROUND_AGENT]
+        assert mgr._sessions[BACKGROUND_KEY].agent == BACKGROUND_AGENT
+        await mgr.close_all()
+
+    @staticmethod
+    def _gated_bg_factory(monkeypatch, gates):
+        """A factory whose ``_bg`` providers block in ``start`` on ``gates[i]``.
+
+        Returns ``(factory, starts, started)``: ``starts`` lists each ``_bg``
+        provider as its start begins, ``started[i]`` is set when the i-th start
+        begins. ``warm_agent_specs`` is stubbed so the path to ``start`` stays on
+        the loop, and yielding the loop is enough for a second caller to reach
+        its own start if nothing serializes it.
+        """
+        import kiro_crew.session_background as session_background
+
+        async def _no_warm(**_kwargs):
+            return None
+
+        monkeypatch.setattr(session_background, "warm_agent_specs", _no_warm)
+        starts: list[object] = []
+        started = [asyncio.Event() for _ in gates]
+        inner = _mock_provider_factory()
+
+        def factory(session_key=None, agent=None, **kwargs):
+            provider = inner(session_key, agent, **kwargs)
+            if session_key == BACKGROUND_KEY:
+
+                async def _start():
+                    index = len(starts)
+                    starts.append(provider)
+                    started[index].set()
+                    await gates[index].wait()
+
+                provider.start = _start
+            return provider
+
+        return factory, starts, started
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_uses_start_one_background_session(self, cfg, monkeypatch):
+        """Two first-time ``_bg`` users at once cold-start ONE process; the second
+        waits for the first and reuses its session."""
+        gate = asyncio.Event()
+        factory, starts, started = self._gated_bg_factory(monkeypatch, [gate, gate])
+        mgr = SessionManager(cfg, provider_factory=factory)
+        await mgr.start_pool()
+        assert BACKGROUND_KEY not in mgr._sessions
+
+        first = asyncio.create_task(mgr._ensure_background())
+        await asyncio.wait_for(started[0].wait(), _HANG_CEILING_S)
+        second = asyncio.create_task(mgr._ensure_background())
+        for _ in range(50):
+            await asyncio.sleep(0)
+        gate.set()
+        await asyncio.wait_for(asyncio.gather(first, second), _HANG_CEILING_S)
+
+        assert len(starts) == 1, f"{len(starts)} background cold starts ran at once"
+        assert mgr._sessions[BACKGROUND_KEY].provider is starts[0]
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_foreground_first_use_does_not_wait_behind_a_background_start(
+        self, cfg, monkeypatch
+    ):
+        """A person waiting on ``_bg`` must not queue behind a background-priority
+        cold start: the foreground caller runs its own start and returns while the
+        background one is still in flight."""
+        background_gate, foreground_gate = asyncio.Event(), asyncio.Event()
+        foreground_gate.set()
+        factory, starts, started = self._gated_bg_factory(
+            monkeypatch, [background_gate, foreground_gate]
+        )
+        mgr = SessionManager(cfg, provider_factory=factory)
+        await mgr.start_pool()
+
+        background = asyncio.create_task(mgr._ensure_background())
+        await asyncio.wait_for(started[0].wait(), _HANG_CEILING_S)
+        await asyncio.wait_for(
+            mgr._ensure_background(start_priority=StartPriority.FOREGROUND), _HANG_CEILING_S
+        )
+
+        assert not background.done()
+        assert mgr._sessions[BACKGROUND_KEY].provider is starts[1]
+        background_gate.set()
+        await asyncio.wait_for(background, _HANG_CEILING_S)
+        assert mgr._sessions[BACKGROUND_KEY].provider is starts[1]
         await mgr.close_all()
 
     @pytest.mark.asyncio

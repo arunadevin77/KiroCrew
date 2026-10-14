@@ -155,6 +155,10 @@ class BackgroundRuntimeState:
 
     runtime: _BackgroundRuntime | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    #: Single-flight guards for ``_ensure_background``, one per start priority,
+    #: so concurrent first users of ``_bg`` share one cold start.
+    ensure_foreground_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    ensure_background_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     draining: list[_BackgroundRuntime] = field(default_factory=list)
     #: The ``$KIROCREW_SCRATCH`` tree the sessions on the ``_bg`` runtime use,
     #: recorded from every runtime observed in the slot and handed to each
@@ -316,7 +320,36 @@ class BackgroundSessionRuntime:
 
         ``start_priority`` is the cold start's place in the queues: a caller a
         person is waiting on (``get_bg_session``) names its own.
+
+        Single-flight per priority: one cold start of each priority runs at a
+        time. A caller arriving while a start it may wait for is in flight
+        waits, then returns once the session is registered; it starts its own
+        only if that start failed. A ``BACKGROUND`` caller waits for an
+        in-flight start of either priority. A ``FOREGROUND`` caller waits only
+        for a ``FOREGROUND`` one: waiting behind a background start would queue
+        a person at background priority in ``_start_sem``. That is the one case
+        where two starts can overlap, and the loser is shut down at
+        registration.
         """
+        background_key = self._deps.background_key
+        async with self._owner._lock:
+            if self._owner._closing or background_key in self._owner._sessions:
+                return
+        foreground = self.state.ensure_foreground_lock
+        if start_priority is StartPriority.FOREGROUND:
+            async with foreground:
+                await self._ensure_background_single(start_priority=start_priority)
+            return
+        async with self.state.ensure_background_lock:
+            if foreground.locked():
+                # Wait out the in-flight foreground start without holding its
+                # lock across this caller's own start.
+                async with foreground:
+                    pass
+            await self._ensure_background_single(start_priority=start_priority)
+
+    async def _ensure_background_single(self, *, start_priority: StartPriority) -> None:
+        """Body of :meth:`_ensure_background`; caller holds its single-flight lock."""
         background_key = self._deps.background_key
         background_agent = self._deps.background_agent
         logger = self._deps.logger

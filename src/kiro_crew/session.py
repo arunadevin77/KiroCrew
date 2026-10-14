@@ -2702,19 +2702,18 @@ class SessionManager:
         ``start_priority`` orders a cold start in the start queues; a caller passes
         FOREGROUND only where a person waits on it (rule: ``kiro_crew.start_priority``).
         """
-        if (
-            key == BACKGROUND_KEY
-            # Consolidation and the skill judges name the background agent
-            # explicitly; they must take the same creation path as a bare call.
-            and agent in (None, BACKGROUND_AGENT)
-            and key not in self._sessions
-            and self._bg_backend_supports_runtime()
-        ):
-            # The persistent background session is created on first use rather
-            # than at boot when the backend serves one-liners from the shared
-            # runtime (``start_pool``). Created through the same path the boot
-            # used, so it keeps the background agent and its start stamping.
-            await self._ensure_background(start_priority=start_priority)
+        if key == BACKGROUND_KEY:
+            # ``_bg`` is one persistent session shared by every background job,
+            # so it is always the background agent, whichever caller reaches it
+            # first: a caller naming its own agent (the task runner's lesson
+            # extraction) gets the shared session, never a session created as
+            # that agent. A live ``_bg`` already ignores the requested agent.
+            agent = BACKGROUND_AGENT
+            if key not in self._sessions:
+                # Created on first use on a shared-runtime backend, and after a
+                # failed boot start on any other: through the same path the boot
+                # uses, so it keeps its start stamping.
+                await self._ensure_background(start_priority=start_priority)
         return await self._allocation_boundary().get_or_create(
             key,
             agent=agent,
