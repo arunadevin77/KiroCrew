@@ -431,6 +431,16 @@ def test_key_result_movement_reads_the_window_from_readings(_floor_monkeypatch) 
     assert (m["start"], m["now"], m["readings_in_window"]) == ("10", "19", 2)
 
 
+def test_key_result_movement_starts_at_the_first_reading_when_none_precedes_the_window() -> None:
+    # Stored out of order: the start is the earliest reading inside the window.
+    readings = [{"value": "4", "at": 300.0}, {"value": "2", "at": 200.0}]
+    late = {"id": "k00000001", "text": "late", "target": "5", "current": "4", "readings": readings}
+    unread = {"id": "k00000002", "text": "unread", "target": "5", "current": "", "readings": []}
+    moved, still = member_goals.key_result_movement({"key_results": [late, unread]}, since=100.0)
+    assert (moved["start"], moved["now"], moved["readings_in_window"]) == ("2", "4", 2)
+    assert (still["start"], still["now"], still["readings_in_window"]) == (None, None, 0)
+
+
 # ── the crewmate's tools ──
 
 

@@ -443,7 +443,7 @@ def _normalize(data: dict[str, Any]) -> dict[str, Any]:
     valid = set(goal_ids(rec))
     krs = data.get("key_results")
     if isinstance(krs, list):
-        rec["key_results"] = [_normalize_kr(k, valid) for k in [k for k in krs if _valid_kr(k)]]
+        rec["key_results"] = [_normalize_kr(k, valid) for k in krs if _valid_kr(k)]
     sched = data.get("schedules")
     if isinstance(sched, dict):
         out = rec["schedules"]
@@ -503,7 +503,7 @@ def _normalize(data: dict[str, Any]) -> dict[str, Any]:
     return rec
 
 
-def _read_pinned(slug: str, path: Path) -> bytes | None:
+def _read_pinned(path: Path) -> bytes | None:
     d = _open_goals_dir(create=False)
     if d is None:
         return None
@@ -531,7 +531,7 @@ def _read_raw(slug: str) -> dict[str, Any] | None:
     path = member_goals_path(slug)
     try:
         if _PINNED:
-            raw = _read_pinned(slug, path)
+            raw = _read_pinned(path)
             if raw is None:
                 return None
         else:
@@ -993,11 +993,12 @@ def set_key_results(
         for raw in clean:
             item = {k: v for k, v in raw.items() if k not in ("id", "goal_ids")}
             old = by_id[raw["id"]] if "id" in raw else kept.get((item["text"], item["target"]))
-            links = (
-                list(raw["goal_ids"])
-                if "goal_ids" in raw
-                else list(old.get("goal_ids") or []) if old is not None else []
-            )
+            if "goal_ids" in raw:
+                links = list(raw["goal_ids"])
+            elif old is not None:
+                links = list(old.get("goal_ids") or [])
+            else:
+                links = []
             if old is not None:
                 item["text"] = keep_unscrubbed(old["text"], item["text"])
                 item["target"] = keep_unscrubbed(old["target"], item["target"])
@@ -1271,7 +1272,7 @@ def record_report(slug: str, member: str, *, kind: str, artifact: str, title: st
     def fn(rec: dict[str, Any]) -> None:
         rec["reports"] = [
             *rec["reports"],
-            {"kind": kind, "slug": artifact, "title": title[:200], "at": _now()},
+            {"kind": kind, "slug": artifact, "title": title[:REPORT_TITLE_MAX_CHARS], "at": _now()},
         ][-MAX_REPORTS:]
 
     _mutate(slug, member, fn)
@@ -1288,7 +1289,13 @@ def key_result_movement(rec: dict[str, Any], *, since: float) -> list[dict[str, 
         readings = sorted(kr.get("readings") or [], key=lambda r: r["at"])
         before = [r for r in readings if r["at"] <= since]
         inside = [r for r in readings if r["at"] > since]
-        start = before[-1] if before else (inside[0] if inside else None)
+        start: dict[str, Any] | None
+        if before:
+            start = before[-1]
+        elif inside:
+            start = inside[0]
+        else:
+            start = None
         out.append(
             {
                 "id": kr["id"],
