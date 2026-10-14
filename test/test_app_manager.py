@@ -639,6 +639,86 @@ class TestUninstall:
         assert result.ok
         assert not (app_home / "apps" / "test-app").exists()
 
+    def test_uninstall_removes_the_agent_lock_and_gateway_overlay(
+        self, tmp_path, app_home, monkeypatch
+    ):
+        # Deregistration unlinks ``<app>--<agent>.json``; uninstall also removes
+        # the empty ``<app>--<agent>.lock`` beside it and the MCP gateway's
+        # overlay copy ``mcp-gateway/agents/<app>--<agent>.json``.
+        from kiro_crew.apps import bridges
+
+        agents = tmp_path / "kiro-agents"
+        agents.mkdir()
+        monkeypatch.setattr(bridges, "KIRO_AGENTS_DIR", agents)
+        overlay = app_home / "mcp-gateway" / "agents"
+        overlay.mkdir(parents=True)
+
+        mine_lock = agents / "test-app--bg.lock"
+        mine_lock.touch()
+        mine_overlay = overlay / "test-app--bg.json"
+        mine_overlay.write_text("{}", encoding="utf-8")
+        # Another app's files, and a user agent's, must be left alone.
+        other_lock = agents / "test-app-two--bg.lock"
+        other_lock.touch()
+        other_overlay = overlay / "test-app-two--bg.json"
+        other_overlay.write_text("{}", encoding="utf-8")
+        user_overlay = overlay / "kirocrew.json"
+        user_overlay.write_text("{}", encoding="utf-8")
+
+        install_app(_make_app_source(tmp_path))
+        result = uninstall_app("test-app")
+
+        assert result.ok
+        assert not mine_lock.exists()
+        assert not mine_overlay.exists()
+        assert other_lock.exists()
+        assert other_overlay.exists()
+        assert user_overlay.exists()
+
+    def test_uninstall_keeps_agent_residue_whose_spec_or_content_survives(
+        self, tmp_path, app_home, monkeypatch
+    ):
+        # A spec that is still on disk (deregistration did not run or failed)
+        # keeps its lock and overlay; a non-empty ``.lock`` is not the launcher's
+        # empty sentinel and is never deleted.
+        from kiro_crew.apps import bridges
+
+        agents = tmp_path / "kiro-agents"
+        agents.mkdir()
+        monkeypatch.setattr(bridges, "KIRO_AGENTS_DIR", agents)
+        overlay = app_home / "mcp-gateway" / "agents"
+        overlay.mkdir(parents=True)
+
+        (agents / "test-app--live.json").write_text("{}", encoding="utf-8")
+        live_lock = agents / "test-app--live.lock"
+        live_lock.touch()
+        live_overlay = overlay / "test-app--live.json"
+        live_overlay.write_text("{}", encoding="utf-8")
+        full_lock = agents / "test-app--gone.lock"
+        full_lock.write_text("not empty", encoding="utf-8")
+
+        install_app(_make_app_source(tmp_path))
+        assert uninstall_app("test-app").ok
+
+        assert live_lock.exists()
+        assert live_overlay.exists()
+        assert full_lock.exists()
+
+    def test_uninstall_leaves_a_held_agent_lock(self, tmp_path, app_home, monkeypatch):
+        from kiro_crew.apps import bridges
+
+        agents = tmp_path / "kiro-agents"
+        agents.mkdir()
+        monkeypatch.setattr(bridges, "KIRO_AGENTS_DIR", agents)
+        held = agents / "test-app--bg.lock"
+        held.touch()
+        monkeypatch.setattr(platform_compat, "try_acquire_lock", lambda fd, exclusive: False)
+
+        install_app(_make_app_source(tmp_path))
+        assert uninstall_app("test-app").ok
+
+        assert held.exists()
+
     def test_uninstall_not_installed(self, app_home):
         result = uninstall_app("nonexistent")
         assert not result.ok

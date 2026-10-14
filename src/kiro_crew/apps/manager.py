@@ -2180,6 +2180,16 @@ def uninstall_app(name: str, *, keep_data: bool = True, retired_builtin: bool = 
         remove_dev_app(name)
     except Exception:
         logger.debug("dev-mode cleanup on uninstall of %r failed", name, exc_info=True)
+    # Deregistration unlinked the app's agent specs, but the per-agent lock file
+    # beside each and the MCP gateway's overlay copy of it are named after the
+    # same spec and would otherwise outlive the app. Lazy import: bridges imports
+    # this module at load.
+    try:
+        from kiro_crew.apps.bridges import purge_uninstalled_agent_residue
+
+        purge_uninstalled_agent_residue(name)
+    except Exception:
+        logger.debug("agent residue cleanup on uninstall of %r failed", name, exc_info=True)
     # The orphan set may have named this app; a successor installed under the
     # same name must not inherit its stale `orphaned` flag.
     invalidate_orphan_cache()
