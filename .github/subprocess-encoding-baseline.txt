@@ -67,7 +67,6 @@
 2 test/test_dev_fleet_app.py
 1 test/test_docker_entrypoint.py
 2 test/test_ensure_python_symlink.py
-1 test/test_flock_compat.py
 2 test/test_harness_parity.py
 1 test/test_host_service_guard.py
 2 test/test_installer_node_floor.py
