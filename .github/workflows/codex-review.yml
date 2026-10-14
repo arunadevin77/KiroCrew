@@ -1452,7 +1452,7 @@ jobs:
           # every other review lane uses (#8462): it finds the bot's existing
           # marker comment, confirms this run's head is still the PR's, and
           # writes through ONE publication primitive for every marker-comment
-          # write. test_ai_review_workflows.py pins both byte-identical across
+          # write. test_ai_review_workflows_comment_writes.py pins both byte-identical across
           # all lanes, so neither the budget nor the honesty below can drift
           # lane by lane.
           #

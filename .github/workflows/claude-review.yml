@@ -598,7 +598,7 @@ jobs:
             echo "\`/ai-review override fable $HEAD: <one-sentence reason>\`"
           } > /tmp/claude-summary.md
           # ONE publication primitive for every marker-comment write in this
-          # lane; test_ai_review_workflows.py pins it byte-identical across all
+          # lane; test_ai_review_workflows_comment_writes.py pins it byte-identical across all
           # of them, the way it already pins guarded_comment_upsert, so neither
           # the budget nor the honesty below can drift lane by lane.
           #

@@ -2414,7 +2414,7 @@ verdict whose slot read stays unreadable is likewise not posted, because a
 second comment in the slot does not come back out without a human. The eleven
 guarded lanes
 define the guard as a `guarded_comment_upsert` bash function that
-`test_ai_review_workflows.py` pins byte-identical across every lane, so the
+`test_ai_review_workflows_comment_writes.py` pins byte-identical across every lane, so the
 invariant cannot drift lane by lane.
 
 `codex-review.yml` joined them in #8462. It used to carry #8342's own inline
@@ -2877,8 +2877,8 @@ untrusted PR comment or a decision for an earlier push cannot turn a gate green.
 `TestForkLaneConsumesTheOverrideRecord` (`test/test_ai_review_workflows_fork_verdict.py`)
 runs each fork lane's resolve step against
 every failing condition and a failed read, and
-`TestOverrideHandlerReRunsTheBoundForkLaneRun` runs the handler's fork re-run against
-a stubbed API.
+`TestOverrideHandlerReRunsTheBoundForkLaneRun` (`test/test_ai_review_workflows_human_override.py`)
+runs the handler's fork re-run against a stubbed API.
 
 ## `Security Scope Review`: what a tightening newly refuses
 
