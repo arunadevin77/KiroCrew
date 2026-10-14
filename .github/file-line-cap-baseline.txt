@@ -211,7 +211,6 @@
 2359 test/test_ai_spine_driver_coverage.py
 4737 test/test_app_backend.py
 2200 test/test_app_backend_composition_contract.py
-5236 test/test_app_bridges.py
 4051 test/test_app_manager.py
 2324 test/test_app_manifest.py
 5489 test/test_apps_backend_coverage.py
@@ -244,7 +243,6 @@
 3069 test/test_chat_tags.py
 6790 test/test_ci_runner_watchdog.py
 10498 test/test_cli.py
-3996 test/test_cli_commands_coverage.py
 4698 test/test_cli_doctor.py
 2744 test/test_cli_server_more_coverage.py
 2182 test/test_cloud_microvm_engine.py
@@ -267,7 +265,6 @@
 3011 test/test_crew_log_projection.py
 4247 test/test_crew_log_routes.py
 2195 test/test_crew_turn_proxy.py
-3762 test/test_cron_gateway_integration.py
 5105 test/test_cron_reaper.py
 3125 test/test_cron_script.py
 2247 test/test_cron_secret_env.py
@@ -282,7 +279,6 @@
 2478 test/test_dashboard_updates_coverage.py
 11203 test/test_denied_commands_security.py
 2194 test/test_deploy_web_handlers.py
-3770 test/test_design_tweak_backend.py
 11284 test/test_dev_fleet_app.py
 4648 test/test_dev_fleet_server_coverage.py
 6756 test/test_discord.py
@@ -302,7 +298,6 @@
 2349 test/test_governance_chokepoints.py
 5410 test/test_governance_distribution.py
 2539 test/test_governance_policy.py
-3800 test/test_handlers_mcp_coverage.py
 3102 test/test_handlers_memory_coverage.py
 2261 test/test_handlers_messaging_coverage.py
 2026 test/test_handlers_taskrunner_coverage.py
@@ -321,7 +316,6 @@
 2092 test/test_issue_radar_tagging.py
 4427 test/test_job_sdk.py
 2377 test/test_kas_agents.py
-7730 test/test_kiro_prerequisite.py
 4721 test/test_knowledge.py
 2332 test/test_knowledge_bundle_ownership.py
 2409 test/test_knowledge_handlers_coverage.py
@@ -355,7 +349,6 @@
 5822 test/test_onboarding_import.py
 3135 test/test_onboarding_import_coverage.py
 2190 test/test_onboarding_import_refactor_contract.py
-3857 test/test_open_slots_persistence.py
 3579 test/test_overload_integration_glue.py
 2429 test/test_pinned_staging.py
 3402 test/test_pipeline_conductor_agent.py
@@ -375,7 +368,6 @@
 4559 test/test_push_guard.py
 2968 test/test_queue_depth_reconcile.py
 2147 test/test_recovery_l1_chat_runner.py
-3995 test/test_registry_store_art_prewarm.py
 5775 test/test_remote_crew_chaining.py
 3966 test/test_remove_slot_for_history_key.py
 4825 test/test_runtime_reconcile.py
@@ -388,7 +380,6 @@
 2055 test/test_security_conductor_verify_fix.py
 2034 test/test_security_path_resolve_bounded.py
 5509 test/test_sel.py
-7771 test/test_service.py
 9530 test/test_session.py
 6171 test/test_session_control.py
 2376 test/test_session_control_revive.py
@@ -406,7 +397,6 @@
 11406 test/test_slack_gateway.py
 2824 test/test_slack_gateway_coverage.py
 2303 test/test_slack_gateway_cron_exec_coverage.py
-5151 test/test_slack_handler.py
 2650 test/test_slack_handler_composition_contract.py
 2629 test/test_slack_handler_coverage.py
 2730 test/test_slack_options_lifecycle.py
