@@ -157,6 +157,34 @@ def test_the_milestones_nudge_offers_check_ins_only_when_none_is_on() -> None:
     assert goal_setup.milestones_prompt({**rec, "key_results": []}) is None
 
 
+def test_the_removed_nudge_names_the_goal_and_its_orphaned_milestones() -> None:
+    rec = {
+        "goals": [GOAL_B],
+        "key_results": [
+            {"id": "k1", "text": "notes out", "target": "yes", "goal_ids": []},
+            {"id": "k2", "text": "build under 5m", "target": "yes", "goal_ids": [GOAL_B["id"]]},
+        ],
+        "schedules": {"daily": True},
+        "removed_goal": {"goal": GOAL_A, "index": 0, "at": 1, "key_result_ids": ["k1"]},
+    }
+    text = goal_setup.removed_prompt(rec, GOAL_A["id"])
+    assert text is not None and "[Goal removed]" in text
+    assert GOAL_A["text"] in text and "1. Cut the build time in half" in text
+    assert "- notes out" in text and "build under 5m" not in text
+    assert "set_key_results" in text
+    # Nothing orphaned: acknowledge only.
+    plain = goal_setup.removed_prompt(
+        {**rec, "removed_goal": {**rec["removed_goal"], "key_result_ids": ["k2"]}}, GOAL_A["id"]
+    )
+    assert plain is not None and "set_key_results" not in plain
+    # No goal left: say the check-ins went off.
+    empty = goal_setup.removed_prompt({**rec, "goals": []}, GOAL_A["id"])
+    assert empty is not None and "every check-in was switched off" in empty
+    # Undone (or superseded by another removal) before the turn runs: nothing.
+    assert goal_setup.removed_prompt({**rec, "removed_goal": None}, GOAL_A["id"]) is None
+    assert goal_setup.removed_prompt(rec, GOAL_B["id"]) is None
+
+
 class _Slot:
     def __init__(self) -> None:
         from kiro_crew import members as members_mod

@@ -26,7 +26,9 @@ import { runCardPlan, userFields } from './runPlan'
 import { problemFrom, problemText, wantsRefresh, type CardProblem } from './refusals'
 import { useCardCorners } from './cardCorners'
 import { useCardAuthor } from './cardAuthor'
-import { MEMBERS_ROSTER_QUERY_KEY } from '../api/membersQuery'
+import { MEMBER_GOALS_QUERY_PREFIX, MEMBERS_ROSTER_QUERY_KEY } from '../api/membersQuery'
+
+const GOALS_CARD_KINDS = new Set(['crewmate.goal', 'crewmate.key_results', 'crewmate.check_ins'])
 
 /** How long an edited field waits before it is re-previewed. */
 export const PREVIEW_DEBOUNCE_MS = 400
@@ -201,6 +203,9 @@ export default function ChangeCard({ card, store, refresh, remove }: ChangeCardP
       // the Crewmates list read the roster, so it is re-read now rather than
       // whenever the next chat event happens to refetch it.
       if (card.kind.startsWith('crewmate.')) void queryClient.invalidateQueries({ queryKey: MEMBERS_ROSTER_QUERY_KEY })
+      // A goal, milestone or check-in card rewrites the Goals record an open
+      // Goals tab is showing, so that tab re-reads it without a page reload.
+      if (GOALS_CARD_KINDS.has(card.kind)) void queryClient.invalidateQueries({ queryKey: MEMBER_GOALS_QUERY_PREFIX })
     }
   }, [running, runAt, stranded, card, inputs, reload, store, refresh, queryClient])
 

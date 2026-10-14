@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MEMBERS_ROSTER_QUERY_KEY } from '../api/membersQuery'
+import { MEMBER_GOALS_QUERY_PREFIX, MEMBERS_ROSTER_QUERY_KEY } from '../api/membersQuery'
 import { MemoryRouter } from 'react-router-dom'
 import { Provider } from 'react-redux'
 import { store as reduxStore } from '../store'
@@ -235,6 +235,18 @@ describe('change card', () => {
     fireEvent.click(await screen.findByTestId('change-card-apply'))
     await waitFor(() => expect(spy.mock.calls.some(([f]) =>
       JSON.stringify((f as { queryKey?: unknown })?.queryKey) === JSON.stringify(MEMBERS_ROSTER_QUERY_KEY))).toBe(true))
+  })
+
+  it('re-reads the Goals record once a milestones card has run, so an open Goals tab updates', async () => {
+    pending = [card({
+      kind: 'crewmate.key_results',
+      plan: { apply: [{ method: 'PUT', path: '/api/members/scout/goals/key-results', body: { member: 'scout', items: [] } }], undo: null },
+    })]
+    renderCards()
+    const spy = vi.spyOn(qc, 'invalidateQueries')
+    fireEvent.click(await screen.findByTestId('change-card-apply'))
+    await waitFor(() => expect(spy.mock.calls.some(([f]) =>
+      JSON.stringify((f as { queryKey?: unknown })?.queryKey) === JSON.stringify(MEMBER_GOALS_QUERY_PREFIX))).toBe(true))
   })
 
   it('sends the plan steps in order with the card headers and waits for the gateway verdict', async () => {

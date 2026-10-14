@@ -299,8 +299,11 @@ goal or its key results change.
 > check-ins are, or where to switch them on.
 
 Saving a new long-term goal (on the Goals tab, or by applying a `crewmate.goal`
-card) sends the crewmate one hidden turn in its own thread. Clearing the goal, an
-Undo putting an older one back, and a small edit (a typo) send nothing. In that
+card) sends the crewmate one hidden turn in its own thread. An Undo putting an
+older one back, and a small edit (a typo) send nothing. Removing a goal sends a
+short turn of its own (_Amended 2026-10-14, Ray_): the crewmate acknowledges it,
+stops work that only served it, and proposes dropping or relinking milestones
+left serving no goal. In the setup
 turn the crewmate:
 
 1. says back what it understands the goal to mean, in a sentence or two;

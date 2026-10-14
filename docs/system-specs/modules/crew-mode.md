@@ -1955,7 +1955,10 @@ draft guard, so a veto neither remounts the card nor loses its pushed form.
   Goals, route/browser navigation and member switches ask before dropping a
   dirty draft; an in-flight save or tracking send refuses those exits. Automatic
   narrow-viewport relocation and a cross-tab panel reveal keep the same Profile
-  mounted while either state is at stake. A successful save clears its draft;
+  mounted while either state is at stake. If the goal or milestone a dirty draft
+  edits is removed elsewhere, the page stays open, says the item is gone and
+  shows the unsaved text read-only; only its Discard button clears it. A
+  successful save clears its draft;
   failed saves preserve it. Writes are serialized while one is pending;
 - **Add something {name} should track** opens a page with a text box; Send
   posts what the user typed as their own message (`"Please track this for me:
@@ -2003,7 +2006,7 @@ draft guard, so a veto neither remounts the card nor loses its pushed form.
   every other card, and `propose_change`, stays user-turn only.
 - the **goal-setup nudge** (`dashboard/goal_setup.py`): adding a goal or really
   changing one's text (the Goals tab or an applied `crewmate.goal` card; not an
-  Undo, not a removal, not an edit at or above 0.9 similarity) sends the
+  Undo, not an edit at or above 0.9 similarity) sends the
   crewmate one hidden turn once its thread is idle (waiting at most ten
   minutes; a newer save, of that goal or another, replaces a waiting nudge).
   It names the goal that changed by number and id, lists every goal, and asks
@@ -2011,7 +2014,14 @@ draft guard, so a veto neither remounts the card nor loses its pushed form.
   background `spawn_run` sub-agent and end the turn so the chat stays free,
   then propose milestones with `set_key_results` (each linked with `goal_ids`)
   when the result comes back, keeping the set small and suggesting merges as it
-  grows. A goal removed before the turn would run sends nothing. Applying that
+  grows. A goal removed before the turn would run sends nothing; removing a
+  goal on the Goals tab instead replaces that waiting nudge with a
+  `[Goal removed]` turn (`schedule_removed_nudge`, same wait): it quotes the
+  removed goal, lists what is left (or says no goal is left and every check-in
+  was switched off), names milestones that served only that goal, and asks the
+  crewmate to acknowledge in a sentence, stop that work and propose dropping or
+  relinking those milestones with `set_key_results`. An Undo of the removal
+  before the turn runs sends nothing. Applying that
   `crewmate.key_results` card (its Apply step sets
   `REQ_CARD_KEY_RESULTS_APPLY`; a Goals-tab edit and an Undo do not) always
   sends a second hidden turn, `[Milestones confirmed]`, the same way, listing

@@ -10,6 +10,7 @@ import { api, type GoalKeyResult, type GoalSchedules, type MemberGoal, type Memb
 import { Btn, Input, Toggle } from '../../components/ui'
 import SimpleSelect from '../../components/SimpleSelect'
 import ErrorNotice from '../../components/ErrorNotice'
+import { MEMBER_GOALS_QUERY_PREFIX } from '../../api/membersQuery'
 import { fmtRelative, fmtWeekday } from '../../i18n/format'
 import { cn } from '../../lib/utils'
 import { ProfilePagePushContext } from './CrewProfilePanel'
@@ -20,7 +21,7 @@ import { ProfilePagePushContext } from './CrewProfilePanel'
 const PICKER_STYLE = { width: '11rem' } as const
 
 /** The query key every view of one crewmate's goal record shares. */
-export const memberGoalsKey = (slug: string, member: string) => ['member-goals', slug, member] as const
+export const memberGoalsKey = (slug: string, member: string) => [...MEMBER_GOALS_QUERY_PREFIX, slug, member] as const
 
 export function useMemberGoals(slug: string, member: string, enabled = true) {
   return useQuery({
@@ -50,7 +51,7 @@ const TONE_TILE: Record<Tone, string> = {
   accent: 'bg-accent-subtle text-accent',
   info: 'bg-info-subtle text-info',
   ok: 'bg-ok-subtle text-ok',
-  warn: 'bg-warn-subtle text-warn',
+  warn: 'bg-warn-subtle text-warn-text',
   quiet: 'bg-bg-hover text-muted',
 }
 
@@ -374,7 +375,10 @@ export default function CrewGoalsPane({ slug, member, name, onTrackInChat, onTra
     clearDraft()
     push?.close()
   }
-  useEffect(() => { if (pageGone) closePage() })
+  // An unsaved draft outlives its record: the page stays open showing that the
+  // item is gone, and the text is cleared only by an explicit Discard (a removal
+  // made here closes the page through its own success callback).
+  useEffect(() => { if (pageGone && !dirty) closePage() })
 
   if (q.isError) return <ErrorNotice message={t('pages.membersPage.goals_load_failed')} askAgent testId="crew-goals-error" />
   if (!goals) return <p role="status" className="text-[13px] text-muted">{t('pages.membersPage.goals_loading')}</p>
@@ -599,15 +603,36 @@ export default function CrewGoalsPane({ slug, member, name, onTrackInChat, onTra
     </div>
   )
 
+  // The record this page edits was removed elsewhere while a draft was open.
+  const goneDraft = [editing?.text, krEdit?.text, krEdit?.target].filter(Boolean).join('\n')
+  const gonePage = (
+    <div className="flex flex-col gap-3" data-testid="crew-goals-page-gone">
+      <ErrorNotice message={t('pages.membersPage.goals_page_gone')} testId="crew-goals-gone-notice" />
+      <textarea
+        readOnly
+        value={goneDraft}
+        rows={5}
+        aria-label={t('pages.membersPage.goals_page_gone_draft')}
+        className="w-full rounded-lg border border-border bg-bg px-2.5 py-2 text-[13px] text-text focus-ring"
+        data-testid="crew-goals-gone-draft"
+      />
+      <div className="flex justify-end">
+        <Btn type="button" onClick={closePage} className="h-8" data-testid="crew-goals-gone-discard">
+          {t('pages.membersPage.goals_page_gone_discard')}
+        </Btn>
+      </div>
+    </div>
+  )
+
   const pageBody = (pg: GoalsPage): ReactNode => {
     if (pg.kind === 'goal') {
       const goal = pg.id ? goals.goals.find(g => g.id === pg.id) : undefined
-      return pg.id && !goal ? null : goalPage(goal)
+      return pg.id && !goal ? (dirty ? gonePage : null) : goalPage(goal)
     }
     if (pg.kind === 'checkins') return checkinsPage
     if (pg.kind === 'track') return trackPage
     const kr = goals.key_results.find(k => k.id === pg.id)
-    return kr ? krPage(kr) : null
+    return kr ? krPage(kr) : (dirty ? gonePage : null)
   }
 
   const firstPage = (

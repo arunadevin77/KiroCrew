@@ -11,8 +11,11 @@ Applying that milestones card always sends a second hidden turn
 decides; the crewmate's own goal cards are admitted outside a turn the user sent
 (``handlers.guide.REQ_OWN_GOAL_TURN``).
 
-The nudge runs only when the goal really changed: removing it, an Undo putting
-an older goal back, and a small edit (a typo) send nothing. It names the goal
+The nudge runs only when the goal really changed: an Undo putting an older
+goal back and a small edit (a typo) send nothing. Removing a goal on the Goals
+tab sends its own short nudge (:func:`schedule_removed_nudge`): acknowledge it,
+stop work that only served it, and propose dropping or relinking milestones
+left serving no goal. The setup nudge names the goal
 that changed by its number and lists every goal. When the crewmate is
 busy the nudge waits for its thread to go idle, for a bounded time, and one
 crewmate holds at most one waiting nudge: a newer save replaces it.
@@ -232,3 +235,49 @@ def schedule_nudge(state: Any, slug: str, member: str, goal_id: str) -> None:
 def schedule_milestones_nudge(state: Any, slug: str, member: str) -> None:
     """Tell *member* the user confirmed its milestones, once its thread is idle."""
     _schedule(state, f"{slug}:milestones", slug, member, milestones_prompt, "milestones confirmed")
+
+
+def removed_prompt(rec: dict[str, Any], goal_id: str) -> str | None:
+    """The hidden turn after the user removes goal *goal_id* on the Goals tab.
+
+    ``None`` unless that removal is the record's newest one (an Undo put it
+    back, or another goal was removed since).
+    """
+    removed = rec.get("removed_goal")
+    if not isinstance(removed, dict) or removed.get("goal", {}).get("id") != goal_id:
+        return None
+    text = member_goals.scrub_text(str(removed["goal"].get("text") or ""))
+    served = set(removed.get("key_result_ids") or [])
+    lines = ["[Goal removed] The user just removed this goal:", "", text, ""]
+    goals = [{**g, "text": member_goals.scrub_text(g["text"])} for g in rec.get("goals") or []]
+    if goals:
+        lines.extend(["Goals left:", *member_goals.goal_lines({"goals": goals})[1:], ""])
+    else:
+        lines.extend(["No goal is left, so every check-in was switched off.", ""])
+    orphans = [
+        member_goals.scrub_text(str(kr.get("text") or ""))
+        for kr in rec.get("key_results") or []
+        if kr.get("id") in served and not kr.get("goal_ids")
+    ]
+    if orphans:
+        lines.extend(["These milestones served only that goal:", *(f"- {o}" for o in orphans), ""])
+    lines.append(
+        "Reply in one or two short sentences, in the user's language: acknowledge the "
+        "removal and stop work that only served it. "
+        + (
+            "Then propose, with set_key_results (a card, the whole set), dropping or "
+            "relinking the milestones above; the user decides."
+            if orphans
+            else "Ask nothing else."
+        )
+    )
+    return "\n".join(lines)
+
+
+def schedule_removed_nudge(state: Any, slug: str, member: str, goal_id: str) -> None:
+    """Tell *member* the user removed goal *goal_id*, once its thread is idle.
+
+    It shares the goal-setup slot: a later save replaces it, and it replaces a
+    nudge still waiting for the goal the user just removed.
+    """
+    _schedule(state, slug, slug, member, lambda rec: removed_prompt(rec, goal_id), "goal removed")

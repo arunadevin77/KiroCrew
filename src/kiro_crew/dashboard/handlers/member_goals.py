@@ -291,11 +291,21 @@ async def api_member_goals_goal_delete(request: web.Request) -> web.Response:
     The Goals tab's remove: kept for one Undo (:func:`api_member_goals_goal_restore`).
     """
     goal_id = request.match_info["goal_id"]
+    removed: list[tuple[str, str]] = []
 
     def fn(slug: str, member: str) -> dict[str, Any]:
-        return member_goals.remove_goal(slug, member, goal_id)["record"]
+        rec = member_goals.remove_goal(slug, member, goal_id)["record"]
+        removed.append((slug, member))
+        return rec
 
-    return await _owner_write(request, "members.goals.write", request.query.get("member", ""), fn)
+    resp = await _owner_write(request, "members.goals.write", request.query.get("member", ""), fn)
+    # The crewmate hears about the removal, so it can stop that work and tidy
+    # milestones that served only that goal (:mod:`kiro_crew.dashboard.goal_setup`).
+    if removed and resp.status == 200:
+        from kiro_crew.dashboard import goal_setup
+
+        goal_setup.schedule_removed_nudge(request.app.get("state"), *removed[0], goal_id)
+    return resp
 
 
 async def api_member_goals_goal_restore(request: web.Request) -> web.Response:

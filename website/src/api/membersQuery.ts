@@ -22,6 +22,8 @@ import type { ErrorReport } from '../utils/errorReport'
  * and sharing one key would let whichever mounted first decide the shape.
  */
 export const MEMBERS_ROSTER_QUERY_KEY = ['kirocrew-agents', 'members-roster'] as const
+/** Prefix of every crewmate's Goals record query (`[...prefix, slug, member]`). */
+export const MEMBER_GOALS_QUERY_PREFIX = ['member-goals'] as const
 
 /** Finite so a return to the page after this long refetches in the
  *  background (and on focus) while the cached roster renders immediately —

@@ -233,6 +233,21 @@ describe('CrewGoalsPane', () => {
     expect(await screen.findByTestId('crew-goals-long-term-text')).toHaveTextContent('A new goal')
   })
 
+  it('keeps an unsaved draft when its goal is removed elsewhere, until Discard', async () => {
+    memberGoals.get.mockResolvedValue(record())
+    memberGoals.setGoal.mockRejectedValueOnce(new Error('missing'))
+    renderWithProviders(<CrewGoalsPane slug="scout" member="scout" name="Scout" />)
+    fireEvent.click(await screen.findByTestId('crew-goals-goal'))
+    fireEvent.change(screen.getByTestId('crew-goals-long-term-input'), { target: { value: 'My unsaved words' } })
+    // Another tab removed the goal: the refused save refetches a record without it.
+    memberGoals.get.mockResolvedValue(record({ goals: [], removed_goal: { id: 'g00000001', text: 'Keep the release notes current', at: NOW } }))
+    fireEvent.click(screen.getByTestId('crew-goals-long-term-save'))
+    expect(await screen.findByTestId('crew-goals-page-gone')).toBeInTheDocument()
+    expect(screen.getByTestId('crew-goals-gone-draft')).toHaveValue('My unsaved words')
+    fireEvent.click(screen.getByTestId('crew-goals-gone-discard'))
+    await waitFor(() => expect(screen.queryByTestId('crew-goals-page-gone')).toBeNull())
+  })
+
   it('saves a goal by its id against the text it started editing from', async () => {
     memberGoals.get.mockResolvedValue(record())
     memberGoals.setGoal.mockResolvedValue(record({ goals: [goal(1, 'Mine')] }))
