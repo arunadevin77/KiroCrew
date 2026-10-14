@@ -121,18 +121,95 @@ describe('ChatEmbed optimistic own message', () => {
     expect(rows()).toEqual(['user:first', 'assistant:reply', 'user:hello there', 'user*:hello there'])
   })
 
-  it('steps aside for the queue entry when the send lands behind a running turn', async () => {
-    mockPost.mockResolvedValue({ ok: true, queued: true })
+  it('on a busy slot shows the send as one queue card, which the server entry takes over in place', async () => {
+    mockGet.mockResolvedValue({ messages: earlier, queue: [], running: true, title: '' })
+    let resolvePost: (v: unknown) => void = () => {}
+    mockPost.mockReturnValue(new Promise(r => { resolvePost = r }))
     await mount()
     await sendText('later please')
+    // Shown at once, in the queue strip only -- never in the transcript.
+    expect(rows()).toEqual(['user:first', 'assistant:reply'])
+    const card = screen.getByTestId('queue-card')
+    expect(card).toHaveTextContent('later please')
     mockGet.mockResolvedValue({
       messages: earlier,
-      queue: [{ id: 'q1', content: 'later please', meta: { sendId: lastSendId() } }],
+      queue: [{ id: 'q9', content: 'later please' }],
+      running: true,
+      title: '',
+    })
+    await act(async () => { resolvePost({ ok: true, queued: true, queue_id: 'q9' }) })
+    await nextPoll()
+    // Still exactly one card, and the same element: it did not leave and re-enter.
+    expect(screen.getAllByTestId('queue-card')).toHaveLength(1)
+    expect(screen.getByTestId('queue-card')).toBe(card)
+    expect(rows()).toEqual(['user:first', 'assistant:reply'])
+  })
+
+  it('keeps both copies when a second send goes out before the poll shows the first', async () => {
+    mockPost.mockResolvedValue({ ok: true })
+    await mount()
+    await sendText('one')
+    await settle()
+    const firstId = lastSendId()
+    await sendText('two')
+    await settle()
+    expect(rows()).toEqual(['user:first', 'assistant:reply', 'user*:one', 'user*:two'])
+    // The poll shows only the first: its copy is replaced, the second stays.
+    mockGet.mockResolvedValue({
+      messages: [...earlier, { role: 'user', content: 'one', cls: 'user', meta: { sendId: firstId } }],
       running: true,
       title: '',
     })
     await nextPoll()
+    expect(rows()).toEqual(['user:first', 'assistant:reply', 'user:one', 'user*:two'])
+  })
+
+  it('keeps both queue cards in place when two busy-slot sends go out before the poll shows either', async () => {
+    mockGet.mockResolvedValue({ messages: earlier, queue: [], running: true, title: '' })
+    mockPost.mockResolvedValueOnce({ ok: true, queued: true, queue_id: 'q1' })
+      .mockResolvedValueOnce({ ok: true, queued: true, queue_id: 'q2' })
+    await mount()
+    await sendText('one')
+    await settle()
+    const cardOne = screen.getByTestId('queue-card')
+    await sendText('two')
+    await settle()
+    // The poll then shows only the first entry. Both cards stay, and the first
+    // is the same element it was before the second send: it never left.
+    mockGet.mockResolvedValue({ messages: earlier, queue: [{ id: 'q1', content: 'one' }], running: true, title: '' })
+    await nextPoll()
+    const cards = screen.getAllByTestId('queue-card')
+    expect(cards).toHaveLength(2)
+    expect(cards[0]).toBe(cardOne)
+    expect(cards[1]).toHaveTextContent('two')
+  })
+
+  it('does not bring the card back once the server entry has been seen and leaves', async () => {
+    // The entry is cancelled from another surface: the poll then has neither
+    // the entry nor a row, and the optimistic card must not reappear.
+    mockGet.mockResolvedValue({ messages: earlier, queue: [], running: true, title: '' })
+    mockPost.mockResolvedValue({ ok: true, queued: true, queue_id: 'q9' })
+    await mount()
+    mockGet.mockResolvedValue({ messages: earlier, queue: [{ id: 'q9', content: 'later please' }], running: true, title: '' })
+    await sendText('later please')
+    await nextPoll()
+    expect(screen.getAllByTestId('queue-card')).toHaveLength(1)
+    mockGet.mockResolvedValue({ messages: earlier, queue: [], running: true, title: '' })
+    await nextPoll()
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(screen.queryAllByTestId('queue-card')).toHaveLength(0)
+  })
+
+  it('moves to the queue strip when an idle-looking slot answers queued', async () => {
+    let resolvePost: (v: unknown) => void = () => {}
+    mockPost.mockReturnValue(new Promise(r => { resolvePost = r }))
+    await mount()
+    await sendText('later please')
+    expect(rows()).toEqual(['user:first', 'assistant:reply', 'user*:later please'])
+    await act(async () => { resolvePost({ ok: true, queued: true, queue_id: 'q9' }) })
+    await settle()
     expect(rows()).toEqual(['user:first', 'assistant:reply'])
+    expect(screen.getByTestId('queue-card')).toHaveTextContent('later please')
   })
 
   it('drops the optimistic row when the send is refused, leaving only the error row', async () => {

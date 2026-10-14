@@ -116,10 +116,14 @@ inserts a line break, and an Enter used to commit an input method editor (IME)
 candidate does not send. The box grows with the draft up to 240 pixels, then
 keeps its height and scrolls vertically.
 
-A sent message appears in the transcript at once, as an optimistic row at the
-end. The embed keeps that row until a poll returns this send by its `sendId`:
-its own `user` row, or its queue entry when the slot was busy. That server copy
-replaces it. The swap does not depend on when the send call settles. A send
+A sent message appears at once, where the server's copy will appear. On an idle
+slot that is a row at the end of the transcript. On a busy slot it is a queued
+card in the queue strip above the composer, and a `queued` receipt moves it
+there too. The embed keeps it until a poll returns this send: its own `user`
+row by `sendId`, or its queue entry by the receipt's `queue_id` (the server
+entry then takes over the same card). Once seen, it does not come back. Each
+send is held on its own, so a second send made before the poll shows the first
+leaves the first's copy in place. A send
 whose text goes back to the composer (refused, or delivery not confirmed) drops
 the row. An `onSend` handler posts on its own endpoint, so no `sendId` comes
 back; there the server copy is a new `user` row with the same text, one that
