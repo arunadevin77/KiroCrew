@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import RecoveryCard, { INJECT_KIND_OPENS_TURN, injectOpensTurn, parseRecoveryMessage, resolveInjectCard } from '../pages/chat/RecoveryCard'
@@ -361,7 +361,17 @@ describe('RecoveryCard', () => {
  * behaviour is covered above.
  */
 describe('ChatPage – recovery card wiring', () => {
-  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../pages/ChatPage.tsx'), 'utf8')
+  // ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings),
+  // so the pins read the page and those owners.
+  const pagesDir = resolve(dirname(fileURLToPath(import.meta.url)), '../pages')
+  const ownerDir = resolve(pagesDir, 'chat/page')
+  const src = [
+    readFileSync(resolve(pagesDir, 'ChatPage.tsx'), 'utf8'),
+    ...readdirSync(ownerDir).filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f)).sort()
+      .map(f => readFileSync(resolve(ownerDir, f), 'utf8')),
+    ...readdirSync(pagesDir).filter(f => /^useChatPage.*\.tsx?$/.test(f) && !/\.test\./.test(f)).sort()
+      .map(f => readFileSync(resolve(pagesDir, f), 'utf8')),
+  ].join('\n')
 
   it('imports the card and its shared resolver', () => {
     // Since chat-core P5-b the recovery row is a shared dashboard entry
@@ -369,7 +379,7 @@ describe('ChatPage – recovery card wiring', () => {
     // list, so the imports live in the factory and the page imports the factory.
     const factory = readFileSync(resolve(__dirname, '../pages/chat/transcriptRenderers.tsx'), 'utf8')
     expect(factory).toMatch(/import\s+RecoveryCard\s*,\s*\{[^}]*\bresolveInjectCard\b[^}]*\}\s*from\s*['"]\.\/RecoveryCard['"]/)
-    expect(src).toMatch(/import \{ createTranscriptRenderers \} from '\.\/chat\/transcriptRenderers'/)
+    expect(src).toMatch(/import \{ createTranscriptRenderers \} from '\.\.\/transcriptRenderers'/)
   })
 
   it('routes inject rows through the shared resolver to the card', () => {

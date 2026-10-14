@@ -12298,6 +12298,7 @@
       "mcp_session_started": "Avviato in questa sessione",
       "message_queued_until_session_ready": "{{error}}. Il tuo messaggio è in coda e verrà inviato quando una sessione sarà pronta — ma è conservato solo in questa scheda, quindi se cambi pagina o ricarichi dovrai digitarlo di nuovo.",
       "message_saved_as_draft": "{{error}}. Il tuo messaggio è salvato come bozza nella sessione da cui lo hai inviato.{{extra}}",
+      "knowledge_context_not_kept": "Il suo contesto delle conoscenze non è stato mantenuto — sceglilo di nuovo prima di inviarlo ancora.",
       "more_actions": "Altre azioni",
       "update_entry_load_failed": "Impossibile caricare la voce di aggiornamento. Controlla gli aggiornamenti nelle Impostazioni.",
       "no_results": "Nessun risultato",

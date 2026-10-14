@@ -4614,23 +4614,37 @@ scroll shell) and the owners under `pages/chat/page/`:
 | `composerStaging.ts` | What the composer holds besides its text (staged files, pastes, session references, the snip, upload notices); folder chips derived from `@rel/` tokens |
 | `composerFileMentions.ts` | Caret insertion of file and folder mentions, file-chip ↔ alias reconciliation, the chip removes |
 | `launchIntake.ts` | Text arriving from outside a keystroke: Redux `pendingInput`, a popout's `?prefill=`, the error hand-off FIFO, an app's launch intent, the auto-send those arm, a widget's prefill |
-| `eventBridges.ts` | Window and Electron events: the Web Preview feed, built-in browser reachability, run-in-terminal and the redaction cards' terminal / composer / reload requests; cold file-tab reads |
-| `busyTurnControls.ts` | Steer, question-card answers, stop and the queued-message cards on a busy slot |
+| `eventBridges.ts` | Window and Electron events: the Web Preview feed, built-in browser reachability, the run-in-terminal bridge (its event-time config is `panelTabs.ts`'s) and the redaction cards' terminal / composer / reload requests; cold file-tab reads |
+| `busyTurnControls.ts` | The busy-turn controls: the steer press (it posts through `turnActions.ts`'s steer mutation), question-card answers, stop and the queued-message cards on a busy slot |
 | `turnRecovery.ts` | Continue and the fixes an error row offers |
 | `transcriptRows.ts` | Turn grouping, the latched running flag, stable row keys and the app-bearing turn's anchor |
-| `transcriptJumps.ts` | Search-result, "Show in chat" and `?msg=` jumps |
+| `transcriptJumps.ts` | Jumps that arrive from outside the transcript: search results, "Show in chat" and `?msg=` |
 | `composerChips.ts`, `sessionRosters.ts`, `sessionControls.ts`, `sessionAutomation.ts`, `followUpChips.ts`, `welcomeState.ts` | The composer's model / effort / project chips and pin-to-agent write; this machine's agent and model rosters; app session controls; the session's automation; follow-up chips; the welcome screen's suggestions |
 | `notificationTs.ts` | `uniqueNotificationTs`, a notification id unique within the tab |
 | `composerDock.tsx`, `ChatPaneNotices.tsx`, `MobileTopBar.tsx` | The composer dock's above-band (its measurement is `pages/chat/composerDockMetrics.ts`, shared with `ChatPane`); the pane's notices; the phone bar's share of the single top bar |
+| `pageEnvironment.ts` | What the page reads before anything else (router, store, provider, viewport and keyboard inset, the shell's phone bar slots, the listed sessions, the active slot and its guide facts, the MCP App panel config), and the dashboard-config switches (split view, link previews, social share, Auto (Jev) send, Connections), composer file arrivals, pop-out state and the plan task id |
+| `activeSlotState.ts` | The active session's store-backed state: messages and prompt history, run / stop / load flags, the cards above the composer, turn and tool-call disclosure, the ambient tip, split-view and crew-window state, context usage, the older-history cursor, the history list |
+| `composerHost.ts` | The main composer's host state: its live draft store and slot-switch refs (`ComposerDraftSync` mirrors each committed draft), the intake refs and prefill hint, the Side Chat hand-off, and the voice host options |
+| `sessionPicks.ts` | The model picker's roster, the agent / model / project staged for the next new session, and the choices made about a session (answer an approval, switch agent or model, pick the project) |
+| `turnActions.ts` | The steer mutation and its receipt adapter (with the action-error slot and the staged message quote), the refused-press notice, and regenerate |
+| `composerSend.ts` | `send()`, the main composer's turn submission, with the turn-start and running-state effects ahead of it |
+| `panelTabs.ts` | The run-in-terminal bridge's event-time config (this chat's project, the terminal config) and the MCP App tab reveal |
+| `followupCardActions.ts` | The follow-up and folder-suggestion cards' actions |
+| `paneLayout.tsx` | The pane's layout state (sidebar pin state / width, side panel dock, rename editor, split view) and the panel widths, phone sessions toggles and memory-mode chip |
+| `messageActions.ts` | The dock clearance, selection Quote / Ask, edit-and-resend, the search highlight context, the `toggle-pin-chat-sidebar` listener (the pin state is `paneLayout.tsx`'s), stream heat, the side panel toggle, read aloud and apply plan |
+| `transcriptPaging.ts` | The scroller refs and the virtualizer, and every door that pages older history (sentinel, earlier-messages bar, walk poll, retry); `shouldAutoFillOlder` |
+| `transcriptPins.ts` | Turn navigation, pins, and the jumps that start inside the transcript: to a pinned, quoted or last-edited message |
+| `transcriptRendering.tsx` | The renderer registry, `renderMessage`, turn items and the measurement farm's rows |
+| `sessionsDrawer.ts` | The sessions drawer and the side panel's phone overlay, their swipes, the sidebar context actions and the hover flyout |
 
-ChatPage keeps the send path, its `switchSlot` sites (the signed-token flow,
-fork, the error hand-off, the side chat, the worktree follow-up, split view and
-the flyout; the `?sid=` ones are the session controller's), the
-transcript renderers and `renderMessage`, paging and pins, the model picker, the
-drawers and the page layout. It calls each owner hook where its inline code ran,
-because React runs a component's effects in declaration order and several are
-ordered against each other (the signed-token intake strips the whole query, so
-`usePendingInputIntake`'s `?prefill=` read runs before it).
+ChatPage keeps its `switchSlot` sites (the signed-token flow, fork, the error
+hand-off, the side chat, the worktree follow-up, split view and the flyout; the
+`?sid=` ones are the session controller's), the three controllers' calls, the
+listbox keyboards and the MCP App auto-open effect (each reads a value declared
+after it), and the page layout. Every owner hook is called where its statements
+ran, because React runs a component's effects in declaration order and several
+are ordered against each other (the signed-token intake strips the whole query,
+so `usePendingInputIntake`'s `?prefill=` read runs before it).
 `website/src/test/ChatPage.pageOwners.test.ts` pins the owners' call sequence
 with that inline effect's place in it, the facade exports, that no owner imports
 the facade or switches slots, and that nothing outside `pages/chat/page/` except ChatPage imports the owners (owners may import each other).

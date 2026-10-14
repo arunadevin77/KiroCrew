@@ -20,7 +20,7 @@
  *    roles the registry claims, or are allowlisted as chrome with a reason.
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defaultMessageRenderers } from '../app-sdk/messageRenderers'
 
@@ -74,7 +74,17 @@ const PAGE_OVERRIDE_IDS: Record<string, string> = {
   undrawn: 'narrower than the SDK default: `system` / `done` stay unclaimed so they keep the bubble fall-through',
 }
 
-const src = readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8')
+// ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings),
+// so the pins read the page and those owners.
+const PAGES_DIR = resolve(__dirname, '../pages')
+const OWNER_DIR = resolve(PAGES_DIR, 'chat', 'page')
+const src = [
+  readFileSync(resolve(PAGES_DIR, 'ChatPage.tsx'), 'utf8'),
+  ...readdirSync(OWNER_DIR).filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f)).sort()
+    .map(f => readFileSync(resolve(OWNER_DIR, f), 'utf8')),
+  ...readdirSync(PAGES_DIR).filter(f => /^useChatPage.*\.ts$/.test(f) && !/\.test\./.test(f)).sort()
+    .map(f => readFileSync(resolve(PAGES_DIR, f), 'utf8')),
+].join('\n')
 
 function rendererBlock(): string {
   const start = src.indexOf('fallback: bubbleRenderer } = useMemo')
@@ -118,8 +128,8 @@ function hostEntryIds(): string[] {
 
 describe('chat role parity (ChatPage consumes the app-sdk registry)', () => {
   it('ChatPage dispatches rows through the registry, not an if-chain of its own', () => {
-    expect(src).toMatch(/import \{[^}]*\bmergeRenderers\b[^}]*\} from '\.\.\/app-sdk\/messageRenderers'/)
-    expect(src).toMatch(/import \{[^}]*\bresolveRenderer\b[^}]*\} from '\.\.\/app-sdk\/messageRenderers'/)
+    expect(src).toMatch(/import \{[^}]*\bmergeRenderers\b[^}]*\} from '\.\.\/\.\.\/\.\.\/app-sdk\/messageRenderers'/)
+    expect(src).toMatch(/import \{[^}]*\bresolveRenderer\b[^}]*\} from '\.\.\/\.\.\/\.\.\/app-sdk\/messageRenderers'/)
     expect(src).toContain('resolveRenderer(m, chatPageRenderers)')
     // Variant flags INSIDE one entry (`const isUser = m.role === 'user'`) are
     // fine; a dispatch statement is not -- it would select a row the registry

@@ -415,7 +415,8 @@ shows literally — the same trade-off inline file mentions make.
 | `website/src/utils/fileTokens.ts` | Attachment-marker owner: file AND dir token parse/serialize/resolve |
 | `website/src/utils/chatFileTokenDrafts.ts` | Per-slot persistence of file-chip aliases beside the staged-file drafts |
 | `website/src/chat-core/composer/outgoingTurn.ts` | Send and steer serialization: `[attached_dir N]` + `meta.dirs` on a send, `@rel/` kept on the text-only steer |
-| `website/src/pages/ChatPage.tsx` | The host that composes the owners below; sends the outgoing turn |
+| `website/src/pages/ChatPage.tsx` | The host that composes the owners below |
+| `website/src/pages/chat/page/composerSend.ts` | Sends the outgoing turn (`buildOutgoingTurn`, `sendTurn`) |
 | `website/src/pages/chat/page/composerStaging.ts` | Staged-resource state; folder chips derived from `@rel/` tokens (`useStagedFolderRefs`) |
 | `website/src/pages/chat/page/composerFileMentions.ts` | Caret mention insertion, file-chip ↔ alias reconciliation, chip remove and its undo |
 | `website/src/pages/chat/page/composerDrafts.ts` | Per-slot draft stores, including the picked-file aliases, and their slot-switch save/restore |

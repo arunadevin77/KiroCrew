@@ -57,7 +57,7 @@ const REGIONS = [
   { name: 'header-fade', start: '<EdgeFade side="top"', end: '{/* Fold sentinel' },
   // The shell IMPORT on the page — one line, but deleting it is precisely the
   // "extraction silently undone" mutation, so it gets its own region.
-  { name: 'shell-import', start: "import TranscriptScrollShell", end: 'import { useVirtualChat' },
+  { name: 'shell-import', start: "import TranscriptScrollShell", end: 'import TurnNavigationMinimap' },
   // The prop-plumbing seam the split invented: the wiring interface, the
   // component signature, and the destructured parameter list. This block did
   // not exist pre-extraction — anchoring the skeleton region below it would

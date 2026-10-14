@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
@@ -33,7 +33,17 @@ import { resolve } from 'node:path'
  * Asserted against SOURCE TEXT: the wiring spans a constant, a hook and two JSX
  * attributes, and happy-dom has no layout for a ResizeObserver to fire against.
  */
-const CHAT_PAGE = readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8')
+// ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings), so
+// the pins read the page and those owners.
+const PAGES_DIR = resolve(__dirname, '../pages')
+const OWNER_DIR = resolve(PAGES_DIR, 'chat/page')
+const CHAT_PAGE = [
+  readFileSync(resolve(PAGES_DIR, 'ChatPage.tsx'), 'utf8'),
+  ...readdirSync(OWNER_DIR).filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f)).sort()
+    .map(f => readFileSync(resolve(OWNER_DIR, f), 'utf8')),
+  ...readdirSync(PAGES_DIR).filter(f => /^useChatPage.*\.tsx?$/.test(f) && !/\.test\./.test(f)).sort()
+    .map(f => readFileSync(resolve(PAGES_DIR, f), 'utf8')),
+].join('\n')
 // The dock's measurement and clearance live in one module shared with the
 // pane; the page mounts the box.
 const DOCK = readFileSync(resolve(__dirname, '../pages/chat/composerDockMetrics.ts'), 'utf8')

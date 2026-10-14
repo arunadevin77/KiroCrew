@@ -81,7 +81,7 @@ globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.res
 
 import { closeHoldForUrl } from '../pages/chat/useChatPageSessionController'
 import ChatPage from '../pages/ChatPage'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { i18nT } from '../i18n/t'
 import { api } from '../api/client'
@@ -278,7 +278,18 @@ describe('ChatPage ?sid= + ?msg= deep link across a slot switch', () => {
  */
 describe('paging-failure notice by jump origin', () => {
   const GONE = /no longer/i
-  const src = readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8')
+  // ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings), so the pins read the page and those owners.
+  const src = [
+    readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8'),
+    ...readdirSync(resolve(__dirname, '../pages/chat/page'))
+      .filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f))
+      .sort()
+      .map(f => readFileSync(resolve(__dirname, '../pages/chat/page', f), 'utf8')),
+    ...readdirSync(resolve(__dirname, '../pages'))
+      .filter(f => /^useChatPage.*\.ts$/.test(f) && !/\.test\./.test(f))
+      .sort()
+      .map(f => readFileSync(resolve(__dirname, '../pages', f), 'utf8')),
+  ].join('\n')
 
   it('routes the link origin to the retry copy, not to the not-found writer', () => {
     expect(src).toContain("pendingPinnedJump.origin === 'earlier' || pendingPinnedJump.origin === 'link'")

@@ -19,7 +19,7 @@
  * own guarantee. Both are pinned below.
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ReactElement } from 'react'
 import type { ChatMessage } from '../types'
@@ -599,10 +599,17 @@ describe('the single-chat surface renders from THIS row set', () => {
   // a row added here reaches the page and every pane at once, and a page-only
   // row is an explicit entry AFTER the spread. What can still drift is the
   // spread itself -- so pin that, not the roles.
-  const chatPageSrc = readFileSync(join(__dirname, '..', 'pages', 'ChatPage.tsx'), 'utf8')
+  // The page composes owners under pages/chat/page/ (and its useChatPage* siblings), so the pins read the page and those owners.
+  const PAGES = join(__dirname, '..', 'pages')
+  const OWNERS = join(PAGES, 'chat', 'page')
+  const chatPageSrc = [
+    readFileSync(join(PAGES, 'ChatPage.tsx'), 'utf8'),
+    ...readdirSync(OWNERS).filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f)).sort().map(f => readFileSync(join(OWNERS, f), 'utf8')),
+    ...readdirSync(PAGES).filter(f => /^useChatPage.*\.ts$/.test(f) && !/\.test\./.test(f)).sort().map(f => readFileSync(join(PAGES, f), 'utf8')),
+  ].join('\n')
 
   it('ChatPage spreads createTranscriptRenderers into its host list, ahead of its page-only rows', () => {
-    expect(chatPageSrc).toMatch(/import \{ createTranscriptRenderers \} from '\.\/chat\/transcriptRenderers'/)
+    expect(chatPageSrc).toMatch(/import \{ createTranscriptRenderers \} from '\.\.\/transcriptRenderers'/)
     const list = chatPageSrc.indexOf('const renderers = mergeRenderers([')
     const spread = chatPageSrc.indexOf('...shared,', list)
     const bubble = chatPageSrc.indexOf('\n      bubble,\n    ])', list)

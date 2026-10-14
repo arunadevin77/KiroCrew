@@ -273,10 +273,23 @@ describe('the remaining scope owners (phase 3)', () => {
     ['members.roster-phone', '../pages/members/MembersPage.tsx'],
     ['menu:shell.mobile-menu', '../App.tsx'],
   ]
-  const sources = import.meta.glob(
+  const listed = import.meta.glob(
     ['../components/ChatInput.tsx', '../pages/ChatPage.tsx', '../shell/nav/railChrome.tsx', '../components/BottomTerminalPanel.tsx', '../pages/members/MembersPage.tsx', '../App.tsx', '../pages/ChatSidebar.tsx'],
     { query: '?raw', import: 'default', eager: true },
   ) as Record<string, string>
+  // ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings),
+  // so its row reads the page and those owners.
+  const chatPageOwners = import.meta.glob(
+    ['../pages/chat/page/*.ts', '../pages/chat/page/*.tsx', '../pages/useChatPage*.ts'],
+    { query: '?raw', import: 'default', eager: true },
+  ) as Record<string, string>
+  const sources: Record<string, string> = {
+    ...listed,
+    '../pages/ChatPage.tsx': [
+      listed['../pages/ChatPage.tsx'],
+      ...Object.keys(chatPageOwners).filter(k => !/\.test\./.test(k)).sort().map(k => chatPageOwners[k]),
+    ].join('\n'),
+  }
 
   it.each(OWNERS)('%s is a compiled scope and its owner reports it', (id, file) => {
     expect(Object.hasOwn(GUIDE_REVEAL_SCOPES, id)).toBe(true)

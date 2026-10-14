@@ -12298,6 +12298,7 @@
       "mcp_session_started": "Iniciado nesta sessão",
       "message_queued_until_session_ready": "{{error}}. Sua mensagem está na fila e será enviada quando uma sessão estiver pronta — mas ela fica guardada apenas nesta aba, então se você sair da página ou recarregar será necessário digitá-la de novo.",
       "message_saved_as_draft": "{{error}}. Sua mensagem foi salva como rascunho na sessão de onde você a enviou.{{extra}}",
+      "knowledge_context_not_kept": "O contexto de conhecimento dela não foi mantido — selecione-o de novo antes de reenviar.",
       "more_actions": "Mais ações",
       "update_entry_load_failed": "Não foi possível carregar a entrada de atualização. Verifique se há atualizações nas Configurações.",
       "no_results": "Nenhum resultado",

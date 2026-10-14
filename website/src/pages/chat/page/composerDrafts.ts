@@ -158,7 +158,7 @@ export function useComposerDraftLifecycle({
     setPendingFiles, setPasteBlocks, setPendingSessions, setUploadError, setUploadHint,
   } = staging
   // Persist the composer text against the slot it BELONGS to (composerSlotRef),
-  // not the live activeSlot (see the composerSlotRef note in ChatPage).
+  // not the live activeSlot (see the composerSlotRef note in composerHost.ts).
   // The draft key is composerSlotRef, which a ref does not need to be a
   // dependency of; the slot-change effect below handles the transition.
   // Runs from `ComposerDraftSync`'s effect, a child of this page, so it lands

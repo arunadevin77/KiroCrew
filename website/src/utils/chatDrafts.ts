@@ -81,7 +81,7 @@ export function appendTypedText(existing: string, typed: string): string {
  * one flush — the pane shows it while ChatPage also persists it into the hidden
  * single-session draft, resurfacing as a duplicate when split view collapses.
  * While split view is active the grid pane is the sole consumer, so ChatPage
- * must skip. See website/src/pages/ChatPage.tsx (the mainComposerAppend effect).
+ * must skip. See website/src/pages/chat/page/composerHost.ts (the mainComposerAppend effect).
  */
 export function chatPageShouldConsumeHandoff(
   splitMode: boolean,

@@ -12298,6 +12298,7 @@
       "mcp_session_started": "Démarré dans cette session",
       "message_queued_until_session_ready": "{{error}}. Ton message est en file d’attente et sera envoyé dès qu’une session sera prête — mais il n’est conservé que dans cet onglet, donc si tu quittes la page ou la recharges, tu devras le ressaisir.",
       "message_saved_as_draft": "{{error}}. Ton message est enregistré comme brouillon dans la session depuis laquelle tu l’as envoyé.{{extra}}",
+      "knowledge_context_not_kept": "Son contexte de connaissances n’a pas été conservé — choisis-le à nouveau avant de renvoyer le message.",
       "more_actions": "Plus d'actions",
       "update_entry_load_failed": "Impossible de charger l'entrée de mise à jour. Recherche les mises à jour dans les Réglages.",
       "no_results": "Aucun résultat",

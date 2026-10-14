@@ -23,7 +23,18 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const chatPageSrc = readFileSync(resolve(here, '../pages/ChatPage.tsx'), 'utf8')
+// ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings), so the pins read the page and those owners.
+const chatPageSrc = [
+  readFileSync(resolve(here, '../pages/ChatPage.tsx'), 'utf8'),
+  ...readdirSync(resolve(here, '../pages/chat/page'))
+    .filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f))
+    .sort()
+    .map(f => readFileSync(resolve(here, '../pages/chat/page', f), 'utf8')),
+  ...readdirSync(resolve(here, '../pages'))
+    .filter(f => /^useChatPage.*\.ts$/.test(f) && !/\.test\./.test(f))
+    .sort()
+    .map(f => readFileSync(resolve(here, '../pages', f), 'utf8')),
+].join('\n')
 const sidebarSrc = readFileSync(resolve(here, '../pages/chat-sidebar/SessionRow.tsx'), 'utf8')
 /** The sidebar's own files joined: the shell and the owners under pages/chat-sidebar/
  *  it composes (the row and its status builders live in chat-sidebar/SessionRow.tsx). */

@@ -12298,6 +12298,7 @@
       "mcp_session_started": "Iniciado en esta sesión",
       "message_queued_until_session_ready": "{{error}}. Tu mensaje está en cola y se enviará cuando haya una sesión lista — pero solo se guarda en esta pestaña, así que si sales o recargas tendrás que volver a escribirlo.",
       "message_saved_as_draft": "{{error}}. Tu mensaje se guardó como borrador en la sesión desde la que lo enviaste.{{extra}}",
+      "knowledge_context_not_kept": "El contexto de conocimiento del mensaje no se conservó: vuelve a elegirlo antes de reenviarlo.",
       "more_actions": "Más acciones",
       "update_entry_load_failed": "No se pudo cargar la entrada de actualización. Busca actualizaciones en Ajustes.",
       "no_results": "Sin resultados",

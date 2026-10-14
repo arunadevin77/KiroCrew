@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import React from 'react'
 import TranscriptScrollShell from '../pages/chat/TranscriptScrollShell'
@@ -173,7 +173,18 @@ describe('TranscriptScrollShell DOM contract', () => {
 })
 
 describe('ChatPage invocation: slot membership and prop threading', () => {
-  const src = readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8')
+  // ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings), so the pins read the page and those owners.
+  const src = [
+    readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8'),
+    ...readdirSync(resolve(__dirname, '../pages/chat/page'))
+      .filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f))
+      .sort()
+      .map(f => readFileSync(resolve(__dirname, '../pages/chat/page', f), 'utf8')),
+    ...readdirSync(resolve(__dirname, '../pages'))
+      .filter(f => /^useChatPage.*\.ts$/.test(f) && !/\.test\./.test(f))
+      .sort()
+      .map(f => readFileSync(resolve(__dirname, '../pages', f), 'utf8')),
+  ].join('\n')
   const open = src.indexOf('<TranscriptScrollShell')
   const close = src.indexOf('</TranscriptScrollShell>')
   const inv = src.slice(open, close)

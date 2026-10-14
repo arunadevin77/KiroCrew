@@ -4,7 +4,7 @@
  * These cover the *visual + accessibility* affordance only — the offline
  * tooltip, the aria-disabled state, and the offline aria-label. The behavioral
  * guards that actually prevent a server-dependent action while offline (the
- * `if (!connected) return` bails in ChatPage.send(), the URL/timer/auto-create
+ * `if (!connected) return` bails in send() (pages/chat/page/composerSend.ts), the URL/timer/auto-create
  * effects, and the sidebar row handlers) are deliberately NOT centralized here:
  * they are layered defense-in-depth at distinct entry points and sinks, not
  * duplication. Collapsing them would reopen the offline draft-loss path.

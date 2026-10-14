@@ -16,14 +16,28 @@
 // files together go red for every meaningful line mutation in the region.
 
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+
+// ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings), so the pins read the page and those owners.
+const PAGE_FILES = [
+  '../pages/ChatPage.tsx',
+  ...readdirSync(resolve(__dirname, '../pages/chat/page'))
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\./.test(f))
+    .sort()
+    .map((f) => `../pages/chat/page/${f}`),
+  ...readdirSync(resolve(__dirname, '../pages'))
+    .filter((f) => /^useChatPage.*\.ts$/.test(f) && !/\.test\./.test(f))
+    .sort()
+    .map((f) => `../pages/${f}`),
+]
+const PAGE = PAGE_FILES.map((f) => readFileSync(resolve(__dirname, f), 'utf8')).join('\n')
 
 // The shell's source may live inline in ChatPage or in extracted components —
 // the net follows the CODE, not the file: assertions are identical either way,
 // and a migration retargets nothing here.
 const SHELL_FILES = [
-  '../pages/ChatPage.tsx',
+  ...PAGE_FILES,
   '../pages/chat/TranscriptScrollShell.tsx', // post-extraction home (absent pre-extraction)
   '../app-sdk/ChatScrollChrome.tsx',
 ]
@@ -65,7 +79,7 @@ describe('scroll shell: header fade', () => {
     // pinned band: its opaque edge would sit under a one-line card and mask
     // the transcript line below it. It overlays from the fold sentinel in a
     // zero-height relative wrapper, and the pinned card paints above it.
-    const page = readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8')
+    const page = PAGE
     expect(page).not.toContain('{titleInTopbar && <EdgeFade side="top" anchor="below" />}')
     const fold = page.indexOf('<div ref={pinFoldRef} aria-hidden className="h-0" />')
     expect(fold, 'fold sentinel not found').toBeGreaterThanOrEqual(0)
@@ -274,7 +288,7 @@ describe('scroll shell: floating dock and jump pill', () => {
     // No bottom fade under the floating dock: the transcript reads through the
     // glass. Scoped to the page — the shared <EdgeFade side="bottom"> in
     // ChatScrollChrome stays for its other consumers (ChatPane).
-    const page = readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8')
+    const page = PAGE
     expect(page).not.toContain('<EdgeFade side="bottom"')
     expect(page).not.toContain('bg-gradient-to-t from-bg')
   })

@@ -11940,6 +11940,7 @@
       "mcp_session_started": "このセッションで起動済み",
       "message_queued_until_session_ready": "{{error}}。メッセージはキューに入り、セッションの準備ができ次第送信されます — ただしこのタブ内にのみ保持されるため、他のページに移動したり再読み込みすると再入力が必要になります。",
       "message_saved_as_draft": "{{error}}。メッセージは送信元のセッションで下書きとして保存されました。{{extra}}",
+      "knowledge_context_not_kept": "添付したナレッジコンテキストは保持されませんでした。再送信する前にもう一度選択してください。",
       "more_actions": "その他の操作",
       "update_entry_load_failed": "アップデート項目を読み込めませんでした。設定でアップデートを確認してください。",
       "no_results": "結果なし",

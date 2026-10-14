@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
@@ -25,7 +25,18 @@ import { resolve } from 'node:path'
  * the comparison BETWEEN them.
  */
 const SRC = (p: string) => readFileSync(resolve(__dirname, '..', p), 'utf8')
-const CHAT_PAGE = SRC('pages/ChatPage.tsx')
+// ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings), so the pins read the page and those owners.
+const CHAT_PAGE = [
+  SRC('pages/ChatPage.tsx'),
+  ...readdirSync(resolve(__dirname, '..', 'pages/chat/page'))
+    .filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f))
+    .sort()
+    .map(f => SRC(`pages/chat/page/${f}`)),
+  ...readdirSync(resolve(__dirname, '..', 'pages'))
+    .filter(f => /^useChatPage.*\.ts$/.test(f) && !/\.test\./.test(f))
+    .sort()
+    .map(f => SRC(`pages/${f}`)),
+].join('\n')
 
 /** The dock root: the one positioned box that floats over the scroller. */
 const DOCK = /<div ref=\{dockRef\} className="([^"]*)" style=\{\{ right: dockGutter \}\} data-testid="composer-dock-root"[^>]*>/.exec(CHAT_PAGE)

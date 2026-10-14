@@ -31,11 +31,17 @@ import { defaultMessageRenderers, resolveRenderer } from '../app-sdk/messageRend
 import type { ChatMessage } from '../types'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const chatPageSrc = readFileSync(resolve(here, '../pages/ChatPage.tsx'), 'utf8')
-// ChatPage's owners (pages/chat/page/), so a page-level banner cannot come back through one of them.
-const ownerSrcs = readdirSync(resolve(here, '../pages/chat/page'))
-  .filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f))
-  .map(f => readFileSync(join(resolve(here, '../pages/chat/page'), f), 'utf8'))
+const pagesDir = resolve(here, '../pages')
+const ownerDir = resolve(pagesDir, 'chat/page')
+// ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings), so the pins read the page and
+// those owners, and a page-level banner cannot come back through one of them.
+const ownerSrcs = [
+  ...readdirSync(ownerDir).filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f)).sort()
+    .map(f => readFileSync(join(ownerDir, f), 'utf8')),
+  ...readdirSync(pagesDir).filter(f => /^useChatPage.*\.tsx?$/.test(f) && !/\.test\./.test(f)).sort()
+    .map(f => readFileSync(join(pagesDir, f), 'utf8')),
+]
+const chatPageSrc = [readFileSync(resolve(pagesDir, 'ChatPage.tsx'), 'utf8'), ...ownerSrcs].join('\n')
 
 function rendererBlock(): string {
   const start = chatPageSrc.indexOf('fallback: bubbleRenderer } = useMemo')

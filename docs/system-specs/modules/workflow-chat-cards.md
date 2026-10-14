@@ -2,7 +2,7 @@
 
 ## Behavior
 
-Workflow launches and completions render as durable inline cards in chat. `transcriptRenderers.tsx::createTranscriptRenderers` is the single owner of card selection (rules `workflow_run_tool` and `workflow_completion`) for both the primary chat surface and SDK transcript hosts; `ChatPage.tsx` only calls it. `TurnBlock.tsx` keeps those items outside collapsed tool and reasoning groups so a launch or completion remains available in either collapse mode.
+Workflow launches and completions render as durable inline cards in chat. `transcriptRenderers.tsx::createTranscriptRenderers` is the single owner of card selection (rules `workflow_run_tool` and `workflow_completion`) for both the primary chat surface and SDK transcript hosts; ChatPage only calls it (from `pages/chat/page/transcriptRendering.tsx`). `TurnBlock.tsx` keeps those items outside collapsed tool and reasoning groups so a launch or completion remains available in either collapse mode.
 
 ### Launch card
 

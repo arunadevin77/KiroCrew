@@ -249,7 +249,13 @@ describe('interactive model visibility', () => {
 
   it('is wired only into ChatPage and ChatPane consumers', () => {
     const root = resolve(process.cwd(), 'src')
-    const chatPage = readFileSync(resolve(root, 'pages/ChatPage.tsx'), 'utf8')
+    // ChatPage composes owners under pages/chat/page/ (and its useChatPage* siblings), so the pins read the page and those owners.
+    const ownerDir = resolve(root, 'pages/chat/page')
+    const chatPage = [
+      readFileSync(resolve(root, 'pages/ChatPage.tsx'), 'utf8'),
+      ...readdirSync(ownerDir).filter(f => /\.tsx?$/.test(f) && !/\.test\./.test(f)).sort().map(f => readFileSync(resolve(ownerDir, f), 'utf8')),
+      ...readdirSync(resolve(root, 'pages')).filter(f => /^useChatPage\w*\.ts$/.test(f)).sort().map(f => readFileSync(resolve(root, 'pages', f), 'utf8')),
+    ].join('\n')
     const chatPane = ['components/useChatPanePickers.ts', 'components/ChatPanePickerMenus.tsx']
       .map(rel => readFileSync(resolve(root, rel), 'utf8')).join('\n')
     // The sidebar, whose bulk model switch lives in pages/chat-sidebar/bulkModelSwitch.tsx:

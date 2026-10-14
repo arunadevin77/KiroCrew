@@ -12119,6 +12119,7 @@
       "mcp_session_started": "In dieser Sitzung gestartet",
       "message_queued_until_session_ready": "{{error}}. Deine Nachricht wartet und wird gesendet, sobald eine Sitzung bereit ist — sie liegt aber nur in diesem Tab, wenn du also weg navigierst oder neu lädst, musst du sie neu eingeben.",
       "message_saved_as_draft": "{{error}}. Deine Nachricht wurde als Entwurf in der Sitzung gespeichert, aus der du sie gesendet hast.{{extra}}",
+      "knowledge_context_not_kept": "Der Wissenskontext der Nachricht wurde nicht übernommen — wähle ihn vor dem erneuten Senden noch einmal aus.",
       "more_actions": "Weitere Aktionen",
       "update_entry_load_failed": "Der Update-Eintrag konnte nicht geladen werden. Prüfe in den Einstellungen auf Updates.",
       "no_results": "Keine Ergebnisse",
