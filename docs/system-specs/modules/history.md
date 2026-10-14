@@ -140,6 +140,27 @@ block sits between rows the page serves, so slot detail serves that page through
 rotated-archive read that fails answers the retryable `503 history_corpus_unreadable`
 instead of a page that silently omits the archive.
 
+### Slot-detail rendered row memo
+
+`dashboard/wire_render.py` keeps rendered row JSON in a process-local bounded
+LRU. Unfilled pages use `_prepare_messages`; a delayed worker fills their rows.
+Filled pages reuse fragments only when the complete source row and render
+context match. The context reuses `_display_redaction_cache_key("")`, so changes
+to that key's redaction dependencies invalidate row fragments too. Workspace
+allowed hosts are also keyed separately: blocked-link restoration reads those
+hosts alone, not their union with policy exemptions. OAuth rows are never
+memoized: every response rechecks live child identity and endpoint approval.
+Owner-view scopes neither read nor fill the memo.
+The per-string cache still serves cold reads, changed rows and other callers.
+The security-posture inventory classifies this module as an internal projection
+of the existing dashboard output sink, not as a separate egress boundary.
+The memo removes the per-string pass and rendered-output encoding on a row hit;
+it still encodes and hashes the source row to detect in-place changes.
+
+Retained fragments are limited to 16 MiB of charged output and 60,000 entries;
+page state is bounded independently. Slot detail joins these JSON fragments
+between separately encoded response fields without changing response bytes.
+
 ### The dashboard transcript window (frontend)
 
 The dashboard renders the rows these pages return through one windowing hook,

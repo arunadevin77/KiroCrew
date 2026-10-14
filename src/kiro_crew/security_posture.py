@@ -2178,6 +2178,10 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         "dashboard/chat_regenerate.py",
         "dashboard/chat_title.py",
         "dashboard/chat_utils.py",
+        # Slot-detail row JSON is an internal render projection, returned by
+        # the existing dashboard handler sink. Its empty-string redaction key
+        # shares that sink's policy context; it opens no separate output path.
+        "dashboard/wire_render.py",
         "dashboard/chat_voice.py",
         # The content-search engines composed into dashboard/handlers/files.py:
         # they redact each hit row, and that facade's api_file_grep, a registered

@@ -1249,15 +1249,38 @@ async def api_chat_slot_detail(request: web.Request) -> web.Response:
         for q in slot._queue
     ]
     context_fields = await _context_snapshot_fields(state, slot)
+    # Imported here, not at module scope: this function runs on the handlers
+    # module's globals (``chat_api.compose``).
+    from kiro_crew.dashboard import wire_render
+
+    # One read shape of this session: the newest page (whatever its size),
+    # an older page by its cursor, or the whole history. Until its row memo
+    # has been filled in the background, it is rendered without the memo.
+    memo_scope = (slot_history_key(slot), before, limit_raw is None and before_raw is None)
+    use_memo, fill = wire_render.plan_read(memo_scope)
 
     def _render(live_child: str) -> str:
-        # Off-loop on purpose. _prepare_messages applies a regex-heavy
-        # redaction battery to the ENTIRE history; on a multi-MB session that
-        # blocked the event loop past the loop-stall watchdog's exit budget
-        # and hard-exited the gateway. json.dumps of the same payload is a
-        # second loop-blocking cost, so it lives in the thread too.
-        prepared = _prepare_messages(messages, running, live_child=live_child, workspace=workspace)
-        return json.dumps(
+        # Off-loop on purpose. Rendering applies a regex-heavy redaction
+        # battery to every row; on a multi-MB session that blocked the event
+        # loop past the loop-stall watchdog's exit budget and hard-exited the
+        # gateway. Serializing the payload is a second loop-blocking cost, so
+        # it lives in the thread too.
+        #
+        # The messages array is serialized on its own, reusing each unchanged
+        # row's rendered text once the page's memo is filled (``wire_render``),
+        # and spliced between the fields before and after it. The result is
+        # byte-for-byte the ``json.dumps`` of the single dict these two halves
+        # are cut from.
+        messages_json = (
+            wire_render.prepare_messages_json(
+                messages, running, live_child=live_child, workspace=workspace
+            )
+            if use_memo
+            else json.dumps(
+                _prepare_messages(messages, running, live_child=live_child, workspace=workspace)
+            )
+        )
+        head = json.dumps(
             {
                 "key": key,
                 # Redacted at emit like every sibling path (_ChatSlot.to_dict
@@ -1268,7 +1291,10 @@ async def api_chat_slot_detail(request: web.Request) -> web.Response:
                 "running": running,
                 **turn_identity,
                 "stopping": stopping,
-                "messages": prepared,
+            }
+        )
+        tail = json.dumps(
+            {
                 "queue": [queue_entry_view(q) for q in queue_snapshot],
                 "total": total,
                 "has_more": has_more,
@@ -1280,6 +1306,7 @@ async def api_chat_slot_detail(request: web.Request) -> web.Response:
                 **context_fields,
             }
         )
+        return "".join((head[:-1], ', "messages": ', messages_json, ", ", tail[1:]))
 
     # Per-slot single-flight: concurrent refetches of the same slot (WS
     # reconnect + switchSlot + chat_done all refetch) queue here instead of
@@ -1292,4 +1319,8 @@ async def api_chat_slot_detail(request: web.Request) -> web.Response:
         # is two dict lookups plus a returncode read.
         live_child = _live_child_instance(state, slot)
         body = await asyncio.to_thread(_render, live_child)
+    if fill:
+        wire_render.schedule_fill(
+            memo_scope, messages, running, live_child=live_child, workspace=workspace
+        )
     return web.Response(text=body, content_type="application/json")
