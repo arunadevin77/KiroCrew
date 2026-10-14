@@ -82,6 +82,19 @@ def _compress_assistant_message(text: str) -> str:
 # walked past.
 _TURN_OPENER_ROLES = frozenset({"user", "nudge", "subagent"})
 
+# Prefix that marks a mid-turn steer inside a restored turn's partial output.
+_STEER_LABEL = "[Steered mid-turn]"
+
+
+def _is_steer_row(row: dict) -> bool:
+    """Whether *row* is a mid-turn steer: a ``user`` row whose ``meta.steer`` is True.
+
+    A steer is delivered into a turn that is already running, so it never opens a
+    turn even though its role is ``user``.
+    """
+    meta = row.get("meta")
+    return row.get("role") == "user" and isinstance(meta, dict) and meta.get("steer") is True
+
 
 def _interrupted_opener_kind(row: dict) -> str:
     """A short name for the automated delivery that opened an interrupted turn."""
@@ -122,6 +135,9 @@ def build_interrupted_turn_preamble(
     turn-in-flight marker restores its opener after a restart). Walk back from
     *current* -- the resume row this turn is running, excluded -- to the row that
     opened the interrupted turn, collecting the assistant text it had streamed.
+    A mid-turn steer (:func:`_is_steer_row`) is walked past rather than taken as
+    the opener, and is carried in the partial output, in the order it was sent,
+    under ``[Steered mid-turn]``.
     Returns "" when no opener is found. The caller mints the result AFTER the
     prompt's egress scrub (its markers are in ``_STRUCTURAL_MARKER_RES``); the
     payload is scrubbed here instead.
@@ -136,7 +152,7 @@ def build_interrupted_turn_preamble(
     for i in range(end - 1, -1, -1):
         role = messages[i].get("role")
         meta = messages[i].get("meta")
-        if role in _TURN_OPENER_ROLES or (
+        if (role in _TURN_OPENER_ROLES and not _is_steer_row(messages[i])) or (
             role == "inject"
             and isinstance(meta, dict)
             and meta.get("injectKind") in opener_inject_kinds
@@ -148,11 +164,15 @@ def build_interrupted_turn_preamble(
     user_text = str(messages[opener_idx].get("content") or "").strip()
     if not user_text:
         return ""
-    assistant_parts = [
-        str(m.get("content") or "").strip()
-        for m in messages[opener_idx + 1 : end]
-        if m.get("role") == "assistant" and str(m.get("content") or "").strip()
-    ]
+    assistant_parts: list[str] = []
+    for m in messages[opener_idx + 1 : end]:
+        text = str(m.get("content") or "").strip()
+        if not text:
+            continue
+        if m.get("role") == "assistant":
+            assistant_parts.append(text)
+        elif _is_steer_row(m):
+            assistant_parts.append(f"{_STEER_LABEL} {text}")
     assistant_text = "\n".join(assistant_parts)
     if len(user_text) > user_cap:
         user_text = user_text[:user_cap] + "… [truncated]"

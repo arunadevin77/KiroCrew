@@ -1994,6 +1994,10 @@ newest turn opener before the resume row (a user, nudge or sub-agent row, or an
 `inject` whose kind is in `dashboard.state.TURN_OPENING_INJECT_KINDS` -- a cron,
 app or synthesis delivery; a recovery inject such as an earlier Resume press is
 walked past) plus the assistant text it had streamed, bracketed `[INTERRUPTED TURN …]` / `[END INTERRUPTED TURN]`.
+A mid-turn steer (a `user` row whose `meta.steer` is true, `replay._is_steer_row`)
+never opens the turn: the walk passes it on the way to the opener, and each steer
+is carried in the partial output, in the order it was sent, prefixed
+`[Steered mid-turn]`. A window that holds steers but no opener restores nothing.
 Only a `role=user` opener is framed as the user's most recent request; a nudge,
 sub-agent, cron, app (`mcp_app`) or synthesis opener is labelled as an automated
 delivery of that kind (`replay._interrupted_opener_kind`), never as something the
