@@ -207,6 +207,12 @@ every step passes that checkout as `ctx.agent(cwd=)`. Leave the line out for a
 single task or a one-shot fan-out; the worker does those itself. This is
 advice to the worker: you still never call `workflow_run` yourself.
 
+**A seed names the failure's class, not only its instance.** Give the one repro,
+then ask the worker to list nearby inputs that reach the same code and to show,
+before reporting `done`, which it tested. For a fix that must hold under inputs
+the worker did not think of, the seed may ask for one independent attempt to break
+it (a fresh subagent that sees the change but not the worker's reasoning).
+
 **Bind BEFORE you seed.** The opposite order — seed first, record after —
 protects against a ledger row with no session behind it. This one protects
 against a running worker with no binding, and that is the failure the worker can
