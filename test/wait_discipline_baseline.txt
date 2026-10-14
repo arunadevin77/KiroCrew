@@ -289,7 +289,6 @@
  1 test_memory_admission_queue.py
  4 test_memory_backup.py
  3 test_memory_multistore_stress.py
- 2 test_memory_resources.py
  6 test_memory_startup.py
  2 test_memv2_audit_a_prompt.py
  4 test_memv2_audit_b_regressions.py
