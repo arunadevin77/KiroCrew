@@ -276,7 +276,7 @@ export function CommentRow({
           <button
             type="button"
             onClick={() => onMarkReview(comment)}
-            className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded-md text-muted hover:text-warn hover:bg-warn-subtle bg-transparent border-none cursor-pointer transition-colors"
+            className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded-md text-muted hover:text-warn-text hover:bg-warn-subtle bg-transparent border-none cursor-pointer transition-colors"
             title={i18nT('components.commentsSidebar.advance_to_review')}
             style={restrictActions ? { display: 'none' } : undefined}
           ><Eye size={13} /> {i18nT('components.commentsSidebar.review')}</button>

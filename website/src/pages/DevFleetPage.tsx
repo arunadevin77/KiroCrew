@@ -2589,7 +2589,7 @@ export default function DevFleetPage() {
               <div
                 role="alert"
                 data-testid="serving-install-warning"
-                className="flex items-start gap-2 rounded-md border border-warn/40 bg-warn-subtle px-3 py-2.5 mt-3 text-[12.5px] leading-relaxed text-warn"
+                className="flex items-start gap-2 rounded-md border border-warn/40 bg-warn-subtle px-3 py-2.5 mt-3 text-[12.5px] leading-relaxed text-warn-text"
               >
                 <AlertTriangle size={14} className="lucide-inline shrink-0 mt-0.5" />
                 <div className="min-w-0">

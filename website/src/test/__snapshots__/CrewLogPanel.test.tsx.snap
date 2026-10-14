@@ -194,7 +194,7 @@ exports[`CrewLogTab > draws the subagents table 1`] = `
         class="py-[3px] border-b border-border"
       >
         <span
-          class="inline-flex items-center px-2 py-px rounded-full text-[10.5px] font-semibold bg-warn-subtle text-warn"
+          class="inline-flex items-center px-2 py-px rounded-full text-[10.5px] font-semibold bg-warn-subtle text-warn-text"
         >
           running
         </span>

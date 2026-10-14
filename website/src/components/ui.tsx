@@ -188,7 +188,7 @@ export function Badge({ variant, children, className, ...rest }: { variant: 'ok'
     : variant === 'err' ? 'bg-danger-subtle text-danger'
     : variant === 'aim' ? 'bg-aim-subtle text-aim'
     : variant === 'muted' ? 'bg-[var(--bg-hover)] text-[var(--muted)]'
-    : 'bg-warn-subtle text-warn'
+    : 'bg-warn-subtle text-warn-text'
   return (
     // No hover transform: a Badge is a non-interactive status label, so growing
     // it under the cursor announced an affordance that isn't there.

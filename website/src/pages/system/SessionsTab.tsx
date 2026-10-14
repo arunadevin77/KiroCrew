@@ -348,7 +348,7 @@ export default function SessionsTab({ planeStateRef }: Props) {
       {isError && data && (
         <div
           data-testid="sessions-stale"
-          className="flex items-center gap-2 px-3.5 py-2 border-b border-border bg-warn-subtle text-[11.5px] text-warn"
+          className="flex items-center gap-2 px-3.5 py-2 border-b border-border bg-warn-subtle text-[11.5px] text-warn-text"
         >
           <TriangleAlert size={13} aria-hidden="true" className="lucide-inline shrink-0" />
           <span>{i18nT('pages.sessionsTab.could_not_refresh')}</span>

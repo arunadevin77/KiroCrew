@@ -661,6 +661,20 @@ html:lang(ko) {
    --shadow-lg alone reads flat over near-black chat; light mode keeps it. */
 :root{--shadow-float:0 0 0 1px rgba(0,0,0,.4),0 24px 64px -8px rgba(0,0,0,.7),0 8px 24px rgba(0,0,0,.45)}
 [data-mode="light"]{--shadow-float:var(--shadow-lg)}
+/* Warn-hued TEXT on a warn-tinted fill (`bg-warn-subtle`, `bg-warn/N`,
+   `glass-warn`): the `text-warn-text` utility and `.glass-warn-fg`. Dark
+   palettes keep the plain `--warn` hue. In light palettes `--warn` on its own
+   10-30% tint falls below the 4.5:1 text floor (1.9:1 in rosepine-light, 4.2:1
+   in `light`; issues #19920, #20071), so the text keeps half the hue and
+   darkens the rest toward black: still amber-brown, so the warning cue
+   survives. The share is set by the strongest tint paired in the source
+   (`bg-warn/30`): 50% clears it at 5.4:1 in the worst light palette
+   (rosepine-light), 60% would drop it to 4.15:1.
+   Internal, derived, outside the [data-theme] blocks so packs cannot set it;
+   glassWarnTextContrast.test.ts reads the share from this rule and measures
+   every tint the source pairs with it in every light palette. */
+:root{--warn-text:var(--warn);}
+[data-mode="light"]{--warn-text:color-mix(in srgb, var(--warn) 50%, #000);}
 :root,[data-theme="dark"],[data-theme="amber-dark"]{
   --search-highlight:rgba(255,167,38,.45);--search-highlight-current:rgba(255,120,0,.85);--search-highlight-current-border:rgba(255,255,255,.9);
   --bg:#12141a;--bg-accent:#14161d;--bg-elevated:#1a1d25;--bg-hover:#262a35;
@@ -3589,14 +3603,12 @@ body.mc-focus-mode.mc-focus-rail .focus-chrome-rail{
 .glass-hover:hover { --glass-tint: color-mix(in srgb, var(--text) 8%, var(--glass-tint-step)); }
 
 /* Warn-hued text on a `glass-warn` pane (the queued-message card, the memory
- * mode chip). Dark palettes keep the plain `--warn` hue. In light palettes
- * `--warn` on its own `glass-warn` tint falls below the 4.5:1 text floor
- * (1.9:1 in rosepine-light, 4.0:1 in `light`; issue #19920), so the text keeps
- * 30% of the hue and takes the rest from `--text-strong`.
- * glassWarnTextContrast.test.ts measures every light palette against this mix
- * and refuses a `glass-warn` pane that paints plain `text-warn`. */
-.glass-warn-fg { color: var(--warn); }
-[data-mode="light"] .glass-warn-fg { color: color-mix(in srgb, var(--warn) 30%, var(--text-strong)); }
+ * mode chip): the same `--warn-text` token the `text-warn-text` utility paints
+ * on `bg-warn-subtle` / `bg-warn/N` fills (see the token's note next to
+ * `--shadow-float`; issues #19920, #20071). glassWarnTextContrast.test.ts
+ * measures every light palette against it and refuses a `glass-warn` pane or a
+ * warn-tinted fill that still paints plain `text-warn`. */
+.glass-warn-fg { color: var(--warn-text); }
 
 /* The context shelf (agent, project, branch, model chips) sits BELOW the glass
  * pane, on the bare transcript, and the dock floats over content, so a chip

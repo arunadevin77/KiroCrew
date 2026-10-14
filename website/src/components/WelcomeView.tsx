@@ -21,7 +21,7 @@ export const SUGGESTION_KIND_STYLE: Record<SuggestionKind, { Icon: LucideIcon; t
   review: { Icon: Eye, tile: 'bg-info-subtle text-info' },
   ops: { Icon: Activity, tile: 'bg-danger-subtle text-danger' },
   tasks: { Icon: ListChecks, tile: 'bg-ok-subtle text-ok' },
-  write: { Icon: FileText, tile: 'bg-warn-subtle text-warn' },
+  write: { Icon: FileText, tile: 'bg-warn-subtle text-warn-text' },
   research: { Icon: Search, tile: 'bg-info-subtle text-info' },
   schedule: { Icon: Clock, tile: 'bg-accent-subtle text-accent' },
   general: { Icon: Sparkles, tile: 'bg-accent-subtle text-accent' },

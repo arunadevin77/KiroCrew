@@ -185,7 +185,7 @@ const SubagentCompletionCard = memo(function SubagentCompletionCard({
               failed
                 ? 'bg-danger-subtle border-danger/20 text-danger'
                 : interrupted
-                  ? 'bg-warn-subtle border-warn/20 text-warn'
+                  ? 'bg-warn-subtle border-warn/20 text-warn-text'
                   : stopped
                     ? 'bg-muted/15 border-border text-muted'
                     : 'bg-ok-subtle border-ok/20 text-ok'
@@ -224,7 +224,7 @@ const SubagentCompletionCard = memo(function SubagentCompletionCard({
             <code
               className={`${CHIP} font-mono max-w-[8rem] ${
                 modelDowngraded
-                  ? 'bg-warn-subtle border-warn/20 text-warn'
+                  ? 'bg-warn-subtle border-warn/20 text-warn-text'
                   : resolvedKnown
                     ? 'bg-accent/10 border-accent/20 text-accent/80'
                     : 'bg-bg-hover border-border text-muted/60'
@@ -302,7 +302,7 @@ const SubagentCompletionCard = memo(function SubagentCompletionCard({
         // rendered as persistent text here too (UX review #3582). role=status so
         // AT announces it; the amber matches the chip.
         <div
-          className="flex items-start gap-1.5 px-3 py-1.5 border-t border-warn/20 bg-warn-subtle/50 text-[11px] leading-4 text-warn"
+          className="flex items-start gap-1.5 px-3 py-1.5 border-t border-warn/20 bg-warn-subtle/50 text-[11px] leading-4 text-warn-text"
           role="status"
           data-testid="subagent-completion-downgrade"
         >

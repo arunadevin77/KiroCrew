@@ -78,7 +78,7 @@ export interface CrewProfilePanelProps {
 const TONE: Record<'accent' | 'ok' | 'warn' | 'info', string> = {
   accent: 'bg-accent-subtle text-accent',
   ok: 'bg-ok-subtle text-ok',
-  warn: 'bg-warn-subtle text-warn',
+  warn: 'bg-warn-subtle text-warn-text',
   info: 'bg-info-subtle text-info',
 }
 

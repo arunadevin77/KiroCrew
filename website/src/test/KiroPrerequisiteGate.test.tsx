@@ -2071,7 +2071,7 @@ describe('KiroPrerequisiteGate agent choice', () => {
     await waitFor(() => expect(api.acpBackendRecheck).toHaveBeenCalledWith('codex'))
     await waitFor(() => expect(vi.mocked(api.kiroPrerequisite).mock.calls.length).toBeGreaterThan(statusReads))
     const selectedRow = screen.getByRole('radio', { name: 'codex' }).closest('label')
-    expect(within(selectedRow!).getByText("Host can't sandbox")).toHaveClass('text-warn')
+    expect(within(selectedRow!).getByText("Host can't sandbox")).toHaveClass('text-warn-text')
     expect(within(selectedRow!).queryByText('Installed')).not.toBeInTheDocument()
     expect(detail).not.toHaveTextContent('ready to use')
     fireEvent.click(useAgent)
@@ -2108,7 +2108,7 @@ describe('KiroPrerequisiteGate agent choice', () => {
     expect(within(detail).queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument()
     // The badge says what the detail says: off, not unavailable.
     const selectedRow = screen.getByRole('radio', { name: 'codex' }).closest('label')
-    expect(within(selectedRow!).getByText('Sandbox turned off')).toHaveClass('text-warn')
+    expect(within(selectedRow!).getByText('Sandbox turned off')).toHaveClass('text-warn-text')
     expect(within(selectedRow!).queryByText("Host can't sandbox")).not.toBeInTheDocument()
     expect(within(selectedRow!).queryByText('Installed')).not.toBeInTheDocument()
     fireEvent.click(useAgent)

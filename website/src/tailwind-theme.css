@@ -89,6 +89,9 @@
   --color-warn: var(--warn);
   --color-warn-fg: var(--warn-fg);
   --color-warn-subtle: var(--warn-subtle);
+  /* `text-warn-text`: warn-hued text that keeps 4.5:1 on the warn tints in
+     light palettes (index.css derives it next to `--shadow-float`). */
+  --color-warn-text: var(--warn-text);
   --color-danger: var(--danger);
   --color-danger-fg: var(--danger-fg);
   --color-danger-subtle: var(--danger-subtle);

@@ -42,12 +42,12 @@ const EVENT_STYLE: Record<string, string> = {
   UserPromptSubmit: 'bg-ok-subtle text-ok border-ok/30',
   PreToolUse: 'bg-aim-subtle text-aim border-aim/30',
   PostToolUse: 'bg-aim-subtle text-aim border-aim/30',
-  Stop: 'bg-warn-subtle text-warn border-warn/30',
+  Stop: 'bg-warn-subtle text-warn-text border-warn/30',
   PreTaskExecution: 'bg-aim-subtle text-aim border-aim/30',
   PostTaskExecution: 'bg-aim-subtle text-aim border-aim/30',
   FileCreated: 'bg-ok-subtle text-ok border-ok/30',
   FileEdited: 'bg-ok-subtle text-ok border-ok/30',
-  FileDeleted: 'bg-warn-subtle text-warn border-warn/30',
+  FileDeleted: 'bg-warn-subtle text-warn-text border-warn/30',
   UserTriggered: 'bg-accent/15 text-accent border-accent/30',
 }
 
@@ -272,7 +272,7 @@ function HookForm({ hook, onSave, onCancel }: {
           </div>
         )}
         {inertSkills && (
-          <div className="flex items-start gap-2 text-[13px] text-warn bg-warn-subtle border border-warn/30 rounded-lg px-3 py-2">
+          <div className="flex items-start gap-2 text-[13px] text-warn-text bg-warn-subtle border border-warn/30 rounded-lg px-3 py-2">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
               {i18nT('pages.hooksPage.skills_inert_warning', { skills: skills.join(', ') })}

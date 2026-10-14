@@ -802,7 +802,7 @@ export function PublishHub({
             )}
           </div>
           {exposesPublicly && (
-            <div className="flex items-start gap-2 text-[12px] text-warn p-2 rounded border border-warn/30 bg-warn-subtle">
+            <div className="flex items-start gap-2 text-[12px] text-warn-text p-2 rounded border border-warn/30 bg-warn-subtle">
               <AlertTriangle className="lucide-inline shrink-0" />
               <span>{i18nT('components.publishHub.public_exposure_warning')}</span>
             </div>
@@ -844,7 +844,7 @@ export function PublishHub({
                 {i18nT('components.publishHub.publishing_is_blocked_until_scan_findings_are_re')}
               </p>
               {exposesPublicly && (
-                <div className="flex items-start gap-2 text-[12px] text-warn p-2 rounded border border-warn/30 bg-warn-subtle">
+                <div className="flex items-start gap-2 text-[12px] text-warn-text p-2 rounded border border-warn/30 bg-warn-subtle">
                   <AlertTriangle className="lucide-inline shrink-0" />
                   <span>{i18nT('components.publishHub.public_exposure_warning')}</span>
                 </div>

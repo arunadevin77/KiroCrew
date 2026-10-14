@@ -1036,7 +1036,7 @@ export default function CrewAvatarBuilder({
                    over a dark page is black on brown. */
                 <p
                   role="note"
-                  className="rounded-md border border-warn/30 bg-warn-subtle px-2 py-1.5 text-[11px] text-warn"
+                  className="rounded-md border border-warn/30 bg-warn-subtle px-2 py-1.5 text-[11px] text-warn-text"
                   data-testid="avatar-reactions-retired-cue-pack"
                 >
                   {t('components.avatarBuilder.react_retired_cue_note_pack', { states: retiredCueLabel })}
@@ -1124,7 +1124,7 @@ export default function CrewAvatarBuilder({
                 /* Same callout, same token reasoning as the pack tier above. */
                 <p
                   role="note"
-                  className="rounded-md border border-warn/30 bg-warn-subtle px-2 py-1.5 text-[11px] text-warn"
+                  className="rounded-md border border-warn/30 bg-warn-subtle px-2 py-1.5 text-[11px] text-warn-text"
                   data-testid="avatar-reactions-retired-cue-picture"
                 >
                   {t('components.avatarBuilder.react_retired_cue_note_picture', { states: retiredCueLabel })}

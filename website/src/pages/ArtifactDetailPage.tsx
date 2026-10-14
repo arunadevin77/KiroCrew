@@ -2213,7 +2213,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
         )}
 
         {showCronWarning && (
-          <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-md border border-warn/40 bg-warn-subtle text-[13px] text-warn">
+          <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-md border border-warn/40 bg-warn-subtle text-[13px] text-warn-text">
             <AlertCircle size={14} className="lucide-inline shrink-0 mt-0.5" />
             <span>
               <strong>{i18nT('pages.artifactDetailPage.heads_up')}</strong> {i18nT('pages.artifactDetailPage.this_artifact_is_regenerated_by_a_cron_job_your')}
@@ -2281,7 +2281,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
             danger surface `last_error` drives. Suppressed when a real error is
             present, since that is the more important thing to show. */}
         {artifact.publication?.notice && !artifact.publication.last_error && (
-          <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-md border border-warn/30 bg-warn-subtle text-[13px] text-warn">
+          <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-md border border-warn/30 bg-warn-subtle text-[13px] text-warn-text">
             <AlertTriangle className="lucide-inline shrink-0 mt-0.5" />
             <span className="min-w-0 flex-1">{i18nT(publishNoticeKey({
               rolling_out: 'pages.artifactDetailPage.publication_still_rolling_out',
@@ -2524,7 +2524,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
 // interpolated tone names).
 const _SYNC_TONES: Record<string, { wrap: string; btn: string }> = {
   info: { wrap: 'border-info/40 bg-info-subtle text-info', btn: 'border-info/40 text-info hover:bg-info/10' },
-  warn: { wrap: 'border-warn/40 bg-warn-subtle text-warn', btn: 'border-warn/40 text-warn hover:bg-warn/10' },
+  warn: { wrap: 'border-warn/40 bg-warn-subtle text-warn-text', btn: 'border-warn/40 text-warn-text hover:bg-warn/10' },
   danger: { wrap: 'border-danger/40 bg-danger-subtle text-danger', btn: 'border-danger/40 text-danger hover:bg-danger/10' },
 }
 
@@ -2671,7 +2671,7 @@ function UpstreamSyncBanner({ artifact, busy = false, onPulled, onBeforeMutate }
   // below handles it and already reassures that local edits are checkpointed.)
   if (!fm && !upstreamAhead && pub && hasLocalEdits) {
     return (
-      <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-md border text-[13px] border-warn/40 bg-warn-subtle text-warn">
+      <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-md border text-[13px] border-warn/40 bg-warn-subtle text-warn-text">
         <Camera size={14} className="lucide-inline shrink-0" />
         <span className="flex-1">
           {i18nT('pages.artifactDetailPage.local_changes_not_yet_published_to')} {provLabel}.

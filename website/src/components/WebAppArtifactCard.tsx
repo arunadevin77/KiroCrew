@@ -129,7 +129,7 @@ function CostPills({ cost, label }: { cost: WebAppMetadata['cost']; label: strin
         <span className="text-[12px] text-muted font-medium">{label}</span>
         {/* Each pill is a what-if traffic scenario over the window — say so
             loudly, so "$45" isn't read as a monthly bill. */}
-        <span className="text-[10px] px-1.5 py-px rounded-full bg-warn-subtle text-warn font-medium uppercase tracking-wide">
+        <span className="text-[10px] px-1.5 py-px rounded-full bg-warn-subtle text-warn-text font-medium uppercase tracking-wide">
           {i18nT('components.webAppArtifactCard.estimate')}
         </span>
       </div>

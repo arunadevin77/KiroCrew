@@ -46,7 +46,7 @@ const STATUS_META: Record<RunStatus, { cls: string; dot: string; pulse?: boolean
     dot: 'bg-muted',
   },
   interrupted: {
-    cls: 'bg-warn-subtle text-warn border-warn',
+    cls: 'bg-warn-subtle text-warn-text border-warn',
     dot: 'bg-warn',
   },
 }
@@ -54,7 +54,7 @@ const STATUS_META: Record<RunStatus, { cls: string; dot: string; pulse?: boolean
 /** The muted "Cancelling" treatment shown when a running run has a cancel
  * pending — deliberately NOT accent, so it reads as winding down. */
 const CANCELLING_META = {
-  cls: 'bg-warn-subtle text-warn border-warn',
+  cls: 'bg-warn-subtle text-warn-text border-warn',
   dot: 'bg-warn',
 } as const
 

@@ -131,7 +131,7 @@ function InclusionChip({ file, showDefault = false }: { file: SteeringFile; show
       aria-label={title}
       className={`text-[10px] px-1.5 py-[1px] rounded-full font-mono shrink-0 border max-w-[9rem] truncate ${
         unrecognized
-          ? 'bg-warn-subtle text-warn border-warn'
+          ? 'bg-warn-subtle text-warn-text border-warn'
           : 'bg-bg-elevated text-muted border-border'
       }`}
     >

@@ -240,11 +240,11 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
   const tone = isRejected
     ? 'text-danger bg-danger-subtle'
     : isAutoDenied
-      ? 'text-warn bg-warn-subtle'
+      ? 'text-warn-text bg-warn-subtle'
       : isDone
         ? 'text-ok bg-ok/5'
         : hasPendingPerm
-          ? 'text-warn bg-warn-subtle'
+          ? 'text-warn-text bg-warn-subtle'
           : 'text-accent bg-accent/5'
   // Animate ONLY while the session is actually running, so a tool call left
   // un-terminated by a dropped turn does not spin forever and make an idle

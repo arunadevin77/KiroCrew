@@ -101,7 +101,7 @@ export function MemoryModeChip({ memoryMode, onSwitchMode }: MemoryModeChipProps
           style={pos ? { bottom: pos.bottom, left: pos.left } : { bottom: 0, left: 0, visibility: 'hidden' }}
         >
           {([
-            { key: 'incognito' as const, Icon: EyeOff, label: i18nT('components.welcomeView.incognito'), desc: i18nT('components.welcomeView.incognito_desc'), tile: 'bg-warn-subtle text-warn' },
+            { key: 'incognito' as const, Icon: EyeOff, label: i18nT('components.welcomeView.incognito'), desc: i18nT('components.welcomeView.incognito_desc'), tile: 'bg-warn-subtle text-warn-text' },
             { key: 'temporary' as const, Icon: VenetianMask, label: i18nT('components.welcomeView.temporary'), desc: i18nT('components.welcomeView.temporary_desc'), tile: 'bg-aim-subtle text-aim' },
           ] as const).map(t => (
             <button

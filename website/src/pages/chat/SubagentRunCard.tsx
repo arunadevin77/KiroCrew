@@ -314,7 +314,7 @@ const SubagentRunCard = memo(function SubagentRunCard({
           )}
           {counts.awaiting > 0 && (
             <span
-              className="shrink-0 inline-flex items-center gap-1 text-[10px] leading-4 px-1.5 py-0.5 rounded bg-warn-subtle border border-warn/20 text-warn"
+              className="shrink-0 inline-flex items-center gap-1 text-[10px] leading-4 px-1.5 py-0.5 rounded bg-warn-subtle border border-warn/20 text-warn-text"
               data-testid="subagent-card-awaiting"
               title={i18nT('pages.chat.subagentRunCard.waiting_for_your_approval_to_start')}
             >

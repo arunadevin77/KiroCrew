@@ -37,7 +37,7 @@ const BAND_META: Record<Band, { dot: string; on: string; off: string }> = {
   },
   yellow: {
     dot: 'text-warn',
-    on: 'bg-warn-subtle text-warn border-warn',
+    on: 'bg-warn-subtle text-warn-text border-warn',
     off: 'bg-card text-muted border-border hover:text-text',
   },
   green: {

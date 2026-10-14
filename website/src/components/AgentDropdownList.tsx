@@ -76,7 +76,7 @@ function AgentButton({ a, active, isDefault, showSource, activeRef, onSelect, fi
           {highlight(label)}
         </span>
         {isDefault ? (
-          <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-[1px] rounded-full text-[11px] font-semibold bg-warn-subtle text-warn" title={i18nT('components.agentDropdownList.new_sessions_start_with_this_agent')}>
+          <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-[1px] rounded-full text-[11px] font-semibold bg-warn-subtle text-warn-text" title={i18nT('components.agentDropdownList.new_sessions_start_with_this_agent')}>
             <Star className="lucide-inline" />{i18nT('components.agentDropdownList.default')}
           </span>
         ) : showSource ? (

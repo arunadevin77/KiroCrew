@@ -813,7 +813,7 @@ function PendingCandidateRow({ p, autoOpen, approveRefusal, mixedQueue, onApprov
                  the same caveat), so a hover title here would be a third
                  rendering of one sentence — and a tooltip BUTTON would be a
                  fourth control in the row (AUTOSDE max-two-buttons-per-row). */
-              <span className="ml-2 text-[10px] px-1.5 py-[1px] rounded-full bg-warn-subtle text-warn font-bold">{i18nT('pages.overview.skillsTab.script')}</span>
+              <span className="ml-2 text-[10px] px-1.5 py-[1px] rounded-full bg-warn-subtle text-warn-text font-bold">{i18nT('pages.overview.skillsTab.script')}</span>
             )}
             {p.script_validation?.ok === false && (
               /* The server will refuse Approve for this candidate as-is; warn
@@ -821,7 +821,7 @@ function PendingCandidateRow({ p, autoOpen, approveRefusal, mixedQueue, onApprov
                  WARN amber, not danger red: this is a prediction, and red is
                  reserved for refusals that already happened — a mixed panel
                  otherwise stacks five red surfaces at once. */
-              <span className="ml-2 text-[10px] px-1.5 py-[1px] rounded-full bg-warn-subtle text-warn font-bold">{i18nT('pages.overview.skillsTab.fails_validation')}</span>
+              <span className="ml-2 text-[10px] px-1.5 py-[1px] rounded-full bg-warn-subtle text-warn-text font-bold">{i18nT('pages.overview.skillsTab.fails_validation')}</span>
             )}
           </div>
           <div className="text-[12px] text-muted truncate">
@@ -959,7 +959,7 @@ function PendingCandidateRow({ p, autoOpen, approveRefusal, mixedQueue, onApprov
                the stale one indistinguishable from the fresh one. A refusal
                with any OTHER code has not superseded the prediction, so the
                box stays. */
-            <details className="text-[11px] p-2 rounded border border-border bg-warn-subtle text-warn">
+            <details className="text-[11px] p-2 rounded border border-border bg-warn-subtle text-warn-text">
               <summary className="cursor-pointer font-semibold">
                 {i18nT('pages.overview.skillsTab.validation_findings')}
               </summary>
@@ -991,12 +991,12 @@ function PendingCandidateRow({ p, autoOpen, approveRefusal, mixedQueue, onApprov
                stages for manual review even with skills.approval_required off.
                Without this note a user who disabled approval sees the row and
                has no idea why the setting "didn't work". */
-            <div className="text-[11px] p-2 rounded bg-warn-subtle text-warn border border-border">
+            <div className="text-[11px] p-2 rounded bg-warn-subtle text-warn-text border border-border">
               {i18nT('pages.overview.skillsTab.scripts_always_require_review')}
             </div>
           )}
           {isUpdate && detail.stale_base && (
-            <div className="text-[11px] p-2 rounded bg-warn-subtle text-warn border border-border">
+            <div className="text-[11px] p-2 rounded bg-warn-subtle text-warn-text border border-border">
               {i18nT('pages.overview.skillsTab.this_skill_changed_after_this_update_was_written')}
             </div>
           )}

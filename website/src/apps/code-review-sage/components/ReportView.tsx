@@ -245,7 +245,7 @@ function ReportRowCard({
                 </span>
               )}
               {live.yellow > 0 && (
-                <span className="inline-flex items-center rounded-full bg-warn-subtle text-warn px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">
+                <span className="inline-flex items-center rounded-full bg-warn-subtle text-warn-text px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">
                   {live.yellow} {i18nT('apps.codeReviewSage.components.reportView.should_fix')}
                 </span>
               )}

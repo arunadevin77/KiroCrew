@@ -612,7 +612,7 @@ function PrerequisiteTip({ label, heading, text }: { label: string; heading: str
         onMouseLeave={releaseHover}
         onFocus={holdHover}
         onBlur={releaseHover}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-warn transition-colors hover:bg-warn-subtle"
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-warn transition-colors hover:text-warn-text hover:bg-warn-subtle"
       >
         <AlertTriangle className="h-4 w-4" aria-hidden="true" />
       </button>
@@ -903,7 +903,7 @@ function ConnectionCard({
     'waiting-for-approval': {
       label: t('pages.connectionsPage.waiting_for_approval'),
       icon: <CircleDashed className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />,
-      tone: 'bg-warn-subtle text-warn',
+      tone: 'bg-warn-subtle text-warn-text',
     },
     connected: {
       label: t('pages.connectionsPage.connected'),
@@ -916,7 +916,7 @@ function ConnectionCard({
     'not-verified': {
       label: t('pages.connectionsPage.not_verified'),
       icon: <KeyRound className="w-3.5 h-3.5" aria-hidden="true" />,
-      tone: 'bg-warn-subtle text-warn',
+      tone: 'bg-warn-subtle text-warn-text',
     },
     'needs-attention': {
       label: t('pages.connectionsPage.needs_attention'),
