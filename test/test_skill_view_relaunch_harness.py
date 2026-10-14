@@ -37,6 +37,7 @@ import logging
 import os
 import struct
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -50,6 +51,7 @@ from kiro_crew.acp import runtime as runtime_mod
 from kiro_crew.acp import skill_projection as projection
 from kiro_crew.acp.runtime import AcpRuntime
 from kiro_crew.acp.types import METHOD_SET_MODE
+from kiro_crew.testing.wait import async_wait_until, default_timeout
 
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="the fake watcher is driven by inotify"
@@ -298,6 +300,31 @@ def _runtime(watcher: FakeKiroWatcher, prepared, work_dir: Path) -> tuple[AcpRun
     return rt, host
 
 
+# The daemon thread a projection ended on the event loop releases its lease on
+# (skill_projection._end_projection): the release is asynchronous by design.
+_END_THREAD = "kirocrew-skill-view-prune"
+
+
+def _ends_in_flight() -> int:
+    return sum(1 for t in threading.enumerate() if t.name == _END_THREAD and t.is_alive())
+
+
+async def _settle_projection_ends() -> None:
+    """Wait until every projection that ended has finished releasing its lease.
+
+    A projection dropped on the event-loop thread hands its lease release to a
+    daemon thread, so a count taken right after a spawn can still see the lease
+    of a projection that has already ended: on a loaded runner that thread is
+    simply not scheduled yet. The census counts what each spawn leaves behind, so
+    it waits for those releases first, under the lost-run bound. A lease that is
+    never released still fails the census strictly once the threads are done.
+    """
+    await async_wait_until(
+        lambda: _ends_in_flight() == 0,
+        describe=lambda: f"{_ends_in_flight()} projection end(s) still releasing a lease",
+    )
+
+
 def _census(agents: Path) -> dict[str, int]:
     prefix = projection.NATIVE_SKILL_ALIAS_PREFIX
     # Side files are counted in BOTH places the projection reads them from: this
@@ -401,6 +428,7 @@ async def _one_spawn(
     rt._native_skill_projection = None
     del rt, host
     gc.collect()
+    await _settle_projection_ends()
     return views, failures
 
 
@@ -446,6 +474,44 @@ async def test_fifty_spawns_under_a_rewriting_launcher_never_fail_and_stay_bound
         assert census["alias_locks"] <= len(AGENTS), f"spawn {spawn}: {census}"
         assert census["entries"] <= 2 * len(AGENTS) + 2 * len(AGENTS) + 3, census
     assert _problems(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_the_census_waits_until_an_ended_projection_has_released_its_lease(
+    host_tree, monkeypatch
+):
+    """Why every spawn settles before it is counted. A projection dropped on the
+    event loop releases its lease on a daemon thread; held there, its lease is
+    still on disk after the spawn returns, which is what a loaded runner shows.
+    The settle does not return while that release is pending, and once it does
+    the ended projection leaves no lease behind."""
+    agents, project = host_tree
+    gate = threading.Event()
+    parked = threading.Event()
+    real_end = projection._end_projection_off_loop
+
+    def held_end(*args):
+        if threading.current_thread().name == _END_THREAD:
+            parked.set()
+            gate.wait(default_timeout())
+        real_end(*args)
+
+    monkeypatch.setattr(projection, "_end_projection_off_loop", held_end)
+    try:
+        prepared = projection.prepare_native_skill_projection(project)
+        assert prepared is not None
+        assert _census(agents)["leases"] == 2  # one lease: its record and its holder
+        del prepared  # the finalizer runs here, on the event-loop thread
+        gc.collect()
+        await async_wait_until(parked.is_set)
+        assert _census(agents)["leases"] == 2, "the release was expected to be pending"
+        # What the settle waits on: an end that has not released its lease yet.
+        assert _ends_in_flight() == 1, "the census would count before the lease is released"
+        gate.set()
+        await _settle_projection_ends()
+        assert _census(agents)["leases"] == 0
+    finally:
+        gate.set()
 
 
 @pytest.mark.asyncio
