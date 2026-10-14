@@ -1179,32 +1179,22 @@ class _ContentCounts:
 
 
 class _MemoGate:
-    """One query's memo keys, and which of them scoring a session can reach.
+    """The complete set of count-memo keys one query may need.
 
-    ``search_sessions`` counts needles in order and stops at the first required
-    needle found in neither the content nor the title, and counts the phrase
-    only for a multi-needle query. :meth:`answered_by` replays that order over
-    memoized counts, so a session the memo already proves disqualified needs no
-    answer for the needles after the one that disqualified it.
+    The document may be skipped only when every answer is already held.
+    Session disqualification belongs to the scoring loop, not this gate.
     """
 
-    __slots__ = ("needles", "needle_keys", "phrase_key", "memo_keys")
+    __slots__ = ("needle_keys", "phrase_key", "memo_keys")
 
     def __init__(self, needles: Sequence[SearchNeedle], phrase: str, multi: bool) -> None:
-        self.needles = needles
         self.needle_keys = [_needle_memo_key(n) for n in needles]
         self.phrase_key = _phrase_memo_key(phrase)
         keys = [*self.needle_keys, self.phrase_key] if multi else self.needle_keys
         self.memo_keys = list(dict.fromkeys(keys))
 
-    def answered_by(self, hits: dict[str, int], title_folded: str) -> bool:
-        for needle, needle_key in zip(self.needles, self.needle_keys):
-            in_content = hits.get(needle_key)
-            if in_content is None:
-                return False
-            if needle.required and not in_content and not count_needle(needle, title_folded):
-                return True
-        return len(hits) == len(self.memo_keys)
+    def answered_by(self, hits: dict[str, int], _title_folded: str) -> bool:
+        return all(key in hits for key in self.memo_keys)
 
 
 def _needle_memo_key(needle: SearchNeedle) -> str:
