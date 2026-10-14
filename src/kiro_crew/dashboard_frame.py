@@ -682,6 +682,7 @@ def read_payload(
     written_at: Mapping[str, str] | None = None,
     locale: object = DEFAULT_LOCALE,
     subject: str = "crewmate",
+    last_user_at: object = "",
 ) -> dict[str, Any]:
     """The object the page sees as ``window.kirocrew``.
 
@@ -705,6 +706,15 @@ def read_payload(
 
     ``locale`` is the reader's UI language, checked by :func:`page_locale`. A page
     picks its own words by it; the values in ``fields`` are never translated.
+
+    ``last_user_at`` is when a PERSON last spoke in the chat this page belongs to --
+    a typed message, an option clicked in the chat, a steer into a running turn --
+    from the host's own record of that chat, as an aware UTC stamp in whole seconds,
+    the precision ``written_at`` is spelled in. A page compares
+    it with ``written_at`` to tell that the person wrote in the chat after a card was
+    written, which nothing else on the page can see: those messages never pass
+    through the page. ``""`` when the host has no stamp to give,
+    for the reason ``written_at`` is an empty map rather than an absent key.
     """
     return {
         "fields": dict(fields),
@@ -715,6 +725,7 @@ def read_payload(
         "written_at": dict(written_at or {}),
         "locale": page_locale(locale),
         "subject": "session" if subject == "session" else "crewmate",
+        "last_user_at": last_user_at if isinstance(last_user_at, str) else "",
     }
 
 

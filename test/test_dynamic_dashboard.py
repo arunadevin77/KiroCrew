@@ -530,6 +530,20 @@ class TestTheAgenticFold:
     def test_another_entry_type_does_not_move_it(self) -> None:
         assert self.fold(entry("panel/published", {"template": "x", "data": {}}))["wrote"] == 0
 
+    def test_a_rewrite_of_an_unchanged_value_moves_its_stamp(self) -> None:
+        """A crewmate that writes the SAME ``for_you`` list again after a chat reply
+        still moves ``at``, which is what ``written_at.for_you`` reads, so the page
+        stops folding the cards the reply folded. Built directly rather than with
+        ``entry()``, which puts two entries 1 ms apart: the same whole second."""
+        cards = [{"text": "Fix the CLI bubble?", "ask": "decide", "options": ["Fix it"]}]
+        data = {"field": "for_you", "type": "array", "value": {"v": cards}}
+        first = Entry(type=AGENTIC, seq=1, time=1_759_000_000_000, src="gateway", data=data)
+        second = Entry(type=AGENTIC, seq=2, time=1_759_000_045_000, src="gateway", data=data)
+        read = self.fold(first, second)
+        assert read["fields"]["for_you"]["value"] == cards
+        assert read["fields"]["for_you"]["at"] == projection._panel_iso(second.time)
+        assert read["fields"]["for_you"]["at"] != projection._panel_iso(first.time)
+
 
 class TestTheMistakeBookFold:
     def fold(self, *entries: Entry) -> dict[str, Any]:

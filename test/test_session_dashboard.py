@@ -351,6 +351,26 @@ async def test_a_session_page_is_told_it_is_a_session():
     assert _subject(body["rendered_html"]) == "session"
 
 
+async def test_a_session_page_is_told_when_the_person_last_spoke_in_that_session(monkeypatch):
+    """The session's OWN chat, read off its own slot: a steer there is the reply."""
+    from kiro_crew.history import HUMAN_TURN_META_KEY
+
+    steer = {
+        "role": "user",
+        "content": "go with the second",
+        "ts": "2026-10-13T23:49:04+00:00",
+        "meta": {HUMAN_TURN_META_KEY: True, "steer": True},
+    }
+    monkeypatch.setattr(SLOTS[ROOT], "loaded_messages", lambda: [steer], raising=False)
+    instance.adopt(instance.session_instance_key(ROOT), "fixture-board")
+    async with _client() as client:
+        body = await (await client.get(_read(ROOT))).json()
+    island = body["rendered_html"].split('id="kirocrew-dashboard-data">', 1)[1]
+    assert json.loads(island.split("</script>", 1)[0])["last_user_at"] == (
+        "2026-10-13T23:49:04+00:00"
+    )
+
+
 def test_a_crewmate_page_is_told_it_is_a_crewmate():
     from kiro_crew import dashboard_frame
 

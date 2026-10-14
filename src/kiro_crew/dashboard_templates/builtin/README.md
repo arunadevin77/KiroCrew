@@ -83,6 +83,28 @@ the lead already knows which of six reds is the one that matters, and no fold ra
 page draws the `crewmate wrote this` tag only when the host says the field IS agentic, so
 a value arriving some other way cannot borrow the label.
 
+A person answers `for_you` cards in the chat as often as on the cards: a typed reply, an
+option clicked in the chat, a steer into the running turn. None of those passes through
+the page, so the host says when the person last spoke in the chat the page belongs to,
+as `window.kirocrew.last_user_at` (UTC in whole seconds, like `written_at`, from the
+chat's own human-marked rows; `""` when it has none). `project-report` folds cards in
+two groups under the desk. Cards picked on the page go under **Answered**
+(`verdict.words.answered`), each with **Undo**. Cards written before that stamp
+(`written_at.for_you`) go under **Asked before you wrote in chat**
+(`verdict.words.in_chat`), each with the line "You wrote in chat after this was asked"
+(`verdict.words.replied`) and a **Show card** button (`verdict.words.reopen`). The page
+knows only that the person wrote in the chat after the card was written; it cannot tell
+whether that message answered the card, so it never says it did. The in-chat cards
+leave the Needs-you number but stay counted: the header adds "N asked before you wrote
+in chat" after "N need you", and when nothing else needs the reader the Needs-you KPI's
+subtitle says "N asked before you wrote in chat" instead of "nothing waiting on you".
+**Show card** unfolds its card until the person next writes in the chat; the card it
+brings back is flashed, takes focus and is scrolled into view (instantly when the reader
+asks for reduced motion), and keeps the "You wrote in chat after this was asked" line on
+a row of its own beside a **Hide card** button (`verdict.words.hide`). **Hide card**
+folds the card again and moves focus to the fold's heading. Once the crewmate writes
+the list after the person's message, the cards it kept ask again.
+
 ## What a crewmate published
 
 `project-report` also binds `published` to `{"fold": "panel", "path": "data"}`: the

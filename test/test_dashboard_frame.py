@@ -319,7 +319,21 @@ class TestTheComposedDocument:
             "locale": "en",
             # Whose page it is; a crewmate's unless the host says otherwise.
             "subject": "crewmate",
+            # Empty rather than absent, like `written_at`: no stamp to give.
+            "last_user_at": "",
         }
+
+    def test_the_read_says_when_the_person_last_spoke_and_nothing_else_there(self) -> None:
+        """The stamp telling a page the person wrote in the chat after a card was written.
+
+        Passed through as the host's own string; anything that is not a string reads as
+        no stamp, so a page never meets a number or a null where it expects text."""
+        stamp = "2026-10-13T23:49:04+00:00"
+        assert dashboard_frame.read_payload({}, last_user_at=stamp)["last_user_at"] == stamp
+        for odd in (None, 0, 1760399344.0, ["2026-10-13T23:49:04+00:00"]):
+            assert dashboard_frame.read_payload({}, last_user_at=odd)["last_user_at"] == ""
+        doc = self.doc(last_user_at=stamp)
+        assert json.loads(self.island(doc))["last_user_at"] == stamp
 
     def test_the_document_language_comes_from_the_read(self) -> None:
         """A page in the reader's language needs a document that says which one."""

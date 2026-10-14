@@ -99,7 +99,7 @@ async def _none(*_a, **_k):
 
 
 @asynccontextmanager
-async def _client():
+async def _client(state=None):
     """A started client that always closes.
 
     An ``async with`` helper rather than an ``@pytest.fixture``, by this repo's
@@ -109,8 +109,13 @@ async def _client():
     Closing is not tidiness. A ``TestClient`` owns an aiohttp session AND a listening
     socket, so a returned-but-never-closed client leaks two descriptors per test and,
     on a loaded runner, fails UNRELATED tests with EMFILE.
+
+    *state* stands in for the gateway's ``DashboardState`` where a case needs one;
+    without it the app carries none, as every other case here reads it.
     """
     app = web.Application()
+    if state is not None:
+        app["state"] = state
     routes.register_member_dashboard_routes(app)
     c = TestClient(TestServer(app))
     await c.start_server()
@@ -1270,3 +1275,225 @@ class TestTheStagedComposedPage:
         assert body["preview"] is True
         assert body["template"]["id"] == "fixture-board"
         assert "manifest" in body
+
+
+# --------------------------------------------------------------------------
+# when the person last spoke in the page's chat
+# --------------------------------------------------------------------------
+
+#: One instant: the person's reply. Every case states it in UTC and writes it the way
+#: a chat row or the stored stamp carries it.
+SPOKE = "2026-10-13T23:49:04+00:00"
+
+
+class _Window:
+    """The one member of a live chat slot the stamp is read from."""
+
+    def __init__(self, rows: list[dict] | None = None) -> None:
+        self._rows = list(rows or [])
+
+    def loaded_messages(self) -> list[dict]:
+        return list(self._rows)
+
+
+def _human(ts: str, **meta) -> dict:
+    """A row a human send path wrote, with the marker those paths set."""
+    from kiro_crew.history import HUMAN_TURN_META_KEY
+
+    return {
+        "role": "user",
+        "content": "reply",
+        "ts": ts,
+        "meta": {HUMAN_TURN_META_KEY: True, **meta},
+    }
+
+
+def _naive_local(utc: str, zone: str) -> str:
+    """*utc* as the naive local wall clock a row written in *zone* carries."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.fromisoformat(utc).astimezone(ZoneInfo(zone)).replace(tzinfo=None).isoformat()
+
+
+class _Log:
+    """A transcript store holding one metadata line per transcript key."""
+
+    def __init__(self, lines: dict[str, dict]) -> None:
+        self.lines = lines
+        self.asked: list[str] = []
+
+    def get_metadata(self, key: str) -> dict:
+        self.asked.append(key)
+        return dict(self.lines.get(key, {}))
+
+
+class _ChatState:
+    """The two things the read takes from ``DashboardState``: live slots and the log."""
+
+    def __init__(self, slots: dict | None = None, log: _Log | None = None) -> None:
+        self.slots = dict(slots or {})
+        self.conversation_log = log
+        self.asked: list[str] = []
+
+    def get_slot(self, name: str):
+        self.asked.append(name)
+        return self.slots.get(name)
+
+
+class TestThePageIsToldWhenThePersonLastSpoke:
+    """The stamp telling a page the person wrote in the chat after a card was written.
+
+    A reply typed in the chat, an option clicked there and a steer into a running turn
+    never pass through the page, and a steer writes no crew-log entry, so the only
+    record of one is the chat slot's own human-marked row.
+    """
+
+    def test_the_newest_row_a_person_wrote_is_the_stamp_a_steer_included(self) -> None:
+        rows = [
+            _human("2026-10-13T23:40:00+00:00"),
+            {"role": "assistant", "content": "two to decide", "ts": "2026-10-13T23:45:00+00:00"},
+            _human(SPOKE, steer=True),
+        ]
+        assert routes._last_user_at_of(_Window(rows)) == SPOKE
+
+    def test_a_user_row_no_person_wrote_is_not_a_reply(self) -> None:
+        """An app wake is a `user` row with no human marker; it must not fold a card."""
+        rows = [
+            _human(SPOKE),
+            {"role": "user", "content": "[wake]", "ts": "2026-10-13T23:55:00+00:00"},
+            {"role": "assistant", "content": "ok", "ts": "2026-10-13T23:56:00+00:00"},
+        ]
+        assert routes._last_user_at_of(_Window(rows)) == SPOKE
+
+    def test_with_no_human_row_in_memory_the_stored_stamp_answers(self) -> None:
+        """A restored row whose window was never loaded, or no live slot at all."""
+        assert routes._last_user_at_of(_Window([]), SPOKE) == SPOKE
+        assert routes._last_user_at_of(None, SPOKE) == SPOKE
+        assert routes._last_user_at_of(None, "") == ""
+        assert routes._last_user_at_of(None, None) == ""
+
+    @pytest.mark.parametrize("zone", ["UTC", "Pacific/Kiritimati", "America/St_Johns"])
+    def test_the_later_instant_wins_and_reaches_the_page_in_utc(self, local_tz, zone) -> None:
+        """A naive row is the writer's local clock. Compared as TEXT against an aware
+        stamp it is in another domain: under +14:00 the row reads a day ahead and wins
+        when it is the earlier instant, and under -03:30 it reads behind and loses when
+        it is the later one."""
+        local_tz(zone)
+        row = _Window([_human(_naive_local(SPOKE, zone))])
+        assert routes._last_user_at_of(row) == SPOKE
+        assert routes._last_user_at_of(row, "2026-10-13T23:48:00+00:00") == SPOKE
+        assert routes._last_user_at_of(row, "2026-10-13T23:50:00+00:00") == (
+            "2026-10-13T23:50:00+00:00"
+        )
+        # A stored stamp in another zone's offset is the same instant, said in UTC.
+        assert routes._last_user_at_of(None, "2026-10-14T13:49:04+14:00") == SPOKE
+
+    def test_the_stamp_is_whole_seconds_like_the_write_time_it_is_compared_with(self) -> None:
+        """A reply and a list the crewmate wrote later in the SAME second compare equal.
+
+        `written_at` is the fold's whole-second spelling of the write, so a stamp with a
+        fraction would read as the later of the two and fold a list written after the
+        reply. Equal is what the page reads as "not answered"."""
+        from datetime import datetime, timezone
+
+        from kiro_crew.crew_log.projection import _panel_iso
+
+        # SPOKE's own second, with the reply 0.3 s into it and the write 0.7 s into it.
+        reply_ms, write_ms = 1791935344300, 1791935344700
+        written = _panel_iso(write_ms)
+        reply = datetime.fromtimestamp(reply_ms / 1000, tz=timezone.utc).isoformat()
+        assert reply.endswith(".300000+00:00") and written == SPOKE
+        assert routes._last_user_at_of(_Window([_human(reply)])) == written
+        # A reply in a LATER second still reads as the later instant.
+        assert routes._last_user_at_of(_Window([_human("2026-10-13T23:49:05.001+00:00")])) == (
+            "2026-10-13T23:49:05+00:00"
+        )
+
+    def test_a_stamp_that_cannot_be_read_is_no_stamp(self, local_tz) -> None:
+        local_tz("Pacific/Kiritimati")
+        assert routes._last_user_at_of(_Window([_human("not a time")])) == ""
+        # Parses, and still cannot be resolved: year 1 at +14:00 is before year 1 UTC.
+        assert routes._last_user_at_of(None, "0001-01-01T00:00:00") == ""
+        # One bad candidate costs only itself.
+        assert routes._last_user_at_of(_Window([_human("not a time")]), SPOKE) == SPOKE
+
+    def test_a_crewmates_page_reads_its_dm_thread(self) -> None:
+        dm = routes._dashboard_slot(MEMBER, SLUG)
+        state = _ChatState({dm: _Window([_human(SPOKE, steer=True)])})
+        assert routes._person_last_spoke(state, SLUG, MEMBER, None) == SPOKE
+        assert state.asked == [dm]
+
+    def test_a_sessions_page_reads_its_own_slot_and_no_crewmates(self) -> None:
+        dm = routes._dashboard_slot(MEMBER, SLUG)
+        state = _ChatState(
+            {"chat-7": _Window([_human(SPOKE)]), dm: _Window([_human("2026-10-14T01:00:00+00:00")])}
+        )
+        assert routes._person_last_spoke(state, "session-key", "", "chat-7") == SPOKE
+        assert state.asked == ["chat-7"]
+
+    def test_a_thread_with_no_live_slot_reads_the_stored_stamp_from_its_file(self) -> None:
+        from kiro_crew.dashboard.chat_utils import slot_transcript_key
+
+        dm = routes._dashboard_slot(MEMBER, SLUG)
+        log = _Log({slot_transcript_key(dm): {"_type": "metadata", "last_user_at": SPOKE}})
+        state = _ChatState({}, log)
+        assert routes._person_last_spoke(state, SLUG, MEMBER, None) == SPOKE
+        assert log.asked == [slot_transcript_key(dm)]
+
+    def test_no_state_or_a_failed_read_is_no_stamp(self) -> None:
+        class _Broken(_Log):
+            def get_metadata(self, key: str) -> dict:
+                raise OSError("unreadable")
+
+        assert routes._person_last_spoke(None, SLUG, MEMBER, None) == ""
+        assert routes._person_last_spoke(_ChatState({}, _Broken({})), SLUG, MEMBER, None) == ""
+
+    async def test_the_composed_page_carries_the_stamp(self, monkeypatch) -> None:
+        """Through the route: `_serve` reads it off the loop and hands it to the page."""
+        from kiro_crew import dashboard_feed
+
+        class FakeFeed:
+            def __init__(self, slot, unit="", panel_record=None):
+                pass
+
+            def subscribe(self, manifest):
+                return []
+
+            def read(self, manifest, agentic=None):
+                out = dashboard_feed.FieldRead()
+                out.fields = {"credits": 1.5}
+                return out
+
+            def unsubscribe(self):
+                pass
+
+        from kiro_crew.crew_log import projection
+
+        monkeypatch.setattr(dashboard_feed, "DashboardFeed", FakeFeed)
+        monkeypatch.setattr(
+            projection, "read_slot_projection", lambda slot, name: SimpleNamespace(value={})
+        )
+        dm = routes._dashboard_slot(MEMBER, SLUG)
+        instance.adopt(SLUG, "fixture-board")
+        state = _ChatState({dm: _Window([_human(SPOKE, steer=True)])})
+        async with _client(state) as client:
+            body = await (await client.get(_q(""))).json()
+        island = body["rendered_html"].split('id="kirocrew-dashboard-data">', 1)[1]
+        read = json.loads(island.split("</script>", 1)[0])
+        assert read["last_user_at"] == SPOKE
+
+        # The STAGED page a person previews is composed by the same read, so it is told
+        # too: a preview that showed answered cards asking would preview another page.
+        instance.stage_preview(SLUG, template_id="fixture-board")
+        async with _client(state) as client:
+            body = await (await client.get(_q("", preview="1"))).json()
+        assert body["preview"] is True
+        island = body["rendered_html"].split('id="kirocrew-dashboard-data">', 1)[1]
+        assert json.loads(island.split("</script>", 1)[0])["last_user_at"] == SPOKE
+
+        # No gateway state at all is no stamp, and the page is served all the same.
+        async with _client() as client:
+            body = await (await client.get(_q(""))).json()
+        island = body["rendered_html"].split('id="kirocrew-dashboard-data">', 1)[1]
+        assert json.loads(island.split("</script>", 1)[0])["last_user_at"] == ""

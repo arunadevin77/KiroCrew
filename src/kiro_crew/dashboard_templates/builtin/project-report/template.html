@@ -217,6 +217,12 @@
   .pr-todo-sent b { color: var(--text, #e4e4e7); font-weight: 500; }
   .pr-todo-sent button { font: inherit; background: none; border: 0; padding: 0;
     color: var(--muted, #7f7f88); text-decoration: underline; cursor: pointer; margin-left: auto; }
+  /* A card brought back with Show card: the line saying the person wrote in the chat
+     after it was asked, and the quiet button that folds it again. */
+  .pr-todo-again { display: flex; gap: 8px; align-items: baseline; margin-top: 2px;
+    font-size: 10.5px; color: var(--muted, #7f7f88); }
+  .pr-todo-again button { font: inherit; background: none; border: 0; padding: 0;
+    color: var(--muted, #7f7f88); text-decoration: underline; cursor: pointer; }
 
   /* ---- the verdict band: one lead-written line above everything else ----
      A left rule in the state's own colour, because the state has to be readable
@@ -595,7 +601,7 @@
       stale_reading: 'Every number below is a last-known reading.', fold_seq: 'fold seq {n}',
       kpi_in_flight: 'In flight', kpi_accepted: 'Accepted', kpi_needs_you: 'Needs you',
       kpi_nothing_waiting: 'nothing waiting on you', kpi_one_answer: 'one answer needed',
-      kpi_answers: 'answers needed',
+      kpi_answers: 'answers needed', kpi_in_chat: '{n} asked before you wrote in chat',
       cost_spent: 'spent', credits: 'credits', cost_last_hour: 'last hour',
       cost_reported_none: 'reported no cost', cost_show: 'show breakdown', cost_hide: 'hide breakdown',
       hero_title: 'Credits per hour', hero_empty: 'No hourly record yet',
@@ -652,12 +658,17 @@
       no_workstream_dot: 'No workstream yet.',
       sent_done: 'done ', sent_spent: ', spent ', sent_in_flight: ' in flight, spent ',
       sent_credits: ' credits, ', needs_you_suffix: ' needs you', need_you_suffix: ' need you',
+      sent_and: ', ', in_chat_suffix: ' asked before you wrote in chat',
       word_blocked: 'Blocked', word_asks: 'Asks you', word_pick: 'Pick one', word_approve: 'OK to go?',
       word_only_you: 'Only you', word_go: 'Go ahead', word_not_now: 'Not now', word_done: 'Done it',
       word_cant: "Can't now", word_redispatch: 'Re-dispatch it', word_drop: 'Drop it',
       word_own: 'Write my own', word_yes: 'Yes', word_no: 'No', word_earlier: 'Earlier',
       word_answered: 'Answered', word_undo: 'Undo', word_context: 'Context', word_why: 'Why',
-      word_how: 'How', word_words: "worker's words"
+      word_how: 'How', word_words: "worker's words",
+      word_replied: 'You wrote in chat after this was asked',
+      word_in_chat: 'Asked before you wrote in chat',
+      word_reopen: 'Show card',
+      word_hide: 'Hide card'
     },
     'zh-CN': {
       doing: '\u8fd9\u4e2a\u961f\u53cb\u6b63\u5728\u505a\u4ec0\u4e48',
@@ -686,7 +697,7 @@
       stale_reading: '\u4e0b\u9762\u6bcf\u4e2a\u6570\u5b57\u90fd\u662f\u6700\u8fd1\u4e00\u6b21\u8bfb\u6570\u3002', fold_seq: 'fold \u5e8f\u53f7 {n}',
       kpi_in_flight: '\u8fdb\u884c\u4e2d', kpi_accepted: '\u901a\u8fc7', kpi_needs_you: '\u9700\u8981\u4f60',
       kpi_nothing_waiting: '\u6ca1\u6709\u5f85\u4f60\u5904\u7406\u7684\u4e8b', kpi_one_answer: '\u9700\u8981\u4e00\u4e2a\u56de\u7b54',
-      kpi_answers: '\u9700\u8981\u56de\u7b54',
+      kpi_answers: '\u9700\u8981\u56de\u7b54', kpi_in_chat: '{n} \u4e2a\u5728\u4f60\u53d1\u804a\u5929\u6d88\u606f\u4e4b\u524d\u63d0\u51fa',
       cost_spent: '\u82b1\u8d39', credits: '\u989d\u5ea6', cost_last_hour: '\u6700\u8fd1\u4e00\u5c0f\u65f6',
       cost_reported_none: '\u672a\u62a5\u544a\u82b1\u8d39', cost_show: '\u5c55\u5f00\u660e\u7ec6', cost_hide: '\u6536\u8d77\u660e\u7ec6',
       hero_title: '\u6bcf\u5c0f\u65f6\u989d\u5ea6', hero_empty: '\u6682\u65e0\u6bcf\u5c0f\u65f6\u8bb0\u5f55',
@@ -743,12 +754,17 @@
       no_workstream_dot: '\u6682\u65e0\u5de5\u4f5c\u6d41\u3002',
       sent_done: '\u5b8c\u6210 ', sent_spent: '\uff0c\u82b1\u8d39 ', sent_in_flight: ' \u8fdb\u884c\u4e2d\uff0c\u82b1\u8d39 ',
       sent_credits: ' \u989d\u5ea6\uff0c', needs_you_suffix: ' \u9700\u8981\u4f60', need_you_suffix: ' \u9700\u8981\u4f60',
+      sent_and: '\uff0c', in_chat_suffix: ' \u4e2a\u5728\u4f60\u53d1\u804a\u5929\u6d88\u606f\u4e4b\u524d\u63d0\u51fa',
       word_blocked: '\u53d7\u963b', word_asks: '\u95ee\u4f60', word_pick: '\u9009\u4e00\u4e2a', word_approve: '\u53ef\u4ee5\u5417\uff1f',
       word_only_you: '\u4ec5\u4f60\u53ef\u505a', word_go: '\u7ee7\u7eed', word_not_now: '\u6682\u4e0d', word_done: '\u641e\u5b9a\u4e86',
       word_cant: '\u73b0\u5728\u4e0d\u884c', word_redispatch: '\u91cd\u65b0\u6d3e\u53d1', word_drop: '\u653e\u5f03\u5b83',
       word_own: '\u81ea\u5df1\u5199', word_yes: '\u662f', word_no: '\u5426', word_earlier: '\u8f83\u65e9',
       word_answered: '\u56de\u590d\u8fc7', word_undo: '\u64a4\u9500', word_context: '\u80cc\u666f', word_why: '\u4e3a\u4f55',
-      word_how: '\u5982\u4f55', word_words: '\u5de5\u4f5c\u8005\u7684\u539f\u8bdd'
+      word_how: '\u5982\u4f55', word_words: '\u5de5\u4f5c\u8005\u7684\u539f\u8bdd',
+      word_replied: '\u8fd9\u6761\u63d0\u51fa\u540e\uff0c\u4f60\u5728\u804a\u5929\u91cc\u53d1\u8fc7\u6d88\u606f',
+      word_in_chat: '\u5728\u4f60\u53d1\u804a\u5929\u6d88\u606f\u4e4b\u524d\u63d0\u51fa',
+      word_reopen: '\u663e\u793a\u5361\u7247',
+      word_hide: '\u6536\u8d77\u5361\u7247'
     }
   };
   function locale() {
@@ -1931,7 +1947,11 @@
         ? (need.mine
             ? need.mine + ' of them raised by the crewmate'
             : need.total === 1 ? i18n('kpi_one_answer') : i18n('kpi_answers'))
-        : i18n('kpi_nothing_waiting'),
+        //: Cards written before the person last wrote in the chat are not counted here,
+        //: but they are not "nothing": the subtitle says how many were asked before that.
+        : need.inChat
+          ? i18n('kpi_in_chat', { n: need.inChat })
+          : i18n('kpi_nothing_waiting'),
       !need.total, {}));
     return wrap;
   }
@@ -2142,8 +2162,56 @@
     catch (e) { /* no host: the choice simply does nothing */ }
   }
 
+  //: A MESSAGE IN THE CHAT FOLDS THE CREWMATE'S CARDS WRITTEN BEFORE IT. Typing in the
+  //: chat, clicking an option there and steering a running turn all reach the crewmate
+  //: without passing through this page, so the page learns of them from the host:
+  //: `last_user_at` is when the person last wrote in this chat. Cards written BEFORE
+  //: that fold under "Asked before you wrote in chat" rather than ask the reader again
+  //: until the crewmate writes the list again -- which moves `written_at.for_you` past
+  //: the message and shows whatever it kept as asking once more. The page cannot tell
+  //: whether that message answered a card, so it says only when the card was written.
+  //:
+  //: The HOST's two stamps and never a time inside a value, for the reason `verdict()`
+  //: gives, and only a parse of BOTH folds anything: one unreadable stamp leaves every
+  //: card asking, which costs the reader a card asked again rather than hiding one
+  //: they never saw.
+  function lastUserAt() { return txt((window.kirocrew || {}).last_user_at); }
+  function repliedInChat() {
+    var said = lastUserAt();
+    var wrote = txt(((window.kirocrew || {}).written_at || {}).for_you);
+    if (!said || !wrote) return false;
+    var s = Date.parse(said);
+    var w = Date.parse(wrote);
+    return isFinite(s) && isFinite(w) && s > w;
+  }
+  //: The stylesheet's reduced-motion block covers what CSS animates; a scroll the
+  //: script starts is the script's to tone down.
+  function reducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+  //: The cards the reader unfolded after a reply folded them, by key, each with the
+  //: reply it was unfolded against. A newer reply is a different stamp, so it folds
+  //: the card again; kept across refills like `deskPicked`, for the same reason.
+  var deskReopened = {};
+  //: "Show card" removes the button that was clicked, so the card it brings back is
+  //: marked and given focus: the key being brought back, and the card element
+  //: `todoRow` built for it in that render. Both are cleared once focus has moved.
+  var deskFocusKey = null;
+  var deskFocusEl = null;
+  //: "Hide card" removes the button that was clicked too, so focus goes to the heading
+  //: of the fold the card went back into: set while that render runs, and the
+  //: `<summary>` `todoCard` built for the fold in it. Both are cleared once focus has moved.
+  var deskRefold = false;
+  var deskRefoldEl = null;
+  function isReplied(row) {
+    return !!row.replied && !(row.key && deskReopened[row.key] === lastUserAt());
+  }
+  function isAnswered(row) {
+    return !!(row.key && deskPicked[row.key]) || isReplied(row);
+  }
+
   function needsYou(list, scope) {
-    var rows = [], workers = 0, mine = 0, i, j;
+    var rows = [], workers = 0, mine = 0, replied = 0, i, j;
     for (i = 0; i < list.length; i++) {
       workers += num(list[i].needs_you) || 0;
       var ts = tasksOf(list[i]);
@@ -2196,6 +2264,7 @@
       }
     }
     var written = forYou();
+    var answeredInChat = repliedInChat();
     for (i = 0; i < written.length; i++) {
       var label = txt(written[i].workstream);
       if (scope && label !== scope.goal && label !== scope.id) continue;
@@ -2219,9 +2288,14 @@
         why: '', when: 'when you answer in chat',
         owner: null, action: null,
         spender: '', boardId: '',
-        isNew: true, note: '', agent: true
+        isNew: true, note: '', agent: true,
+        replied: answeredInChat
       });
-      mine += 1;
+      //: A card written before the person last wrote in the chat does not ask them
+      //: again, so no count says it needs them: it is drawn under "Asked before you
+      //: wrote in chat" and counted apart.
+      if (isReplied(rows[rows.length - 1])) replied += 1;
+      else mine += 1;
     }
     //: `workers` is the fold's own count for the boards in view, not a count of the rows
     //: drawn: the retained task list is bounded, so the fold can legitimately know of
@@ -2234,13 +2308,21 @@
     //: unbounded one without saying so is how a headline starts disagreeing with the
     //: list under it.
     var drawn = rows.length;
-    var fromWorkers = drawn - mine;
+    var fromWorkers = drawn - mine - replied;
     //: The record cannot report FEWER worker items than the page can draw: a count
     //: below the rows in hand would be the fold disagreeing with its own task list, and
     //: the rows are the thing a reader can act on, so they win.
     if (workers < fromWorkers) workers = fromWorkers;
     var total = workers + mine;
-    return { rows: rows, notes: [], total: total, workers: workers, mine: mine };
+    //: The rows the "Asked before you wrote in chat" fold draws: written before the
+    //: person last wrote in the chat and not picked on the page. Stated on their own in
+    //: the header and the KPI, so asks the page folded on a message it cannot read are
+    //: never simply dropped from view.
+    var inChat = rows.filter(function (r) {
+      return isReplied(r) && !(r.key && deskPicked[r.key]);
+    }).length;
+    return { rows: rows, notes: [], total: total, workers: workers, mine: mine,
+      replied: replied, inChat: inChat };
   }
 
   //: THE NEEDS-YOU DESK, shelved by recency and coloured by kind.
@@ -2278,6 +2360,11 @@
     function todoRow(row) {
       var it = el('div', 'pr-todo-i');
       it.style.setProperty('--pr-todo-c', row.kindColor);
+      if (deskFocusKey !== null && row.key === deskFocusKey) {
+        it.className += ' pr-flash';
+        it.tabIndex = -1;
+        deskFocusEl = it;
+      }
       it.appendChild(el('div', 'pr-todo-k', KIND_WORD[row.kind] ? W(KIND_WORD[row.kind]) : row.kind));
       var x = el('div', 'pr-todo-x');
       x.appendChild(el('b', null, row.text));
@@ -2304,6 +2391,28 @@
           br.appendChild(el('dd', null, b[1]));
         });
         x.appendChild(br);
+      }
+      //: A card the reader brought back with "Show card" still says the person wrote in
+      //: the chat after it was asked, on a status row of its own (`pr-todo-why` clamps
+      //: and reads as the worker's note), with "Hide card" to fold it again.
+      if (row.replied && row.key && deskReopened[row.key] === lastUserAt()) {
+        var again = el('div', 'pr-todo-again');
+        again.appendChild(el('span', null, W('replied')));
+        var hide = el('button', null, W('hide'));
+        hide.type = 'button';
+        hide.addEventListener('click', function () {
+          delete deskReopened[row.key];
+          //: The render removes this button, so focus goes to the heading of the fold
+          //: the card went back into.
+          deskRefold = true;
+          render();
+          var sum = deskRefoldEl;
+          deskRefold = false;
+          deskRefoldEl = null;
+          if (sum) sum.focus();
+        });
+        again.appendChild(hide);
+        x.appendChild(again);
       }
       if (row.why) {
         var head = headline(row.why);
@@ -2351,17 +2460,36 @@
       it.appendChild(x);
       return it;
     }
-    //: A picked card, folded: what was picked, and that it waits in the chat box.
-    //: "Undo" only unfolds the card; text already in the chat box is the person's.
+    //: A folded card: the choice picked on it, which waits in the chat box, or, for a
+    //: card written before the person last wrote in the chat, that they wrote there
+    //: after it was asked. "Undo" (a picked card) and "Show card" (a card folded by a
+    //: message in the chat) both only unfold the card; text already in the chat box or
+    //: the chat is the person's.
     function sentLine(row) {
       var s = el('div', 'pr-todo-sent');
       s.appendChild(el('b', null, row.text));
-      s.appendChild(el('span', null, '\u2192 ' + deskPicked[row.key]));
-      var u = el('button', null, W('undo'));
+      var picked = row.key && deskPicked[row.key];
+      s.appendChild(el('span', null, '\u2192 ' + (picked || W('replied'))));
+      var u = el('button', null, picked ? W('undo') : W('reopen'));
       u.type = 'button';
       u.addEventListener('click', function () {
         delete deskPicked[row.key];
+        if (row.replied) deskReopened[row.key] = lastUserAt();
+        //: Undo only unfolds the card, as it always has.
+        if (picked) { render(); return; }
+        //: Show card: the render removes this button, so focus goes to the card it
+        //: brings back, which the render marks with the same flash a changed tree row gets.
+        deskFocusKey = row.key;
         render();
+        var back = deskFocusEl;
+        deskFocusKey = null;
+        deskFocusEl = null;
+        //: The scroll is instant when the reader asked for less motion, and focus does
+        //: not scroll a second time over it.
+        if (back) {
+          back.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+          back.focus({ preventScroll: true });
+        }
       });
       s.appendChild(u);
       return s;
@@ -2408,10 +2536,17 @@
       return shelf;
     }
 
-    //: Picked cards leave the shelves, so the cards still open sit side by side
-    //: with no holes; the picked ones stack as single lines under the desk.
-    var picked = rows.filter(function (r) { return r.key && deskPicked[r.key]; });
-    var open = rows.filter(function (r) { return !(r.key && deskPicked[r.key]); });
+    //: Folded cards leave the shelves, so the cards still open sit side by side
+    //: with no holes; the folded ones stack as single lines under the desk, in two
+    //: folds whose headings match their rows: cards picked on the page under
+    //: "Answered", and cards written before the person last wrote in the chat under
+    //: "Asked before you wrote in chat", since the reader picked nothing on those and
+    //: the page cannot tell whether that message answered them.
+    var picked = rows.filter(function (r) { return !!(r.key && deskPicked[r.key]); });
+    var inChat = rows.filter(function (r) {
+      return isReplied(r) && !(r.key && deskPicked[r.key]);
+    });
+    var open = rows.filter(function (r) { return !isAnswered(r); });
     var newRows = open.filter(function (r) { return r.isNew; });
     var oldRows = open.filter(function (r) { return !r.isNew; });
 
@@ -2433,17 +2568,31 @@
       picked.forEach(function (r) { ps.appendChild(sentLine(r)); });
       desk.appendChild(fold(W('answered'), picked.length, ps));
     }
-    if (!open.length && picked.length) {
+    if (inChat.length) {
+      var ws = el('div', 'pr-picked');
+      inChat.forEach(function (r) { ws.appendChild(sentLine(r)); });
+      var wf = fold(W('in_chat'), inChat.length, ws);
+      //: "Hide card" moves focus to this fold's heading once the render is done.
+      if (deskRefold) deskRefoldEl = wf.firstChild;
+      desk.appendChild(wf);
+    }
+    //: "Nothing left to pick" only when every card was picked here: a card asked
+    //: before the person wrote in the chat may still be asked again, so the line
+    //: would read as all done.
+    if (!open.length && picked.length && !inChat.length) {
       desk.insertBefore(el('div', 'pr-empty', i18n('todo_nothing_left')), desk.firstChild);
     }
     card.appendChild(desk);
 
-    if (need.total > rows.length) {
+    //: The rows the total counts: a card asked before the person last wrote in the
+    //: chat is drawn, not counted.
+    var counted = rows.length - need.replied;
+    if (need.total > counted) {
       //: The record counts more than the retained tasks can show, so the difference is
       //: NAMED. Drawing only the rows would under-report what is waiting; printing only
       //: the count would send the reader looking for lines that are not on the page.
       var held = el('div', 'pr-held',
-        (need.total - rows.length) + ' more not shown (list truncated)');
+        (need.total - counted) + ' more not shown (list truncated)');
       card.appendChild(held);
     }
     return card;
@@ -2527,7 +2676,8 @@
       var c = credits(list[i]);
       if (c !== null) cr = (cr || 0) + c;
     }
-    var need = needsYou(list, null).total;
+    var needs = needsYou(list, null);
+    var need = needs.total;
     var host = document.getElementById('pr-sentence');
     clear(host);
     function bit(strong, after) {
@@ -2537,6 +2687,16 @@
     bit(String(open), i18n('sent_in_flight'));
     bit(fmtCr(cr), i18n('sent_credits'));
     bit(String(need), need === 1 ? i18n('needs_you_suffix') : i18n('need_you_suffix'));
+    sentInChat(host, needs.inChat);
+  }
+  //: The cards written before the person last wrote in the chat are still asks until
+  //: the crewmate writes the list again, so the header says how many were asked before
+  //: that rather than dropping them.
+  function sentInChat(host, inChat) {
+    if (!inChat) return;
+    host.appendChild(document.createTextNode(i18n('sent_and')));
+    host.appendChild(el('b', null, String(inChat)));
+    host.appendChild(document.createTextNode(i18n('in_chat_suffix')));
   }
 
   //: WHO IS WORKING, AND ON WHAT (Paperclip's Latest Run card, team/REPORT.md #7).
@@ -2703,7 +2863,10 @@
       //: rather than only that nothing has. A bare "No workstream yet." leaves a
       //: reader unsure whether the page is empty or broken. Kept for the case it is
       //: actually about: nothing, from any of the three records.
-      if (!need.total && !spent) {
+      //: A card asked before the person last wrote in the chat needs nobody, but it is
+      //: still drawn, folded, so the reader can unfold it: the desk is kept for any row
+      //: it holds, not only a count.
+      if (!need.total && !need.rows.length && !spent) {
         var card = el('div', 'pr-card');
         var hasPub = published();
         if (hasPub && Object.keys(hasPub).length) {
@@ -2732,7 +2895,7 @@
       var lead = el('div', 'pr-card');
       lead.appendChild(el('div', 'pr-empty', i18n('empty_no_tree')));
       box.appendChild(lead);
-      if (need.total) box.appendChild(todoCard(list, null));
+      if (need.total || need.rows.length) box.appendChild(todoCard(list, null));
       if (spent) box.appendChild(sectionCost(list, pts, i18n('cap_record')));
       host.appendChild(box);
       var note2 = document.getElementById('pr-note');
@@ -2775,7 +2938,8 @@
     var acc = root ? root.done : (num(s.accepted) || 0);
     var tot = root ? root.total : (num(s.total) || 0);
     var cr = root ? billTotal(root.bill) : credits(s);
-    var need = needsYou([s], scope).total;
+    var needs = needsYou([s], scope);
+    var need = needs.total;
     var host = document.getElementById('pr-sentence');
     clear(host);
     host.appendChild(document.createTextNode(i18n('sent_done')));
@@ -2785,6 +2949,7 @@
     host.appendChild(document.createTextNode(i18n('sent_credits')));
     host.appendChild(el('b', null, String(need)));
     host.appendChild(document.createTextNode(need === 1 ? i18n('needs_you_suffix') : i18n('need_you_suffix')));
+    sentInChat(host, needs.inChat);
 
     var box = el('div');
     box.style.display = 'grid';

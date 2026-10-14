@@ -860,8 +860,87 @@ class TestTheAgentPicksTheLanguage:
             "earlier",
             "answered",
             "undo",
+            "replied",
+            "reopen",
+            "in_chat",
+            "hide",
         ):
             assert f"W('{key}')" in script, f"{key} is not read from ui_words"
+
+
+class TestACardAskedBeforeThePersonWroteInTheChat:
+    """A message in the chat folds the crewmate's cards written before it.
+
+    Pinned against the source for what a regex can pin; the behaviour is driven in
+    ``website/src/test/projectReportPage.test.ts``, where a JS engine runs the page.
+    """
+
+    def test_it_compares_the_hosts_two_stamps_and_needs_both(self, script: str) -> None:
+        body = script.split("function repliedInChat()")[1].split("\n  }")[0]
+        assert "last_user_at" in script.split("function lastUserAt()")[1].split("\n")[0]
+        assert ".written_at" in body and ".for_you" in body
+        assert re.search(r"isFinite\(s\) && isFinite\(w\) && s > w", body), (
+            "a card folds on one readable stamp, so an unreadable one can hide a card "
+            "the reader never answered"
+        )
+
+    def test_an_answered_card_is_counted_apart_from_the_ones_that_wait(self, script: str) -> None:
+        block = re.search(r"function needsYou\(list, scope\) \{(.*?)\n  \}", script, re.S)
+        assert block, "the page has no needsYou"
+        body = block.group(1)
+        assert re.search(r"if \(isReplied\([^)]*\)\) replied \+= 1;\s*else mine \+= 1;", body)
+        assert "var fromWorkers = drawn - mine - replied;" in body, (
+            "an answered card is read as a worker row, so the fold's own count is raised "
+            "by the cards the reader already answered"
+        )
+
+    def test_it_folds_under_its_own_heading_with_its_own_word(self, script: str) -> None:
+        assert "fold(W('in_chat'), inChat.length, ws)" in script, (
+            "a card folded only by a chat reply sits under Answered, which says it was "
+            "picked on the page while nothing was picked on it"
+        )
+        assert "fold(W('answered'), picked.length, ps)" in script
+        assert "W('replied')" in script.split("function sentLine(row)")[1].split("\n    }")[0]
+        for key in ("word_replied:", "word_in_chat:", "word_hide:"):
+            assert key in script.split("'zh-CN': {")[0]
+            assert key in script.split("'zh-CN': {")[1]
+
+    def test_needs_you_returns_the_in_chat_count(self, script: str) -> None:
+        block = re.search(r"function needsYou\(list, scope\) \{(.*?)\n  \}", script, re.S)
+        assert block, "the page has no needsYou"
+        assert re.search(r"replied: replied, inChat: inChat \}", block.group(1)), (
+            "the folded asks have no count of their own, so the header and the KPI "
+            "drop them with nothing shown"
+        )
+
+    def test_undo_unfolds_it_against_the_reply_it_was_folded_by(self, script: str) -> None:
+        body = script.split("function sentLine(row)")[1].split("\n    }")[0]
+        assert "deskReopened[row.key] = lastUserAt();" in body
+
+    def test_a_card_folded_by_the_chat_shows_card_and_a_picked_one_keeps_undo(
+        self, script: str
+    ) -> None:
+        body = script.split("function sentLine(row)")[1].split("\n    }")[0]
+        assert "picked ? W('undo') : W('reopen')" in body, (
+            "a card folded only by a chat reply reads Undo, which suggests it cancels "
+            "what the person said in the chat"
+        )
+        assert "word_reopen:" in script.split("'zh-CN': {")[0]
+        assert "word_reopen:" in script.split("'zh-CN': {")[1]
+
+    def test_every_word_the_page_reads_is_one_a_verdict_may_carry(
+        self, loaded: tuple[Any, str], script: str
+    ) -> None:
+        """A word the page offers to override must be a key the write accepts.
+
+        `verdict.words` declares its keys, and a write naming any other key is refused
+        whole as `wrong_shape`, so a word missing from the shape is worse than missing
+        from the page: a lead writing it loses its whole verdict, not the one label."""
+        manifest, _ = loaded
+        words = manifest.fields["verdict"].shape.properties["words"]
+        read = set(re.findall(r"\bW\('([a-z_]+)'\)", script))
+        assert {"replied", "reopen", "in_chat", "hide"} <= read
+        assert read <= set(words.properties), sorted(read - set(words.properties))
 
 
 #: Every way a script can turn a string into markup. The page draws what a crewmate

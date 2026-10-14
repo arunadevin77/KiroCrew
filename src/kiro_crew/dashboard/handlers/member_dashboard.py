@@ -173,6 +173,106 @@ def _newest_unit(slot: str) -> str:
         return ""
 
 
+def _utc_stamp(stamp: str) -> str:
+    """*stamp* as one aware UTC second (``...+00:00``), or ``""`` when it is not one.
+
+    A chat row's ``ts`` is stored in two formats -- offset-aware, and the naive local
+    wall clock older builds wrote -- and the page compares this against
+    ``written_at``, which is UTC. Read through :func:`~kiro_crew.history.
+    transcript_sort_key`, the repository's one rule for both formats (a naive value
+    is the writer's own local time), so the page is handed one domain and never has
+    to guess which clock a bare stamp came from.
+
+    WHOLE SECONDS, cut down rather than rounded, because ``written_at`` is: the fold
+    spells a write time with ``timespec="seconds"``. A reply at ``:04.3`` and a list
+    the crewmate wrote at ``:04.7`` then compare EQUAL, and only a reply in a LATER
+    second folds a card. At sub-second precision the reply would read as the later of
+    the two and fold a list written after it.
+
+    A stamp that parses can still be unusable: resolving a naive value at the
+    representable boundary raises, which ``_latest_stamp`` documents. That costs the
+    stamp, never the page.
+    """
+    from datetime import datetime, timezone
+
+    from kiro_crew.history import transcript_sort_key
+
+    if not stamp:
+        return ""
+    try:
+        bucket, seconds = transcript_sort_key(stamp)
+        if bucket != 0:
+            return ""
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat(timespec="seconds")
+    except (ValueError, OverflowError, OSError):
+        return ""
+
+
+def _last_user_at_of(slot: Any, persisted: object = "") -> str:
+    """When a PERSON last spoke in *slot*'s chat, as a UTC stamp, or ``""``.
+
+    The newest row a human send path marked -- a typed message, an option clicked in
+    the chat, a steer into a running turn -- read by the save path's own
+    :func:`~kiro_crew.dashboard.slot_persistence.metadata_line._newest_human_turn_ts`,
+    so this and the session's stored ``last_user_at`` agree about what a human turn
+    is. ``loaded_messages`` rather than ``messages``: a restored row whose window was
+    never loaded must not be loaded just to draw a page, and it has no row that is
+    not already on disk.
+
+    *persisted* is that stored stamp, folded in through ``_latest_stamp``, the same
+    fold the save makes. It is what answers when the window holds no human row: a
+    row still unloaded, a window scrolled past the last turn, or no live slot at all.
+    The live window is what answers between saves, which is when a reply matters to
+    a page -- a steer is on the slot the moment it is sent and on disk only at the
+    next flush.
+    """
+    from kiro_crew.dashboard.slot_persistence.metadata_line import (
+        _latest_stamp,
+        _newest_human_turn_ts,
+    )
+
+    live = ""
+    if slot is not None:
+        try:
+            live = _newest_human_turn_ts(slot.loaded_messages())
+        except Exception:
+            logger.debug("dashboard: could not read the person's last turn", exc_info=True)
+    stored = persisted if isinstance(persisted, str) else ""
+    return _utc_stamp(_latest_stamp(live, stored))
+
+
+def _person_last_spoke(state: Any, slug: str, member: str, slot: str | None) -> str:
+    """:func:`_last_user_at_of` for the chat this page belongs to: its live slot and its file.
+
+    The chat is *slot* for a root session's own page and the crewmate's DM thread
+    otherwise -- the slot :func:`read_fields` reads the page's folds from, so a reply
+    and the cards it answers are read from one thread.
+
+    *state* is the gateway's ``DashboardState``, or ``None`` where there is none. File
+    IO -- the config read behind the DM slot and the transcript's metadata line -- so
+    callers run it off the event loop, beside the fold read it is composed with. ``""``
+    on any failure, which leaves every card asking, as no stamp at all would.
+    """
+    if state is None:
+        return ""
+    try:
+        from kiro_crew.dashboard.chat_utils import slot_history_key, slot_transcript_key
+
+        slot_key = slot if slot is not None else _dashboard_slot(member, slug)
+        if not slot_key:
+            return ""
+        live = state.get_slot(slot_key)
+        persisted: object = ""
+        log = getattr(state, "conversation_log", None)
+        if log is not None:
+            key = slot_history_key(live) if live is not None else slot_transcript_key(slot_key)
+            persisted = log.get_metadata(key).get("last_user_at") or ""
+        return _last_user_at_of(live, persisted)
+    except Exception:
+        logger.debug("dashboard: no last turn for %r's chat", slug, exc_info=True)
+        return ""
+
+
 async def _owner_only(request: web.Request, operation: str) -> web.Response | None:
     return await require_owner_dashboard_request(request, operation)
 
@@ -337,6 +437,9 @@ async def _serve(request: web.Request, slug: str, member: str, slot: str | None)
     # The reader's UI language, as the browser resolved it. Checked against the
     # shipped catalogs in `dashboard_frame.page_locale`; anything else is English.
     locale = request.query.get("locale", "")
+    # The gateway's live chat slots, which say when the person last spoke in this
+    # page's chat. Taken here, on the loop; read off it with the fold values.
+    state = request.app.get("state")
     package_slug = request.query.get("dashboard", "")
     #: A PREVIEW SHOWS THE STAGED PAGE OR NOTHING. `instance.preview_url` carries no
     #: `dashboard=`, so filling the slug in from the crewmate's binding would serve the
@@ -488,7 +591,16 @@ async def _serve(request: web.Request, slug: str, member: str, slot: str | None)
         # Which staged page this is. The person's Keep sends it back, so the page that
         # lands is the one drawn here and not one staged again after the look.
         body["staged_ms"] = staged.updated_ms
-        rendered = await _run(lambda: _render(slug, _member, staged, locale, slot=slot))
+        rendered = await _run(
+            lambda: _render(
+                slug,
+                _member,
+                staged,
+                locale,
+                slot=slot,
+                last_user_at=_person_last_spoke(state, slug, _member, slot),
+            )
+        )
         if rendered is not None:
             body["rendered_html"] = rendered
         return web.json_response(body)
@@ -523,7 +635,16 @@ async def _serve(request: web.Request, slug: str, member: str, slot: str | None)
         instance.STATE_EMPTY,
         instance.STATE_STALE,
     ):
-        rendered = await _run(lambda: _render(slug, _member, record, locale, slot=slot))
+        rendered = await _run(
+            lambda: _render(
+                slug,
+                _member,
+                record,
+                locale,
+                slot=slot,
+                last_user_at=_person_last_spoke(state, slug, _member, slot),
+            )
+        )
         if rendered is not None:
             body["rendered_html"] = rendered
     return web.json_response(body)
@@ -860,7 +981,13 @@ def read_fields(slug: str, member: str, manifest: Any, *, slot: str | None = Non
 
 
 def _render(
-    slug: str, member: str, record: Any, locale: str = "", *, slot: str | None = None
+    slug: str,
+    member: str,
+    record: Any,
+    locale: str = "",
+    *,
+    slot: str | None = None,
+    last_user_at: str = "",
 ) -> str | None:
     """The live page with its values filled in: the frame's half of contract v3 part 5.
 
@@ -870,6 +997,9 @@ def _render(
     slot's ``agentic`` fold. The result is :func:`dashboard_frame.compose_body`, the one
     builder that also composes a refill, so the page's ``window.kirocrew`` is the same
     shape on first paint and after.
+
+    *last_user_at* is :func:`_person_last_spoke` for this page's chat, handed to the page
+    beside the write times it is compared with.
 
     DEMO SCOPE: the feed is opened and closed per request. The contract wants one
     long-lived feed per open dashboard pushing refills over the WS exporter; until
@@ -915,6 +1045,8 @@ def _render(
             locale=locale,
             # A root session's page is read by its slot; a crewmate's never is.
             subject="crewmate" if slot is None else "session",
+            # Through the same mask as the write times it is compared with.
+            last_user_at=str(_page_safe(last_user_at)),
         )
         # The catalog's page, redacted like the values that go into it. The scrub is
         # kept because this is the one step producing both the raw body and the
