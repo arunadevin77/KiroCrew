@@ -2912,6 +2912,133 @@ def app_command_agent_refusal(owner: str, agent: str, *projects: str | None) -> 
     return None
 
 
+@dataclass(frozen=True)
+class AgentOwner:
+    """The installed app whose manifest declares an agent, and whether it is switched on."""
+
+    app: str
+    label: str
+    enabled: bool
+
+
+def _owner_json(path: Path) -> dict[str, Any] | None:
+    """*path* parsed as a JSON object for the owner lookup, or None when refused.
+
+    Every file the lookup reads -- an app's ``installed.json``, its ``app.json``
+    and its agent specs -- sits in a tree the app can write, so each is screened
+    before anything follows a link (:func:`_screened_spec_path`) and read through
+    the hardened, audited agent-spec reader. A link into a protected location, an
+    oversized file and a document that is not an object all read as None.
+    """
+    from kiro_crew.agent_discovery import _read_agent_spec
+
+    screened = _screened_spec_path(path)
+    if screened is None:
+        return None
+    data = _read_agent_spec(screened, operation="app_agent_owner", source="unknown")
+    return data if isinstance(data, dict) else None
+
+
+def _app_agent_names(app_name: str, manifest: AppManifest, app_root: Path) -> set[str]:
+    """Every name *app_name*'s own agents are selected by, for attributing a binding.
+
+    Each agent's declared ``name`` (its file stem when it declares none), plus the
+    ``<app>--<name>`` stem registration writes the spec under, so a binding that
+    names either is recognised. Attribution only, never an authorization: a
+    templated spec still names its agent here, unlike the command-agent check in
+    :mod:`kiro_crew.apps.manifest`. A path escaping the app root, and a spec the
+    screened read refuses (:func:`_owner_json`), contribute nothing.
+    """
+    from kiro_crew.apps import bridges  # bridges imports this module
+    from kiro_crew.apps.manifest import _path_escapes_app_root_screened
+
+    names: set[str] = set()
+    for rel in manifest.agents:
+        rel = str(rel)
+        if not rel or _path_escapes_app_root_screened(rel, app_root):
+            continue
+        data = _owner_json(app_root / rel)
+        if data is None:
+            continue
+        name = data.get("name", Path(rel.replace("\\", "/")).stem)
+        if isinstance(name, str) and name:
+            names.add(name)
+            names.add(bridges._safe_link_name(bridges._namespace(app_name, name)))
+    return names
+
+
+def owning_app_for_agent(agent: str) -> AgentOwner | None:
+    """The installed app that declares *agent*, enabled or not, or None when none does.
+
+    Read from each installed app's own manifest and agent files, never from the
+    agents directory: disabling an app removes the specs it registered there, so
+    that directory cannot say who owned a name absent from it. The manifest and the
+    agent files come from where registration reads them: a shipped builtin's
+    immutable package root, every other app's installed tree
+    (``bridges._registration_source``). Apps are visited in name order and the
+    first that declares the agent answers. Every read is screened
+    (:func:`_owner_json`). Blocking file I/O; call it off the event loop. Never
+    raises: an app that cannot be read is skipped.
+    """
+    if not agent:
+        return None
+    # No ``is_dir`` filter: it would follow an entry that is a link before the
+    # screen sees it. Each entry is screened through its ``installed.json`` read
+    # instead, which refuses a link to a protected location or an untrusted share
+    # and reads nothing for an entry that is not an app directory.
+    try:
+        entries = sorted(apps_dir().iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        try:
+            raw_meta = _owner_json(entry / INSTALLED_META_FILENAME)
+            if raw_meta is None:
+                continue
+            root = shipped_builtin_app_root(entry.name) or entry
+            raw_manifest = _owner_json(root / APP_MANIFEST_FILENAME)
+            if raw_manifest is None:
+                continue
+            manifest = AppManifest.from_dict(raw_manifest)
+            if not manifest.agents or agent not in _app_agent_names(entry.name, manifest, root):
+                continue
+            label = manifest.displayName.strip() or entry.name
+            enabled = bool(InstalledApp.from_dict(raw_meta).enabled)
+            return AgentOwner(entry.name, label, enabled)
+        except Exception:  # noqa: BLE001 - one unreadable app must not hide the others
+            logger.debug("agent owner lookup skipped app %s", entry.name, exc_info=True)
+    return None
+
+
+def missing_agent_reason(agent: str, *, member: str = "") -> str:
+    """Why a session cannot start on *agent*, whose definition is gone, and the fix.
+
+    *member* is the Crew Member the session belongs to, when there is one; the
+    reason then names the member rather than the agent. Blocking file I/O through
+    :func:`owning_app_for_agent`; call it off the event loop.
+    """
+    owner = owning_app_for_agent(agent)
+    subject = f'Crew member "{member}"' if member else f'The agent "{agent}"'
+    target = "this crew member" if member else "it"
+    if owner is None:
+        if member:
+            return (
+                f'{subject} can\'t start: its agent template "{agent}" is missing. '
+                "Pick another template on its Agent Template tab."
+            )
+        return f"{subject} can't start: its agent definition is missing."
+    if not owner.enabled:
+        return (
+            f"{subject} comes from the {owner.label} app, which is disabled. "
+            f"Enable {owner.label} in Apps \u203a Library to use {target}."
+        )
+    return (
+        f"{subject} comes from the {owner.label} app, but its agent definition "
+        f'"{agent}" is missing. Disable and re-enable {owner.label} in Apps \u203a Library '
+        f"to register it again."
+    )
+
+
 def list_apps() -> list[dict[str, Any]]:
     """Return metadata for all installed apps."""
     root = apps_dir()

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
         _COMPACTION_CONTINUE_MSG,
         _PROMISE_ONLY_CONTINUE_MSG,
         _SYNTHETIC_RECOVERY_MSGS,
+        APP_AGENT_REFUSED_KIND,
         AUTH_REQUIRED_KIND,
         CONTEXT_OVERFLOW_KIND,
         FALSE_TOOL_BLOCKER_REPLAY_KIND,
@@ -245,7 +246,7 @@ async def _note_cycle_failure(
 def _terminal_error_meta(exc: BaseException) -> dict[str, object] | None:
     """Row-level kind for a terminal ACP error, or None for a plain error row.
 
-    Five structural tags, read here without looking at the prose. Four are set
+    Six structural tags, read here without looking at the prose. Four are set
     by ``_raise_acp_error`` from the raw frame: a model-entitlement rejection
     (``rejected_model`` / ``advertised``), a sign-in failure (``auth_required``),
     a spent plan allowance (``usage_limit``) and a context overflow
@@ -256,8 +257,11 @@ def _terminal_error_meta(exc: BaseException) -> dict[str, object] | None:
     ``session_start_failed``, is set at the ACP session-start timeout raise
     sites on BOTH exception families (``AcpError`` on the dedicated client,
     ``AcpRequestTimeout`` on the shared runtime, which share no base -- hence
-    ``getattr``) and ranks last: a start that failed because the process is
-    signed out has a fix, and that fix is what the card should show.
+    ``getattr``) and ranks below them: a start that failed because the process is
+    signed out has a fix, and that fix is what the card should show. The sixth,
+    ``agent_unavailable``, is set by the session start that finds no definition
+    for its agent (``AcpAgentUnavailable``); its row is the app-agent refusal,
+    because a retry finds the same missing definition and the prose names the fix.
     """
     unentitled = _model_unentitled_meta(exc)
     if unentitled is not None:
@@ -270,6 +274,8 @@ def _terminal_error_meta(exc: BaseException) -> dict[str, object] | None:
         return {"kind": CONTEXT_OVERFLOW_KIND}
     if getattr(exc, "session_start_failed", False) is True:
         return {"kind": SESSION_START_FAILED_KIND}
+    if getattr(exc, "agent_unavailable", False) is True:
+        return {"kind": APP_AGENT_REFUSED_KIND}
     return None
 
 

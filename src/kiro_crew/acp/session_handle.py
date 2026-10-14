@@ -882,6 +882,24 @@ class AcpModeNotFound(AcpRuntimeError):
         self.mode_id = mode_id
 
 
+class AcpAgentUnavailable(AcpRuntimeError):
+    """The session's agent has no definition at all, so the session is not created.
+
+    Raised at session start when no spec declares the agent -- typically because
+    the app that registered it is disabled -- with a message that names the cause
+    and the fix. ``transient = False``: a retry finds the same missing definition.
+    ``agent_unavailable`` is the structural tag the chat reads to show the reason
+    as a refusal with no Resume, so the verdict never depends on the prose.
+    """
+
+    transient = False
+    agent_unavailable = True
+
+    def __init__(self, message: str, *, agent: str) -> None:
+        super().__init__(message)
+        self.agent = agent
+
+
 class AcpRequestTimeout(AcpRuntimeError):
     """Raised when a request's response does not arrive within its budget.
 

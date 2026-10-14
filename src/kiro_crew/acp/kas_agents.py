@@ -238,6 +238,21 @@ class KasAgentTranslationError(ValueError):
     """A spec cannot be projected onto KAS's schema at all."""
 
 
+class KasAgentSpecAbsent(KasAgentTranslationError):
+    """No spec declares the agent and no file carries its name: there is nothing to read.
+
+    Distinct from a spec that exists and cannot be read, because the remedy is
+    different: something has to put the definition back (typically by enabling the
+    app that registers it), and the caller can say so instead of quoting a failed
+    file open. A subclass, so every ``except KasAgentTranslationError`` keeps
+    refusing the session exactly as before.
+    """
+
+    def __init__(self, agent_id: str, agents_dir: Path) -> None:
+        super().__init__(f"agent {agent_id!r} has no spec in {agents_dir}")
+        self.agent_id = agent_id
+
+
 #: System prompt fed to a prompt-less agent when projecting onto KAS. KAS
 #: requires a non-empty prompt where kiro-cli tolerates an empty one, so any
 #: agent that ships ``"prompt": ""`` (today only Crew's ``kirocrew-lite``, but

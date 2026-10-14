@@ -1152,7 +1152,10 @@ _EXPECTED_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
     # it goes through the hardened reader; a denial belongs to the app listing.
     # A turn refused for an app-owned agent labels the refusal with the app's
     # `displayName`, read from the app-writable `app.json` the same way.
+    # A session whose agent has no spec left names the app that declares it,
+    # from that app's own source specs in its app-writable root.
     "kiro_crew/apps/manager.py": [
+        ("app_agent_owner", "unknown"),
         ("app_command_agent_label", "unknown"),
         ("list_apps_command_agent", "unknown"),
     ],

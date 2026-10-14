@@ -114,12 +114,22 @@ def resolve_projected_spec(
 
     A project-only spec that exists but cannot be read raises
     :class:`KasAgentTranslationError`: there is no other spec of that name to run.
+    A name no spec declares at either level raises its subclass
+    :class:`~kiro_crew.acp.kas_agents.KasAgentSpecAbsent`, so a caller can say
+    what is missing rather than quote a failed file open.
     """
     if not kas_agents_mod.agent_spec_absent(agents_dir, agent):
         return kas_agents_mod.load_agent_spec(agents_dir, agent), agents_dir
     declared, project = project_agent_spec(agent, work_dir)
     if not declared:
-        return kas_agents_mod.load_agent_spec(agents_dir, agent), agents_dir
+        try:
+            return kas_agents_mod.load_agent_spec(agents_dir, agent), agents_dir
+        except KasAgentTranslationError as exc:
+            # Asked again after the read failed, so a spec that appeared meanwhile
+            # and cannot be read keeps its own reason.
+            if kas_agents_mod.agent_spec_absent(agents_dir, agent):
+                raise kas_agents_mod.KasAgentSpecAbsent(agent, agents_dir) from exc
+            raise
     if project is None:
         raise KasAgentTranslationError(
             f"agent {agent!r} is declared by {work_dir}/.kiro/agents but that spec is unreadable"
@@ -145,6 +155,34 @@ def resolve_projected_spec(
     if work_dir is None:  # unreachable: ``project_agent_spec`` declares nothing without one
         return spec, agents_dir
     return spec, paths_mod.project_agents_dir(work_dir)
+
+
+def _missing_agent_reason(agent: str, session_key: str) -> str:
+    """The reason a session cannot start on *agent*, which has no spec, for the user.
+
+    Names the Crew Member when *session_key* is one's DM thread, and the app the
+    agent came from when an installed app declares it (``apps.manager``). Blocking
+    file I/O, so it runs inside the projection's worker thread; it never raises,
+    because the reason replaces an error that is already being raised.
+    """
+    from kiro_crew.apps.manager import missing_agent_reason
+
+    member = ""
+    try:
+        from kiro_crew.config import KiroCrewConfig
+        from kiro_crew.members import member_identity_for_session
+
+        identity = member_identity_for_session(session_key)
+        if identity is not None:
+            row = KiroCrewConfig.load().agents.get(identity["name"])
+            member = (row.display_name if row is not None else "") or identity["name"]
+    except Exception:  # noqa: BLE001 - the member name is a label, never a gate
+        logger.debug("no member label for a missing agent %r", agent, exc_info=True)
+    try:
+        return missing_agent_reason(agent, member=member)
+    except Exception:  # noqa: BLE001 - same: fall back to the plain reason
+        logger.debug("no owner lookup for a missing agent %r", agent, exc_info=True)
+        return f'The agent "{agent}" can\'t start: its agent definition is missing.'
 
 
 class KasHarness(MembershipHarness):
@@ -298,7 +336,7 @@ class KasHarness(MembershipHarness):
         failed translation would leave the session on KAS's own default mode,
         which for a restricted agent is a BROADER agent than the caller asked for.
         """
-        from kiro_crew.acp.session_handle import AcpRuntimeError
+        from kiro_crew.acp.session_handle import AcpAgentUnavailable, AcpRuntimeError
 
         if not agent:
             return SessionExtras()
@@ -332,7 +370,15 @@ class KasHarness(MembershipHarness):
             if snapshot is not None and snapshot.spec is not None:
                 spec, prompt_dir = snapshot.spec, agents_dir
             else:
-                spec, prompt_dir = resolve_projected_spec(agents_dir, agent, work_dir)
+                try:
+                    spec, prompt_dir = resolve_projected_spec(agents_dir, agent, work_dir)
+                except kas_agents_mod.KasAgentSpecAbsent as exc:
+                    # Nothing defines the agent, so name what removed it (an app
+                    # switched off, usually) and the fix, rather than a file open
+                    # that failed. Still a refusal: there is no spec to run.
+                    raise AcpAgentUnavailable(
+                        _missing_agent_reason(agent, session_key), agent=agent
+                    ) from exc
             try:
                 # A session-injected server outranks an agent-declared one, so
                 # declaring both is a double registration. Only the caller holds
