@@ -1,7 +1,7 @@
 /**
  * Screenshot harness for the workspace tree's STATE ROW under a childless
  * folder (#13054): "Empty folder", "Contains only hidden items (dotfiles,
- * caches)", "Link to another folder: contents not listed", "Not shown:
+ * caches)", "Link to another folder: contents not listed", "Some items not shown:
  * limit of 10,000 items reached" -- for the truncation badge that yields
  * to its own state row while the folder is expanded, for the folder the server
  * could not read (no state row beneath it, a lock marker on its row, and a
@@ -201,7 +201,7 @@ const TREE_CHAIN_TRUNCATED = {
 const STATE_LABELS = {
   '_bg/': 'Contains only hidden items (skipped tool and cache folders, protected entries)',
   'empty/': 'Empty folder',
-  'big/': 'Not shown: limit of 10,000 items reached',
+  'big/': 'Some items not shown: limit of 10,000 items reached',
   // `deploy/` holds only the link, so Pierre's `flattenEmptyDirectories` paints
   // the pair as one row whose path is the terminal directory.
   'deploy/current/': 'Link to another folder: contents not listed',
@@ -843,7 +843,7 @@ async function main() {
       const panelEl = document.querySelector('div > .side-panel-strip')?.parentElement
       const text = (panelEl?.innerText ?? '').replace(/\s+/g, ' ')
       return {
-        limit: text.includes('Large workspace: limit of 10,000 items reached, some not shown'),
+        limit: text.includes('Workspace too large to list: limit of 10,000 items reached'),
         marked: !!panelEl?.querySelector('[data-testid="workspace-tree-root-truncated"]'),
         empty: text.includes('No files in this workspace yet'),
         tree: !!document.querySelector('file-tree-container'),
@@ -854,7 +854,7 @@ async function main() {
     if (!truncatedRoot.limit || !truncatedRoot.marked || truncatedRoot.empty || truncatedRoot.tree) {
       throw new Error(`frame 32: expected the limit notice in the tree's place, got ${JSON.stringify(truncatedRoot)}`)
     }
-    await shot('32-root-truncated', [`"Large workspace: limit of 10,000 items reached, some not shown" (data-testid workspace-tree-root-truncated) in the tree's place; no "No files in this workspace yet", no tree mounted (text: ${truncatedRoot.text})`])
+    await shot('32-root-truncated', [`"Workspace too large to list: limit of 10,000 items reached" (data-testid workspace-tree-root-truncated) in the tree's place; no "No files in this workspace yet", no tree mounted (text: ${truncatedRoot.text})`])
 
     // Frame 33: `pkg` folded into the `pkg/core` chain row keeps its badge.
     treeState = 'chain-truncated'

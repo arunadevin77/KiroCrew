@@ -1227,7 +1227,7 @@ export function PierreWorkspaceTreeImpl({ projectDir, onFileOpen, onAddToContext
       mode === 'changed'
         ? ([FileDiff, i18nT('pages.chat.folderPanel.no_changes'), undefined] as const)
         : rootTruncated
-          ? ([FolderOpen, i18nT('pages.chat.activityViewer.workspace_truncated'), 'workspace-tree-root-truncated'] as const)
+          ? ([FolderOpen, i18nT('components.workspaceTree.root_truncated'), 'workspace-tree-root-truncated'] as const)
           : rootHiddenOnly
             ? ([FolderDot, i18nT('components.workspaceTree.root_hidden_only'), 'workspace-tree-root-hidden-only'] as const)
             : ([FolderOpen, i18nT('pages.chat.activityViewer.workspace_empty'), undefined] as const)

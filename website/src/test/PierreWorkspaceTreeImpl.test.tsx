@@ -281,7 +281,7 @@ describe('PierreWorkspaceTreeImpl — data loading', () => {
     }))
     renderTree()
     const notice = await screen.findByTestId('workspace-tree-root-truncated')
-    expect(notice).toHaveTextContent('limit of 10,000 items reached')
+    expect(notice).toHaveTextContent('Workspace too large to list: limit of 10,000 items reached')
     expect(screen.queryByText('No files in this workspace yet')).not.toBeInTheDocument()
   })
 
@@ -1194,7 +1194,7 @@ describe('PierreWorkspaceTreeImpl — state row under a childless folder', () =>
     await waitForTree()
 
     expect(treeMock.last().calls.resetPaths).toEqual([
-      ['README.md', 'big/', `big/Not shown: limit of 10,000 items reached${M}`],
+      ['README.md', 'big/', `big/Some items not shown: limit of 10,000 items reached${M}`],
     ])
     // The folder row's badge and the state row beneath it make the same claim,
     // so the badge yields while the row is showing (the folder is expanded) and
@@ -1765,7 +1765,7 @@ describe('PierreWorkspaceTreeImpl — search forwarding', () => {
     const { update } = renderTree()
     await waitForTree()
     const model = treeMock.last()
-    const bigRow = `big/Not shown: limit of 10,000 items reached${M}`
+    const bigRow = `big/Some items not shown: limit of 10,000 items reached${M}`
     expect(model.calls.resetPaths.at(-1)).toEqual(['README.md', 'empty/', 'big/', `empty/Empty folder${M}`, bigRow])
     const decorate = model.options.renderRowDecoration as (
       context: { item: MenuItem; row: VisibleRow },

@@ -280,6 +280,7 @@ export default function FolderPanel({ path, projectDir, onClose, onFileOpen, onA
   const {
     data: searchData,
     isFetching: isSearching,
+    isPlaceholderData: isSearchPlaceholder,
     isError: isSearchError,
     error: searchError,
   } = useQuery({
@@ -581,9 +582,6 @@ export default function FolderPanel({ path, projectDir, onClose, onFileOpen, onA
                 />
               </div>
             )}
-            {!isSearchError && isSearching && matches.length === 0 && (
-              <div role="status" className="px-2 py-2 text-[12px] text-muted">{t('pages.chat.folderPanel.searching')}</div>
-            )}
             {!isSearchError && !isSearching && matches.length === 0 && (
               <div role="status" className="px-2 py-2 text-[12px] text-muted">{t('pages.chat.folderPanel.no_files_match')}</div>
             )}
@@ -600,6 +598,15 @@ export default function FolderPanel({ path, projectDir, onClose, onFileOpen, onA
                 />
               )
             })}
+            {/* Below the rows, so the listed matches read as results and the status as
+                "more may come". Also while this query has no answer of its own yet and rows are already
+                listed (the tree's own matches, or the previous query's placeholder):
+                the list is about to change, so it is announced rather than changing
+                unannounced. Not while a wider page loads: the expand control already
+                spins for that. */}
+            {!isSearchError && isSearching && (matches.length === 0 || !searchData || (isSearchPlaceholder && !expanding)) && (
+              <div role="status" className="px-2 py-2 text-[12px] text-muted">{t('pages.chat.folderPanel.searching')}</div>
+            )}
             {(matches.length >= searchLimit || expanding) && (searchLimit < SEARCH_RESULT_LIMIT_MAX || expanding ? (
               // The notice IS the control: clicking "showing first N" is the
               // natural gesture (#5639), so the text itself requests the next
