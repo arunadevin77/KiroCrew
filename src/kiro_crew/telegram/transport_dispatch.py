@@ -1045,6 +1045,10 @@ class TelegramDispatcher:
             # pinned to the split's base (the composition contract test).
             from kiro_crew.start_priority import person_priority
 
+            # The pick this turn starts on, read once: get_or_create applies it
+            # and the post-turn promotion follow compares against it, so a pick
+            # made while the turn prepares is left for the next turn.
+            _pick_before = self._model_pref.get(route)
             provider, is_new, resumed = await self.sessions.get_or_create(
                 session_key,
                 start_priority=person_priority(msg.person_origin),
@@ -1061,7 +1065,7 @@ class TelegramDispatcher:
                 # that conversation under a model its owner never picked, silently
                 # and for every later turn. A resumed session therefore passes None
                 # and lets its own persisted model resolve.
-                model=(None if resumed_key is not None else self._model_pref.get(route) or None),
+                model=(None if resumed_key is not None else _pick_before or None),
             )
             _acquired = True
             # Hold the provider this turn obtained, for the failure handler's
@@ -1229,6 +1233,14 @@ class TelegramDispatcher:
                 ),
             )
             accumulated = await driver.run(full_message)
+            if resumed_key is None:
+                # The route's pick is what `/model` shows and what a cold start
+                # re-applies; follow a model the engine promoted this turn.
+                # Imported here, not at module level: this facade's bound names
+                # are pinned to the split's base (the composition contract test).
+                from kiro_crew.agent_sdk.drivers.acp_vocab import follow_engine_promotion
+
+                follow_engine_promotion(self._model_pref, route, provider, before=_pick_before)
 
             # ── Post-turn bookkeeping (each guarded so a failure here can't
             # fall through to the except and re-record the successful turn). ──

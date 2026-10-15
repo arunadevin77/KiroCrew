@@ -218,6 +218,11 @@ from kiro_crew.acp.client_turn_control import _ConcurrentSteerTurn  # noqa: F401
 from kiro_crew.acp.client_turn_control import format_command_result  # noqa: F401
 from kiro_crew.acp.client_turn_control import parse_slash_command  # noqa: F401
 from kiro_crew.acp.client_turn_control import steering_advertised  # noqa: F401
+from kiro_crew.acp.engine_fallback import (
+    EngineFallbackTracker,
+    is_v2_model_fallback,
+    normalize_kiro_v2,
+)
 from kiro_crew.acp.harness import claude as claude_mod  # noqa: F401
 from kiro_crew.acp.harness import pi as pi_mod  # noqa: F401
 from kiro_crew.acp.harness import process_adapter_for
@@ -314,6 +319,7 @@ from kiro_crew.acp.types import (  # noqa: F401
     EVENT_MCP_OAUTH_REQUEST,
     EVENT_MCP_SERVER_INIT_FAILURE,
     EVENT_MCP_SERVER_INITIALIZED,
+    EVENT_MODEL_FALLBACK,
     EVENT_STEER_CONSUMED,
     EVENT_SUBAGENT_ACTIVITY,
     EVENT_SUBAGENT_LIST,
@@ -990,6 +996,9 @@ class AcpClient:
         # from self._model when that's the "auto" sentinel). Used to look up
         # the context window when usage_update isn't sent (see _track_metadata).
         self._resolved_model_id: str | None = None
+        # Keeps _model / _resolved_model_id in step with a fallback the ENGINE
+        # made mid-turn (acp/engine_fallback.py).
+        self._engine_fallback = EngineFallbackTracker()
         # The model a ``_kiro.dev/agent/switched`` frame says the session now
         # runs, waiting to be judged by ``_judge_activated_model`` before the next
         # prompt. ``""`` = nothing to judge. See ``_note_agent_switched``.
@@ -2937,6 +2946,10 @@ class AcpClient:
             return "subagent_list"
 
         if msg.is_method(METHOD_KIRO_SESSION_UPDATE):
+            # The V2 engine's fallback notice for this session rides the same
+            # extension method (acp/engine_fallback.py).
+            if is_v2_model_fallback(msg.params):
+                return "model_fallback"
             return "subagent_activity"
 
         # Unknown server→client REQUEST (has both method AND id). Per JSON-RPC
@@ -3396,6 +3409,7 @@ class AcpClient:
 
         req_id = await self._send_prompt(message)
         self.last_prompt_stats = self.last_prompt_stats.carry_over()
+        self._engine_fallback.begin_prompt(self)
 
         # aclosing(): _prompt_loop holds _turn_lock and releases it in its
         # finally. Consumers below `return` on "complete" without exhausting the
@@ -3526,6 +3540,7 @@ class AcpClient:
     ) -> AsyncGenerator[AcpEvent, None]:
         """Shared event dispatch loop for prompts and commands."""
         self.last_prompt_stats = self.last_prompt_stats.carry_over()
+        self._engine_fallback.begin_prompt(self)
         self._tool_call_inputs.clear()
         self._tool_call_input_redacted.clear()
         self._tool_call_is_shell.clear()
@@ -3836,6 +3851,13 @@ class AcpClient:
                     # process with a single session, so an ownerless frame from
                     # it is this session's own roster, never a co-tenant's.
                     yield AcpEvent(kind=EVENT_SUBAGENT_LIST, subagents=_subs)
+            elif action == "model_fallback":
+                # The engine moved this turn onto another model, or could not.
+                # AcpClient owns one session, so the notice is this session's.
+                _fb_upd = (msg.params or {}).get("update")
+                if isinstance(_fb_upd, dict):
+                    for _fb_notice in self._engine_fallback.apply(self, normalize_kiro_v2(_fb_upd)):
+                        yield AcpEvent(kind=EVENT_MODEL_FALLBACK, model_fallback=_fb_notice)
             elif action == "subagent_activity":
                 # _kiro.dev/session/update: a sub-agent session's own update,
                 # tagged with its sessionId. Carries either:
@@ -4136,6 +4158,7 @@ class AcpClient:
     async def _read_prompt_response(self, req_id: int, timeout: float) -> str:
         output: list[str] = []
         self.last_prompt_stats = self.last_prompt_stats.carry_over()
+        self._engine_fallback.begin_prompt(self)
 
         async for action, msg in self._prompt_loop(req_id, timeout):
             if action == "complete":
