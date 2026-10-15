@@ -764,7 +764,6 @@ test/test_skill_browser.py
 test/test_skill_dedupe.py
 test/test_skill_discover.py
 test/test_skill_home_paths.py
-test/test_skill_index_app_symlinks.py
 test/test_skill_paths_and_mcp_sync.py
 test/test_skill_pending.py
 test/test_skill_pending_notify.py

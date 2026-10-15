@@ -47,12 +47,7 @@ def _packaged_app_skill() -> Path:
     instead of a bare ``FileNotFoundError`` from ``os.symlink``.
     """
     skill = (
-        Path(skills_mod.__file__).parent
-        / "apps"
-        / "builtins"
-        / "dev_fleet"
-        / "skills"
-        / "pod-e2e"
+        Path(skills_mod.__file__).parent / "apps" / "builtins" / "dev_fleet" / "skills" / "pod-e2e"
     )
     assert skill.is_dir(), f"fixture drift: expected a built-in app skill at {skill}"
     return skill
@@ -84,9 +79,9 @@ class TestBuiltinAppSkillsAreVisible:
         os.symlink(str(packaged), str(base / "pod-e2e"))
 
         names = [name for name, _ in _iter_skill_files(base)]
-        assert names.count("dev-fleet/pod-e2e") + names.count("pod-e2e") == 1, (
-            f"one skill must yield one key, got {names}"
-        )
+        assert (
+            names.count("dev-fleet/pod-e2e") + names.count("pod-e2e") == 1
+        ), f"one skill must yield one key, got {names}"
 
     def test_surviving_key_is_a_function_of_the_names_not_the_filesystem(
         self, tmp_path: Path
@@ -114,9 +109,7 @@ class TestBuiltinAppSkillsAreVisible:
         assert "pod-e2e" in [n for n, _ in _iter_skill_files(late)]
 
         # Repeating a walk must give the identical key both times.
-        assert [n for n, _ in _iter_skill_files(early)] == [
-            n for n, _ in _iter_skill_files(early)
-        ]
+        assert [n for n, _ in _iter_skill_files(early)] == [n for n, _ in _iter_skill_files(early)]
 
     def test_symlink_into_the_installed_apps_dir_is_enumerated(
         self, tmp_path: Path, monkeypatch
@@ -168,6 +161,137 @@ class TestUntrustedTargetsStillRefused:
 
         names = {name for name, _ in _iter_skill_files(base)}
         assert "secretish" not in names
+
+
+@requires_symlinks
+class TestOutsideRootLinkIsReported:
+    """A refused out-of-root link in the skills base is reported, not silent.
+
+    A user who links a skill folder into the skills directory from an outside
+    repository has the folder dropped from the catalog by the containment gate.
+    That refusal is a security boundary and stays. These tests lock in that the
+    refused direct-child link emits one warning naming the target and
+    ``skills.extra_paths`` as the supported fix.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_dedup(self):
+        # Tolerant of the attribute being absent so the red-first run on an
+        # unfixed tree fails on the missing-warning assertion, not here.
+        getattr(skills_mod, "_WARNED_OUTSIDE_ROOT_LINKS", set()).clear()
+        yield
+        getattr(skills_mod, "_WARNED_OUTSIDE_ROOT_LINKS", set()).clear()
+
+    def test_outside_link_is_refused_and_warned(self, tmp_path: Path, caplog) -> None:
+        outsider = tmp_path / "elsewhere" / "my-skill"
+        _write_skill(outsider, "# Injected\n")
+        base = tmp_path / "skills"
+        base.mkdir()
+        os.symlink(str(outsider), str(base / "my-skill"))
+
+        with caplog.at_level("WARNING", logger="kiro_crew.skills"):
+            names = {name for name, _ in _iter_skill_files(base)}
+
+        assert "my-skill" not in names, "the containment boundary must still refuse it"
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        hits = [
+            m
+            for m in warnings
+            if os.path.realpath(str(outsider)) in m and "skills.extra_paths" in m
+        ]
+        assert (
+            len(hits) == 1
+        ), f"expected one warning naming the target and skills.extra_paths, got {warnings}"
+
+    def test_repeat_scans_warn_only_once(self, tmp_path: Path, caplog) -> None:
+        outsider = tmp_path / "elsewhere" / "my-skill"
+        _write_skill(outsider, "# Injected\n")
+        base = tmp_path / "skills"
+        base.mkdir()
+        os.symlink(str(outsider), str(base / "my-skill"))
+
+        with caplog.at_level("WARNING", logger="kiro_crew.skills"):
+            _iter_skill_files(base)
+            _iter_skill_files(base)
+            _iter_skill_files(base)
+
+        warnings = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelname == "WARNING" and "skills.extra_paths" in r.getMessage()
+        ]
+        assert len(warnings) == 1, f"the warning must be deduped per process, got {warnings}"
+
+    def test_dedup_memory_is_bounded_and_still_warns_past_the_cap(
+        self, tmp_path: Path, monkeypatch, caplog
+    ) -> None:
+        """The dedup set never grows without bound, and a pair past the cap still warns.
+
+        A link retargeted between scans must not let the remembered-pairs set
+        grow for the process lifetime; at the cap the warning fires anyway
+        (dedup is skipped), which is the fail-safe direction.
+        """
+        monkeypatch.setattr(skills_mod, "_WARNED_OUTSIDE_ROOT_LINKS_MAX", 2)
+        outsider = tmp_path / "elsewhere" / "my-skill"
+        _write_skill(outsider, "# Injected\n")
+
+        with caplog.at_level("WARNING", logger="kiro_crew.skills"):
+            for i in range(5):
+                skills_mod._warn_skill_link_outside_roots(
+                    tmp_path / "skills" / f"link{i}", str(outsider / f"t{i}")
+                )
+
+        assert len(skills_mod._WARNED_OUTSIDE_ROOT_LINKS) <= 2, "the dedup set must stay bounded"
+        warnings = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelname == "WARNING" and "skills.extra_paths" in r.getMessage()
+        ]
+        assert (
+            len(warnings) == 5
+        ), f"every distinct pair must warn, even past the cap, got {warnings}"
+
+    def test_set_stays_bounded_across_many_catalog_loads(self, tmp_path: Path, monkeypatch) -> None:
+        """Many loads over more distinct out-of-root links than the cap stay bounded.
+
+        Drives the real scan (``_iter_skill_files``) rather than the helper: more
+        distinct links than the cap, each scanned, plus repeated scans of the same
+        tree, and the remembered-pairs set must never exceed the cap.
+        """
+        monkeypatch.setattr(skills_mod, "_WARNED_OUTSIDE_ROOT_LINKS_MAX", 4)
+        base = tmp_path / "skills"
+        base.mkdir()
+        for i in range(10):
+            target = tmp_path / "elsewhere" / f"skill{i}"
+            _write_skill(target, "# Injected\n")
+            os.symlink(str(target), str(base / f"skill{i}"))
+
+        for _ in range(3):
+            names = {name for name, _ in _iter_skill_files(base)}
+            assert not names, "every out-of-root link must stay refused"
+            assert (
+                len(skills_mod._WARNED_OUTSIDE_ROOT_LINKS) <= 4
+            ), "the dedup set must never exceed the cap across reloads"
+
+    def test_link_inside_an_allowed_root_is_admitted_without_warning(
+        self, tmp_path: Path, monkeypatch, caplog
+    ) -> None:
+        """A link whose target IS inside an allowed root loads and must not warn."""
+        data_home = tmp_path / "home"
+        _write_skill(data_home / "apps" / "my-app" / "skills" / "thing")
+        monkeypatch.setattr(skills_mod, "config_dir", lambda: data_home)
+
+        base = tmp_path / "skills"
+        base.mkdir()
+        os.symlink(str(data_home / "apps" / "my-app" / "skills" / "thing"), str(base / "thing"))
+
+        with caplog.at_level("WARNING", logger="kiro_crew.skills"):
+            names = {name for name, _ in _iter_skill_files(base)}
+
+        assert "thing" in names
+        assert not [
+            r for r in caplog.records if "skills.extra_paths" in r.getMessage()
+        ], "an admitted link must not emit the outside-root warning"
 
 
 class TestPreExistingBehaviourPreserved:
