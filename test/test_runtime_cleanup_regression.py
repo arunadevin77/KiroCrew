@@ -21,6 +21,7 @@ from kiro_crew.acp.types import (
     METHOD_SET_MODE,
     JsonRpcMessage,
 )
+from kiro_crew.security import paths as security_paths
 from kiro_crew.session_cleanup import SessionCleanup
 from kiro_crew.watchdog import CleanupHook, SessionWatchdog
 
@@ -105,13 +106,29 @@ def lifecycle(monkeypatch, tmp_path):
     monkeypatch.setattr(session_pid, "_accepted_subreaper_pids", lambda: {1})
     monkeypatch.setattr(session_pid, "_PROTECTED_PIDS", set())
     monkeypatch.setattr(runtime, "pooled_session_servers", lambda *_, **__: [])
-    # load_session resolves its MCP array from the agent spec, and the spec read
-    # self-heals a missing managed spec by rebuilding EVERY managed agent config
-    # (a dozen files plus a config migration) inside the session-start hop. The
-    # per-test agents dir is always empty, so without this the load path does
-    # that whole rebuild under the test's 5 s budget while the create path, which
-    # passes an explicit array, never does. No kiro-cli reads the spec here.
-    monkeypatch.setattr(session_mcp, "ensure_agent_materialized", lambda _agent: False)
+    # load_session resolves its MCP array from the agent spec, which the create
+    # path never reads when it is handed an explicit array. That read is not the
+    # subject here and it is expensive in two ways the per-test home cannot
+    # hide: it self-heals a missing managed spec by rebuilding every managed
+    # agent config, and its project-checkout scan runs the work dir through
+    # the sensitive-path fence, whose symlink resolution spawns the
+    # process-wide resolver child pool on first use. On a loaded Windows shard
+    # that cold spawn alone outlasts the 5 s lost-run bound around the resume,
+    # so the [load] cases went red while the [new] cases never could. No
+    # kiro-cli reads the spec here, so the resume path is answered "no spec"
+    # before either cost is reached, the same shape the create path takes.
+    monkeypatch.setattr(session_mcp, "_agent_spec_for", lambda *_, **__: None)
+
+    def _no_path_resolution(expanded, *_args, **_kwargs):
+        raise AssertionError(
+            "this lifecycle must not reach the sensitive-path resolver pool "
+            f"(a cold spawn costs the test its lost-run bound): {expanded!r}"
+        )
+
+    # The closed interface extends to the resolver children: a path that still
+    # reaches the pool fails by name on every host, instead of only on the shard
+    # slow enough to expose it.
+    monkeypatch.setattr(security_paths, "_run_resolution_bounded", _no_path_resolution)
     kernel.add(900, 1, 900, "gateway")
     with ThreadPoolExecutor(max_workers=1) as pool:
         monkeypatch.setattr(runtime, "subprocess_executor", lambda: pool)
