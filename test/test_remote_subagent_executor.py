@@ -1,0 +1,3881 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import io
+import json
+import os
+import re
+import tarfile
+import threading
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Callable, cast
+from unittest.mock import AsyncMock
+
+import pytest
+
+import kiro_crew
+from kiro_crew import mcp_shared
+from kiro_crew.dashboard import remote_subagents, remote_workspaces
+from kiro_crew.dashboard.remote_subagents import (
+    RemoteSubagentError,
+    RemoteSubagentService,
+)
+from kiro_crew.dashboard.remote_workspaces import (
+    WorkspaceArchiveRejected,
+    api_remote_workspace_upload,
+    install_workspace,
+)
+from kiro_crew.mcp_tools import spawn as spawn_tools
+from kiro_crew.subagent import SubagentInfo, SubagentManager
+from kiro_crew.subagent_manager.published_depth import PublishedQueueDepths
+from kiro_crew.testing.wait import async_wait_until, await_until
+from kiro_crew.validation import SPAWN_RUN_SCHEMA, validate_tool_args
+
+# The local-path cases drive SubagentManager.spawn; pin the host-memory reading
+# so a memory-pressured runner does not queue them.
+pytestmark = pytest.mark.usefixtures("healthy_host_memory")
+
+
+# Installs go through dir_fd-relative creates; a platform without them refuses.
+_PINNED_INSTALL = pytest.mark.skipif(
+    not remote_workspaces._can_extract_pinned(),
+    reason="workspace install needs descriptor-pinned extraction (POSIX)",
+)
+
+
+async def _settle_monitor(service: RemoteSubagentService, run_id: str) -> None:
+    """Wait for one run's monitor, bounded; stop the service if it never settles."""
+    try:
+        await await_until(service._monitors[run_id], what=f"remote monitor for {run_id}")
+    except AssertionError as exc:
+        await service.close()
+        pytest.fail(f"remote monitor for {run_id} did not settle: {exc}")
+
+
+class _Content:
+    """aiohttp StreamReader double that delivers the body in small chunks.
+
+    Like the real reader, ``read(n)`` resolves with whatever is buffered -- here
+    only the first chunk -- so code that does a single read sees a truncated
+    body. Readers must drain ``iter_chunked`` to EOF.
+    """
+
+    def __init__(self, body: bytes, chunk: int = 7) -> None:
+        self._body = body
+        self._chunk = chunk
+
+    async def read(self, limit: int) -> bytes:
+        return self._body[: min(limit, self._chunk)]
+
+    async def iter_chunked(self, size: int):
+        step = max(1, min(size, self._chunk))
+        for start in range(0, len(self._body), step):
+            yield self._body[start : start + step]
+
+
+class _Response:
+    def __init__(self, status: int, payload: dict[str, object]) -> None:
+        self.status = status
+        self.content = _Content(json.dumps(payload).encode("utf-8"))
+
+
+class _Instances:
+    def __init__(
+        self,
+        responses: list[tuple[int, dict[str, object]] | BaseException],
+        *,
+        connected: tuple[str, ...] = ("crew-a", "crew-b"),
+        advertises: bool = True,
+    ) -> None:
+        self._responses = list(responses)
+        self._connected = connected
+        # A current peer lists the fields it enforces in /api/version; a peer
+        # without that change (same major.minor) silently drops them.
+        self._advertises = advertises
+        self.calls: list[tuple[str, str, str, dict[str, object] | bytes | None]] = []
+
+    def status(self, instance_id: str) -> object | None:
+        if instance_id not in self._connected:
+            return None
+        return SimpleNamespace(state=SimpleNamespace(value="connected"))
+
+    def status_all(self) -> dict[str, object]:
+        return {
+            instance_id: SimpleNamespace(state=SimpleNamespace(value="connected"))
+            for instance_id in self._connected
+        }
+
+    async def peer_version(self, _instance_id: str) -> tuple[bool, str]:
+        return True, kiro_crew.__version__
+
+    async def peer_capability(self, _instance_id: str, path: str) -> tuple[bool, object]:
+        assert path == "/api/version"
+        body: dict[str, object] = {"version": kiro_crew.__version__}
+        if self._advertises:
+            body["spawn_enforces"] = ["approval_floor", "approval_relay", "memory_mode", "run_id"]
+        return True, body
+
+    @asynccontextmanager
+    async def proxy_request(
+        self,
+        instance_id: str,
+        method: str,
+        path: str,
+        *,
+        data: bytes | None = None,
+        **_kwargs: object,
+    ):
+        try:
+            body = json.loads(data) if data else None
+        except (ValueError, UnicodeDecodeError):
+            body = data
+        self.calls.append((instance_id, method, path, body))
+        scripted = self._responses.pop(0)
+        if isinstance(scripted, BaseException):
+            raise scripted
+        status, payload = scripted
+        yield _Response(status, payload)
+
+
+class _Sessions:
+    """The two session-store reads the hub's approval floor makes."""
+
+    def __init__(self, policy: str = "", present: bool | None = True) -> None:
+        self.policy = policy
+        self.present = present
+
+    def get_approval_policy(self, _key: str) -> str:
+        return self.policy
+
+    def has_session(self, _key: str) -> bool | None:
+        return self.present
+
+
+class _Manager:
+    def __init__(self) -> None:
+        self.external_agents: list[SubagentInfo] = []
+        self.events: list[tuple[str, str, dict[str, object]]] = []
+        self.reported: list[SubagentInfo] = []
+        self._sessions: Any = _Sessions()
+        self._is_yolo: Callable[[], bool] | None = None
+        self._global_approval_mode = ""
+        self._completion_keep = "head"
+        self._completion_keep_chars = 3
+        self._result_ttl_secs = 3600
+        self.external_placement: Any = None
+        # A person who approves every spawn: a Normal-mode parent's remote spawn
+        # waits for this before anything leaves the hub.
+        self.spawn_approvals: list[tuple[str, str, str]] = []
+        self.approve_spawns = True
+
+    async def _on_spawn_approval(self, request_id: str, label: str, parent: str) -> bool:
+        self.spawn_approvals.append((request_id, label, parent))
+        return self.approve_spawns
+
+    @property
+    def _external_agents(self) -> dict[str, SubagentInfo]:
+        return {info.id: info for info in self.external_agents}
+
+    def bind_external_placement(self, placement: Any) -> None:
+        self.external_placement = placement
+
+    def get(self, agent_id: str) -> SubagentInfo | None:
+        return next((info for info in self.external_agents if info.id == agent_id), None)
+
+    def forget_external(self, agent_id: str) -> SubagentInfo | None:
+        info = self.get(agent_id)
+        if info is not None:
+            self.external_agents.remove(info)
+        return info
+
+    def register_external(self, info: SubagentInfo) -> None:
+        self.external_agents.append(info)
+
+    async def _fire_event(self, event: str, info: SubagentInfo, extra: dict[str, object]) -> None:
+        self.events.append((event, info.id, extra))
+
+    async def report_external(self, info: SubagentInfo) -> bool:
+        self.reported.append(info)
+        return True
+
+
+def _auto_manager() -> "_Manager":
+    """A manager whose parent is on auto: the spawn needs no person and is placed
+    inline, so a placement failure is the spawn's own refusal."""
+    manager = _Manager()
+    manager._sessions = _Sessions(policy="auto")
+    return manager
+
+
+async def _spawn_placed(service: Any, **kwargs: Any) -> SubagentInfo:
+    """``service.spawn`` and, for a spawn that waited for approval, its placement.
+
+    A placement failure there ends the run instead of raising; it is raised
+    here with the same code, so one assertion covers both paths.
+    """
+    info = await service.spawn(**kwargs)
+    runner = service._approvals.get(info.id)
+    if runner is not None:
+        await await_until(runner, what=f"placement of {info.id}")
+    if info.done and info.error_code:
+        raise RemoteSubagentError(info.error, code=info.error_code)
+    return info
+
+
+@pytest.mark.asyncio
+async def test_remote_spawn_picks_least_loaded_peer_and_relays_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    instances = _Instances(
+        [
+            (200, {"id": "peer01"}),
+            (200, {"done": False, "turns": 2, "last_tool": "Reading src"}),
+            (
+                200,
+                {
+                    "done": True,
+                    "result": "remote-result",
+                    "error": "",
+                    "outcome": "completed",
+                    "partial": False,
+                },
+            ),
+        ]
+    )
+    manager = _Manager()
+    manager.external_agents.append(
+        SubagentInfo(
+            id="occupied",
+            task="existing",
+            executor="remote",
+            instance_id="crew-a",
+            remote_id="peer00",
+        )
+    )
+    state = SimpleNamespace(instances_manager=instances)
+    service = RemoteSubagentService(state, manager)  # type: ignore[arg-type]
+
+    info = await _spawn_placed(
+        service,
+        task="review exact refactor SHA",
+        parent_session="dashboard:chat-1",
+        agent="kirocrew",
+        max_turns=50,
+        cwd="/home/kirocrew/workplace/repo",
+        model="",
+        reasoning_effort="",
+        include_memory=False,
+        include_lessons=False,
+        include_project=True,
+        memory_mode="temporary",
+        batch_id="batch01",
+        batch_total=1,
+    )
+    await _settle_monitor(service, info.id)
+
+    assert info.instance_id == "crew-b"
+    assert info.remote_id == "peer01"
+    assert info.done is True
+    assert info.result == "rem"
+    assert info.result_truncated is True
+    assert manager.reported == [info]
+    assert manager.events[0][0] == "subagent_spawn"
+    post = instances.calls[0]
+    assert post[:3] == ("crew-b", "POST", "api/spawn")
+    # Named by the hub, in the peer's own minted shape, before it is sent.
+    assert re.fullmatch(r"[0-9a-f]{16}", post[3].pop("run_id"))
+    assert post[3] == {
+        "task": "review exact refactor SHA",
+        "parent_session": "",
+        "silent": True,
+        "include_memory": False,
+        "include_lessons": False,
+        "include_project": True,
+        "memory_mode": "temporary",
+        "agent": "kirocrew",
+        "max_turns": 50,
+        "cwd": "/home/kirocrew/workplace/repo",
+        # A dashboard parent in Normal mode: the crew must not auto-approve.
+        "approval_floor": "interactive",
+    }
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_credential_quoted_in_the_task_never_reaches_the_peer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    instances = _Instances(
+        [
+            (200, {"id": "peer01"}),
+            (200, {"done": True, "result": "ok", "error": "", "outcome": "completed"}),
+        ]
+    )
+    manager = _Manager()
+    service = RemoteSubagentService(  # type: ignore[arg-type]
+        SimpleNamespace(instances_manager=instances), manager
+    )
+    secret = "AKIAIOSFODNN7EXAMPLE"
+
+    info = await _spawn_placed(
+        service,
+        task=f"deploy with key {secret} please",
+        parent_session="",
+        agent="",
+        max_turns=0,
+        cwd="/home/kirocrew/workplace/repo",
+        model="",
+        reasoning_effort="",
+        include_memory=False,
+        include_lessons=False,
+        include_project=False,
+        memory_mode="persistent",
+        batch_id="",
+        batch_total=0,
+    )
+    await _settle_monitor(service, info.id)
+
+    sent = instances.calls[0]
+    assert sent[1:3] == ("POST", "api/spawn")
+    assert secret not in json.dumps(sent[3])
+    assert "deploy with key" in str(sent[3]["task"])
+    assert secret not in info.task
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_spawn_refuses_disconnected_explicit_peer() -> None:
+    manager = _Manager()
+    service = RemoteSubagentService(
+        cast(
+            Any,
+            SimpleNamespace(instances_manager=_Instances([], connected=("crew-a",))),
+        ),
+        cast(Any, manager),
+    )
+
+    with pytest.raises(RemoteSubagentError) as raised:
+        await _spawn_placed(
+            service,
+            task="x",
+            parent_session="dashboard:chat-1",
+            agent="",
+            max_turns=0,
+            cwd="",
+            model="",
+            reasoning_effort="",
+            include_memory=False,
+            include_lessons=False,
+            include_project=False,
+            memory_mode="temporary",
+            batch_id="",
+            batch_total=0,
+            instance_id="crew-z",
+        )
+
+    assert raised.value.code == "remote_instance_not_connected"
+    assert manager.external_agents == []
+
+
+@pytest.mark.asyncio
+async def test_remote_cancel_targets_peer_run() -> None:
+    instances = _Instances([(200, {"ok": True, "cancelled": True})])
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), _Manager()  # type: ignore[arg-type]
+    )
+    info = SubagentInfo(
+        id="local01",
+        task="x",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+    )
+
+    assert await service.cancel(info) is True
+    assert instances.calls == [("crew-a", "DELETE", "api/spawn/peer01", None)]
+
+
+@pytest.mark.asyncio
+async def test_an_unconfirmed_cancel_keeps_stopping_the_peer_run(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opus: a failed DELETE raised and was swallowed by teardown and Stop-all,
+    so nothing re-sent the stop. The stop is committed and handed to the
+    monitor, which re-sends it until the peer confirms."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    instances = _Instances([(503, {"error": "busy"})])
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), _Manager()  # type: ignore[arg-type]
+    )
+    info = SubagentInfo(
+        id="a1b2c3d4",
+        task="x",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+    )
+
+    with pytest.raises(RemoteSubagentError):
+        await service.cancel(info)
+
+    assert info.id in service._unconfirmed_stops
+    [(restored, _delivered)] = RemoteSubagentService._load_records()
+    assert restored.user_stopped is True and restored.done is False
+
+
+@pytest.mark.asyncio
+async def test_an_accepted_remote_spawn_and_its_cancel_are_audited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A remote child leaves this gateway's approval ceiling, so its placement
+    # and its stop must reach the SEL trail just like a local run's.
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "kiro_crew.sel.sel",
+        lambda: SimpleNamespace(log_tool_invocation=lambda **kw: events.append(kw)),
+    )
+    instances = _Instances([(200, {"id": "peer01"}), (200, {"ok": True, "cancelled": True})])
+    service = RemoteSubagentService(
+        cast(Any, SimpleNamespace(instances_manager=instances)), cast(Any, _auto_manager())
+    )
+    info = await _spawn_placed(
+        service,
+        task="x",
+        parent_session="dashboard:chat-1",
+        agent="reviewer",
+        max_turns=0,
+        cwd="/home/kirocrew/workplace/repo",
+        model="",
+        reasoning_effort="",
+        include_memory=False,
+        include_lessons=False,
+        include_project=False,
+        memory_mode="persistent",
+        batch_id="",
+        batch_total=0,
+    )
+    await service.close()  # the monitor must not consume the cancel reply
+    assert await service.cancel(info) is True
+
+    assert [e["outcome"] for e in events] == ["spawned", "cancelled"]
+    for event in events:
+        assert event["tool_name"] == "spawn_run"
+        assert event["session_key"] == "dashboard:chat-1"
+        assert event["metadata"] == {
+            "subagent_id": info.id,
+            "executor": "remote",
+            "instance_id": info.instance_id,
+            "remote_id": "peer01",
+            "agent": "reviewer",
+        }
+
+
+def test_manager_external_inventory_does_not_consume_local_running_capacity() -> None:
+    manager = SubagentManager.__new__(SubagentManager)
+    manager._agents = {
+        "local01": SubagentInfo(id="local01", task="local"),
+    }
+    manager._external_agents = {}
+    manager._batch_submitted = {}
+    manager._batch_progress_ts = {}
+    remote = SubagentInfo(
+        id="remote01",
+        task="remote",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+        batch_id="batch01",
+        batch_total=1,
+    )
+
+    manager.register_external(remote)
+
+    assert manager.get("remote01") is remote
+    assert {info.id for info in manager.all_agents} == {"local01", "remote01"}
+    assert [info.id for info in manager.running] == ["local01"]
+    assert manager._batch_submitted["batch01"] == [1, 1]
+
+
+def test_spawn_schema_accepts_remote_pool_selection() -> None:
+    cleaned = validate_tool_args(
+        {"task": "review", "executor": "remote", "instance_id": "crew-a"},
+        SPAWN_RUN_SCHEMA,
+    )
+    assert cleaned["executor"] == "remote"
+    assert cleaned["instance_id"] == "crew-a"
+
+
+def test_spawn_tool_forwards_remote_placement_and_reports_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(spawn_tools.mcp_core, "_resolve_session_key", lambda: "dashboard:chat-1")
+
+    def post(path: str, body: dict[str, object]) -> dict[str, object]:
+        assert path == "/api/spawn"
+        calls.append(body)
+        return {
+            "id": f"run{len(calls)}",
+            "executor": "remote",
+            "instance_id": "crew-a",
+        }
+
+    monkeypatch.setattr(spawn_tools.mcp_core, "_post", post)
+    deferred = spawn_tools.spawn_run(
+        "spawn_run",
+        {
+            "tasks": ["review a", "review b"],
+            "executor": "remote",
+            "instance_id": "crew-a",
+            "include_memory": False,
+            "include_lessons": False,
+        },
+    )
+    # spawn_run returns a DeferredTool that posts one task per step; drive it
+    # to its receipt the way the stdio loop does.
+    if isinstance(deferred, mcp_shared.DeferredTool):
+        result = mcp_shared.drive_deferred(deferred, clock=spawn_tools.mcp_core.time)
+    else:
+        result = deferred
+
+    assert len(calls) == 2
+    assert all(call["executor"] == "remote" for call in calls)
+    assert all(call["instance_id"] == "crew-a" for call in calls)
+    assert "[remote:crew-a]" in result
+
+
+def _tar_payload(entries: list[tuple[str, bytes, int, str]]) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, data, mode, kind in entries:
+            member = tarfile.TarInfo(name)
+            member.mode = mode
+            if kind == "file":
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+            else:
+                member.type = tarfile.SYMTYPE
+                member.linkname = data.decode("utf-8")
+                archive.addfile(member)
+    return buffer.getvalue()
+
+
+@_PINNED_INSTALL
+def test_workspace_install_is_content_addressed_and_rejects_unsafe_members(
+    tmp_path,
+) -> None:
+    payload = _tar_payload(
+        [
+            ("README.md", b"hello\n", 0o644, "file"),
+            ("scripts/run.sh", b"#!/bin/sh\n", 0o755, "file"),
+        ]
+    )
+    digest = hashlib.sha256(payload).hexdigest()
+
+    path = install_workspace(payload, digest, "a" * 40, root=tmp_path)
+
+    assert (path / "README.md").read_text(encoding="utf-8") == "hello\n"
+    if os.name != "nt":
+        # Windows has no POSIX execute bit; the mode is preserved only on POSIX.
+        assert (path / "scripts/run.sh").stat().st_mode & 0o111
+    # Same digest, fresh tree: a second run never starts in the first one's edits.
+    (path / "README.md").write_text("edited by run 1\n", encoding="utf-8")
+    second = install_workspace(payload, digest, "a" * 40, root=tmp_path)
+    assert second != path and second.name[:24] == path.name[:24] == digest[:24]
+    assert (second / "README.md").read_text(encoding="utf-8") == "hello\n"
+
+    for bad in (
+        _tar_payload([("../escape", b"x", 0o644, "file")]),
+        _tar_payload([("nested//file", b"x", 0o644, "file")]),
+        _tar_payload([("nested/./file", b"x", 0o644, "file")]),
+        _tar_payload([("../link", b"/etc/passwd", 0o777, "symlink")]),
+    ):
+        with pytest.raises(WorkspaceArchiveRejected):
+            install_workspace(bad, hashlib.sha256(bad).hexdigest(), "b" * 40, root=tmp_path)
+
+
+def _pax_payload(comment_bytes: int) -> bytes:
+    """A one-byte file behind a PAX comment of *comment_bytes*: the file size the
+    member check counts is 1, while the header tarfile retains is the comment."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
+        member = tarfile.TarInfo("a.txt")
+        member.size = 1
+        member.pax_headers = {"comment": "x" * comment_bytes}
+        archive.addfile(member, io.BytesIO(b"a"))
+    return buffer.getvalue()
+
+
+def test_an_extended_header_past_the_stream_bound_is_refused_before_it_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GPT F1: the expansion counter only sees member sizes, so the bound has to sit
+    on the decompressed stream, and refuse the oversized read before it allocates."""
+    import gzip
+
+    from kiro_crew.dashboard import remote_workspaces
+
+    bound = 64 * 1024
+    monkeypatch.setattr(remote_workspaces, "_MAX_STREAM_BYTES", bound)
+    largest: list[int] = []
+    real_read = gzip.GzipFile.read
+
+    def spying_read(self, size=-1):
+        largest.append(size)
+        return real_read(self, size)
+
+    monkeypatch.setattr(gzip.GzipFile, "read", spying_read)
+
+    remote_workspaces._validate_archive(_pax_payload(1024))  # under the bound: fine
+    largest.clear()
+    with pytest.raises(WorkspaceArchiveRejected, match="workspace limit"):
+        remote_workspaces._validate_archive(_pax_payload(4 * bound))
+    # Nothing past the bound ever reached the decompressor.
+    assert largest and max(largest) <= bound
+
+
+@_PINNED_INSTALL
+def test_workspace_install_skips_tracked_symlinks_instead_of_rejecting(tmp_path) -> None:
+    # build_source_tarball emits a symlink member for every tracked symlink; a
+    # repo with one must still sync, and the link must never be created.
+    payload = _tar_payload(
+        [
+            ("README.md", b"hello\n", 0o644, "file"),
+            ("link", b"/etc/passwd", 0o777, "symlink"),
+        ]
+    )
+    path = install_workspace(payload, hashlib.sha256(payload).hexdigest(), "a" * 40, root=tmp_path)
+
+    assert (path / "README.md").is_file()
+    assert not (path / "link").exists() and not (path / "link").is_symlink()
+
+
+@_PINNED_INSTALL
+@pytest.mark.parametrize("planted", ["file-link", "parent-link"])
+def test_extraction_never_writes_through_a_link_planted_in_staging(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, planted: str
+) -> None:
+    # A same-user agent can see the staging directory while the gateway fills
+    # it. A link it plants at a name the archive will write must fail the
+    # create, not redirect the write onto a protected file.
+    base = tmp_path / "workspaces"
+    base.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "security_policy.json"
+    victim.write_text("ceiling\n", encoding="utf-8")
+    payload = _tar_payload(
+        [
+            ("pkg/injected.py", b"overwritten\n", 0o644, "file"),
+            ("security_policy.json", b"overwritten\n", 0o644, "file"),
+        ]
+    )
+
+    def plant(staging: Path) -> None:
+        if planted == "file-link":
+            (staging / "security_policy.json").symlink_to(victim)
+        else:
+            (staging / "pkg").symlink_to(outside, target_is_directory=True)
+
+    real = remote_workspaces._extract_pinned
+
+    def _racing(archive: tarfile.TarFile, staging_fd: int) -> None:
+        (staging,) = [p for p in base.iterdir() if p.name.startswith(".")]
+        plant(staging)
+        real(archive, staging_fd)
+
+    monkeypatch.setattr(remote_workspaces, "_extract_pinned", _racing)
+
+    with pytest.raises(WorkspaceArchiveRejected):
+        install_workspace(payload, hashlib.sha256(payload).hexdigest(), "a" * 40, root=base)
+
+    assert victim.read_text(encoding="utf-8") == "ceiling\n"
+    assert sorted(p.name for p in outside.iterdir()) == ["security_policy.json"]
+    assert list(base.iterdir()) == []
+
+
+@_PINNED_INSTALL
+def test_a_staging_tree_swapped_before_publish_is_not_published(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The publish rename is by name, so the name must still be the directory
+    # the gateway filled; a link swapped in for it is refused and removed.
+    base = tmp_path / "workspaces"
+    base.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    payload = _tar_payload([("README.md", b"hello\n", 0o644, "file")])
+    real = remote_workspaces._write_marker
+
+    def _swap(staging_fd: int, digest: str, commit: str) -> None:
+        real(staging_fd, digest, commit)
+        (staging,) = [p for p in base.iterdir() if p.name.startswith(".")]
+        staging.rename(tmp_path / "moved")
+        staging.symlink_to(elsewhere, target_is_directory=True)
+
+    monkeypatch.setattr(remote_workspaces, "_write_marker", _swap)
+
+    with pytest.raises(WorkspaceArchiveRejected, match="replaced"):
+        install_workspace(payload, hashlib.sha256(payload).hexdigest(), "a" * 40, root=base)
+
+    assert list(base.iterdir()) == []
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_a_platform_without_pinned_creates_refuses_the_install(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No by-name fallback: that is the write-through-a-link hole itself.
+    monkeypatch.setattr(remote_workspaces, "_can_extract_pinned", lambda: False)
+    payload = _tar_payload([("README.md", b"hello\n", 0o644, "file")])
+
+    with pytest.raises(WorkspaceArchiveRejected, match="pinned"):
+        install_workspace(payload, hashlib.sha256(payload).hexdigest(), "a" * 40, root=tmp_path)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@_PINNED_INSTALL
+def test_workspace_prune_spares_snapshots_in_use(tmp_path) -> None:
+    from kiro_crew.dashboard.remote_workspaces import _prune_workspaces
+
+    def install(name: bytes) -> Path:
+        payload = _tar_payload([("f", name, 0o644, "file")])
+        return install_workspace(
+            payload, hashlib.sha256(payload).hexdigest(), "a" * 40, root=tmp_path
+        )
+
+    busy, idle = install(b"busy"), install(b"idle")
+    old = time.time() - 8 * 24 * 60 * 60
+    for path in (busy, idle):
+        os.utime(path, (old, old))
+
+    assert _prune_workspaces(tmp_path, keep="", in_use={busy.name}) == 1
+    assert busy.is_dir() and not idle.exists()
+
+
+def _ownership_request(manager: object) -> Any:
+    return SimpleNamespace(app={"state": SimpleNamespace(subagents=manager)})
+
+
+@pytest.mark.asyncio
+async def test_a_queued_runs_workspace_counts_as_in_use(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run waiting for memory is in the queued listing, not in ``all_agents``."""
+    from kiro_crew.dashboard import remote_workspaces
+    from kiro_crew.subagent_manager.admission.types import QueuedRun, QueuedRunListing
+
+    monkeypatch.setattr(remote_workspaces, "_workspace_root", lambda: tmp_path)
+    queued_name = "a" * 24 + "-0000aaaa"
+    live_name = "b" * 24 + "-0000bbbb"
+    listing = QueuedRunListing(
+        (
+            QueuedRun(
+                id="q1", task="t", parent_session_key="", cwd=str(tmp_path / queued_name / "src")
+            ),
+        )
+    )
+    manager = SimpleNamespace(
+        all_agents=[SimpleNamespace(done=False, cwd=str(tmp_path / live_name))],
+        queued_runs_async=AsyncMock(return_value=listing),
+    )
+
+    names = await remote_workspaces._workspaces_in_use(_ownership_request(manager))
+
+    assert names == {queued_name, live_name}
+
+
+@pytest.mark.asyncio
+async def test_a_run_admitted_during_the_queued_read_still_counts_as_in_use(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run leaves the queue while the listing is read; it must be seen live."""
+    from kiro_crew.dashboard import remote_workspaces
+    from kiro_crew.subagent_manager.admission.types import QueuedRunListing
+
+    monkeypatch.setattr(remote_workspaces, "_workspace_root", lambda: tmp_path)
+    name = "c" * 24 + "-0000cccc"
+    manager = SimpleNamespace(all_agents=[])
+
+    async def admitted_meanwhile(_parent):
+        manager.all_agents = [SimpleNamespace(done=False, cwd=str(tmp_path / name))]
+        return QueuedRunListing(())
+
+    manager.queued_runs_async = admitted_meanwhile
+
+    assert await remote_workspaces._workspaces_in_use(_ownership_request(manager)) == {name}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["partial", "raises", "no-listing"])
+async def test_ownership_that_cannot_be_read_completely_is_none(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from kiro_crew.dashboard import remote_workspaces
+    from kiro_crew.subagent_manager.admission.types import QueuedRunListing
+
+    monkeypatch.setattr(remote_workspaces, "_workspace_root", lambda: tmp_path)
+    manager = SimpleNamespace(all_agents=[])
+    if failure == "partial":
+        manager.queued_runs_async = AsyncMock(return_value=QueuedRunListing((), partial=True))
+    elif failure == "raises":
+        manager.queued_runs_async = AsyncMock(side_effect=RuntimeError("store down"))
+
+    assert await remote_workspaces._workspaces_in_use(_ownership_request(manager)) is None
+
+
+@_PINNED_INSTALL
+def test_unknown_ownership_prunes_nothing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_workspaces._WORKSPACE_TTL_SECS", 1)
+    first = _tar_payload([("one.txt", b"one", 0o644, "file")])
+    first_path = install_workspace(
+        first, hashlib.sha256(first).hexdigest(), "a" * 40, root=tmp_path
+    )
+    old = time.time() - 10
+    os.utime(first_path, (old, old))
+
+    second = _tar_payload([("two.txt", b"two", 0o644, "file")])
+    install_workspace(
+        second, hashlib.sha256(second).hexdigest(), "b" * 40, root=tmp_path, in_use=None
+    )
+
+    assert first_path.is_dir()
+
+
+def test_a_queued_run_keeps_its_cwd_for_the_ownership_read() -> None:
+    from unittest.mock import MagicMock
+
+    from kiro_crew.subagent import SubagentManager
+
+    manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
+    run = manager._admission._queued_run("q1", {"task": "t", "cwd": "/w/x"}, "p", 0.0, "")
+    assert run.cwd == "/w/x"
+
+
+@pytest.mark.asyncio
+async def test_remote_spawn_syncs_parent_project_when_no_remote_cwd(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    payload = b"tracked-source"
+    digest = hashlib.sha256(payload).hexdigest()
+    instances = _Instances(
+        [
+            (
+                200,
+                {
+                    "path": "/srv/peer-snapshots/abc",
+                    "sha256": digest,
+                    "commit": "a" * 40,
+                },
+            ),
+            (200, {"id": "peer01"}),
+            (200, {"done": True, "result": "ok", "error": ""}),
+        ],
+        connected=("crew-a",),
+    )
+    manager = _Manager()
+    manager.external_agents.clear()
+    state = SimpleNamespace(
+        instances_manager=instances,
+        get_slot=lambda _name: SimpleNamespace(project=str(tmp_path)),
+    )
+    service = RemoteSubagentService(state, manager)  # type: ignore[arg-type]
+    identities: list[tuple[str, ...]] = []
+
+    def archive(_path: object, *identity: str) -> tuple[bytes, str, str]:
+        identities.append(identity)
+        return payload, digest, "a" * 40
+
+    monkeypatch.setattr(service, "_build_project_archive", archive)
+
+    info = await _spawn_placed(
+        service,
+        task="review",
+        parent_session="dashboard:chat-1",
+        parent_agent="researcher",
+        agent="",
+        max_turns=0,
+        cwd="",
+        model="",
+        reasoning_effort="",
+        include_memory=False,
+        include_lessons=False,
+        include_project=True,
+        memory_mode="temporary",
+        batch_id="",
+        batch_total=0,
+    )
+    await _settle_monitor(service, info.id)
+
+    assert instances.calls[0][:3] == ("crew-a", "POST", "api/remote-workspaces")
+    # The snapshot is read as the parent's agent, whose profile narrows it.
+    assert identities == [("dashboard:chat-1", "", "researcher")]
+    spawn_body = instances.calls[1][3]
+    assert isinstance(spawn_body, dict)
+    assert spawn_body["cwd"] == "/srv/peer-snapshots/abc"
+    assert info.cwd == "/srv/peer-snapshots/abc"
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("parent_session", "slot"),
+    (
+        ("slack:C123:1712793600.123456", None),
+        ("cron:job-1", None),
+        ("dashboard:chat-1", SimpleNamespace(project="")),
+    ),
+)
+async def test_remote_spawn_without_a_parent_project_runs_without_a_snapshot(
+    monkeypatch: pytest.MonkeyPatch, parent_session: str, slot: object
+) -> None:
+    """``include_project`` is on by default, so a parent with no project (a
+    channel, cron or CLI parent, or a project-less chat) must still spawn:
+    no snapshot is uploaded and the peer gets no cwd."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    instances = _Instances(
+        [
+            (200, {"id": "peer01"}),
+            (200, {"done": True, "result": "ok", "error": ""}),
+        ],
+        connected=("crew-a",),
+    )
+    manager = _Manager()
+    manager.external_agents.clear()
+    state = SimpleNamespace(instances_manager=instances, get_slot=lambda _name: slot)
+    service = RemoteSubagentService(state, manager)  # type: ignore[arg-type]
+
+    def no_archive(_path: object, *_identity: str) -> tuple[bytes, str, str]:
+        raise AssertionError("no project, so nothing may be packaged")
+
+    monkeypatch.setattr(service, "_build_project_archive", no_archive)
+
+    info = await _spawn_placed(
+        service,
+        task="review",
+        parent_session=parent_session,
+        agent="",
+        max_turns=0,
+        cwd="",
+        model="",
+        reasoning_effort="",
+        include_memory=False,
+        include_lessons=False,
+        include_project=True,
+        memory_mode="temporary",
+        batch_id="",
+        batch_total=0,
+    )
+    await _settle_monitor(service, info.id)
+
+    assert [call[:3] for call in instances.calls][0] == ("crew-a", "POST", "api/spawn")
+    assert not any(call[2] == "api/remote-workspaces" for call in instances.calls)
+    spawn_body = instances.calls[0][3]
+    assert isinstance(spawn_body, dict)
+    assert "cwd" not in spawn_body
+    assert info.cwd == ""
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_spawn_refuses_a_parent_project_that_is_gone(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gone = tmp_path / "removed"
+    instances = _Instances([], connected=("crew-a",))
+    state = SimpleNamespace(
+        instances_manager=instances,
+        get_slot=lambda _name: SimpleNamespace(project=str(gone)),
+    )
+    service = RemoteSubagentService(state, _Manager())  # type: ignore[arg-type]
+
+    with pytest.raises(RemoteSubagentError) as caught:
+        await _spawn_placed(
+            service,
+            task="review",
+            parent_session="dashboard:chat-1",
+            agent="",
+            max_turns=0,
+            cwd="",
+            model="",
+            reasoning_effort="",
+            include_memory=False,
+            include_lessons=False,
+            include_project=True,
+            memory_mode="temporary",
+            batch_id="",
+            batch_total=0,
+        )
+    assert caught.value.code == "remote_project_unavailable"
+    assert instances.calls == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_restart_restores_terminal_mapping_and_redelivers_once(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    run_dir = tmp_path / "subagents" / "remote" / "abcdef12"
+    run_dir.mkdir(parents=True)
+    result_path = run_dir / "result.txt"
+    result_path.write_text("restored-result", encoding="utf-8")
+    original = SubagentInfo(
+        id="abcdef12",
+        task="review",
+        parent_session_key="dashboard:chat-1",
+        agent="kirocrew",
+        done=True,
+        result="restored-result",
+        result_path=str(result_path),
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+    )
+    RemoteSubagentService._persist_info(original, delivered=False)
+
+    manager = _Manager()
+    service = RemoteSubagentService(SimpleNamespace(instances_manager=None), manager)  # type: ignore[arg-type]
+    await service.ensure_restored()
+
+    restored = manager.get("abcdef12")
+    assert restored is not None
+    assert restored.executor == "remote"
+    assert restored.result == "res"
+    assert restored.result_truncated is True
+    assert manager.reported == [restored]
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["delivered"] is True
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_monitor_recovers_from_disconnect_and_terminal_404(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._RETRY_SECONDS", 0.0)
+
+    reconnecting = _Instances(
+        [
+            (200, {"id": "peer01"}),
+            OSError("tunnel dropped"),
+            (200, {"done": True, "turns": {}, "result": "reconnected", "error": ""}),
+        ],
+        connected=("crew-a",),
+    )
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=reconnecting), manager  # type: ignore[arg-type]
+    )
+    info = await _spawn_placed(
+        service,
+        task="review",
+        parent_session="dashboard:chat-1",
+        agent="",
+        max_turns=0,
+        cwd="/remote/project",
+        model="",
+        reasoning_effort="",
+        include_memory=False,
+        include_lessons=False,
+        include_project=True,
+        memory_mode="temporary",
+        batch_id="",
+        batch_total=0,
+    )
+    await _settle_monitor(service, info.id)
+    assert info.done is True
+    assert info.error == ""
+    assert manager.reported == [info]
+    await service.close()
+
+    missing = _Instances(
+        [(200, {"id": "peer02"}), (404, {}), (404, {}), (404, {})],
+        connected=("crew-a",),
+    )
+    missing_manager = _Manager()
+    missing_service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=missing), missing_manager  # type: ignore[arg-type]
+    )
+    missing_info = await _spawn_placed(
+        missing_service,
+        task="review",
+        parent_session="dashboard:chat-1",
+        agent="",
+        max_turns=0,
+        cwd="/remote/project",
+        model="",
+        reasoning_effort="",
+        include_memory=False,
+        include_lessons=False,
+        include_project=True,
+        memory_mode="temporary",
+        batch_id="",
+        batch_total=0,
+    )
+    await _settle_monitor(missing_service, missing_info.id)
+    assert missing_info.done is True
+    assert "no longer available" in missing_info.error
+    assert missing_manager.reported == [missing_info]
+    await missing_service.close()
+
+
+@pytest.mark.asyncio
+async def test_corrupt_persistence_is_ignored_fail_closed(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    state_path = tmp_path / "subagents" / "remote" / "abcdef12" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "id": "abcdef12",
+                "executor": "remote",
+                "instance_id": "crew-a",
+                "remote_id": "../peer",
+            }
+        ),
+        encoding="utf-8",
+    )
+    malformed_path = tmp_path / "subagents" / "remote" / "abcdef13" / "state.json"
+    malformed_path.parent.mkdir(parents=True)
+    malformed_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "id": "abcdef13",
+                "executor": "remote",
+                "instance_id": "crew-a",
+                "remote_id": "peer02",
+                "max_turns": {"not": "an integer"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = _Manager()
+    service = RemoteSubagentService(SimpleNamespace(instances_manager=None), manager)  # type: ignore[arg-type]
+
+    await service.ensure_restored()
+
+    assert manager.external_agents == []
+    assert manager.reported == []
+    assert service._monitors == {}
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_terminal_enters_normal_batch_digest_reporter() -> None:
+    manager = SubagentManager.__new__(SubagentManager)
+    info = SubagentInfo(
+        id="remote01",
+        task="remote",
+        done=True,
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+        batch_id="batch01",
+        batch_total=2,
+    )
+    manager._external_agents = {info.id: info}
+    manager._claim_finalize = lambda candidate: candidate is info  # type: ignore[method-assign]
+    reporter = AsyncMock(return_value=True)
+    manager._run_terminal_report = reporter  # type: ignore[method-assign]
+
+    assert await manager.report_external(info) is True
+    reporter.assert_awaited_once_with(
+        info,
+        source="Remote subagent",
+        injection_timeout_reason="remote completion delivery timed out",
+        mark_delivered_on_success=False,
+        settle_digest=True,
+    )
+
+
+def _manager_with_remote(info: SubagentInfo) -> tuple[SubagentManager, AsyncMock]:
+    manager = cast(Any, SubagentManager.__new__(SubagentManager))
+    manager._agents = {}
+    manager._external_agents = {info.id: info}
+    manager._queue = []
+    manager._undurable_in_dispatch = {}
+    manager._shutting_down = False
+    manager._teardown_store_fences = {}
+    manager._teardown_store_sweeps = []
+    manager._teardown_sweeps_owed = []
+    manager._teardown_fence_lock = threading.Lock()
+    manager._teardown_cancelled_ids = set()
+    manager._followup_watchers = {}
+    manager._followup_watcher_parents = {}
+    manager._followup_watcher_infos = {}
+    manager._report_owners = {}
+    manager._batch_submitted = {}
+    manager._batch_progress_ts = {}
+    manager._published_depths = PublishedQueueDepths()
+    manager._admission = SimpleNamespace(
+        taskq_pending_ids_for_async=AsyncMock(return_value=[]),
+        taskq_store=lambda: None,
+        _drain_queue_impl=lambda: None,
+    )
+    canceller = AsyncMock(return_value=True)
+    manager.bind_external_placement(
+        SimpleNamespace(
+            cancel=canceller,
+            dismiss=AsyncMock(return_value=True),
+            acknowledge_delivered=AsyncMock(),
+        )
+    )
+    return cast(SubagentManager, manager), canceller
+
+
+@pytest.mark.asyncio
+async def test_stop_all_and_parent_teardown_cancel_remote_children() -> None:
+    stop_info = SubagentInfo(
+        id="remote01",
+        task="remote",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+    )
+    stop_manager, stop_canceller = _manager_with_remote(stop_info)
+
+    assert await stop_manager.cancel_for_parent("dashboard:chat-1") == (1, 0)
+    stop_canceller.assert_awaited_once_with(stop_info)
+    assert stop_info.user_stopped is True
+
+    teardown_info = SubagentInfo(
+        id="remote02",
+        task="remote",
+        parent_session_key="dashboard:chat-2",
+        executor="remote",
+        instance_id="crew-b",
+        remote_id="peer02",
+    )
+    teardown_manager, teardown_canceller = _manager_with_remote(teardown_info)
+
+    selected = teardown_manager.snapshot_teardown_children("dashboard:chat-2")
+    assert selected == ("remote02",)
+    assert "remote02" in teardown_manager._teardown_cancelled_ids
+    assert (
+        await teardown_manager.cancel_for_teardown(
+            selected,
+            parent_session_key="dashboard:chat-2",
+            verb="remove",
+        )
+        == 1
+    )
+    teardown_canceller.assert_awaited_once_with(teardown_info)
+
+
+class _WorkspaceRequest:
+    def __init__(self, *, user: str, app: str = "", internal_auth: bool = False) -> None:
+        self.app = {"state": SimpleNamespace(owner_id="owner")}
+        self.query = {"sha256": "a" * 64, "commit": "b" * 40}
+        self.content = _Content(b"archive")
+        self._values = {"user": user, "app": app, "internal_auth": internal_auth}
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._values
+
+    def __getitem__(self, key: str) -> object:
+        return self._values[key]
+
+    def get(self, key: str, default: object = None) -> object:
+        return self._values.get(key, default)
+
+
+@pytest.mark.asyncio
+async def test_workspace_route_accepts_only_owner_cookie_requests(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for request in (
+        _WorkspaceRequest(user="owner", internal_auth=True),
+        _WorkspaceRequest(user="owner", app="notes"),
+        _WorkspaceRequest(user="other"),
+    ):
+        response = await api_remote_workspace_upload(cast(Any, request))
+        assert response.status == 403
+
+    installed = tmp_path / "workspace"
+    monkeypatch.setattr(
+        "kiro_crew.dashboard.remote_workspaces.install_workspace",
+        lambda _payload, _digest, _commit, **_kwargs: installed,
+    )
+    response = await api_remote_workspace_upload(cast(Any, _WorkspaceRequest(user="owner")))
+    assert response.status == 200
+    assert isinstance(response.body, (bytes, bytearray))
+    payload = json.loads(response.body)
+    assert payload["path"] == str(installed)
+    assert "reused" not in payload
+
+
+@pytest.mark.asyncio
+async def test_delivered_remote_records_expire_at_configured_ttl(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    info = SubagentInfo(
+        id="abcdef12",
+        task="done",
+        done=True,
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+    )
+    RemoteSubagentService._persist_info(info, delivered=True)
+    manager = _Manager()
+    manager._result_ttl_secs = 0
+    service = RemoteSubagentService(SimpleNamespace(instances_manager=None), manager)  # type: ignore[arg-type]
+
+    await service.ensure_restored()
+
+    assert manager.get("abcdef12") is None
+    assert not (tmp_path / "subagents" / "remote" / "abcdef12").exists()
+    await service.close()
+
+
+@_PINNED_INSTALL
+def test_workspace_install_prunes_only_expired_marked_snapshots(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_workspaces._WORKSPACE_TTL_SECS", 1)
+    first = _tar_payload([("one.txt", b"one", 0o644, "file")])
+    first_path = install_workspace(
+        first,
+        hashlib.sha256(first).hexdigest(),
+        "a" * 40,
+        root=tmp_path,
+    )
+    old = time.time() - 10
+    os.utime(first_path, (old, old))
+
+    unmarked = tmp_path / ("f" * 24 + "-" + "0" * 8)
+    unmarked.mkdir()
+    os.utime(unmarked, (old, old))
+
+    second = _tar_payload([("two.txt", b"two", 0o644, "file")])
+    second_path = install_workspace(
+        second,
+        hashlib.sha256(second).hexdigest(),
+        "b" * 40,
+        root=tmp_path,
+    )
+
+    assert second_path.is_dir()
+    assert not first_path.exists()
+    assert unmarked.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_restart_resumes_polling_an_unfinished_remote_mapping(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    original = SubagentInfo(
+        id="abcdef12",
+        task="review",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+    )
+    RemoteSubagentService._persist_info(original, delivered=False)
+    instances = _Instances(
+        [(200, {"done": True, "result": "after-restart", "error": ""})],
+        connected=("crew-a",),
+    )
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+
+    await service.ensure_restored()
+    await _settle_monitor(service, "abcdef12")
+
+    restored = manager.get("abcdef12")
+    assert restored is not None and restored.done is True
+    assert manager.reported == [restored]
+    assert instances.calls == [("crew-a", "GET", "api/spawn/peer01", None)]
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_terminal_write_publishes_nothing_and_retries(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Persist before publish: no completion reaches the parent, and ``done``
+    stays False, until the terminal mapping is on disk; the monitor re-polls
+    the peer and retries instead of logging the write failure and reporting."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._RETRY_SECONDS", 0.0)
+    original = SubagentInfo(
+        id="abcdef12",
+        task="review",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+    )
+    RemoteSubagentService._persist_info(original, delivered=False)
+    instances = _Instances(
+        [
+            (200, {"done": True, "result": "first", "error": ""}),
+            (200, {"done": True, "result": "second", "error": ""}),
+        ],
+        connected=("crew-a",),
+    )
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    real_persist = RemoteSubagentService._persist_info.__func__
+    seen: list[tuple[bool, bool, int]] = []
+
+    def flaky(cls, info, *, delivered, done=None):
+        committed = info.done if done is None else done
+        seen.append((committed, info.done, len(manager.reported)))
+        if committed and len([s for s in seen if s[0]]) == 1:
+            raise OSError("disk full")
+        return real_persist(cls, info, delivered=delivered, done=done)
+
+    monkeypatch.setattr(RemoteSubagentService, "_persist_info", classmethod(flaky))
+
+    await service.ensure_restored()
+    await _settle_monitor(service, "abcdef12")
+
+    restored = manager.get("abcdef12")
+    assert restored is not None and restored.done is True
+    # The failed commit happened with nothing published and done still False.
+    first_commit = next(entry for entry in seen if entry[0])
+    assert first_commit[1:] == (False, 0)
+    assert manager.reported == [restored]
+    assert len(instances.calls) == 2
+    state = json.loads((tmp_path / "subagents" / "remote" / "abcdef12" / "state.json").read_text())
+    assert state["done"] is True
+    await service.close()
+
+
+def _git_project(root) -> str:
+    import subprocess
+
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+    run = lambda *argv: subprocess.run(  # noqa: E731
+        ["git", "-C", str(root), *argv], check=True, capture_output=True, env=env
+    )
+    run("init", "-q")
+    (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    run("add", "app.py")
+    run(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "init",
+    )
+    return run("rev-parse", "HEAD").stdout.decode().strip()
+
+
+def test_build_project_archive_uses_the_staged_tarball(tmp_path) -> None:
+    import hashlib
+
+    from kiro_crew.dashboard.remote_subagents import RemoteSubagentService
+
+    head = _git_project(tmp_path)
+
+    payload, digest, commit = RemoteSubagentService._build_project_archive(tmp_path)
+
+    assert payload
+    assert digest == hashlib.sha256(payload).hexdigest()
+    assert commit == head
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+        assert any(name.endswith("app.py") for name in archive.getnames())
+
+
+def _commit_all(root, *paths: str) -> None:
+    import subprocess
+
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+    run = lambda *argv: subprocess.run(  # noqa: E731
+        ["git", "-C", str(root), *argv], check=True, capture_output=True, env=env
+    )
+    run("add", "-f", *paths)
+    run(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "more",
+    )
+
+
+def _names(payload: bytes) -> set[str]:
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+        return set(archive.getnames())
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs a privilege on Windows")
+def test_an_ancestor_swapped_for_a_link_after_resolution_is_refused(tmp_path, monkeypatch) -> None:
+    """The project was resolved and screened, then an ancestor became a link into
+    a masked directory: the pin refuses it instead of reading through it."""
+    from kiro_crew.dashboard.remote_subagents import _snapshot_project
+
+    project = tmp_path / "checkout" / "cache"
+    project.mkdir(parents=True)
+    _git_project(project)
+    masked = tmp_path / "masked" / "cache"
+    masked.mkdir(parents=True)
+    _git_project(masked)
+    (masked / "app.py").write_bytes(b"token\n")
+    (tmp_path / "checkout").rename(tmp_path / "checkout.real")
+    (tmp_path / "checkout").symlink_to(tmp_path / "masked", target_is_directory=True)
+    # Resolution and screening happened before the swap.
+    monkeypatch.setattr(remote_subagents.os.path, "realpath", lambda path: str(path))
+
+    with pytest.raises(remote_subagents._SnapshotRefused) as caught:
+        _snapshot_project(project)
+    assert caught.value.code == "remote_project_moved"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the pinned handle blocks the rename on Windows")
+def test_a_directory_swapped_in_while_git_runs_is_refused(tmp_path, monkeypatch) -> None:
+    """git lists by path, so a listing taken from a swapped-in tree is not packaged."""
+    from kiro_crew.dashboard.remote_subagents import _snapshot_project
+
+    project = tmp_path / "project"
+    project.mkdir()
+    _git_project(project)
+    real_git = remote_subagents._project_git
+
+    def swapping_git(git: str, root: Path, *argv: str) -> Any:
+        result = real_git(git, root, *argv)
+        if argv[0] == "ls-files":
+            (tmp_path / "project").rename(tmp_path / "project.real")
+            (tmp_path / "project").mkdir()
+        return result
+
+    monkeypatch.setattr(remote_subagents, "_project_git", swapping_git)
+    with pytest.raises(remote_subagents._SnapshotRefused) as caught:
+        _snapshot_project(project)
+    assert caught.value.code == "remote_project_moved"
+
+
+@pytest.fixture
+def read_policy(tmp_path, monkeypatch):
+    """Install a governance ceiling for one test, with no profiles bound."""
+    import dataclasses
+
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.platform import context as ctx_mod
+    from kiro_crew.platform import governance_profiles as gp
+    from kiro_crew.platform.bootstrap import build_default_context
+    from kiro_crew.platform.governance import parse_policy
+
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    monkeypatch.setattr(gp, "_PROFILES_DIR", profiles)
+    gp.reset_store()
+
+    def install(*, deny: tuple[str, ...] = (), allow: tuple[str, ...] = ()) -> None:
+        rules = (
+            {"mode": "allow", "allow": list(allow)}
+            if allow
+            else {"mode": "deny", "deny": list(deny)}
+        )
+        body = {"version": 1, "boot": {"fail_closed": True}, "filesystem": {"read": rules}}
+        base = build_default_context(KiroCrewConfig.load())
+        ctx_mod.set_context(dataclasses.replace(base, governance=parse_policy(body)))
+
+    yield install
+    gp.reset_store()
+    ctx_mod.reset_context()
+
+
+@pytest.mark.parametrize("mode", ["deny", "allow"])
+def test_the_snapshot_leaves_out_a_file_the_parents_read_policy_denies(
+    tmp_path, read_policy, mode, monkeypatch
+) -> None:
+    """The gateway reads the snapshot, so the parent's read policy is applied here,
+    and each denial is written to the SEL like the PreToolUse gate's own."""
+    from kiro_crew import sel as sel_mod
+    from kiro_crew.dashboard.remote_subagents import RemoteSubagentService
+
+    audited: list[dict] = []
+
+    class _Recorder:
+        def log_governance_decision(self, **kwargs: object) -> None:
+            audited.append(kwargs)
+
+    monkeypatch.setattr(sel_mod, "sel", lambda: _Recorder())
+
+    project = tmp_path / "project"
+    project.mkdir()
+    _git_project(project)
+    (project / "docs").mkdir()
+    (project / "docs" / "private.md").write_bytes(b"keep out\n")
+    (project / "docs" / "public.md").write_bytes(b"fine\n")
+    _commit_all(project, "docs/private.md", "docs/public.md")
+    if mode == "deny":
+        # Path globs match the native spelling of the absolute item.
+        read_policy(deny=(f"**{os.sep}private.md",))
+    else:
+        read_policy(allow=(str(project / "app.py"), str(project / "docs" / "public.md")))
+
+    payload, _digest, _commit = RemoteSubagentService._build_project_archive(
+        project, "dashboard:parent", ""
+    )
+
+    names = _names(payload)
+    assert "docs/private.md" not in names
+    assert {"app.py", "docs/public.md"} <= names
+    denied = [row for row in audited if row["item"].endswith("private.md")]
+    assert len(denied) == 1
+    row = denied[0]
+    assert row["session_key"] == "dashboard:parent"
+    assert row["scope"] == "filesystem.read" and row["outcome"] == "denied"
+    assert row["tool_name"] == "remote_project_snapshot"
+    assert row["rule"] and row["layer"]
+    # Only denials are written, one per file, as the gate writes them.
+    assert all(row["outcome"] == "denied" for row in audited)
+    assert not any(row["item"].endswith("public.md") for row in audited)
+
+
+def test_the_snapshot_honours_a_read_profile_bound_to_the_parents_agent(
+    tmp_path, read_policy, monkeypatch
+) -> None:
+    """Opus: the parent's own tool gate resolves the profile WITH its agent, so a
+    profile bound to that agent narrows the snapshot as it narrows the agent."""
+    from kiro_crew import sel as sel_mod
+    from kiro_crew.dashboard.remote_subagents import RemoteSubagentService
+    from kiro_crew.platform import context as ctx_mod
+
+    class _Quiet:
+        def log_governance_decision(self, **_kwargs: object) -> None:
+            pass
+
+    monkeypatch.setattr(sel_mod, "sel", lambda: _Quiet())
+    ctx_mod.reset_context()  # no ceiling: only the agent's profile governs
+    project = tmp_path / "project"
+    project.mkdir()
+    _git_project(project)
+    (project / "private.md").write_bytes(b"keep out\n")
+    _commit_all(project, "private.md")
+    (tmp_path / "profiles" / "researcher.json").write_text(
+        json.dumps(
+            {
+                "name": "researcher",
+                "bind": {"type": "task", "id": "researcher"},
+                "filesystem": {"read": {"mode": "deny", "deny": [f"**{os.sep}private.md"]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def names_for(agent: str) -> set[str]:
+        payload, _digest, _commit = RemoteSubagentService._build_project_archive(
+            project, "dashboard:parent", "", agent
+        )
+        return _names(payload)
+
+    assert "private.md" not in names_for("researcher")
+    # The binding is what narrows it: another agent's snapshot keeps the file.
+    assert "private.md" in names_for("writer")
+
+
+def test_an_ungoverned_parent_has_no_read_check(tmp_path, read_policy) -> None:
+    from kiro_crew.dashboard.remote_subagents import _project_read_check
+    from kiro_crew.platform import context as ctx_mod
+
+    ctx_mod.reset_context()
+    assert _project_read_check("dashboard:parent") is None
+
+
+def test_an_unevaluable_read_policy_refuses_the_snapshot(
+    tmp_path, read_policy, monkeypatch
+) -> None:
+    """A wrong permit here uploads the file to another host, so an error refuses."""
+    from kiro_crew.dashboard.remote_subagents import RemoteSubagentError, RemoteSubagentService
+    from kiro_crew.platform import governance
+
+    project = tmp_path / "project"
+    project.mkdir()
+    _git_project(project)
+    read_policy(deny=("**/never.md",))
+
+    def broken(*_args: object) -> object:
+        raise RuntimeError("evaluator failed")
+
+    monkeypatch.setattr(governance, "resolve", broken)
+    with pytest.raises(RemoteSubagentError) as caught:
+        RemoteSubagentService._build_project_archive(project, "dashboard:parent", "")
+    assert caught.value.code == "remote_project_policy_unavailable"
+    assert caught.value.status == 409
+
+
+def test_a_planted_fsmonitor_never_runs_on_the_gateway(tmp_path) -> None:
+    """An agent-written ``core.fsmonitor`` must not execute while packaging."""
+    import subprocess
+
+    from kiro_crew.dashboard.remote_subagents import RemoteSubagentService
+
+    project = tmp_path / "project"
+    project.mkdir()
+    _git_project(project)
+    marker = tmp_path / "fsmonitor-ran"
+    hook = tmp_path / "fsmonitor.sh"
+    hook.write_bytes(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n".encode())
+    hook.chmod(0o755)
+    subprocess.run(["git", "-C", str(project), "config", "core.fsmonitor", str(hook)], check=True)
+    # Dirty a tracked file too: a status refresh is where git would ask the monitor.
+    # Bytes, not text: text mode writes CRLF on Windows.
+    (project / "app.py").write_bytes(b"print('changed')\n")
+
+    payload, _digest, _commit = RemoteSubagentService._build_project_archive(project)
+
+    assert not marker.exists()
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+        member = archive.extractfile("app.py")
+        assert member is not None and member.read() == b"print('changed')\n"
+
+
+def test_a_symlinked_parent_cannot_pull_files_from_outside(tmp_path) -> None:
+    """``cache/config.json`` is tracked, then ``cache`` becomes a link elsewhere."""
+    from kiro_crew.dashboard.remote_subagents import RemoteSubagentService
+
+    project = tmp_path / "project"
+    project.mkdir()
+    _git_project(project)
+    (project / "cache").mkdir()
+    (project / "cache" / "config.json").write_text("{}\n", encoding="utf-8")
+    (project / "notes.txt").write_text("kept\n", encoding="utf-8")
+    (project / "leaf-link").symlink_to(project / "notes.txt")
+    _commit_all(project, "cache/config.json", "notes.txt", "leaf-link")
+
+    outside = tmp_path / "credentials"
+    outside.mkdir()
+    (outside / "config.json").write_text("SECRET\n", encoding="utf-8")
+    (project / "cache" / "config.json").unlink()
+    (project / "cache").rmdir()
+    (project / "cache").symlink_to(outside, target_is_directory=True)
+
+    payload, _digest, _commit = RemoteSubagentService._build_project_archive(project)
+
+    names = _names(payload)
+    assert "cache/config.json" not in names
+    assert "leaf-link" not in names  # a tracked symlink is never packaged
+    assert {"app.py", "notes.txt"} <= names
+    assert b"SECRET" not in gzip_decompress(payload)
+
+
+def gzip_decompress(payload: bytes) -> bytes:
+    import gzip
+
+    return gzip.decompress(payload)
+
+
+def test_tracked_credentials_and_protected_paths_are_left_out(tmp_path, monkeypatch) -> None:
+    from kiro_crew.dashboard import remote_subagents
+    from kiro_crew.dashboard.remote_subagents import RemoteSubagentService
+
+    _git_project(tmp_path)
+    (tmp_path / ".env").write_text("TOKEN=x\n", encoding="utf-8")
+    (tmp_path / "fenced.txt").write_text("fenced\n", encoding="utf-8")
+    _commit_all(tmp_path, ".env", "fenced.txt")
+    fenced = str(tmp_path / "fenced.txt")
+
+    import kiro_crew.security.paths as paths
+
+    real = paths.is_sensitive_resolved_path
+    monkeypatch.setattr(paths, "is_sensitive_resolved_path", lambda p: p == fenced or real(p))
+
+    names = _names(RemoteSubagentService._build_project_archive(tmp_path)[0])
+    assert ".env" not in names and "fenced.txt" not in names
+    assert "app.py" in names
+
+    monkeypatch.setattr(paths, "is_sensitive_resolved_path", lambda p: True)
+    with pytest.raises(RemoteSubagentError) as raised:
+        RemoteSubagentService._build_project_archive(tmp_path)
+    assert raised.value.code == "remote_project_protected"
+    assert remote_subagents._GIT_NEUTRALISED_CONFIG[0] == "core.fsmonitor="
+
+
+@pytest.mark.asyncio
+async def test_registered_upload_route_reaches_the_real_handler(monkeypatch) -> None:
+    """The route the gateway REGISTERS must import the module where it lives.
+
+    The handler tests above import ``api_remote_workspace_upload`` directly, so
+    they stayed green while the registered route resolved it under
+    ``dashboard.handlers`` and raised ``ModuleNotFoundError`` -- a bare 500 on
+    every project-synced remote spawn, caught only by an end-to-end canary.
+    """
+    from aiohttp import web
+
+    from kiro_crew.dashboard import remote_workspaces, server
+
+    sentinel = web.json_response({"reached": True})
+
+    async def _stub(_request: Any) -> web.Response:
+        return sentinel
+
+    monkeypatch.setattr(remote_workspaces, "api_remote_workspace_upload", _stub)
+    app = web.Application()
+    server._register_mcp_routes(app)
+    route = next(
+        r
+        for r in app.router.routes()
+        if r.method == "POST"
+        and r.resource is not None
+        and r.resource.canonical == "/api/remote-workspaces"
+    )
+
+    assert await route.handler(cast(Any, object())) is sentinel
+
+
+def _spawn_kwargs(**overrides: object) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        "task": "review the secret plan",
+        "parent_session": "dashboard:chat-1",
+        "agent": "",
+        "max_turns": 0,
+        "cwd": "/remote/project",
+        "model": "",
+        "reasoning_effort": "",
+        "include_memory": False,
+        "include_lessons": False,
+        "include_project": True,
+        "memory_mode": "persistent",
+        "batch_id": "",
+        "batch_total": 0,
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+@pytest.mark.asyncio
+async def test_unpersisted_mapping_cancels_the_peer_run_instead_of_publishing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    instances = _Instances([(200, {"id": "peer01"}), (200, {"cancelled": True})])
+    manager = _auto_manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    real_persist = service._persist_info
+    writes: list[bool] = []
+
+    def confirmed_write_fails(info: object, **kwargs: object) -> None:
+        writes.append(bool(kwargs.get("accepted", True)))
+        if kwargs.get("accepted", True):
+            raise OSError(28, "No space left on device")
+        real_persist(info, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service, "_persist_info", confirmed_write_fails)
+
+    with pytest.raises(RemoteSubagentError) as caught:
+        await _spawn_placed(service, **_spawn_kwargs())  # type: ignore[arg-type]
+
+    assert caught.value.code == "remote_mapping_unpersisted"
+    assert manager.external_agents == []
+    assert writes == [False, True]
+    assert [call[1:3] for call in instances.calls] == [
+        ("POST", "api/spawn"),
+        ("DELETE", "api/spawn/peer01"),
+    ]
+    # The peer confirmed the stop, so the unconfirmed record goes too.
+    assert not any((tmp_path / "subagents" / "remote").glob("*/state.json"))
+    assert not service._monitors
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_cannot_be_recorded_first_is_never_sent(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orphan window: the record is written before the peer is asked, so a
+    gateway that cannot write it sends nothing."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    instances = _Instances([])
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), _Manager()  # type: ignore[arg-type]
+    )
+
+    def disk_full(*_args: object, **_kwargs: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(service, "_persist_info", disk_full)
+    with pytest.raises(RemoteSubagentError) as caught:
+        await _spawn_placed(service, **_spawn_kwargs())  # type: ignore[arg-type]
+    assert caught.value.code == "remote_mapping_unpersisted"
+    assert instances.calls == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("withdraw", "kept"),
+    [((404, {}), False), ((200, {"cancelled": True}), False), (OSError("down"), True)],
+    ids=["never-started", "stopped", "unreachable"],
+)
+async def test_a_lost_spawn_answer_withdraws_the_named_run(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, withdraw: object, kept: bool
+) -> None:
+    """The peer may have accepted a run whose answer was lost. It was sent under a
+    hub-chosen name, so the hub stops that name. A confirmed stop refuses the
+    spawn and drops the record; an unconfirmed one keeps the record and the run,
+    which the monitor then reconciles (here: the peer never started it)."""
+    from kiro_crew.dashboard import remote_subagents
+
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._RETRY_SECONDS", 0.0)
+    polls = [(404, {})] * remote_subagents._MAX_NOT_FOUND_POLLS if kept else []
+    instances = _Instances([OSError("answer lost"), withdraw, *polls])  # type: ignore[list-item]
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), _auto_manager()  # type: ignore[arg-type]
+    )
+    if kept:
+        info = await _spawn_placed(service, **_spawn_kwargs())  # type: ignore[arg-type]
+    else:
+        with pytest.raises(RemoteSubagentError):
+            await _spawn_placed(service, **_spawn_kwargs())  # type: ignore[arg-type]
+
+    minted = instances.calls[0][3]["run_id"]  # type: ignore[index]
+    assert instances.calls[1][1:3] == ("DELETE", f"api/spawn/{minted}")
+    states = list((tmp_path / "subagents" / "remote").glob("*/state.json"))
+    assert bool(states) is kept
+    if kept:
+        state = json.loads(states[0].read_text(encoding="utf-8"))
+        assert state["accepted"] is False and state["remote_id"] == minted
+        await async_wait_until(lambda: info.done, describe=lambda: instances.calls)
+        assert instances.calls[2][1:3] == ("GET", f"api/spawn/{minted}")
+        assert info.error == remote_subagents._NEVER_STARTED
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_restart_inside_the_window_reports_a_never_started_run_plainly(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._RETRY_SECONDS", 0.0)
+    from kiro_crew.dashboard import remote_subagents
+
+    pending = SubagentInfo(
+        id="abcdef12",
+        task="review",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="0123456789abcdef",
+    )
+    RemoteSubagentService._persist_info(pending, delivered=False, accepted=False)
+    polls = [(404, {})] * remote_subagents._MAX_NOT_FOUND_POLLS
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=_Instances(polls, connected=("crew-a",))),  # type: ignore[arg-type]
+        manager,  # type: ignore[arg-type]
+    )
+    await service.ensure_restored()
+    await _settle_monitor(service, "abcdef12")
+    restored = manager.get("abcdef12")
+    assert restored is not None and restored.done is True
+    assert restored.error == remote_subagents._NEVER_STARTED
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "refused"),
+    [
+        ({"memory_mode": "incognito", "approval_mode": "auto", "include_project": False}, True),
+        ({"memory_mode": "temporary", "approval_mode": "auto", "include_project": False}, True),
+        ({"approval_mode": "", "include_project": False}, True),
+        # Nothing to tighten still needs the crew to keep the run's name: a crew
+        # that advertises nothing could run it under another id and lose it.
+        ({"approval_mode": "auto", "include_project": False}, True),
+    ],
+    ids=["incognito", "temporary", "floor", "no-run-id"],
+)
+async def test_a_crew_that_does_not_advertise_the_tightening_never_gets_the_task(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    overrides: dict[str, object],
+    refused: bool,
+) -> None:
+    """A crew that does not advertise the fields is refused before it sees the task."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    instances = _Instances(
+        [(200, {"id": "peer01"})],
+        connected=("crew-a",),
+        advertises=False,
+    )
+    manager = _Manager()
+    service = RemoteSubagentService(
+        cast(Any, SimpleNamespace(instances_manager=instances)), cast(Any, manager)
+    )
+    monkeypatch.setattr(service, "_monitor", AsyncMock())
+
+    if refused:
+        with pytest.raises(RemoteSubagentError) as caught:
+            await _spawn_placed(service, **_spawn_kwargs(**overrides))  # type: ignore[arg-type]
+        assert caught.value.code == "remote_peer_unenforced"
+        assert caught.value.status == 409
+        # Not a single request reached the crew, so no task text left the hub.
+        assert instances.calls == []
+        assert manager.external_agents == []
+    else:
+        info = await _spawn_placed(service, **_spawn_kwargs(**overrides))  # type: ignore[arg-type]
+        assert info.remote_id == "peer01"
+        assert [call[1:3] for call in instances.calls] == [("POST", "api/spawn")]
+    await service.close()
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_privacy_mode_runs_leave_no_task_or_result_on_disk(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    instances = _Instances(
+        [(200, {"id": "peer01"}), (200, {"done": True, "result": "private answer"})]
+    )
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+
+    info = await _spawn_placed(service, **_spawn_kwargs(memory_mode="incognito"))  # type: ignore[arg-type]
+    await _settle_monitor(service, info.id)
+
+    run_dir = tmp_path / "subagents" / "remote" / info.id
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["task"] == ""
+    assert state["remote_id"] == "peer01"
+    assert not (run_dir / "result.txt").exists()
+    assert info.result_path == ""
+    assert "secret plan" not in (run_dir / "state.json").read_text(encoding="utf-8")
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_unreachable_peer_ends_the_shadow_run(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._RETRY_SECONDS", 0.0)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._UNREACHABLE_DEADLINE_SECONDS", 0.0)
+    instances = _Instances([(200, {"id": "peer01"}), ConnectionError("gone")])
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+
+    info = await _spawn_placed(service, **_spawn_kwargs())  # type: ignore[arg-type]
+    await _settle_monitor(service, info.id)
+
+    assert info.done is True
+    assert "unreachable" in info.error
+    assert manager.reported == [info]
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_digest_held_completion_is_not_acknowledged(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    instances = _Instances([(200, {"id": "peer01"}), (200, {"done": True, "result": "ok"})])
+    manager = _Manager()
+
+    async def held(info: SubagentInfo) -> bool:
+        # The gateway parked this wave member in the digest: the reporter
+        # returns True, but nothing has reached the parent yet.
+        info._digest_held = True
+        manager.reported.append(info)
+        return True
+
+    manager.report_external = held  # type: ignore[method-assign]
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+
+    info = await _spawn_placed(service, **_spawn_kwargs(batch_id="w1", batch_total=2))  # type: ignore[arg-type]
+    await _settle_monitor(service, info.id)
+
+    state = json.loads(
+        (tmp_path / "subagents" / "remote" / info.id / "state.json").read_text(encoding="utf-8")
+    )
+    assert state["done"] is True
+    assert state["delivered"] is False
+
+    # The digest later reaches the parent; its settle acknowledges the run, so
+    # a restart does not deliver the same result a second time.
+    assert manager.external_placement is service
+    await service.acknowledge_delivered([info.id, "notmine1"])
+    state = json.loads(
+        (tmp_path / "subagents" / "remote" / info.id / "state.json").read_text(encoding="utf-8")
+    )
+    assert state["delivered"] is True
+    assert not (tmp_path / "subagents" / "remote" / "notmine1").exists()
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_the_service_binds_once_and_close_unbinds_every_duty(tmp_path, monkeypatch) -> None:
+    """One reference carries cancel, dismiss and delivery acknowledgement.
+
+    Closing drops all three together: before, ``close`` unbound the canceller
+    and the dismisser but left the delivery listener pointing at a closed service.
+    """
+    from kiro_crew.subagent import ExternalPlacement
+
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    manager = SubagentManager(sessions=SimpleNamespace(), ctx_builder=None)
+    service = RemoteSubagentService(
+        cast(Any, SimpleNamespace(instances_manager=_Instances([]))), manager
+    )
+    placement: ExternalPlacement = service
+    assert cast(Any, manager)._external_placement is placement
+
+    await service.close()
+
+    assert cast(Any, manager)._external_placement is None
+    info = SubagentInfo(
+        id="remote01",
+        task="t",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+    )
+    manager.register_external(info)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await manager.cancel_external("remote01")
+
+
+@pytest.mark.asyncio
+async def test_settles_hand_only_delivered_external_ids_to_the_listener() -> None:
+    from kiro_crew.subagent import SubagentDelivery
+
+    info = SubagentInfo(
+        id="remote01", task="t", parent_session_key="dashboard:chat-1", executor="remote"
+    )
+    manager, _canceller = _manager_with_remote(info)
+    raw = cast(Any, manager)
+    raw._waves = SimpleNamespace(
+        settle_queued_delivery_impl=AsyncMock(), _settle_digest_holds_impl=AsyncMock()
+    )
+    listener = cast(Any, manager)._external_placement.acknowledge_delivered
+    deliveries = [
+        SubagentDelivery("remote01", 1.0, 0.0),
+        SubagentDelivery("local001", 1.0, 0.0),
+        SubagentDelivery("remote01", 0.0, 0.0, report_owed=True),
+    ]
+
+    await manager.settle_queued_delivery(deliveries)
+    listener.assert_awaited_once_with(["remote01"])
+
+    listener.reset_mock()
+    holder = SubagentInfo(id="member01", task="t", parent_session_key="dashboard:chat-1")
+    holder._digest_settle_deliveries = [SubagentDelivery("remote01", 1.0, 0.0)]
+    await manager._settle_digest_holds(holder)
+    listener.assert_awaited_once_with(["remote01"])
+
+    # A digest whose injection the gateway gave up on did not reach the parent.
+    listener.reset_mock()
+    holder._digest_settle_deliveries = [SubagentDelivery("remote01", 1.0, 0.0)]
+    holder._report_undelivered = True
+    await manager._settle_digest_holds(holder)
+    listener.assert_not_awaited()
+
+    # A failing acknowledgement never fails the settle itself.
+    listener.side_effect = RuntimeError("disk full")
+    await manager.settle_queued_delivery([SubagentDelivery("remote01", 1.0, 0.0)])
+
+
+@pytest.mark.asyncio
+async def test_version_skew_is_a_typed_refusal_not_a_bare_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unreachable(*_args: object, **_kwargs: object) -> None:
+        raise ConnectionError("version read failed")
+
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._ensure_version_parity", unreachable)
+    instances = _Instances([])
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), _Manager()  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RemoteSubagentError) as caught:
+        await _spawn_placed(service, **_spawn_kwargs())  # type: ignore[arg-type]
+
+    assert caught.value.status == 409
+    assert instances.calls == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_project_that_cannot_be_packaged_is_a_typed_refusal(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kiro_crew.cloud.aws import AWSError
+
+    state = SimpleNamespace(
+        instances_manager=_Instances([], connected=("crew-a",)),
+        get_slot=lambda _name: SimpleNamespace(project=str(tmp_path)),
+    )
+    service = RemoteSubagentService(state, _auto_manager())  # type: ignore[arg-type]
+
+    def not_git(_path: Path, *_identity: str) -> tuple[bytes, str, str]:
+        raise AWSError("not a git checkout")
+
+    monkeypatch.setattr(service, "_build_project_archive", not_git)
+
+    with pytest.raises(RemoteSubagentError) as caught:
+        await _spawn_placed(service, **_spawn_kwargs(cwd=""))  # type: ignore[arg-type]
+
+    assert caught.value.code == "remote_project_snapshot_failed"
+    assert caught.value.status == 400
+    await service.close()
+
+
+def test_a_swallowed_injection_failure_is_not_read_as_delivered() -> None:
+    from kiro_crew.dashboard.remote_subagents import _reached_parent
+
+    info = SubagentInfo(id="remote01", task="t", parent_session_key="cron:job-1")
+    assert _reached_parent(info) is True
+    # A channel or cron parent whose injection attempts all failed: the
+    # reporter returned True, but the parent never saw the result.
+    info._report_undelivered = True
+    assert _reached_parent(info) is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_redelivery_does_not_strand_live_runs_on_restore(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    finished = SubagentInfo(
+        id="aaaaaaa1",
+        task="t",
+        parent_session_key="dashboard:chat-1",
+        done=True,
+        result="r",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+    )
+    live = SubagentInfo(
+        id="bbbbbbb2",
+        task="t",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer02",
+    )
+    RemoteSubagentService._persist_info(finished, delivered=False)
+    RemoteSubagentService._persist_info(live, delivered=False)
+
+    manager = _Manager()
+
+    async def broken(_info: SubagentInfo) -> bool:
+        raise OSError("disk full")
+
+    manager.report_external = broken  # type: ignore[method-assign]
+    service = RemoteSubagentService(SimpleNamespace(instances_manager=None), manager)  # type: ignore[arg-type]
+    started: list[str] = []
+
+    async def monitor(info: SubagentInfo) -> None:
+        started.append(info.id)
+
+    monkeypatch.setattr(service, "_monitor", monitor)
+    await service.ensure_restored()
+    await asyncio.sleep(0)
+
+    assert started == ["bbbbbbb2"]
+    state = json.loads(
+        (tmp_path / "subagents" / "remote" / "aaaaaaa1" / "state.json").read_text(encoding="utf-8")
+    )
+    assert state["delivered"] is False  # retried on the next start
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_one_bad_record_does_not_fail_the_whole_restore(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record with an empty crew binding, or one the manager refuses, is
+    skipped; the other runs still restore and the restore itself succeeds,
+    so the spawn routes that await it do not error."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    runs = {
+        run_id: SubagentInfo(
+            id=run_id,
+            task="t",
+            parent_session_key="dashboard:chat-1",
+            executor="remote",
+            instance_id="crew-a",
+            remote_id=f"peer0{index}",
+        )
+        for index, run_id in enumerate(("aaaaaaa1", "bbbbbbb2", "ccccccc3"), start=1)
+    }
+    for info in runs.values():
+        RemoteSubagentService._persist_info(info, delivered=False)
+    blank = tmp_path / "subagents" / "remote" / "aaaaaaa1" / "state.json"
+    state = json.loads(blank.read_text(encoding="utf-8"))
+    state["instance_id"] = ""
+    blank.write_text(json.dumps(state), encoding="utf-8")
+
+    manager = _Manager()
+    accept = manager.register_external
+
+    def picky(info: SubagentInfo) -> None:
+        if info.id == "bbbbbbb2":
+            raise ValueError("subagent id already registered: bbbbbbb2")
+        accept(info)
+
+    manager.register_external = picky  # type: ignore[method-assign]
+    service = RemoteSubagentService(SimpleNamespace(instances_manager=None), manager)  # type: ignore[arg-type]
+    started: list[str] = []
+
+    async def monitor(info: SubagentInfo) -> None:
+        started.append(info.id)
+
+    monkeypatch.setattr(service, "_monitor", monitor)
+    await service.ensure_restored()
+    await asyncio.sleep(0)
+
+    assert [info.id for info in manager.external_agents] == ["ccccccc3"]
+    assert started == ["ccccccc3"]
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_restore_is_retried_on_the_next_call(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    info = SubagentInfo(
+        id="ddddddd4",
+        task="t",
+        parent_session_key="dashboard:chat-1",
+        done=True,
+        result="r",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer04",
+    )
+    RemoteSubagentService._persist_info(info, delivered=True)
+    real_load = RemoteSubagentService._load_records.__func__
+    calls: list[int] = []
+
+    def flaky(cls):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("transient")
+        return real_load(cls)
+
+    monkeypatch.setattr(RemoteSubagentService, "_load_records", classmethod(flaky))
+    manager = _Manager()
+    service = RemoteSubagentService(SimpleNamespace(instances_manager=None), manager)  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError):
+        await service.ensure_restored()
+    await service.ensure_restored()
+
+    assert len(calls) == 2
+    assert [restored.id for restored in manager.external_agents] == ["ddddddd4"]
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_automatic_placement_skips_a_version_skewed_crew(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    instances = _Instances([(200, {"id": "peer01"})], connected=("crew-a", "crew-b"))
+
+    async def version(instance_id: str) -> tuple[bool, str]:
+        # crew-a is the least-loaded (alphabetical tie winner) but a feature
+        # release ahead; crew-b matches.
+        return True, ("99.0.0" if instance_id == "crew-a" else kiro_crew.__version__)
+
+    instances.peer_version = version  # type: ignore[method-assign]
+    manager = _Manager()
+    service = RemoteSubagentService(SimpleNamespace(instances_manager=instances), manager)  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_monitor", AsyncMock())
+
+    info = await _spawn_placed(service, **_spawn_kwargs())  # type: ignore[arg-type]
+
+    assert info.instance_id == "crew-b"
+    assert [call[0] for call in instances.calls] == ["crew-b"]
+
+    # An explicitly requested skewed crew is still a typed refusal.
+    with pytest.raises(RemoteSubagentError) as caught:
+        await _spawn_placed(service, **_spawn_kwargs(instance_id="crew-a"))  # type: ignore[arg-type]
+    assert caught.value.status == 409
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dismissing_a_finished_remote_run_waits_for_its_delivery() -> None:
+    info = SubagentInfo(
+        id="remote01",
+        task="t",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        done=True,
+    )
+    manager, _canceller = _manager_with_remote(info)
+
+    info._delivery_queued = True
+    assert await manager.settle_before_delete("remote01") == "pending"
+    assert manager.get("remote01") is info
+
+    info._delivery_queued = False
+    assert await manager.settle_before_delete("remote01") == "delivered"
+    # Gone from the inventory, so the spawn list does not show it.
+    assert cast(Any, manager)._external_agents == {}
+
+
+@pytest.mark.asyncio
+async def test_a_dismissed_remote_run_stays_dismissed_across_a_restart(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dismissal is committed to the mapping before the pop, so a restart
+    does not restore it; a failed commit leaves the run listed and retryable."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    info = SubagentInfo(
+        id="abcdef12",
+        task="t",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+        done=True,
+    )
+    RemoteSubagentService._persist_info(info, delivered=True)
+    manager, _canceller = _manager_with_remote(info)
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=_Instances([], connected=("crew-a",))),
+        manager,  # type: ignore[arg-type]
+    )
+    real_persist = RemoteSubagentService._persist_info.__func__
+
+    def unwritable(cls, *args, **kwargs):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(RemoteSubagentService, "_persist_info", classmethod(unwritable))
+    assert await manager.settle_before_delete("abcdef12") == "pending"
+    assert manager.get("abcdef12") is info
+
+    monkeypatch.setattr(RemoteSubagentService, "_persist_info", classmethod(real_persist))
+    assert await manager.settle_before_delete("abcdef12") == "delivered"
+    assert manager.get("abcdef12") is None
+    assert RemoteSubagentService._load_records() == []
+    await service.close()
+
+
+def test_a_late_acknowledgement_cannot_undo_a_committed_dismissal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delivery acknowledgement already in flight when the operator dismisses
+    the run must not write ``dismissed: false`` back: mapping writes for one run
+    are serialized and a committed dismissal is sticky."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    info = SubagentInfo(
+        id="abcdef12",
+        task="t",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="peer01",
+        done=True,
+    )
+    RemoteSubagentService._persist_info(info, delivered=False)
+
+    # Sequential: an acknowledgement after the dismissal keeps it.
+    RemoteSubagentService._persist_info(info, delivered=True, dismissed=True)
+    RemoteSubagentService._persist_info(info, delivered=True)
+    assert RemoteSubagentService._load_records() == []
+
+    # Interleaved: the acknowledgement has read the mapping (not yet dismissed)
+    # and is about to write when the dismissal arrives on another thread.
+    # Start from a fresh, undismissed mapping (the dismissal above is sticky).
+    (tmp_path / "subagents" / "remote" / "abcdef12" / "state.json").unlink()
+    RemoteSubagentService._persist_info(info, delivered=False)
+    assert len(RemoteSubagentService._load_records()) == 1
+    real_stored = RemoteSubagentService._stored_dismissed
+    ack_has_read = threading.Event()
+    release_ack = threading.Event()
+
+    def paused_read(run_dir: Path) -> bool:
+        value = real_stored(run_dir)
+        if threading.current_thread().name == "ack":
+            ack_has_read.set()
+            release_ack.wait(timeout=5)
+        return value
+
+    monkeypatch.setattr(RemoteSubagentService, "_stored_dismissed", staticmethod(paused_read))
+    ack = threading.Thread(
+        target=RemoteSubagentService._persist_info,
+        args=(info,),
+        kwargs={"delivered": True},
+        name="ack",
+    )
+    ack.start()
+    assert ack_has_read.wait(timeout=5)
+    dismiss = threading.Thread(
+        target=RemoteSubagentService._persist_info,
+        args=(info,),
+        kwargs={"delivered": True, "dismissed": True},
+        name="dismiss",
+    )
+    dismiss.start()
+    dismiss.join(timeout=0.3)  # blocked behind the acknowledgement's lock
+    release_ack.set()
+    ack.join(timeout=5)
+    dismiss.join(timeout=5)
+    assert not ack.is_alive() and not dismiss.is_alive()
+
+    state = json.loads(
+        (tmp_path / "subagents" / "remote" / "abcdef12" / "state.json").read_text(encoding="utf-8")
+    )
+    assert state["dismissed"] is True
+    assert RemoteSubagentService._load_records() == []
+
+
+@pytest.mark.parametrize("record", ("abcdef12/state.json", "remote/abcdef12/state.json"))
+def test_remote_run_mappings_are_write_protected_like_run_records(record: str) -> None:
+    """A mapping names the parent session a restart restores, which decides who
+    may read or cancel the run and where its result lands. It lives inside the
+    ``subagents`` registry, so the same seal holds it: agent file edits are
+    refused, reads stay open."""
+    from kiro_crew import security
+
+    path = os.path.expanduser(f"~/.kiro/crew/subagents/{record}")
+    assert security.is_sensitive_write_path(path) is True
+    assert security.is_sensitive_path(path) is False
+
+
+def test_remote_records_live_inside_the_sealed_run_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The records root must stay under ``subagents/``: a sibling leaf would need
+    its own seal, and an unsealed one lets an agent forge a run's parent session."""
+    from kiro_crew.dashboard import remote_subagents
+
+    monkeypatch.setattr(remote_subagents, "data_home", lambda: tmp_path)
+    root = remote_subagents._records_root()
+    assert root.parent == tmp_path / "subagents"
+    assert not re.fullmatch(r"[a-f0-9]+", root.name), "the root must never look like a run id"
+
+
+def test_local_registry_walks_skip_the_remote_records_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every local walk of ``subagents/`` must pass over ``remote/``: it has no
+    ``state.json`` of its own, so it is neither an orphan to recover, a panel
+    record, a legacy queue row, nor a tombstoned folder to prune."""
+    from kiro_crew import subagent_persistence
+    from kiro_crew.taskq.migrate import legacy_subagent_records
+
+    registry = tmp_path / "subagents"
+    record = registry / "remote" / "abcdef12"
+    record.mkdir(parents=True)
+    (record / "state.json").write_text(
+        json.dumps({"version": 1, "id": "abcdef12", "executor": "remote"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(subagent_persistence, "_SUBAGENTS_DIR", registry)
+
+    assert subagent_persistence.list_orphans() == []
+    assert subagent_persistence.prune_stale_tombstones(max_age_days=0, delivered_ttl_secs=0) == 0
+    assert subagent_persistence.read_panel_records(keep=10, max_age_secs=86400).records == []
+    assert legacy_subagent_records(registry, now=time.time()) == []
+    assert (record / "state.json").is_file()
+
+
+def _raising_sessions() -> Any:
+    class _Broken:
+        def get_approval_policy(self, _key: str) -> str:
+            raise RuntimeError("session store unreadable")
+
+        def has_session(self, _key: str) -> bool | None:
+            raise RuntimeError("session store unreadable")
+
+    return _Broken()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("configure", "approval_mode", "expected"),
+    [
+        (lambda m: None, "", "interactive"),
+        (lambda m: setattr(m, "_sessions", _Sessions(policy="auto")), "", ""),
+        (lambda m: None, "auto", ""),
+        (lambda m: setattr(m, "_is_yolo", lambda: True), "", ""),
+        # Global approval_mode=auto counts only for a parent that is gone ...
+        (
+            lambda m: (
+                setattr(m, "_global_approval_mode", "auto"),
+                setattr(m, "_sessions", _Sessions(present=False)),
+            ),
+            "",
+            "",
+        ),
+        # ... never for a live parent that is intentionally not on auto.
+        (lambda m: setattr(m, "_global_approval_mode", "auto"), "", "interactive"),
+        # An unreadable posture must not loosen the child.
+        (lambda m: setattr(m, "_sessions", _raising_sessions()), "auto", "interactive"),
+    ],
+    ids=[
+        "normal-parent",
+        "auto-parent",
+        "sdk-auto",
+        "hub-yolo",
+        "global-auto-parent-gone",
+        "global-auto-parent-alive",
+        "store-unreadable",
+    ],
+)
+async def test_remote_spawn_forwards_the_parents_approval_floor(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    configure: Callable[[Any], object],
+    approval_mode: str,
+    expected: str,
+) -> None:
+    """The crew gets the posture the same child would have here, as a floor."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    instances = _Instances([(200, {"id": "peer01"})], connected=("crew-a",))
+    manager = _Manager()
+    configure(manager)
+    service = RemoteSubagentService(
+        cast(Any, SimpleNamespace(instances_manager=instances)), cast(Any, manager)
+    )
+    monkeypatch.setattr(service, "_monitor", AsyncMock())
+
+    info = await _spawn_placed(
+        service,
+        task="review",
+        parent_session="dashboard:chat-1",
+        agent="",
+        max_turns=0,
+        cwd="/remote/project",
+        model="",
+        reasoning_effort="",
+        include_memory=False,
+        include_lessons=False,
+        include_project=True,
+        memory_mode="persistent",
+        batch_id="",
+        batch_total=0,
+        approval_mode=approval_mode,
+    )
+
+    body = instances.calls[0][3]
+    assert isinstance(body, dict)
+    if expected:
+        assert body["approval_floor"] == expected
+    else:
+        assert "approval_floor" not in body
+    assert "approval_mode" not in body
+    assert info.approval_floor == expected
+    state = json.loads(
+        (tmp_path / "subagents" / "remote" / info.id / "state.json").read_text(encoding="utf-8")
+    )
+    assert state["approval_floor"] == expected
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_restored_remote_run_keeps_its_approval_floor(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    for run_id, floor in (("abcdef12", "interactive"), ("abcdef13", "bogus")):
+        RemoteSubagentService._persist_info(
+            SubagentInfo(
+                id=run_id,
+                task="review",
+                parent_session_key="dashboard:chat-1",
+                done=True,
+                executor="remote",
+                instance_id="crew-a",
+                remote_id="peer01",
+                approval_floor=floor,
+            ),
+            delivered=True,
+        )
+    manager = _Manager()
+    service = RemoteSubagentService(
+        cast(Any, SimpleNamespace(instances_manager=None)), cast(Any, manager)
+    )
+    await service.ensure_restored()
+
+    kept = manager.get("abcdef12")
+    unknown = manager.get("abcdef13")
+    assert kept is not None and kept.approval_floor == "interactive"
+    # Only the one known value survives a reload; anything else reads as none.
+    assert unknown is not None and unknown.approval_floor == ""
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_lost_private_result_is_redelivered_as_an_error_not_an_empty_success(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An incognito/temporary result is never written to disk, so a run that
+    # finished but was not delivered before a restart has no result left.
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    cases = (
+        ("abcdef21", "incognito", False),
+        ("abcdef22", "temporary", False),
+        ("abcdef23", "incognito", True),
+        ("abcdef24", "persistent", False),
+    )
+    for run_id, mode, delivered in cases:
+        RemoteSubagentService._persist_info(
+            SubagentInfo(
+                id=run_id,
+                task="review",
+                parent_session_key="dashboard:chat-1",
+                done=True,
+                executor="remote",
+                instance_id="crew-a",
+                remote_id=f"peer-{run_id}",
+                memory_mode=mode,
+            ),
+            delivered=delivered,
+        )
+    manager = _Manager()
+    service = RemoteSubagentService(
+        cast(Any, SimpleNamespace(instances_manager=None)), cast(Any, manager)
+    )
+    await service.ensure_restored()
+
+    errors = {}
+    for run_id, *_ in cases:
+        restored = manager.get(run_id)
+        assert restored is not None
+        errors[run_id] = restored.error
+    assert "did not survive a gateway restart" in errors["abcdef21"]
+    assert "did not survive a gateway restart" in errors["abcdef22"]
+    assert errors["abcdef23"] == ""  # already delivered: nothing to redeliver
+    assert errors["abcdef24"] == ""  # persistent: its result is on disk when it exists
+    await service.close()
+
+
+# ── Floored runs: tool requests relayed back to the hub's person ─────────────
+
+
+@pytest.mark.asyncio
+async def test_a_parked_hub_request_is_listed_answered_and_cleared() -> None:
+    from kiro_crew.subagent_manager import hub_approvals
+
+    event = SimpleNamespace(
+        title="execute_bash: ls", tool_input='{"command": "ls"}', tool_purpose=""
+    )
+    waiting = asyncio.create_task(hub_approvals.ask_hub("run-p1", event))
+    for _ in range(100):
+        listed = hub_approvals.pending_for("run-p1")
+        if listed:
+            break
+        await asyncio.sleep(0)
+    assert [item["title"] for item in listed] == ["execute_bash: ls"]
+    assert hub_approvals.resolve("run-p1", "f" * 16, True) is False
+    assert hub_approvals.resolve("run-p1", listed[0]["id"], True) is True
+    assert await waiting is True
+    assert hub_approvals.pending_for("run-p1") == []
+    # A request nobody answers is a rejection once its wait runs out.
+    assert await hub_approvals.ask_hub("run-p2", event, timeout=0.01) is False
+    assert hub_approvals.pending_for("run-p2") == []
+
+
+class _AnswerRequest(_WorkspaceRequest):
+    def __init__(self, body: object, *, approval_id: str = "a" * 16, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.match_info = {"agent_id": "run-q1", "approval_id": approval_id}
+        self._body = body
+
+    async def json(self) -> object:
+        return self._body
+
+
+@pytest.mark.asyncio
+async def test_only_the_owner_answers_a_hub_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    from kiro_crew.dashboard.handlers.remote_approvals import api_spawn_approval_answer
+    from kiro_crew.subagent_manager import hub_approvals
+
+    audited: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "kiro_crew.sel.sel", lambda: SimpleNamespace(log_api_access=lambda **kw: audited.append(kw))
+    )
+    resolved: list[tuple[str, str, bool]] = []
+    monkeypatch.setattr(
+        hub_approvals, "resolve", lambda run, aid, ok: resolved.append((run, aid, ok)) or True
+    )
+    # An agent on this gateway (internal MCP caller, an app) or another user never answers.
+    for request in (
+        _AnswerRequest({"approved": True}, user="owner", internal_auth=True),
+        _AnswerRequest({"approved": True}, user="owner", app="notes"),
+        _AnswerRequest({"approved": True}, user="other"),
+    ):
+        assert (await api_spawn_approval_answer(cast(Any, request))).status == 403
+    for request in (
+        _AnswerRequest({"approved": True}, user="owner", approval_id="../x"),
+        _AnswerRequest({"approved": "yes"}, user="owner"),
+    ):
+        assert (await api_spawn_approval_answer(cast(Any, request))).status == 400
+    assert resolved == [] and audited == []
+
+    response = await api_spawn_approval_answer(
+        cast(Any, _AnswerRequest({"approved": False}, user="owner"))
+    )
+    assert response.status == 200
+    assert resolved == [("run-q1", "a" * 16, False)]
+    assert audited[0]["operation"] == "subagent.hub_approval"
+    assert audited[0]["outcome"] == "rejected"
+
+    monkeypatch.setattr(hub_approvals, "resolve", lambda *_a: False)
+    response = await api_spawn_approval_answer(
+        cast(Any, _AnswerRequest({"approved": True}, user="owner"))
+    )
+    assert response.status == 404
+
+
+@pytest.mark.asyncio
+async def test_registered_approval_route_reaches_the_real_handler(monkeypatch) -> None:
+    from aiohttp import web
+
+    from kiro_crew.dashboard import server
+    from kiro_crew.dashboard.handlers import remote_approvals
+
+    sentinel = web.json_response({"reached": True})
+
+    async def _stub(_request: Any) -> web.Response:
+        return sentinel
+
+    monkeypatch.setattr(remote_approvals, "api_spawn_approval_answer", _stub)
+    app = web.Application()
+    server._register_mcp_routes(app)
+    route = next(
+        r
+        for r in app.router.routes()
+        if r.method == "POST"
+        and r.resource is not None
+        and r.resource.canonical == "/api/spawn/{agent_id}/approvals/{approval_id}"
+    )
+    assert await route.handler(cast(Any, object())) is sentinel
+
+
+def _floored_info(**overrides: object) -> SubagentInfo:
+    values: dict[str, object] = {
+        "id": "local-r1",
+        "task": "t",
+        "parent_session_key": "dashboard:chat-1",
+        "executor": "remote",
+        "instance_id": "crew-a",
+        "remote_id": "peer01",
+        "approval_floor": "interactive",
+    }
+    values.update(overrides)
+    return SubagentInfo(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [True, False])
+async def test_the_hub_asks_its_person_and_posts_the_answer_back(answer: bool) -> None:
+    from kiro_crew.dashboard.chat_utils import dashboard_slot_key
+
+    asked: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def request_approval(*args: object, **kwargs: object) -> bool:
+        asked.append((args, kwargs))
+        return answer
+
+    instances = _Instances([(200, {"approved": answer})])
+    state = SimpleNamespace(instances_manager=instances, request_approval=request_approval)
+    service = RemoteSubagentService(state, _Manager())  # type: ignore[arg-type]
+    info = _floored_info()
+    listed = [{"id": "a" * 16, "title": "execute_bash: ls", "tool_input": "ls", "tool_purpose": ""}]
+
+    service._relay_approvals(info, listed)
+    service._relay_approvals(info, listed)  # the next poll does not ask twice
+    assert len(service._relays) == 1
+    await await_until(asyncio.gather(*service._relays.values()), what="the approval relays")
+
+    assert len(asked) == 1
+    args, kwargs = asked[0]
+    assert args[1] == "subagent" and "execute_bash: ls" in str(args[2])
+    assert kwargs["slot"] == dashboard_slot_key("dashboard:chat-1")
+    assert kwargs["is_background"] is False
+    assert instances.calls == [
+        ("crew-a", "POST", f"api/spawn/peer01/approvals/{'a' * 16}", {"approved": answer})
+    ]
+    assert service._relays == {}
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_request_the_peer_settled_is_withdrawn_on_the_hub() -> None:
+    gate = asyncio.Event()
+    cancelled: list[bool] = []
+
+    async def request_approval(*_args: object, **_kwargs: object) -> bool:
+        try:
+            await gate.wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+        return True
+
+    instances = _Instances([])
+    state = SimpleNamespace(instances_manager=instances, request_approval=request_approval)
+    service = RemoteSubagentService(state, _Manager())  # type: ignore[arg-type]
+    info = _floored_info()
+    service._relay_approvals(info, [{"id": "b" * 16, "title": "write"}])
+    await asyncio.sleep(0)
+    (task,) = service._relays.values()
+
+    service._relay_approvals(info, [])
+    with pytest.raises(asyncio.CancelledError):
+        await await_until(task, what="the cancelled relay")
+    assert cancelled == [True]
+    assert instances.calls == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_only_a_floored_run_relays_and_only_well_formed_ids() -> None:
+    asked: list[object] = []
+
+    async def request_approval(*args: object, **_kwargs: object) -> bool:
+        asked.append(args)
+        return True
+
+    state = SimpleNamespace(instances_manager=_Instances([]), request_approval=request_approval)
+    service = RemoteSubagentService(state, _Manager())  # type: ignore[arg-type]
+    service._relay_approvals(_floored_info(approval_floor=""), [{"id": "c" * 16, "title": "x"}])
+    service._relay_approvals(
+        _floored_info(), [{"id": "../../steer", "title": "x"}, "junk", {"title": "no id"}]
+    )
+    assert service._relays == {} and asked == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_floored_run_needs_a_crew_that_relays_approvals() -> None:
+    instances = _Instances([])
+
+    async def older_peer(_instance_id: str, _path: str) -> tuple[bool, object]:
+        return True, {
+            "version": kiro_crew.__version__,
+            "spawn_enforces": ["approval_floor", "memory_mode", "run_id"],
+        }
+
+    instances.peer_capability = older_peer  # type: ignore[method-assign]
+    with pytest.raises(RemoteSubagentError) as refused:
+        await remote_subagents._ensure_peer_supports(
+            instances, "crew-a", memory_mode="", approval_floor="interactive"
+        )
+    assert refused.value.code == "remote_peer_unenforced"
+    # A run without a floor still goes to that crew.
+    await remote_subagents._ensure_peer_supports(
+        instances, "crew-a", memory_mode="temporary", approval_floor=""
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_floored_runs_status_lists_its_parked_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kiro_crew.dashboard.messaging_api import run_views
+    from kiro_crew.subagent_manager import hub_approvals
+
+    runs = {
+        "run-s1": SubagentInfo(id="run-s1", task="t", approval_floor="interactive"),
+        "run-s2": SubagentInfo(id="run-s2", task="t"),
+    }
+
+    async def _restored() -> None:
+        return None
+
+    monkeypatch.setattr(
+        "kiro_crew.dashboard.remote_subagents.get_remote_subagent_service",
+        lambda _state: SimpleNamespace(ensure_restored=_restored),
+    )
+    state = SimpleNamespace(subagents=SimpleNamespace(get=runs.get))
+    event = SimpleNamespace(title="execute_bash: ls", tool_input="ls", tool_purpose="")
+    waits = [asyncio.create_task(hub_approvals.ask_hub(run, event)) for run in runs]
+    await asyncio.sleep(0)
+
+    async def _status(run_id: str) -> dict[str, object]:
+        request = SimpleNamespace(app={"state": state}, match_info={"agent_id": run_id}, query={})
+        response = await run_views.api_spawn_status(cast(Any, request))
+        return json.loads(response.body)
+
+    floored, normal = await _status("run-s1"), await _status("run-s2")
+    assert [item["title"] for item in floored["approvals"]] == ["execute_bash: ls"]
+    assert "approvals" not in normal
+    for run in runs:
+        for item in hub_approvals.pending_for(run):
+            hub_approvals.resolve(run, str(item["id"]), False)
+    answers = await await_until(asyncio.gather(*waits), what="the two approval waits")
+    assert answers == [False, False]
+
+
+@pytest.mark.parametrize(
+    ("backend", "enforceable"),
+    # KAS takes the derived spec over the wire and raised a permission request
+    # for every tool under it (measured for ACP_BACKENDS_SIDE_READONLY), so it
+    # carries the floor; the floor reads that set rather than its own list.
+    [("", True), ("claude", False), ("codex", False), ("kas", True), ("opencode", False)],
+)
+def test_only_a_harness_the_derived_spec_controls_carries_the_floor(
+    monkeypatch: pytest.MonkeyPatch, backend: str, enforceable: bool
+) -> None:
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.subagent_manager import hub_approvals
+
+    monkeypatch.setattr(
+        KiroCrewConfig,
+        "load",
+        classmethod(lambda _cls: SimpleNamespace(agent=SimpleNamespace(acp_backend=backend))),
+    )
+    assert hub_approvals.floor_enforceable() is enforceable
+
+
+def test_an_unreadable_config_cannot_carry_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.subagent_manager import hub_approvals
+
+    def _broken(_cls):
+        raise OSError("config.json unreadable")
+
+    monkeypatch.setattr(KiroCrewConfig, "load", classmethod(_broken))
+    assert hub_approvals.floor_enforceable() is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enforceable", [True, False])
+async def test_the_version_route_advertises_the_floor_only_where_it_holds(
+    monkeypatch: pytest.MonkeyPatch, enforceable: bool
+) -> None:
+    from kiro_crew.dashboard.handlers.core import api_version
+
+    monkeypatch.setattr(
+        "kiro_crew.subagent_manager.hub_approvals.floor_enforceable", lambda: enforceable
+    )
+    payload = json.loads((await api_version(cast(Any, object()))).body)
+    listed = set(payload["spawn_enforces"])
+    assert {"memory_mode", "run_id"} <= listed
+    assert ({"approval_floor", "approval_relay"} <= listed) is enforceable
+    assert not ({"approval_floor", "approval_relay"} & listed) or enforceable
+
+
+@pytest.mark.asyncio
+async def test_a_floored_run_keeps_only_its_templates_pre_tool_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kiro_crew.agent_sdk import spec_hooks
+    from kiro_crew.hooks import HOOK_EVENT_POST_TOOL_USE, HOOK_EVENT_PRE_TOOL_USE, ScriptHook
+
+    deny = ScriptHook(name="deny-rm", event=HOOK_EVENT_PRE_TOOL_USE, command="exit 2")
+    audit = ScriptHook(name="audit", event=HOOK_EVENT_POST_TOOL_USE, command="true")
+    source = {"name": "kirocrew", "hooks": {"preToolUse": [{"command": "exit 2"}]}}
+    seen: list[tuple[str, object]] = []
+
+    def convert(agent_id: str, spec: object) -> tuple[tuple[ScriptHook, ...], int]:
+        seen.append((agent_id, spec))
+        return (deny, audit), 0
+
+    def re_resolved(*_a: object) -> object:
+        raise AssertionError("the floored hooks must come from the derivation's source")
+
+    monkeypatch.setattr(spec_hooks, "_convert", convert)
+    monkeypatch.setattr(spec_hooks, "crew_fired_spec_hooks", re_resolved)
+    gated = await spec_hooks.floored_spec_hooks("kirocrew", "/work/repo", source)
+    assert seen == [("kirocrew", source)]
+    assert [hook.name for hook in gated.hooks] == ["deny-rm"]
+    assert gated.gated is True and gated.unreadable is False
+
+    def unconvertible(*_a: object) -> object:
+        raise ValueError("hooks did not parse")
+
+    monkeypatch.setattr(spec_hooks, "_convert", unconvertible)
+    blocked = await spec_hooks.floored_spec_hooks("kirocrew", None, source)
+    assert blocked.unreadable is True and blocked.gated is True
+    sourceless = await spec_hooks.floored_spec_hooks("kirocrew", None, None)
+    assert sourceless.unreadable is True and sourceless.gated is True
+
+
+@pytest.mark.asyncio
+async def test_a_floored_project_agents_hooks_follow_the_trust_verdict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The derivation may read a PROJECT spec. Its hooks are commands from the
+    checkout, so an untrusted project refuses every request (no hook runs, and the
+    floor does not weaken to "no hooks"); a trusted one fires its PreToolUse deny."""
+    from kiro_crew.acp import session_mcp
+    from kiro_crew.agent_sdk import spec_hooks
+    from kiro_crew.hooks import HOOK_EVENT_PRE_TOOL_USE
+
+    project_spec = {
+        "name": "kirocrew",
+        "hooks": {"preToolUse": [{"matcher": "*", "command": "exit 2"}]},
+    }
+    converted: list[object] = []
+    real_convert = spec_hooks._convert
+
+    def tracking_convert(agent_id: str, spec: object) -> object:
+        converted.append(spec)
+        return real_convert(agent_id, spec)
+
+    monkeypatch.setattr(spec_hooks, "_convert", tracking_convert)
+    monkeypatch.setattr(session_mcp, "trusted_project_agent_spec", lambda *_a: (False, None))
+    refused = await spec_hooks.floored_spec_hooks(
+        "kirocrew", str(tmp_path), project_spec, project_source=str(tmp_path)
+    )
+    assert refused.hooks == [] and refused.unreadable is True and refused.gated is True
+    assert converted == []
+
+    monkeypatch.setattr(session_mcp, "trusted_project_agent_spec", lambda *_a: (True, project_spec))
+    gated = await spec_hooks.floored_spec_hooks(
+        "kirocrew", str(tmp_path), project_spec, project_source=str(tmp_path)
+    )
+    assert gated.unreadable is False
+    assert [hook.event for hook in gated.hooks] == [HOOK_EVENT_PRE_TOOL_USE]
+    assert gated.hooks[0].command == "exit 2"
+
+
+# ── The hub's own spawn approval (Design: a Normal-mode parent ships nothing
+# to another host before its person approves) ──
+
+
+def _no_snapshot(*_args: object, **_kwargs: object) -> object:
+    raise AssertionError("the project must not be packaged before the spawn is approved")
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_remote_spawn_sends_nothing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "kiro_crew.sel.sel",
+        lambda: SimpleNamespace(log_tool_invocation=lambda **kw: events.append(kw)),
+    )
+    instances = _Instances([])
+    manager = _Manager()
+    manager.approve_spawns = False
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(service, "_build_project_archive", _no_snapshot)
+
+    with pytest.raises(RemoteSubagentError) as caught:
+        await _spawn_placed(service, **_spawn_kwargs(cwd=""))
+
+    assert caught.value.code == "remote_spawn_rejected"
+    assert instances.calls == []  # no snapshot upload, no peer spawn
+    [(request_id, label, parent)] = manager.spawn_approvals
+    assert request_id.startswith("spawn:") and parent == "dashboard:chat-1"
+    assert "remote crew crew-a" in label and "secret plan" in label
+    [info] = manager.external_agents
+    assert info.done is True and manager.reported == [info]
+    assert [e["outcome"] for e in events] == ["rejected_spawn"]
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_the_receipt_does_not_wait_for_the_person(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """spawn_run's HTTP call is bounded, so the run is listed as awaiting approval
+    at once, as a local spawn is, and placed only after the answer."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    instances = _Instances(
+        [(200, {"id": "peer01"}), (200, {"done": True, "turns": 1, "result": "ok"})]
+    )
+    manager = _Manager()
+    answer = asyncio.Event()
+
+    async def person(request_id: str, label: str, parent: str) -> bool:
+        await answer.wait()
+        return True
+
+    manager._on_spawn_approval = person  # type: ignore[method-assign]
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    info = await service.spawn(**_spawn_kwargs())
+    assert info._awaiting_approval is True and instances.calls == []
+    assert manager.external_agents == [info]
+    state = json.loads(next((tmp_path / "subagents" / "remote").glob("*/state.json")).read_text())
+    assert state["approved"] is False
+
+    answer.set()
+    await await_until(service._approvals[info.id], what=f"placement of {info.id}")
+    assert instances.calls[0][1:3] == ("POST", "api/spawn")
+    await _settle_monitor(service, info.id)
+    assert info.done is True and info.error == ""
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("peer_ran_it", [True, False], ids=["peer-ran-it", "never-started"])
+async def test_an_approved_spawn_whose_answer_and_withdrawal_are_lost_is_reconciled(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, peer_ran_it: bool
+) -> None:
+    """After approval, the peer may accept the run while its answer and the
+    withdrawing DELETE are both lost. The record was kept for reconciliation, so
+    the run must stay live under the monitor, not be persisted as done: a done
+    record is never reconciled and the peer's result would never arrive."""
+    from kiro_crew.dashboard import remote_subagents
+
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._RETRY_SECONDS", 0.0)
+    polls: list[object] = (
+        [(200, {"done": True, "turns": 1, "result": "ok"})]
+        if peer_ran_it
+        else [(404, {})] * remote_subagents._MAX_NOT_FOUND_POLLS
+    )
+    instances = _Instances([OSError("answer lost"), OSError("down"), *polls])  # type: ignore[list-item]
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    info = await service.spawn(**_spawn_kwargs())
+    runner = service._approvals.get(info.id)
+    if runner is not None:
+        await await_until(runner, what=f"placement of {info.id}")
+
+    minted = instances.calls[0][3]["run_id"]  # type: ignore[index]
+    assert instances.calls[1][1:3] == ("DELETE", f"api/spawn/{minted}")
+    # The monitor, not the placement failure, ends the run: wait on its outcome.
+    await async_wait_until(lambda: info.done, describe=lambda: instances.calls)
+    assert len(instances.calls) > 2, "the kept record must be reconciled by polling the peer"
+    assert instances.calls[2][1:3] == ("GET", f"api/spawn/{minted}")
+    if peer_ran_it:
+        assert info.error == ""
+    else:
+        assert info.error == remote_subagents._NEVER_STARTED
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_hub_without_an_approval_surface_refuses_a_normal_parents_remote_spawn(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    instances = _Instances([])
+    manager = _Manager()
+    manager._on_spawn_approval = None  # type: ignore[assignment]
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    with pytest.raises(RemoteSubagentError) as caught:
+        await service.spawn(**_spawn_kwargs())
+    assert caught.value.code == "remote_spawn_unapproved" and caught.value.status == 403
+    assert instances.calls == [] and manager.external_agents == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_stop_during_the_approval_wait_is_local(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    instances = _Instances([])
+    manager = _Manager()
+
+    async def never(*_args: object) -> bool:
+        await asyncio.Event().wait()
+        return True
+
+    manager._on_spawn_approval = never  # type: ignore[method-assign]
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    info = await service.spawn(**_spawn_kwargs())
+    assert await service.cancel(info) is True
+    assert info.done is True and info.user_stopped is True
+    assert "nothing was sent" in info.error
+    assert instances.calls == [] and not service._approvals
+    await service.close()
+
+
+def _failing_terminal_write(service: RemoteSubagentService, failures: int) -> list[bool]:
+    """Make the first *failures* terminal (``done=True``) writes fail; log each one."""
+    real_persist = service._persist_info
+    attempts: list[bool] = []
+
+    def persist(info: SubagentInfo, **kw: Any) -> object:
+        if kw.get("done") is True:
+            attempts.append(len(attempts) >= failures)
+            if not attempts[-1]:
+                raise OSError("disk full")
+        return real_persist(info, **kw)
+
+    service._persist_info = persist  # type: ignore[method-assign]
+    return attempts
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_spawns_failed_terminal_write_is_retried_until_committed(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Persist before publish: a rejection whose terminal write fails must not
+    leave the run pending forever (its parent and batch wait on it)."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._RETRY_SECONDS", 0.0)
+    monkeypatch.setattr(
+        "kiro_crew.sel.sel", lambda: SimpleNamespace(log_tool_invocation=lambda **kw: None)
+    )
+    instances = _Instances([])
+    manager = _Manager()
+    manager.approve_spawns = False
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    attempts = _failing_terminal_write(service, failures=1)
+    info = await service.spawn(**_spawn_kwargs())
+    await await_until(service._approvals[info.id], what=f"placement of {info.id}")
+    # The retry, not the rejection itself, commits the ending.
+    await async_wait_until(lambda: info.done, describe=lambda: attempts)
+    assert attempts == [False, True]
+    assert info.done is True and info.error_code == "remote_spawn_rejected"
+    assert manager.reported == [info] and instances.calls == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_stop_during_the_approval_wait_is_acknowledged_once_committed(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._RETRY_SECONDS", 0.0)
+    instances = _Instances([])
+    manager = _Manager()
+
+    async def never(*_args: object) -> bool:
+        await asyncio.Event().wait()
+        return True
+
+    manager._on_spawn_approval = never  # type: ignore[method-assign]
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    attempts = _failing_terminal_write(service, failures=1)
+    info = await service.spawn(**_spawn_kwargs())
+    assert await service.cancel(info) is False, "an uncommitted stop is not acknowledged"
+    assert info.done is False
+    await async_wait_until(lambda: info.done, describe=lambda: attempts)
+    assert attempts == [False, True]
+    assert info.done is True and info.user_stopped is True
+    assert instances.calls == []
+    await service.close()
+
+
+async def _approved_spawn_held_at(
+    service: RemoteSubagentService, monkeypatch: pytest.MonkeyPatch, held: dict[str, object]
+) -> tuple[SubagentInfo, threading.Event]:
+    """Spawn an approved remote run and hold its placement at the first
+    ``_persist_info`` call whose keywords equal *held*; return it and the release."""
+    reached, release = threading.Event(), threading.Event()
+    real_persist = service._persist_info
+
+    def persist(info: SubagentInfo, **kw: Any) -> object:
+        # Only the first matching write is held: the stop's own commit may match.
+        if kw == held and not reached.is_set():
+            reached.set()
+            assert release.wait(10), "the test never released the placement"
+        return real_persist(info, **kw)
+
+    service._persist_info = persist  # type: ignore[method-assign]
+    info = await service.spawn(**_spawn_kwargs())
+    assert await asyncio.to_thread(reached.wait, 10), "placement never reached the hold"
+    return info, release
+
+
+@pytest.mark.asyncio
+async def test_a_stop_while_the_run_is_placed_never_starts_it_on_the_peer(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opus: a stop between approval and the POST sent a DELETE for a name the peer
+    had never seen (404, an error to the user) and the POST then started the run."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    instances = _Instances([])
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    info, release = await _approved_spawn_held_at(
+        service, monkeypatch, {"delivered": False, "accepted": False}
+    )
+    assert await service.cancel(info) is True
+    release.set()
+    await await_until(service._approvals[info.id], what=f"placement of {info.id}")
+    assert instances.calls == [], "neither a POST nor a DELETE may reach the peer"
+    assert info.done is True and info.user_stopped is True
+    assert info.error_code == "remote_spawn_stopped"
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_stop_after_the_post_left_stops_the_run_on_the_peer(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    instances = _Instances(
+        [
+            (200, {"id": "peer01"}),
+            (200, {"cancelled": True}),
+            (200, {"done": True, "stopped": True, "result": "stopped"}),
+        ]
+    )
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    info, release = await _approved_spawn_held_at(service, monkeypatch, {"delivered": False})
+    assert await service.cancel(info) is True
+    # Committed before it was acknowledged, so a restart still knows to stop it.
+    state = json.loads((tmp_path / "subagents" / "remote" / info.id / "state.json").read_text())
+    assert state["stopped"] is True
+    release.set()
+    await await_until(service._approvals[info.id], what=f"placement of {info.id}")
+    assert [call[1:3] for call in instances.calls[:2]] == [
+        ("POST", "api/spawn"),
+        ("DELETE", "api/spawn/peer01"),
+    ]
+    await _settle_monitor(service, info.id)
+    assert info.done is True and info.user_stopped is True
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_pending_admission_does_not_count_toward_a_never_started_run(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GPT: a peer still admitting the run answered 404 to the hub's polls, and three
+    of them ended a run the peer was about to start. Its 409 resets the count."""
+    from kiro_crew.dashboard import remote_subagents
+
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._RETRY_SECONDS", 0.0)
+    pending = (409, {"code": "spawn_admission_pending"})
+    polls: list[object] = [
+        *[(404, {})] * (remote_subagents._MAX_NOT_FOUND_POLLS - 1),
+        pending,
+        *[(404, {})] * (remote_subagents._MAX_NOT_FOUND_POLLS - 1),
+        (200, {"done": True, "turns": 1, "result": "ok"}),
+    ]
+    instances = _Instances([OSError("answer lost"), OSError("down"), *polls])  # type: ignore[list-item]
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    info = await service.spawn(**_spawn_kwargs())
+    runner = service._approvals.get(info.id)
+    if runner is not None:
+        await await_until(runner, what=f"placement of {info.id}")
+    await async_wait_until(lambda: info.done, describe=lambda: instances.calls)
+    assert info.error == "" and info.result == "ok"
+    await service.close()
+
+
+def test_a_floored_runs_session_identity_write_records_its_floor() -> None:
+    """GPT: the relaunch guard read only the in-memory record, which a restart
+    drops. The floor rides in the same state write as the session id a cold
+    continuation resumes from, so a resumable run always carries it."""
+    import inspect
+
+    from kiro_crew.subagent_manager import run as run_mod
+
+    source = inspect.getsource(run_mod)
+    _, after = source.split('"session_id": str(getattr(info, "_session_id", "")),', 1)
+    write = after.split("_write_state_off_loop", 1)[0]
+    assert 'state_update["approval_floor"] = info.approval_floor' in write
+
+
+@pytest.mark.asyncio
+async def test_a_hub_request_too_long_to_show_whole_is_refused_not_cut() -> None:
+    """GPT: a command padded past the relay bound showed the person only its
+    head, so the approval covered a suffix nobody saw. It is refused instead,
+    and anything within the bound is relayed whole."""
+    from kiro_crew.subagent_manager import hub_approvals
+
+    padded = "ls" + " " * hub_approvals._MAX_INPUT_CHARS + "; : > src/main.py"
+    titled = "x" * (hub_approvals._MAX_TITLE_CHARS + 1)
+    for title, tool_input in (("execute_bash", padded), (titled, "")):
+        event = SimpleNamespace(title=title, tool_input=tool_input, tool_purpose="")
+        # Refused at once, never parked: a parked request would wait the full
+        # hub window here instead of answering.
+        refusal = asyncio.create_task(hub_approvals.ask_hub("run-p9", event))
+        assert await await_until(refusal, what="the refusal") is False
+        assert hub_approvals.pending_for("run-p9") == []
+
+    whole = "y" * 5000
+    event = SimpleNamespace(title="execute_bash", tool_input=whole, tool_purpose="")
+    waiting = asyncio.create_task(hub_approvals.ask_hub("run-p10", event))
+    await async_wait_until(
+        lambda: hub_approvals.pending_for("run-p10"), describe=lambda: "the parked request"
+    )
+    [listed] = hub_approvals.pending_for("run-p10")
+    assert listed["tool_input"] == whole
+    assert hub_approvals.resolve("run-p10", listed["id"], False) is True
+    assert await waiting is False
+
+
+def _expired_snapshot(base: Path, nonce: str) -> Path:
+    from kiro_crew.dashboard import remote_workspaces
+
+    digest = "a" * 64
+    tree = base / f"{digest[:24]}-{nonce}"
+    tree.mkdir(parents=True)
+    (tree / remote_workspaces._MARKER).write_text(json.dumps({"sha256": digest}))
+    old = time.time() - remote_workspaces._WORKSPACE_TTL_SECS - 60
+    os.utime(tree, (old, old))
+    return tree
+
+
+def test_a_claimed_snapshot_survives_the_prune_an_unclaimed_one_does_not(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GPT: pruning read run ownership, then deleted, and a run admitted in between
+    lost its tree. Admission claims the snapshot under the same lock, which renews
+    its age, so the prune that follows keeps it; a pruned one is reported gone."""
+    from kiro_crew.dashboard import remote_workspaces
+
+    base = tmp_path / "ws"
+    monkeypatch.setattr(remote_workspaces, "_workspace_root", lambda: base)
+    claimed = _expired_snapshot(base, "00000001")
+    unclaimed = _expired_snapshot(base, "00000002")
+    assert remote_workspaces.claim_workspace(str(claimed / "src")) is True
+    assert remote_workspaces._prune_workspaces(base.resolve(), keep="", in_use=()) == 1
+    assert claimed.is_dir() and not unclaimed.exists()
+    assert remote_workspaces.claim_workspace(str(unclaimed)) is False
+    assert remote_workspaces.claim_workspace(str(tmp_path / "elsewhere")) is True
+
+
+def _remote_record(**overrides: Any) -> SubagentInfo:
+    fields: dict[str, Any] = {
+        "id": "abcdef01",
+        "task": "t",
+        "parent_session_key": "dashboard:chat-1",
+        "executor": "remote",
+        "instance_id": "crew-a",
+        "remote_id": "0123456789abcdef",
+    }
+    fields.update(overrides)
+    return SubagentInfo(**fields)
+
+
+def test_an_unreadable_result_is_not_restored_as_an_empty_success(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GPT: an OSError reading a finished run's result.txt became "", which the
+    restore published as an empty success and acknowledged, losing the result."""
+    from kiro_crew.dashboard import remote_subagents
+
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    info = _remote_record(done=True)
+    RemoteSubagentService._persist_info(info, delivered=False, done=True)
+    result = remote_subagents._records_root() / info.id / "result.txt"
+    result.write_text("the answer")
+    real_read = Path.read_text
+
+    def unreadable(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.name == "result.txt":
+            raise OSError("bad sector")
+        return real_read(self, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "read_text", unreadable)
+        assert RemoteSubagentService._load_records() == []
+    [(restored, delivered)] = RemoteSubagentService._load_records()
+    assert restored.result == "the answer" and delivered is False
+
+
+@pytest.mark.asyncio
+async def test_a_lost_approval_is_committed_before_it_is_published(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GPT: a restart during the approval wait derived a terminal at load and
+    published it before writing it; a failed write left a published ending that
+    the record did not hold. The write now comes first."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    waiting = _remote_record()
+    RemoteSubagentService._persist_info(waiting, delivered=False, accepted=False, approved=False)
+
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=_Instances([])), manager  # type: ignore[arg-type]
+    )
+
+    def refuse_terminal(info: SubagentInfo, **kw: Any) -> None:
+        if kw.get("done") is True:
+            raise OSError("disk full")
+
+    service._persist_info = refuse_terminal  # type: ignore[method-assign]
+    await service.ensure_restored()
+    assert manager.external_agents == [] and manager.reported == []
+    await service.close()
+
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=_Instances([])), manager  # type: ignore[arg-type]
+    )
+    await service.ensure_restored()
+    [published] = manager.reported
+    assert published.error_code == "remote_spawn_approval_lost"
+    state = json.loads((tmp_path / "subagents" / "remote" / waiting.id / "state.json").read_text())
+    assert state["done"] is True
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_an_unconfirmed_stop_after_placement_is_sent_again(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opus: a stop accepted during placement whose peer DELETE failed was never
+    retried, so the run went on while the stop read as done. The monitor re-sends
+    it until the peer confirms."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    instances = _Instances(
+        [
+            (200, {"id": "peer01"}),
+            (503, {}),
+            (200, {"cancelled": True}),
+            (200, {"done": True, "stopped": True, "result": "stopped"}),
+        ]
+    )
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    info, release = await _approved_spawn_held_at(service, monkeypatch, {"delivered": False})
+    assert await service.cancel(info) is True
+    release.set()
+    await await_until(service._approvals[info.id], what=f"placement of {info.id}")
+    await _settle_monitor(service, info.id)
+    assert [call[1:3] for call in instances.calls] == [
+        ("POST", "api/spawn"),
+        ("DELETE", "api/spawn/peer01"),
+        ("DELETE", "api/spawn/peer01"),
+        ("GET", "api/spawn/peer01"),
+    ]
+    assert info.done is True and not service._unconfirmed_stops
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_silent_remote_run_stays_silent_across_a_restart(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opus: the remote branch dropped ``silent``, so a silent spawn still notified."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=_Instances([])), _Manager()  # type: ignore[arg-type]
+    )
+
+    async def never(*_args: object) -> bool:
+        await asyncio.Event().wait()
+        return True
+
+    service._manager._on_spawn_approval = never  # type: ignore[attr-defined]
+    info = await service.spawn(**_spawn_kwargs(), silent=True)
+    assert info.silent is True
+    [(restored, _delivered)] = RemoteSubagentService._load_records()
+    assert restored.silent is True
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_remote_run_waiting_for_its_spawn_approval_is_parked_not_live(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parent end and Stop-all leave a run parked on its spawn approval alone, so
+    the person's pending decision is not answered for them. A remote run must read
+    as parked the same way while it waits, and as executing once approved."""
+    from kiro_crew.subagent import _parked_at_spawn_approval
+
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    instances = _Instances(
+        [(200, {"id": "peer01"}), (200, {"done": True, "turns": 1, "result": "ok"})]
+    )
+    manager = _Manager()
+    answer = asyncio.Event()
+
+    async def person(request_id: str, label: str, parent: str) -> bool:
+        await answer.wait()
+        return True
+
+    manager._on_spawn_approval = person  # type: ignore[method-assign]
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    info = await service.spawn(**_spawn_kwargs())
+    assert _parked_at_spawn_approval(info) is True
+
+    answer.set()
+    await await_until(service._approvals[info.id], what=f"placement of {info.id}")
+    assert _parked_at_spawn_approval(info) is False
+    await _settle_monitor(service, info.id)
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_restart_during_the_approval_wait_ends_the_run_as_never_sent(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kiro_crew.dashboard import remote_subagents
+
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    waiting = SubagentInfo(
+        id="abcdef12",
+        task="review",
+        parent_session_key="dashboard:chat-1",
+        executor="remote",
+        instance_id="crew-a",
+        remote_id="0123456789abcdef",
+    )
+    RemoteSubagentService._persist_info(waiting, delivered=False, accepted=False, approved=False)
+    instances = _Instances([])
+    manager = _Manager()
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), manager  # type: ignore[arg-type]
+    )
+    await service.ensure_restored()
+    restored = manager.get("abcdef12")
+    assert restored is not None and restored.done is True
+    assert restored.error == remote_subagents._APPROVAL_LOST
+    assert manager.reported == [restored] and instances.calls == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("advertised", "sent"),
+    [
+        (["memory_mode"], False),
+        (["run_id"], True),
+    ],
+    ids=["ignores-run-id", "keeps-run-id"],
+)
+async def test_every_remote_run_needs_a_crew_that_keeps_its_name(
+    advertised: list[str], sent: bool
+) -> None:
+    """A run with nothing to tighten is still refused by a crew without ``run_id``."""
+    instances = _Instances([])
+
+    async def peer(_instance_id: str, _path: str) -> tuple[bool, object]:
+        return True, {"version": kiro_crew.__version__, "spawn_enforces": advertised}
+
+    instances.peer_capability = peer  # type: ignore[method-assign]
+    if sent:
+        await remote_subagents._ensure_peer_supports(
+            instances, "crew-a", memory_mode="", approval_floor=""
+        )
+        return
+    with pytest.raises(RemoteSubagentError) as refused:
+        await remote_subagents._ensure_peer_supports(
+            instances, "crew-a", memory_mode="", approval_floor=""
+        )
+    assert refused.value.code == "remote_peer_unenforced"
+
+
+@pytest.mark.parametrize(
+    ("default", "run_backend", "enforceable"),
+    [
+        ("", "claude", False),
+        ("", "codex", False),
+        ("claude", "", True),
+        ("claude", None, False),
+        ("", None, True),
+    ],
+)
+def test_the_floor_is_checked_against_the_runs_own_backend(
+    monkeypatch: pytest.MonkeyPatch, default: str, run_backend: str | None, enforceable: bool
+) -> None:
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.subagent_manager import hub_approvals
+
+    loaded = SimpleNamespace(agent=SimpleNamespace(acp_backend=default))
+    monkeypatch.setattr(KiroCrewConfig, "load", classmethod(lambda _cls: loaded))
+    assert hub_approvals.floor_enforceable(run_backend) is enforceable
+
+
+@pytest.mark.asyncio
+async def test_a_committed_stop_is_sent_again_after_a_restart(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GPT: the unconfirmed-stop retry lived only in memory, so a hub restart
+    resumed polling a run it had acknowledged as stopped without stopping it."""
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents.data_home", lambda: tmp_path)
+    monkeypatch.setattr("kiro_crew.dashboard.remote_subagents._POLL_SECONDS", 0.0)
+    stopped = _remote_record(user_stopped=True)
+    RemoteSubagentService._persist_info(stopped, delivered=False)
+    instances = _Instances(
+        [(200, {"cancelled": True}), (200, {"done": True, "stopped": True, "result": "stopped"})]
+    )
+    service = RemoteSubagentService(
+        SimpleNamespace(instances_manager=instances), _Manager()  # type: ignore[arg-type]
+    )
+    await service.ensure_restored()
+    await _settle_monitor(service, stopped.id)
+    assert [call[1:3] for call in instances.calls] == [
+        ("DELETE", f"api/spawn/{stopped.remote_id}"),
+        ("GET", f"api/spawn/{stopped.remote_id}"),
+    ]
+    await service.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="hard links need a privilege on Windows")
+def test_a_tracked_name_hardlinked_to_an_excluded_file_is_not_packaged(tmp_path) -> None:
+    """GPT: exclusions judge names, so a tracked file hardlinked to the project's
+    .env (one inode, two names) carried the credential into the snapshot."""
+    _git_project(tmp_path)
+    (tmp_path / "config.py").write_text("TOKEN = 'x'\n", encoding="utf-8")
+    _commit_all(tmp_path, "config.py")
+    os.link(tmp_path / "config.py", tmp_path / ".env")
+    payload, _digest, _commit = RemoteSubagentService._build_project_archive(tmp_path)
+    names = _names(payload)
+    assert "app.py" in names
+    assert "config.py" not in names and ".env" not in names
