@@ -95,13 +95,16 @@ case "$url" in
     # to -- from green_runs.json, each entry re-labelled with the lane's path
     # so the step's own `.path` select finds it. LANE_FILES is the step's
     # spec list, derived by the Runner from the workflow text.
+    # codeql_pr_runs.json is the checked-in CodeQL workflow's own runs
+    # (advanced setup), passed through with the path they carry.
     jq -cs --arg names "$LANE_FILES" '
       {workflow_runs:
         ([.[0].workflow_runs[] | .path = ".github/workflows/ci.yml"]
          + [.[1].workflow_runs[] as $r
             | ($names | split(" ")[] | select(. != "")) as $n
-            | $r | .path = ".github/workflows/" + $n])}
-    ' "$FIXTURES/ci_runs.json" "$FIXTURES/green_runs.json"
+            | $r | .path = ".github/workflows/" + $n]
+         + .[2].workflow_runs)}
+    ' "$FIXTURES/ci_runs.json" "$FIXTURES/green_runs.json" "$FIXTURES/codeql_pr_runs.json"
     exit 0 ;;
   *"/actions/runs?event=dynamic"*)         cat "$FIXTURES/codeql_runs.json"; exit 0 ;;
   *"/collaborators/"*"/permission"*)
@@ -316,6 +319,9 @@ class Runner:
         (self.fixtures / "codeql_runs.json").write_text(
             _run_json("codeql", status="completed", conclusion="success")
         )
+        # The checked-in CodeQL workflow has no run by default: today's repo
+        # runs default setup only.
+        (self.fixtures / "codeql_pr_runs.json").write_text(json.dumps({"workflow_runs": []}))
         (self.fixtures / "check_runs.json").write_text(
             json.dumps(
                 {
@@ -1092,8 +1098,9 @@ class TestSameSecondRunCollapse:
         assert outputs["label"] == "readiness: passed"
 
     def test_every_collapse_site_carries_identical_logic(self):
-        # The workflow resolves runs/results at five separately-written sites: the
-        # monitored-workflow loop, the dynamic CodeQL read, the trigger-run read
+        # The workflow resolves runs/results at six separately-written sites: the
+        # monitored-workflow loop, the dynamic CodeQL read, the checked-in
+        # (advanced-setup) CodeQL read, the trigger-run read
         # that dates an attempt-bound fork check-run, and the fork check-run
         # read itself (collapsing to the newest row sharing a trigger-bound id,
         # so a human-override rerun of the lane cannot have its stale failure
@@ -1107,10 +1114,10 @@ class TestSameSecondRunCollapse:
         fragment = "| max_by(.id) // empty"
         lines = [ln.strip() for ln in script.splitlines()]
         count = lines.count(fragment)
-        assert count == 5, (
-            "expected exactly the five result-collapse sites (monitored"
-            " workflows + dynamic CodeQL + CodeQL security result + fork"
-            " trigger run + fork check-run),"
+        assert count == 6, (
+            "expected exactly the six result-collapse sites (monitored"
+            " workflows + dynamic CodeQL + checked-in CodeQL + CodeQL security"
+            " result + fork trigger run + fork check-run),"
             f" found {count}"
         )
         # No site may re-grow a filter stage between the select() and the

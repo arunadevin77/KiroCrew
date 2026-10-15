@@ -3115,13 +3115,19 @@ status plus one `readiness:` label**.
   its previous head, and a draft PR is not scanned until it is ready for review.
   GitHub rejects its uploads while default setup is on, so its jobs are
   skipped until an admin has turned default setup off and set the repository
-  variable `CODEQL_ADVANCED_SETUP` to `true`. The aggregator still resolves the
-  analysis run by `path == "dynamic/github-code-scanning/codeql"` (default
-  setup), then reads the exact head SHA's `CodeQL` check from the
-  `github-advanced-security` app. A successful analysis run does not mask a
-  failed security result. An absent, running, or interim neutral result
-  remains `checking`; `skipped` still counts as passed for the managed
-  workflow.
+  variable `CODEQL_ADVANCED_SETUP` to `true`.
+- **The aggregator reads CodeQL from either setup** (#20576). It first resolves
+  the analysis run by `path == "dynamic/github-code-scanning/codeql"` (default
+  setup); only when the head has no such run does it read this PR's
+  `pull_request` run of `.github/workflows/codeql.yml`. So under default setup
+  the verdict is unchanged, a checked-in run that is skipped or fails its
+  upload while default setup is still on cannot answer, and the switch can
+  happen in either order. Either way it then reads the exact head SHA's
+  `CodeQL` check from the `github-advanced-security` app. A successful analysis
+  run does not mask a failed security result. An absent, running, or interim
+  neutral result remains `checking`. `skipped` counts as passed for the managed
+  workflow only; a skipped checked-in run (variable unset, draft, or the PR's
+  own copy skips it) scanned nothing and stays `checking`.
 - **Labels:** `readiness: checking` (pending), `readiness: action required` (a
   blocker), `readiness: passed`. Exactly one is ever present.
 - **A changes-requested review of the head blocks.** When a reviewer with
