@@ -25,10 +25,8 @@ import { i18nT } from '../../i18n/t'
 import {
   DOCS_URL,
   type GatewayStatus,
-  type LaunchPreview,
   type BulkCandidate,
   type BulkIssue,
-  pairLaunches,
   launchIsApprovable,
   stateLabelKey,
   stubErrorKey,
@@ -40,7 +38,7 @@ import {
   sharedWithoutSupport,
   waitForMeasurePass,
 } from './mcpManagementModel'
-import { LaunchLines, LaunchReviewPanel, RefusalPanel } from './McpManagementLaunchReview'
+import { RefusalPanel } from './McpManagementLaunchReview'
 import { AssessmentView } from './McpManagementAssessment'
 
 /**
@@ -195,22 +193,23 @@ export function McpManagement() {
     setError(i18nT(key))
   }
 
-  // The server whose launch is open for review, and the launch itself. One at a
-  // time: two panels would put two commands on screen with two approve buttons,
-  // and the whole point is that the operator is deciding about ONE command.
-  const [review, setReview] = useState<LaunchPreview | null>(null)
   // The approve button of each refused row's panel, by server name, so the row's
   // switch can move the keyboard to the panel it already shows.
   const approveButtons = useRef<Record<string, HTMLButtonElement | null>>({})
-  // Reading the launch is the first half of turning a stub ON. It writes nothing,
-  // so a failure here has to say that nothing was turned on -- see
-  // `launchPreviewErrorKey`, which is a separate table from the write's for
-  // exactly that reason.
+  // Reading the launch is the first half of turning a stub ON, and the only gate:
+  // the page shows no command, so a readable launch is approved straight away and
+  // an unapprovable one turns nothing on and says so. A read failure (a separate
+  // table from the write's) likewise reports that nothing was turned on.
   const previewLaunch = useMutation({
     mutationFn: (name: string) => api.mcpGatewayLaunchPreview(name),
-    onSuccess: preview => setReview(preview),
+    onSuccess: (preview, name) => {
+      if (launchIsApprovable(preview)) {
+        setStub.mutate({ name, stub: true, expectedLaunch: preview.expected_launch as string })
+      } else {
+        setError(i18nT('pages.mcpManagement.approval_not_approvable_here'))
+      }
+    },
     onError: (error, name) => {
-      setReview(null)
       setError(i18nT(launchPreviewErrorKey(error), { name }))
     },
   })
@@ -228,9 +227,8 @@ export function McpManagement() {
       invalidate()
       // The question the panel asked has been answered, so it has nothing left to
       // show. Closed here rather than at the click: closing optimistically would
-      // hide the command while the write that names it can still be refused.
+      // drop the row while the write that names it can still be refused.
       if (vars.stub) {
-        setReview(null)
         setBulkIssues(issues => issues.filter(issue => issue.name !== vars.name))
         setNotice(null)
       }
@@ -243,12 +241,6 @@ export function McpManagement() {
     onError: (error, vars) => {
       invalidate()
       setError(i18nT(stubErrorKey(error), { name: vars.name }))
-      // The launch moved between the render and the click, so the panel is showing
-      // a command that no longer exists. Read the new one: leaving the old one up
-      // beside "check it before you approve" points at the wrong command.
-      if (vars.stub && review?.name === vars.name && launchChangedSinceDisplay(error)) {
-        previewLaunch.mutate(vars.name)
-      }
     },
   })
 
@@ -419,10 +411,11 @@ export function McpManagement() {
       const rows = fresh?.servers ?? []
       const candidates = rows.filter(s => s.can_stub && !s.stub).map(s => s.name)
       if (candidates.length === 0) return { pending: false, review: [] }
-      // Read what each candidate would run and show all of it before writing
-      // anything. Eligibility is still the server's to decide -- each write below
-      // requests that decision inside the lock hold that performs it -- but a list
-      // the operator is about to approve as a whole cannot be a list of names.
+      // Read what each candidate would run before writing anything: each write
+      // below carries that launch's `expected_launch`, and this read is where it
+      // comes from. Eligibility is still the server's to decide -- each write
+      // requests that decision inside the lock hold that performs it. The confirm
+      // lists the candidates by name and shows no command.
       return {
         pending: false,
         review: await Promise.all(
@@ -457,14 +450,14 @@ export function McpManagement() {
   // The confirm half: one request per server, sent one after another.
   //
   // Not a batch, and not in parallel. Each write carries `expected_launch` -- the
-  // identity of the command that server showed in the list -- so one body cannot
+  // identity of the launch read for that server -- so one body cannot
   // stand for the whole set, and the endpoint refuses a batch stub=true for that
   // reason. Serial because these are config writes behind one lock: firing them
   // together only queues them somewhere less visible.
   //
   // Three outcomes, counted apart, because they need different answers from the
   // operator: written, left alone (nothing to approve, or the server declined it),
-  // and refused because the command moved after it was shown — the last is the one
+  // and refused because the command moved after it was read — the last is the one
   // worth looking at again.
   const enableAllApprove = useMutation({
     mutationFn: async (items: BulkCandidate[]) => {
@@ -827,7 +820,7 @@ export function McpManagement() {
                   done: measureProgress?.running ? measureProgress.done : 0,
                   total: measureProgress?.running ? measureProgress.total : unmeasuredCount,
                 })
-              : notice || i18nT('pages.mcpManagement.enable_all_hint')}
+              : notice}
           </span>
           {bulkIssues.length > 0 && (
             <div className="flex basis-full flex-col gap-2 pt-1">
@@ -921,11 +914,6 @@ export function McpManagement() {
               // The assessment view's warning sends the operator here, so the
               // rows it counted have to be findable without memorising names.
               const flagged = sharedWithoutSupport(s, !!status?.enabled, status?.launch_refused)
-              // One at a time, by name: the panel that reads a launch and the row
-              // that shows a refused one are the same width and the same place, so
-              // two open at once would read as one panel with two commands in it.
-              const reviewing = review && review.name === s.name ? review : undefined
-              const loadingReview = previewLaunch.isPending && previewLaunch.variables === s.name
               return (
                 <Fragment key={s.name}>
                 <tr className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-3 border-t border-[var(--border)] px-3 py-3 md:table-row md:px-0 md:py-0">
@@ -995,27 +983,19 @@ export function McpManagement() {
                       onClick={() => {
                         setError(null)
                         setRestartNotice(null)
-                        setReview(null)
                         // OFF is one click: it only ever narrows what runs outside a
-                        // session. ON approves a command, so it reads that command
-                        // first and asks -- the write happens in the review panel,
-                        // carrying the identity of the launch shown there.
+                        // session. ON is also one click now: it reads the launch and,
+                        // if that launch can be approved, writes the stub straight away
+                        // carrying its identity -- no command is shown to review.
                         //
-                        // A row waiting for approval is the exception: the panel it
-                        // already shows carries what was approved before beside what
-                        // would run now, which is the comparison this click is a
-                        // decision about. Reading the launch again swaps that panel
-                        // for the single-command review one and takes the before-state
-                        // away at the moment it is needed, so the switch moves the
-                        // keyboard to that panel's approve button instead of opening
-                        // anything.
+                        // A row waiting for approval already shows its own Approve
+                        // button in the sub-row below. The switch moves the keyboard
+                        // to that button instead of reading the launch again.
                         //
-                        // A row the panel cannot approve has no such button --
-                        // the launch arrived with no identity to write an
-                        // approval against, or its display was cut at the caps.
-                        // There the click is the operator's only control over the
-                        // opt-in, and sending them to a button that is not there
-                        // leaves a lit switch that cannot be moved either way.
+                        // A row that button cannot approve -- the launch arrived with
+                        // no identity to write an approval against -- has no button, so
+                        // the click is the operator's only control over the opt-in and
+                        // turns the stub off.
                         if (state === 'needs_reapproval') {
                           const approve = approveButtons.current[s.name]
                           if (approve) {
@@ -1035,55 +1015,29 @@ export function McpManagement() {
                     />
                   </td>
                 </tr>
-                {/* A full-width sub-row, not the STATE column. What goes here is a
-                    command, an environment and a decision — a 16% column renders a
-                    command one word per line, and the decision copy had to shrink
-                    to 11px muted to fit, which is the styling of a footnote about
-                    something already settled. The pill stays in STATE, because a
-                    state IS a column value. */}
-                {(loadingReview || reviewing || refusal) && (
+                {/* A full-width sub-row for a refused launch: its reason and the
+                    Approve button. The pill stays in STATE, because a state IS a
+                    column value. */}
+                {refusal && (
                   <tr className="block border-t border-[var(--border)] md:table-row md:border-0">
                     <td colSpan={4} className="block px-3 pb-3.5 pt-0 md:table-cell md:px-4">
-                      {loadingReview && (
-                        <p role="status" className="text-[12.5px] text-[var(--muted)]">
-                          {i18nT('pages.mcpManagement.launch_review_loading', { name: s.name })}
-                        </p>
-                      )}
-                      {reviewing && (
-                        <LaunchReviewPanel
-                          preview={reviewing}
-                          busy={setStub.isPending}
-                          onApprove={() => {
-                            setError(null)
-                            setRestartNotice(null)
-                            setStub.mutate({
-                              name: s.name,
-                              stub: true,
-                              expectedLaunch: reviewing.expected_launch as string,
-                            })
-                          }}
-                          onCancel={() => setReview(null)}
-                        />
-                      )}
-                      {refusal && !reviewing && !loadingReview && (
-                        <RefusalPanel
-                          server={s}
-                          refusal={refusal}
-                          busy={busy}
-                          approveRef={node => {
-                            approveButtons.current[s.name] = node
-                          }}
-                          onApprove={() => {
-                            setError(null)
-                            setRestartNotice(null)
-                            setStub.mutate({
-                              name: s.name,
-                              stub: true,
-                              expectedLaunch: refusal.expected_launch as string,
-                            })
-                          }}
-                        />
-                      )}
+                      <RefusalPanel
+                        server={s}
+                        refusal={refusal}
+                        busy={busy}
+                        approveRef={node => {
+                          approveButtons.current[s.name] = node
+                        }}
+                        onApprove={() => {
+                          setError(null)
+                          setRestartNotice(null)
+                          setStub.mutate({
+                            name: s.name,
+                            stub: true,
+                            expectedLaunch: refusal.expected_launch as string,
+                          })
+                        }}
+                      />
                     </td>
                   </tr>
                 )}
@@ -1240,17 +1194,14 @@ function ConfirmSharing({
 }
 
 /**
- * The review the bulk action opens before it writes anything.
+ * The confirm the bulk action opens before it writes anything.
  *
- * "Stub every server the evidence allows" used to send one batch with stub=true,
- * which approved N commands the operator had never seen -- the exact thing the
- * per-row review exists to prevent, done N at a time. Every command is listed
- * here first, and one confirm then sends one request per server, because an
- * approval names the exact command shown for that server.
- *
- * A candidate whose command could not be read, or could not be shown in full,
- * stays in the list and says so. Approving skips it: the operator can only vouch
- * for what they were shown.
+ * "Stub every server the evidence allows" used to send one batch with stub=true;
+ * it now lists the candidate servers by name and one confirm sends one request
+ * per server. Each write carries that server's expected_launch, so the exact
+ * launch the gateway resolved is what the approval covers -- the command itself
+ * is not shown, here or anywhere else on this page. A candidate whose launch
+ * cannot be approved is skipped by the write.
  */
 function ConfirmEnableAll({
   items,
@@ -1272,28 +1223,28 @@ function ConfirmEnableAll({
       }}
     >
       <DialogContent maxWidth={640}>
+        {/* The dialog shows names only, so it reuses the bulk button's own label
+            as its title (and, via Radix, its accessible name) rather than a title
+            that promises to show what each server runs. */}
         <DialogHeader>
-          <DialogTitle>{i18nT('pages.mcpManagement.enable_all_review_title')}</DialogTitle>
+          <DialogTitle>{i18nT('pages.mcpManagement.enable_all')}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <DialogDescription>
-            {i18nT('pages.mcpManagement.enable_all_review_lede')}
-          </DialogDescription>
-          <ul className="mt-3 space-y-3">
+          {/* Server names, no command text: the command lists this dialog used to
+              show were long, clipped and unread. Each per-server write still
+              carries that server's expected_launch. A candidate whose launch could
+              not be read, or cannot be approved, still says so here -- otherwise a
+              server that will be skipped looks like one that will be shared. */}
+          <ul className="mt-1 space-y-2">
             {items.map(item => (
               <li key={item.name}>
                 <p className="font-mono text-[12.5px] text-[var(--text)]">{item.name}</p>
                 {item.preview ? (
-                  <>
-                    <LaunchLines
-                      launches={pairLaunches(item.preview.commands, item.preview.envs)}
-                    />
-                    {!launchIsApprovable(item.preview) && (
-                      <p className="mt-1 text-[12.5px] leading-snug text-[var(--muted)]">
-                        {i18nT('pages.mcpManagement.approval_not_approvable_here')}
-                      </p>
-                    )}
-                  </>
+                  !launchIsApprovable(item.preview) && (
+                    <p className="mt-1 text-[12.5px] leading-snug text-[var(--muted)]">
+                      {i18nT('pages.mcpManagement.approval_not_approvable_here')}
+                    </p>
+                  )
                 ) : 'error' in item ? (
                   <ErrorNotice
                     variant="inline"

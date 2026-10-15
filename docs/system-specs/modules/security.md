@@ -35,10 +35,11 @@ read-only with a strict no-symlink check. The first writer creates that
 directory itself, `0700` under any umask (`owner_only_files.mkdirs_owner_only`),
 so on a host that has not spawned a sandboxed process yet the store does not
 land in a umask-default `0755` directory. Empty and absent forms both approve
-nothing. A refusal displays each command with its redacted,
-bounded declared environment. Every identity serialized into `expected_launch`
-has exactly one displayed command and one displayed environment, so the operator
-can approve only launch content that was rendered. Cached recommendation seeding
+nothing. A refusal record carries each command with its redacted, bounded declared
+environment, though the dashboard no longer displays it. Every identity serialized
+into `expected_launch` has exactly one command and one environment behind it, so an
+approval covers the exact launch the gateway resolved, pinned by `expected_launch`,
+whether or not it was rendered. Cached recommendation seeding
 can add a stub route, but it does not approve the launch behind that name.
 
 The generated `mcp-gateway/agents/` overlays and `mcp-gateway/stubs/` sidecars

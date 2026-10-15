@@ -38,13 +38,13 @@ export type LaunchRefusal = {
   // What the operator approved LAST time, when the approval record kept it. A
   // record written without it is readable as "not recorded", never as "empty":
   // an absent before-state and an approval of nothing are different facts, and
-  // rendering the second for the first would invent a comparison.
+  // reading the second as the first would invent a comparison.
   approved_commands?: string[][]
   approved_envs?: string[][]
-  // False when the launch could not be rendered in full, which is also when
-  // `expected_launch` is absent: a partial display cannot be approved.
+  // False when the launch could not be read in full, which is also when
+  // `expected_launch` is absent: a partial launch cannot be approved.
   complete?: boolean
-  // Present only when every launch above can be shown; approval needs it.
+  // Present only when every launch above resolved in full; approval needs it.
   expected_launch?: string
 }
 
@@ -66,28 +66,13 @@ export type BulkIssue = {
   kind: 'changed' | 'preview_failed' | 'write_failed'
 }
 
-/** Pair each command with its declared environment, dropping empty commands. */
-export function pairLaunches(
-  commands?: string[][],
-  envs?: string[][],
-): { argv: string[]; env: string[] }[] {
-  return (commands ?? [])
-    .map((argv, i) => ({ argv, env: envs?.[i] ?? [] }))
-    .filter((launch) => launch.argv.length > 0)
-}
-
-/** Each launch a refusal covers: its command and its declared environment. */
-export function refusalLaunches(refusal: LaunchRefusal): { argv: string[]; env: string[] }[] {
-  return pairLaunches(refusal.commands, refusal.envs)
-}
-
 /**
- * True when the launch on screen is the WHOLE launch, so an approval can name it.
+ * True when the launch read is the WHOLE launch, so an approval can name it.
  *
  * Both halves are load bearing. `expected_launch` is the identity the write is
- * checked against, and `complete: false` says the display was cut short — offering
- * approval then would ask the operator to vouch for a command they were only shown
- * part of, which is the one thing this whole view exists to prevent.
+ * checked against, and `complete: false` says the launch was cut short — approving
+ * then would pin the approval to only part of what the server resolves, which is
+ * the one thing this whole view exists to prevent.
  */
 export function launchIsApprovable(launch: { complete?: boolean; expected_launch?: string }): boolean {
   return launch.complete !== false && !!launch.expected_launch
@@ -129,7 +114,7 @@ export function stubErrorKey(error: unknown): string {
   if (error.status === 503 && code === 'approval_write_failed') {
     return 'pages.mcpManagement.stub_error_approval_write_failed'
   }
-  // Sending stub=true without the identity of a launch the operator was shown.
+  // Sending stub=true without the identity of a launch that was read.
   if (error.status === 409 && code === 'expected_launch_required') {
     return 'pages.mcpManagement.stub_error_expected_launch_required'
   }
@@ -143,7 +128,7 @@ export function stubErrorKey(error: unknown): string {
   return 'pages.mcpManagement.stub_failed'
 }
 
-/** True when the write was refused because the launch moved after it was shown. */
+/** True when the write was refused because the launch moved after it was read. */
 export function launchChangedSinceDisplay(error: unknown): boolean {
   return stubErrorKey(error) === 'pages.mcpManagement.stub_error_launch_changed'
 }

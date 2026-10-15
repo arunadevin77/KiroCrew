@@ -932,17 +932,17 @@ command and environment identity again immediately before the fork, so revoking
 an approval while it waits prevents the process from starting. A stub with no
 recorded approval needs one in **Developer → MCP Management** before it pools. Cached recommendation
 seeding may add a stub route, but it grants no launch approval; the seeded
-row stays on the session-sandboxed path until the operator reviews it.
+row stays on the session-sandboxed path until the operator approves it.
 
 The MCP Management toggle resolves the launch at the time of the operator's
-choice. Every `stub: true` is a compare-and-set on a displayed launch, the first
-approval of a name included: the UI reads
+choice. Every `stub: true` is a compare-and-set on the launch read at that
+moment (`expected_launch`), the first approval of a name included: the UI reads
 `GET /api/mcp-gateway/servers/launch?name=<name>`, which returns `name`,
-`commands`, `envs`, `complete` and, only when the display is complete,
-`expected_launch`. This display-safe, bounded GET follows the other dashboard
+`commands`, `envs`, `complete` and, only when the resolution is complete,
+`expected_launch`. This scrubbed, bounded GET follows the other dashboard
 read routes and does not require owner identity; the POST that records the choice
 remains owner-only. `POST /api/mcp-gateway/servers/stub` refuses a missing token
-with 409 `expected_launch_required`, a truncated display with 409
+with 409 `expected_launch_required`, a truncated resolution with 409
 `launch_display_incomplete`, and a token that no longer matches the resolution
 with 409 `launch_changed_since_display`. A batch `stub: true` returns 400
 `batch_stub_requires_individual`; batch `stub: false` is accepted. Turning a stub
@@ -950,13 +950,16 @@ off revokes the approval first, and restores it when the config write does not
 commit. The approval also stores the redacted, bounded display of the approved
 launch, so a `changed_needs_reapproval` refusal carries `approved_commands` and
 `approved_envs` beside the new `commands` and `envs`; an approval recorded
-without a display omits both fields. A refused row exposes each display-only command argv with its redacted
-declared environment. Both displays are scrubbed and bounded before they enter
-the refusal record, and status polling only reads that record; it does not rebuild
-or resolve agent specs. Every identity serialized into `expected_launch` has
-exactly one displayed command and one displayed environment, so an approval
-covers only launch content the operator saw. Selecting re-approve sends back the
-stored command/effective-environment pair for the row. The handler compares it
+without a display omits both fields. The refusal record carries each command argv
+with its redacted declared environment, scrubbed and bounded before they enter it,
+but the dashboard does not display them: the page shows only that a server needs
+approval, not the command it would run. Status polling only reads that record; it
+does not rebuild or resolve agent specs. Every identity serialized into
+`expected_launch` has exactly one command and one environment behind it, so an
+approval covers the exact launch the gateway resolved, pinned by `expected_launch`,
+whether or not any command was shown. One click on the row -- or a confirm in the
+bulk review -- approves the launch read at that moment, sending back the stored
+command/effective-environment pair for the row. The handler compares it
 with both the stored refusal and a fresh resolution before any write; a changed
 launch returns 409 and preserves both stores. A matching launch replaces the
 fingerprint and clears the refusal. A changed command, arguments, or declared
