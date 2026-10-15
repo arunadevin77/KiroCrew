@@ -31,6 +31,7 @@ from ai_review_workflows_helpers import (
     _child_env,
     _flat,
     _fp_contract,
+    _github_outputs,
     _line_containing,
     _proc_log,
     _prompt,
