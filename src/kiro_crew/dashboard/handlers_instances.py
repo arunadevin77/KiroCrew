@@ -685,9 +685,11 @@ async def api_instances_update(request: web.Request) -> web.Response:
     # Disabling is a teardown too, and it takes the same locked path: the
     # tunnel closes and the flag lands in one critical section, so a connect
     # racing it is either torn down here or reads the flag and is refused.
-    transport_changed = any(
+    # Every disable takes it, even one `current` reads as off: that read precedes
+    # the lock, so an enable and a connect can land after it.
+    transport_changed = changes.get("disabled") is True or any(
         k in transport_keys and v != getattr(current, k) for k, v in changes.items()
-    ) or (changes.get("disabled") is True and not current.disabled)
+    )
     # Validate the PROPOSED record before touching the tunnel. The registry
     # validates too, but that happens after the teardown — so a rejected edit
     # would answer 400 having already disconnected a healthy crew, punishing the
@@ -999,13 +1001,14 @@ async def api_instances_connect(request: web.Request) -> web.Response:
             },
             status=409,
         )
-    except InstanceDisabledError:
+    except InstanceDisabledError as e:
         _audit("connect", "denied", request_id=instance_id, error="disabled")
         return web.json_response(
             {
                 "instance_id": instance_id,
                 "state": "disconnected",
-                "error": "this crew is disabled; enable it to connect",
+                # The crew that is off, by id: for a chained crew, the one it rides.
+                "error": f"{e}; enable it to connect",
                 "code": "instance_disabled",
             },
             status=409,

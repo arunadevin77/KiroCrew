@@ -122,12 +122,13 @@ transport, and **EC2** when the instance was provisioned by the cloud launcher.
 
 ## Turning one crew off
 
-Each crew in **Settings → Remote Crew** has an on/off switch beside its status.
-Off closes that crew's tunnel and keeps it closed: no click, auto-connect or
-gateway restart opens it again. Its sidebar group reads **Disabled** with an
-**Enable** button, and an open pane for it shows offline. Turning it back on
-reconnects it. The crew's settings are kept the whole time. Only the owner can
-flip the switch.
+Each crew in **Settings → Remote Crew** has a switch beside its status that reads
+**Connections: On** or **Connections: Off**. Off closes that crew's tunnel and
+keeps it closed: no click, auto-connect or gateway restart opens it again. Its
+sidebar group reads **Off** with an **Enable** button, and an open pane for it
+shows offline. A crew reached through it stays closed too, and connecting one
+names the crew that is off. Turning it back on reconnects it. The crew's
+settings are kept the whole time. Only the owner can flip the switch.
 
 ## Crews reached through another crew
 

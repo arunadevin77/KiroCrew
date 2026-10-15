@@ -149,6 +149,87 @@ async def test_connect_route_answers_409_for_a_disabled_crew(env):
 
 
 @pytest.mark.asyncio
+async def test_connect_route_names_the_crew_that_is_off(env):
+    """A chained crew is refused for its parent's switch, so say which crew is off.
+
+    The refusal names crews by id only, never a host.
+    """
+    reg, mgr, state = env
+    reg.add(
+        name="Child",
+        ssh_host="child-host",
+        instance_id="kid",
+        remote_port=7778,
+        via_instance_id="cd-1",
+        via_remote_port=7999,
+        via_remote_id="kid",
+    )
+    reg.update("cd-1", disabled=True)
+    r = await handlers.api_instances_connect(_Req(state, match={"id": "kid"}))
+    assert r.status == 409
+    body = _body(r)
+    assert body["code"] == "instance_disabled"
+    assert "'cd-1'" in body["error"] and "enable it to connect" in body["error"]
+    assert "cd-1-alias" not in body["error"] and "child-host" not in body["error"]
+    assert _Tunnel.built == []
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_disable_closes_a_forward_the_record_already_calls_off(env):
+    """The route reads the record before the manager lock, so an enable and a
+    connect can land between that read and its write. A record that says off over
+    a live forward is what that leaves, and a repeated disable must still close it.
+    """
+    reg, mgr, state = env
+    try:
+        assert (await mgr.connect("cd-1")).state == TunnelState.CONNECTED
+        reg.update("cd-1", disabled=True)
+        r = await handlers.api_instances_update(
+            _Req(state, match={"id": "cd-1"}, body={"disabled": True})
+        )
+        assert r.status == 200 and _body(r)["disabled"] is True
+        assert _body(r)["status"]["state"] == "disconnected"
+        assert mgr.status("cd-1") is None
+    finally:
+        await mgr.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_disable_of_an_idle_crew_opens_and_forgets_nothing(env):
+    """The locked teardown re-run on a crew that is already off changes nothing else.
+
+    Nothing is spawned, no record moves (its intent and its chained crew's stay),
+    and a crew it does not carry keeps its forward.
+    """
+    reg, mgr, state = env
+    reg.add(name="B", ssh_host="host-b", instance_id="b", remote_port=7778)
+    reg.add(
+        name="Child",
+        ssh_host="child-host",
+        instance_id="kid",
+        remote_port=7779,
+        via_instance_id="cd-1",
+        via_remote_port=7999,
+        via_remote_id="kid",
+    )
+    try:
+        assert (await mgr.connect("b")).state == TunnelState.CONNECTED
+        reg.update("cd-1", was_connected=True, disabled=True)
+        reg.update("kid", was_connected=True)
+        before = {row.id: row.to_dict() for row in reg.list()}
+        r = await handlers.api_instances_update(
+            _Req(state, match={"id": "cd-1"}, body={"disabled": True})
+        )
+        assert r.status == 200 and _body(r)["disabled"] is True
+        assert {row.id: row.to_dict() for row in reg.list()} == before
+        assert _Tunnel.built == ["b"]
+        status_b = mgr.status("b")
+        assert status_b is not None and status_b.state == TunnelState.CONNECTED
+    finally:
+        await mgr.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_auto_warm_on_a_disabled_crew_is_a_quiet_decline(env):
     """The viewport's connected-only probe is not an error for a disabled crew."""
     reg, mgr, state = env

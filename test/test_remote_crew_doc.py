@@ -205,6 +205,26 @@ def test_the_one_feature_preview_the_page_sends_users_to_still_exists(doc_flat: 
     assert "Feature Previews → Chat on a crew" in doc_flat
 
 
+def test_the_off_switch_labels_the_page_quotes_are_the_ones_on_screen(doc_text: str) -> None:
+    """§Turning one crew off quotes the switch's two labels and the sidebar's words."""
+    import json
+
+    section = doc_text.split("## Turning one crew off", 1)[1].split("\n## ", 1)[0]
+    section = re.sub(r"\s+", " ", section)
+    en = json.loads(
+        (ROOT / "website" / "src" / "i18n" / "locales" / "en.json").read_text(encoding="utf-8")
+    )
+    panel = en["pages"]["settings"]["remoteCrewPanel"]
+    sidebar = en["pages"]["chatSidebar"]
+    for label in (
+        panel["crew_enabled"],
+        panel["crew_disabled"],
+        sidebar["crew_status_disabled"],
+        sidebar["crew_enable"],
+    ):
+        assert f"**{label}**" in section, f"the section no longer quotes the label {label!r}"
+
+
 def test_an_old_relay_chat_is_a_read_only_archive(doc_flat: str) -> None:
     """§A session that runs on another machine names the archive refusal code."""
     from kiro_crew.dashboard.relay_archive import RELAY_ARCHIVE_CODE
