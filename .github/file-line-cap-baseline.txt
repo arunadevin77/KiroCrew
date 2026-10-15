@@ -260,7 +260,7 @@
 3125 test/test_cron_script.py
 2247 test/test_cron_secret_env.py
 3175 test/test_dashboard_approval.py
-5365 test/test_dashboard_chat.py
+3586 test/test_dashboard_chat.py
 2347 test/test_dashboard_chat_pins.py
 2718 test/test_dashboard_server_composition_contract.py
 3002 test/test_dashboard_source_link_unlink.py
