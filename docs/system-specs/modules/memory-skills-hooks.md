@@ -5403,7 +5403,7 @@ Skill detection runs only when ALL hold:
 | Condition | Source |
 |-----------|--------|
 | `skills.auto_create_from_sessions: true` | Config flag, default **off** (opt-in; when on, candidates STAGED, not live) |
-| `skills_loader` instance passed | Wired from `cli.py`, `cli_server.py`, `dashboard/server_runtime/skill_learning.py` and `slack/gateway.py` |
+| `skills_loader` instance passed | Wired from `cli_knowledge.py`, `cli_server.py`, `dashboard/server_runtime/skill_learning.py` and `slack/gateway.py` |
 | `include_history=True` | Idle path only, not prefs-only |
 | Not a private member store (`member_memory` false) | Auto-skills are shared install-wide, so private member experience is not published |
 | `≥ skills.auto_min_tool_calls` messages with non-empty `tools` | Default 5 |

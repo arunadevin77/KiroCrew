@@ -1166,7 +1166,7 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         "acp/kas_bundle.py::_probe_node",
         "browser_cli/launcher.py::_run_cli",
         "browser_cli/view.py::_spawn",
-        "cli.py::_consolidate_cmd",
+        "cli_knowledge.py::_consolidate_cmd",
         "cli.py::_ensure_node",
         "cli.py::_node_ok",
         "cli.py::main",
