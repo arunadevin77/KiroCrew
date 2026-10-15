@@ -7,7 +7,7 @@
  *  writes and order, create, rename, title, peer sessions). */
 import { Fragment } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { X, ArrowUpDown, EyeOff, ChevronRight, Clock, Check, List, ListTree, RotateCcw, Server, Pause, Play } from 'lucide-react'
+import { X, ArrowUpDown, EyeOff, ZapOff, ChevronRight, Clock, Check, List, ListTree, RotateCcw, Server, Pause, Play } from 'lucide-react'
 import ErrorNotice from '../../components/ErrorNotice'
 import FolderGlyph from '../../components/FolderGlyph'
 import { useQuery } from '@tanstack/react-query'
@@ -81,6 +81,16 @@ export const FILTER_DESCRIPTION_KEY: Record<SessionFilterKey, string> = {
   running: 'pages.chatSidebar.filter_running_description',
   pinned: 'pages.chatSidebar.filter_pinned_description',
   recent: 'pages.chatSidebar.filter_recent_description',
+}
+/** Catalog keys for the optional "Not <filter>" named rows in the filter menu.
+ *  A filter with an entry here shows a dedicated labeled row for hiding its matches
+ *  instead of the hover-only EyeOff button. The value must be a full literal key so
+ *  `scripts/check-i18n-keys.mjs` can resolve it via the map-access shape. */
+const FILTER_NOT_LABEL_KEY: Partial<Record<SessionFilterKey, string>> = {
+  running: 'pages.chatSidebar.filter_not_running',
+}
+const FILTER_NOT_DESCRIPTION_KEY: Partial<Record<SessionFilterKey, string>> = {
+  running: 'pages.chatSidebar.filter_not_running_description',
 }
 
 /** Sort options, in menu order. The label lives in `SORT_LABEL_KEY`. */
@@ -422,35 +432,56 @@ export function renderSearchDock(shell: SidebarScope): { field: React.ReactNode;
                   const hideLabel = hidden
                     ? i18nT('pages.chatSidebar.filter_unhide_named', { filter: filterLabel })
                     : i18nT('pages.chatSidebar.filter_hide_named', { filter: filterLabel })
+                  // A filter with a `FILTER_NOT_LABEL_KEY` entry gets a dedicated named
+                  // "Not <filter>" row instead of the hover-only EyeOff button, so the
+                  // option is discoverable without hovering. The EyeOff stays for filters
+                  // that have no named opposite (unread, pinned). Mutual exclusion is
+                  // handled: toggleHideFilter calls disableFilter which clears show-only,
+                  // and toggleFilter calls clearHideFor which drops the hide.
+                  const notLabelKey = FILTER_NOT_LABEL_KEY[filterDef.key]
+                  const notDescKey = FILTER_NOT_DESCRIPTION_KEY[filterDef.key]
                   return (
-                    <div
-                      key={filterDef.key}
-                      role="group"
-                      className="group/filter flex items-center rounded-md transition-colors hover:bg-bg-hover focus-within:bg-bg-hover"
-                    >
-                      {showRow}
-                      {!active && (
+                    <Fragment key={filterDef.key}>
+                      <div
+                        role="group"
+                        className="group/filter flex items-center rounded-md transition-colors hover:bg-bg-hover focus-within:bg-bg-hover"
+                      >
+                        {showRow}
+                        {!active && !notLabelKey && (
+                          <DropdownMenuItem
+                            aria-label={hideLabel}
+                            title={hideLabel}
+                            onSelect={e => { e.preventDefault(); toggleHideFilter(filterDef.key) }}
+                            className="group/hide shrink-0"
+                            data-testid={`filter-hide-${filterDef.key}`}
+                            data-filter-hidden={hidden ? 'true' : undefined}
+                          >
+                            <span
+                              className={hidden
+                                ? 'inline-flex size-3.5 items-center justify-center rounded bg-accent-subtle text-accent ring-4 ring-accent-subtle'
+                                : 'inline-flex size-3.5 items-center justify-center text-muted group-focus/hide:text-text'}
+                            >
+                              <EyeOff
+                                size={12}
+                                className={hidden ? undefined : 'opacity-0 group-hover/filter:opacity-100 group-focus-within/filter:opacity-100 [@media(hover:none)]:opacity-100'}
+                              />
+                            </span>
+                          </DropdownMenuItem>
+                        )}
+                      </div>
+                      {notLabelKey && !active && (
                         <DropdownMenuItem
-                          aria-label={hideLabel}
-                          title={hideLabel}
+                          title={notDescKey ? i18nT(notDescKey) : undefined}
                           onSelect={e => { e.preventDefault(); toggleHideFilter(filterDef.key) }}
-                          className="group/hide shrink-0"
-                          data-testid={`filter-hide-${filterDef.key}`}
+                          data-testid={`filter-not-${filterDef.key}`}
                           data-filter-hidden={hidden ? 'true' : undefined}
                         >
-                          <span
-                            className={hidden
-                              ? 'inline-flex size-3.5 items-center justify-center rounded bg-accent-subtle text-accent ring-4 ring-accent-subtle'
-                              : 'inline-flex size-3.5 items-center justify-center text-muted group-focus/hide:text-text'}
-                          >
-                            <EyeOff
-                              size={12}
-                              className={hidden ? undefined : 'opacity-0 group-hover/filter:opacity-100 group-focus-within/filter:opacity-100 [@media(hover:none)]:opacity-100'}
-                            />
-                          </span>
+                          <ZapOff size={12} className={hidden ? 'text-[var(--warn)]' : 'text-muted'} {...(hidden ? { fill: 'var(--warn)', stroke: 'none' } : {})} />
+                          <span className="flex-1 truncate">{i18nT(notLabelKey)}</span>
+                          {hidden && <Check size={14} className="text-accent shrink-0" />}
                         </DropdownMenuItem>
                       )}
-                    </div>
+                    </Fragment>
                   )
                 })}
                 {/* Lift every active status filter at once, for a look at the

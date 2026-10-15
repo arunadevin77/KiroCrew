@@ -1,13 +1,15 @@
 /**
  * Chat sidebar — a status chip's HIDE state.
  *
- * Unread, In progress and Pinned each carry a second control beside their menu
- * row that drops matching sessions instead of keeping only them. The include
- * chips OR together, so a hide is its own filter dimension that ANDs over the
- * result: "Unread + hide In progress" is unread sessions that are NOT running.
- * A chip is either showing-only or hiding, never both — the hide control is
- * offered only while show-only is off — and the active hides always show as one
- * aggregate chip under the header so no row vanishes silently.
+ * Unread and Pinned carry a hover EyeOff control beside their menu row that
+ * drops matching sessions instead of keeping only them. In progress instead has
+ * a named "Not in progress" row (data-testid="filter-not-running") immediately
+ * below it. The include chips OR together, so a hide is its own filter
+ * dimension that ANDs over the result: "Unread + Not in progress" shows unread
+ * sessions that are NOT running. A chip is either showing-only or hiding, never
+ * both — the hide control is offered only while show-only is off — and the
+ * active hides always show as one aggregate chip under the header so no row
+ * vanishes silently.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, fireEvent, screen, waitFor } from '@testing-library/react'
@@ -211,13 +213,11 @@ describe('status chip hide state', () => {
     renderSidebar()
     await waitFor(() => expect(shown('running unread')).toBe(true))
     openFilterMenu()
-    const hideButton = await screen.findByTestId('filter-hide-running')
-    expect(hideButton).toHaveAttribute('aria-label', 'Hide sessions matching In progress')
+    const hideButton = await screen.findByTestId('filter-not-running')
     fireEvent.click(hideButton)
     await waitFor(() => expect(shown('running unread')).toBe(false))
     expect(localStorage.getItem(RUNNING_HIDDEN)).toBe('1')
-    expect(screen.getByTestId('filter-hide-running')).toHaveAttribute('aria-label', 'Stop hiding In progress sessions')
-    fireEvent.click(screen.getByTestId('filter-hide-running'))
+    fireEvent.click(screen.getByTestId('filter-not-running'))
     await waitFor(() => expect(shown('running unread')).toBe(true))
     expect(localStorage.getItem(RUNNING_HIDDEN)).toBe('0')
   })
@@ -228,7 +228,7 @@ describe('status chip hide state', () => {
     await waitFor(() => expect(shown('idle read')).toBe(true))
     expect(shown('running unread')).toBe(false)
     openFilterMenu()
-    await screen.findByTestId('filter-hide-running')
+    await screen.findByTestId('filter-not-running')
     // Clicking the row goes to show-only and drops the hide.
     const row = screen.getAllByRole('menuitem').find(el => el.textContent?.startsWith('In progress'))!
     fireEvent.click(row)
@@ -238,14 +238,14 @@ describe('status chip hide state', () => {
     expect(localStorage.getItem(RUNNING_HIDDEN)).toBe('0')
     // From show-only there is no one-click path to a hide: the row holds its
     // check and the control is gone, so the next click only turns show-only off.
-    expect(screen.queryByTestId('filter-hide-running')).toBeNull()
+    expect(screen.queryByTestId('filter-not-running')).toBeNull()
     fireEvent.click(screen.getAllByRole('menuitem').find(el => el.textContent?.startsWith('In progress'))!)
     await waitFor(() => expect(shown('idle read')).toBe(true))
     expect(shown('running unread')).toBe(true)
     expect(localStorage.getItem(RUNNING_ONLY)).toBe('0')
     expect(localStorage.getItem(RUNNING_HIDDEN)).toBe('0')
     // Now the control is back, and hiding keeps show-only off.
-    fireEvent.click(await screen.findByTestId('filter-hide-running'))
+    fireEvent.click(await screen.findByTestId('filter-not-running'))
     await waitFor(() => expect(shown('running unread')).toBe(false))
     expect(shown('idle read')).toBe(true)
     expect(localStorage.getItem(RUNNING_ONLY)).toBe('0')
@@ -277,7 +277,7 @@ describe('status chip hide state', () => {
     openFilterMenu()
     // Other hideable rows do offer the control, so the menu is open and the
     // omission below is this row's, not a missing menu.
-    await screen.findByTestId('filter-hide-running')
+    await screen.findByTestId('filter-not-running')
     expect(screen.queryByTestId('filter-hide-unread')).toBeNull()
     const row = screen.getAllByRole('menuitem').find(el => el.textContent?.startsWith('Unread'))!
     const check = row.querySelector('.lucide-check')
@@ -330,7 +330,7 @@ describe('status chip hide state', () => {
     renderSidebar()
     await waitFor(() => expect(shown('idle read')).toBe(true))
     openFilterMenu()
-    await screen.findByTestId('filter-hide-running')
+    await screen.findByTestId('filter-not-running')
     expect(screen.queryByTestId('filter-hide-recent')).toBeNull()
   })
 
