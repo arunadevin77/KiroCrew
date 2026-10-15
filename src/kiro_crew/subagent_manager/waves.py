@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ._component import ManagerComponent
+from .admission.taskq_bridge import _in_memory_queued_entries
 
 if TYPE_CHECKING:
     from ..subagent import (
@@ -119,15 +120,22 @@ class WaveDigestCoordinator(ManagerComponent):
             if not holds:
                 self._manager._reports_in_flight.pop(batch_id, None)
 
+    def _unstarted_entries(self) -> list[dict]:
+        """Accepted spawns held in memory with no registered run: the dispatch
+        window and the entries the pump holds mid re-check
+        (:func:`_in_memory_queued_entries`). Not an ``*_impl``, so it runs on
+        this module's globals, where that helper is imported."""
+        return _in_memory_queued_entries(self._manager)
+
     def _batch_pending_in_memory(self, batch_id: str) -> bool:
         """The halves of :meth:`batch_members_pending_impl` that read manager
-        state: submissions in flight, live members, window entries."""
+        state: submissions in flight, live members, unstarted entries."""
         _bs = self._manager._batch_submitted.get(batch_id)
         if _bs is not None and _bs[1] > 0 and _bs[0] < _bs[1]:
             return True  # submissions still in flight
         if any(a.batch_id == batch_id and not a.done for a in self._manager._agents.values()):
             return True
-        return any(p.get("batch_id") == batch_id for p in self._manager._queue)
+        return any(p.get("batch_id") == batch_id for p in self._unstarted_entries())
 
     def wave_has_live_nested_spawns_impl(self, batch_id: str) -> bool:
         """True when a member of *batch_id* itself spawned further work that is
@@ -165,7 +173,7 @@ class WaveDigestCoordinator(ManagerComponent):
             return True
         return any(
             p.get("batch_id") != batch_id and p.get("parent_session_key") in member_keys
-            for p in self._manager._queue
+            for p in self._unstarted_entries()
         )
 
     def finalize_batch_impl(self, batch_id: str) -> None:
@@ -300,7 +308,7 @@ class WaveDigestCoordinator(ManagerComponent):
             members = [a for a in self._manager._agents.values() if a.batch_id == batch_id]
             if any(not a.done for a in members):
                 continue  # live members will re-evaluate the wave on completion
-            if any(p.get("batch_id") == batch_id for p in self._manager._queue):
+            if any(p.get("batch_id") == batch_id for p in self._unstarted_entries()):
                 continue  # queued members still pending — not stuck
             out.append((batch_id, members[0].parent_session_key if members else ""))
         return out

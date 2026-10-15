@@ -318,7 +318,12 @@ does not start a row a stop took, whether the stop landed during a grant or a
 read. A raise in the gap (a pool that cannot start a thread, in a read or in a
 grant ahead of the dispatch) puts the row back at the front of the window, not
 eligible again until the admit wait passes (`_requeue_undispatched`), instead of
-dropping it.
+dropping it. Every read of a parent's or a wave's unstarted spawns reads the
+entries held there beside the window (`_in_memory_queued_entries`): the queued
+lookups, the queued depth and its chip, the pending-work checks, and the wave
+helpers (`_batch_pending_in_memory`, `wave_has_live_nested_spawns`,
+`_stuck_wave_candidates`). For the whole re-check the row reads as waiting to
+start, not as gone.
 
 **Prices.** Decided per start (`_spawn_memory_floor_and_cost` reads the floor and
 `subagent_cost_gb` for every caller) and carried on the row as `_start_price_gb`,

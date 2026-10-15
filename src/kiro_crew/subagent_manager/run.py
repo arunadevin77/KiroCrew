@@ -34,6 +34,7 @@ from ..tool_permission import (
     SubagentRows,
 )
 from ._component import ManagerComponent
+from .admission.taskq_bridge import _in_memory_queued_entries
 from .admission.types import WINDOW_ENTRY_RECOVERING
 
 if TYPE_CHECKING:
@@ -1426,7 +1427,12 @@ class RunEventCoordinator(ManagerComponent):
         return in_window + self._manager._admission.taskq_overflow(parent_session_key)
 
     def _window_depth(self, parent_session_key: str, *, include_recovering: bool = True) -> int:
-        """Unstarted spawns *parent_session_key* holds in the in-memory window.
+        """Unstarted spawns *parent_session_key* holds in memory.
+
+        The dispatch window and the entries the pump holds while it re-checks
+        them (:func:`_in_memory_queued_entries`): an entry popped for a re-check
+        with no store row is in neither the window nor the store until the gate
+        decides, and it is still waiting to start.
 
         A ``_resume_id`` entry is not one: it is a RESIDENT run asking for its
         lane slot back, already counted where running runs are, and it leaves
@@ -1444,7 +1450,7 @@ class RunEventCoordinator(ManagerComponent):
         resident = self._manager._admission.entry_is_resident_resume
         return sum(
             1
-            for q in self._manager._queue
+            for q in _in_memory_queued_entries(self._manager)
             if q.get("parent_session_key", "") == parent_session_key
             and not resident(q)
             and (include_recovering or not q.get(WINDOW_ENTRY_RECOVERING))
@@ -1477,9 +1483,12 @@ class RunEventCoordinator(ManagerComponent):
         return await self._manager._queued_depth_async(parent_session_key)
 
     def _in_window_count(self, parent_session_key: str) -> int:
-        """This parent's spawns in the in-memory dispatch window."""
+        """This parent's spawns in memory: the dispatch window and the entries
+        the pump holds mid re-check (:func:`_in_memory_queued_entries`)."""
         return sum(
-            1 for q in self._manager._queue if q.get("parent_session_key", "") == parent_session_key
+            1
+            for q in _in_memory_queued_entries(self._manager)
+            if q.get("parent_session_key", "") == parent_session_key
         )
 
     def _has_live_parent_run_task(self, parent_session_key: str, *, exclude_id: str = "") -> bool:
