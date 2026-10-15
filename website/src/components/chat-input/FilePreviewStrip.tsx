@@ -149,10 +149,15 @@ export function FilePreviewStrip({ files, dirs = NO_DIRS, resizedInfo, onRemove,
                 // no scroll lands, so this load signal still refreshes the cue.
                 onLoad={remeasure} />
             </button>
+            {/* Hidden at rest on a hover-capable device, so it must also be
+                revealed on keyboard focus: focus anywhere in the chip (its
+                preview button or this button) shows it, and the house focus
+                ring marks it. Touch devices always show it via the hover:none
+                rule. */}
             {onRemove && (
               <button
                 aria-label={i18nT('components.chatInput.remove')}
-                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-danger text-white text-[12px] flex items-center justify-center opacity-0 group-hover/preview:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity cursor-pointer"
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-danger text-white text-[12px] flex items-center justify-center opacity-0 group-hover/preview:opacity-100 [@media(hover:none)]:opacity-100 group-focus-within/preview:opacity-100 focus-ring-accent transition-opacity cursor-pointer"
                 onClick={() => onRemove(path)} title={i18nT('components.chatInput.remove')}
               ><X className="lucide-inline" /></button>
             )}
