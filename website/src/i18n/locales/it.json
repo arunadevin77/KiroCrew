@@ -11630,7 +11630,7 @@
         "waiting_to_start_queued_behind_the_concurrency_l": "In attesa di avvio — in coda a causa del limite di concorrenza",
         "stop_failed": "Impossibile arrestare il subagente {{name}}",
         "stop_all_failed": "Impossibile arrestare i subagenti",
-        "retry_failed_error": "Impossibile riprovare alcuni subagenti non riusciti"
+        "retry_failed_error": "Impossibile riprovare {{count}} dei subagenti non riusciti"
       },
       "subagentQueued": {
         "low_memory": "in attesa di avvio — richiede {{required}} di memoria libera, ora {{available}} liberi; libera memoria per continuare",

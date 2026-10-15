@@ -5045,7 +5045,7 @@
         "stop_subagent": "Stop subagent {{name}}",
         "stop_failed": "Couldn't stop subagent {{name}}",
         "stop_all_failed": "Couldn't stop the subagents",
-        "retry_failed_error": "Couldn't retry some of the failed subagents"
+        "retry_failed_error": "Couldn't retry {{count}} of the failed subagents"
       },
       "taskProgressBar": {
         "all_tasks_complete": "All tasks complete",

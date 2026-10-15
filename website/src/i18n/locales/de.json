@@ -11466,7 +11466,7 @@
         "waiting_to_start_queued_behind_the_concurrency_l": "Warten auf den Start — in der Warteschlange hinter der Parallelitätsgrenze",
         "stop_failed": "Subagent {{name}} konnte nicht gestoppt werden",
         "stop_all_failed": "Die Subagents konnten nicht gestoppt werden",
-        "retry_failed_error": "Einige fehlgeschlagene Subagents konnten nicht wiederholt werden"
+        "retry_failed_error": "{{count}} der fehlgeschlagenen Subagenten konnten nicht wiederholt werden"
       },
       "subagentQueued": {
         "low_memory": "wartet auf den Start — benötigt {{required}} freien Speicher, aktuell {{available}} frei; gib Speicher frei, um fortzufahren",

@@ -4,6 +4,7 @@ import { Bot, X, AlertTriangle, Loader2, CheckCircle, AlertCircle, Square, Rotat
 import { useAppSelector, useAppDispatch } from '../../store'
 import { openActivityToTab, selectSubagent, sseSubagentDone, isAwaitingSpawnApproval } from '../../store/chatSlice'
 import { api } from '../../api/client'
+import { ApiError } from '../../api/apiError'
 import { sanitizeLlmOutput } from '../../utils/sanitize'
 import ErrorNotice from '../../components/ErrorNotice'
 import { Glass } from '../../components/Glass'
@@ -14,6 +15,25 @@ import { fmtElapsed } from '../../i18n/format'
 import { queuedWaitText } from './subagentQueuedReason'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
 const EMPTY_SUBAGENTS: Record<string, SubagentActivity> = {}
+
+/**
+ * Is a rejected retry a BENIGN, self-caused no-op rather than a failure to
+ * report? The one such case is the backend's `409 retry_superseded`: the run
+ * was already picked up by another retry or a `spawn_continue` (a double-click,
+ * two tabs), so retrying it again would double-run its task — the refusal is
+ * correct and the failed set is already drained. The code travels in the JSON
+ * body `toApiError` keeps on `ApiError.body`; everything else (404 not found,
+ * 429 capacity, 503, an older gateway's codeless 409, a proxy's HTML) counts as
+ * a genuine failure worth a count.
+ */
+function isBenignSupersededRetry(reason: unknown): boolean {
+  if (!(reason instanceof ApiError) || reason.status !== 409) return false
+  try {
+    return (JSON.parse(reason.body) as { code?: unknown }).code === 'retry_superseded'
+  } catch {
+    return false
+  }
+}
 
 /** Max agent rows rendered in the chip — exceptions (stalled/retrying) sort
  *  first, the healthy remainder collapses into a summary row. Bounds chip DOM
@@ -212,14 +232,19 @@ const SubagentProgressBar = memo(function SubagentProgressBar({ slot }: { slot: 
   const retryFailed = useCallback(() => {
     setRetrying(true)
     setActionError(null)
-    // `allSettled` so one refused retry does not abort the rest — but the
-    // rejections are counted, not discarded: a retry that never landed leaves
-    // the card in `error` with the button back at rest, which read as "nothing
-    // happened" rather than "refused".
+    // `allSettled` so one refused retry does not abort the rest. Rejections are
+    // counted, not discarded — but a `409 retry_superseded` is a benign,
+    // self-caused no-op (the run was already picked up, so the failed set is
+    // already drained) and must not read like an outage. Only GENUINE failures
+    // are counted, and the toast carries that count, matching the activityViewer
+    // sibling. An all-benign race shows nothing: there was nothing to report.
     Promise.allSettled(failedIds.map(id => api.spawnRetry(id)))
       .then(results => {
-        if (results.some(r => r.status === 'rejected')) {
-          setActionError(i18nT('pages.chat.subagentProgressBar.retry_failed_error'))
+        const failed = results.filter(
+          r => r.status === 'rejected' && !isBenignSupersededRetry(r.reason),
+        ).length
+        if (failed > 0) {
+          setActionError(i18nT('pages.chat.subagentProgressBar.retry_failed_error', { count: failed }))
         }
       })
       .finally(() => setRetrying(false))

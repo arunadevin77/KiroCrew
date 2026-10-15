@@ -11302,7 +11302,7 @@
         "waiting_to_start_queued_behind_the_concurrency_l": "開始待ち — 同時実行数の上限により待機中",
         "stop_failed": "サブエージェント {{name}} を停止できませんでした",
         "stop_all_failed": "サブエージェントを停止できませんでした",
-        "retry_failed_error": "失敗したサブエージェントの一部を再試行できませんでした"
+        "retry_failed_error": "失敗したサブエージェントのうち {{count}} 件を再試行できませんでした"
       },
       "subagentQueued": {
         "low_memory": "開始待ち — {{required}} の空きメモリが必要です（現在の空き {{available}}）。続行するにはメモリを空けてください",

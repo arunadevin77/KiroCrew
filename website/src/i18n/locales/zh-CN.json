@@ -11302,7 +11302,7 @@
         "waiting_to_start_queued_behind_the_concurrency_l": "等待开始 — 受并发上限限制正在排队",
         "stop_failed": "无法停止子代理 {{name}}",
         "stop_all_failed": "无法停止子代理",
-        "retry_failed_error": "部分失败的子代理无法重试"
+        "retry_failed_error": "有 {{count}} 个失败的子代理无法重试"
       },
       "subagentQueued": {
         "low_memory": "等待开始 — 需要 {{required}} 可用内存，当前可用 {{available}}；请释放内存以继续",

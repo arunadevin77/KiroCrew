@@ -11466,7 +11466,7 @@
         "waiting_to_start_queued_behind_the_concurrency_l": "শুরুর অপেক্ষায় — কনকারেন্সি সীমার পেছনে সারিতে আছে",
         "stop_failed": "সাবএজেন্ট {{name}} থামানো যায়নি",
         "stop_all_failed": "সাবএজেন্টগুলো থামানো যায়নি",
-        "retry_failed_error": "কিছু ব্যর্থ সাবএজেন্ট আবার চালানো যায়নি"
+        "retry_failed_error": "ব্যর্থ সাবএজেন্টের মধ্যে {{count}} টি আবার চালানো যায়নি"
       },
       "subagentQueued": {
         "low_memory": "শুরু হওয়ার অপেক্ষায় — {{required}} ফাঁকা মেমোরি প্রয়োজন, এখন {{available}} ফাঁকা; চালিয়ে যেতে মেমোরি খালি করো",

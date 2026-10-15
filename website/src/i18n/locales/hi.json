@@ -11466,7 +11466,7 @@
         "waiting_to_start_queued_behind_the_concurrency_l": "शुरू होने की प्रतीक्षा — समांतरता सीमा के कारण कतार में",
         "stop_failed": "सबएजेंट {{name}} को रोका नहीं जा सका",
         "stop_all_failed": "सबएजेंट रोके नहीं जा सके",
-        "retry_failed_error": "कुछ विफल सबएजेंट फिर से आज़माए नहीं जा सके"
+        "retry_failed_error": "विफल सबएजेंट में से {{count}} फिर से चलाए नहीं जा सके"
       },
       "subagentQueued": {
         "low_memory": "शुरू होने की प्रतीक्षा — {{required}} खाली मेमोरी चाहिए, अभी {{available}} खाली है; जारी रखने के लिए मेमोरी खाली करो",
