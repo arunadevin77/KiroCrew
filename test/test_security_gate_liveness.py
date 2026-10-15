@@ -335,7 +335,15 @@ def _url_payload_command(n: int) -> str:
 #: Raised again, from 29,293, for the ``engines`` leaf in ``paths.py``: the KAS
 #: engine bundle the gateway installs and later executes joins the file-tool floor
 #: beside ``playwright-cli`` -- one entry and its reason. No matcher moved.
-_PACKAGE_LINE_BUDGET = 29_296
+#:
+#: Raised again, from 29,296, for the hosts-file parse in ``argv_floor.py``
+#: telling apart the two halves of its cache key: a file that moves mid-parse is
+#: still ``"changed"``, while an own-address set the enrichment worker grows
+#: mid-parse hands the table back uncached, so a name absent from an unchanged
+#: file falls through to the DNS layer on the first ssh vet. Nineteen lines, five
+#: of them code and the rest the docstrings that say which half may move and why
+#: each answer stays fail-closed. No rule, threshold or pass moved.
+_PACKAGE_LINE_BUDGET = 29_315
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
