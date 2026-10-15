@@ -67,6 +67,7 @@ has a "not measured" value and an unmeasured field never fires.
 |---|---|---|---|
 | `loop_lag` | how late the controller's own timer fired on the gateway loop | **neither track** for a cap decision (`HOST_ONLY_SIGNALS` for exec, `GATE_IGNORED_SIGNALS` for the gate); reported on the decision and retires slow start | `>= DEFAULT_LAG_DECREASE_MS` (250) |
 | `memory` | `resource_status._read_available_gb` (cgroup-clamped) | **spawn gate only** (`HOST_ONLY_SIGNALS`) | `<= resource_critical_gb` (2 GB); always **severe** |
+| `vram` | `adaptive.gpu_probe.read_gpu` (NVML through the optional `gpu` extra; free memory of the most constrained NVIDIA device, `-1` without a driver) | **spawn gate only** (`HOST_ONLY_SIGNALS`) | `<= vram_critical_gb` (default 0 = off, operator opt-in for a host that serves a local model); always **severe** |
 | `fds` | `/proc/self/fd` or `/dev/fd` count vs `RLIMIT_NOFILE` soft | both tracks | `>= 80 %` of the limit |
 | `procs` | daemon `stats.admission.host_budget` (`procs` / `max_procs`) | both tracks | `>= 90 %` of the budget |
 | `start_latency` | `record_start(duration_ms, ...)` hook (session/new, backend initialize) | both tracks | p95 over the window `>= 30 s` |
@@ -81,11 +82,11 @@ has a "not measured" value and an unmeasured field never fires.
 `exec_corroborated` is two or more of them in one sample: nothing is sufficient
 alone for the execution cap. The spawn gate reads `gate_signals` (the set minus
 `GATE_IGNORED_SIGNALS`, i.e. minus `loop_lag`): `gate_corroborated` is one of
-`GATE_SUFFICIENT_ALONE` (`memory`, `gate_failures`, `gate_slow_inits`) or two
-distinct gate signals, `gate_severe` is memory at the critical line, and
+`GATE_SUFFICIENT_ALONE` (`memory`, `vram`, `gate_failures`, `gate_slow_inits`) or two
+distinct gate signals, `gate_severe` is host or GPU memory at the critical line, and
 `gate_clear_for_increase` is no gate signal with memory at or above the pressure
-line. `corroborated` (which `SUFFICIENT_ALONE` still feeds) only retires slow
-start.
+line and GPU memory at or above `vram_pressure_gb` when set. `corroborated` (which
+`SUFFICIENT_ALONE` still feeds) only retires slow start.
 
 Attributable means a congestion failure: a start or turn that timed out, a
 stall, a backend that never initialised (`controller.ATTRIBUTABLE_MARKERS`).
@@ -250,6 +251,17 @@ test_no_static_host_prediction_sits_under_the_user_ceiling`,
 test_the_climb_is_bounded_by_the_user_ceiling_alone` and
 `test_subagent_sizing.py::TestMemoryIsTheOnlyHostTerm` pin it.
 
+GPU memory is read by the tick itself, and only while
+`vram_pressure_gb` or `vram_critical_gb` is set; with both at 0 NVML is never
+imported. The read goes through `adaptive.gpu_probe` (NVML through the optional
+`gpu` extra, cached for 2 s, the most constrained device, never raising; every
+field `-1` without a driver) on a worker thread of its own, one read at a time. A
+tick waits for it at most `GPU_READ_TIMEOUT_SECS` (1 s): a read still running
+then, or found still running by a later tick, leaves the GPU fields at `-1` (not
+measured) and the rest of the tick goes on, so a stuck NVML call cannot hold up
+the host-memory decisions. `test_adaptive_gpu_probe.py::TestTheTickReadsTheGpu`
+pins it.
+
 This is what makes `max_subagents = 64` on a clear host start at 64, and on a
 host short of memory run however many starts the floor admits, rather than a
 number guessed before the work existed.
@@ -380,7 +392,9 @@ in a subprocess because this suite's `sys.modules` already holds whatever else
 imported it.
 
 Memory thresholds reuse `resource_pressure_gb` / `resource_critical_gb`; they
-shape the spawn gate only. The controller subscribes to all of these (bar the
+shape the spawn gate only. GPU memory thresholds are `vram_pressure_gb` /
+`vram_critical_gb` (both default 0 = off): pressure blocks spawn-gate increases,
+critical is the `vram` signal. The controller subscribes to all of these (bar the
 inert `adaptive_initial`) through `live.watch_object` and
 re-parameterises the policy in place (`update_params`): a lowered ceiling clamps,
 a raised one does not lift the live cap (it is earned), and a mode switch to

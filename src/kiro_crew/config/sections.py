@@ -1995,6 +1995,28 @@ class AgentConfig:
             "at all. Should be <= resource_pressure_gb. 0 disables the critical tier.",
         ),
     )
+    vram_pressure_gb: float = field(
+        default=0.0,
+        metadata=_meta(
+            "GPU Memory Pressure Threshold (GB)",
+            "Free GPU memory (GB, on the most constrained NVIDIA device) below which "
+            "the adaptive controller stops raising the sub-agent spawn gate. Read "
+            "through NVML when the optional 'gpu' extra (nvidia-ml-py) is installed. "
+            "0 (the default) disables the line. Set it, together with "
+            "vram_critical_gb, on a host that serves a local model next to the "
+            "gateway, so concurrently decoding sub-agents cannot fill the card.",
+        ),
+    )
+    vram_critical_gb: float = field(
+        default=0.0,
+        metadata=_meta(
+            "GPU Memory Critical Threshold (GB)",
+            "Free GPU memory (GB) at or below which the spawn gate is cut, the way "
+            "resource_critical_gb cuts it for host memory. Should be <= "
+            "vram_pressure_gb. 0 (the default) disables the line; it never fires on a "
+            "host without an NVIDIA driver.",
+        ),
+    )
     admission_gate: bool = field(
         default=True,
         metadata=_meta(

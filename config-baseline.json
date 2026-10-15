@@ -55,6 +55,8 @@
         "spawn_min_memory_gb": 2.0,
         "resource_pressure_gb": 4.0,
         "resource_critical_gb": 2.0,
+        "vram_pressure_gb": 0.0,
+        "vram_critical_gb": 0.0,
         "admission_gate": true,
         "task_queue_enabled": true,
         "task_dispatch_window": 64,
@@ -814,6 +816,34 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": 2.0
+    },
+    {
+      "path": "agent.vram_pressure_gb",
+      "kind": "core",
+      "type": "number",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "GPU Memory Pressure Threshold (GB)",
+      "help": "Free GPU memory (GB, on the most constrained NVIDIA device) below which the adaptive controller stops raising the sub-agent spawn gate. Read through NVML when the optional 'gpu' extra (nvidia-ml-py) is installed. 0 (the default) disables the line. Set it, together with vram_critical_gb, on a host that serves a local model next to the gateway, so concurrently decoding sub-agents cannot fill the card.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": 0.0
+    },
+    {
+      "path": "agent.vram_critical_gb",
+      "kind": "core",
+      "type": "number",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "GPU Memory Critical Threshold (GB)",
+      "help": "Free GPU memory (GB) at or below which the spawn gate is cut, the way resource_critical_gb cuts it for host memory. Should be <= vram_pressure_gb. 0 (the default) disables the line; it never fires on a host without an NVIDIA driver.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": 0.0
     },
     {
       "path": "agent.admission_gate",
