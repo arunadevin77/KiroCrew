@@ -232,6 +232,59 @@ def test_a_capture_leaves_every_resolver_cache_as_it_found_it(tmp_path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "backend", [ACP_BACKEND_KIRO, ACP_BACKEND_CODEX], ids=["client", "runtime"]
+)
+def test_the_default_home_stays_pinned_while_the_capture_environment_is_installed(
+    backend, monkeypatch, tmp_path
+) -> None:
+    """No instant has the cleared environment installed and the real resolver live.
+
+    The fixed parent carries no ``KIROCREW_HOME``. A thread an earlier test on the
+    same worker left running reads the home when it calls ``config_dir()``, so if
+    the capture installs that environment before pinning the default resolver, or
+    lifts the pin before restoring the environment, such a thread resolves the
+    operator's real ``~/.kiro/crew`` in between. Both edges of the environment
+    patch are probed, because those are the moments a concurrent reader can land.
+    """
+    from unittest import mock
+
+    from kiro_crew.config import paths as config_paths
+
+    assert (backend in capture_mod.RUNTIME_ONLY_BACKENDS) == (backend == ACP_BACKEND_CODEX)
+    real_resolver = config_paths._resolve_default_home
+    exposed: list[str] = []
+
+    def _probe(edge: str) -> None:
+        if "KIROCREW_HOME" not in os.environ and (
+            config_paths._resolve_default_home is real_resolver
+        ):
+            exposed.append(edge)
+
+    original_patch = mock._patch_dict._patch_dict
+    original_unpatch = mock._patch_dict._unpatch_dict
+
+    def _patch(self):
+        result = original_patch(self)
+        if self.in_dict is os.environ:
+            _probe("after the environment was installed")
+        return result
+
+    def _unpatch(self):
+        if self.in_dict is os.environ:
+            _probe("before the environment was restored")
+        return original_unpatch(self)
+
+    monkeypatch.setattr(mock._patch_dict, "_patch_dict", _patch)
+    monkeypatch.setattr(mock._patch_dict, "_unpatch_dict", _unpatch)
+
+    capture_mod.capture(backend, tmp_path)
+
+    assert (
+        exposed == []
+    ), f"the real default-home resolver was live with KIROCREW_HOME absent: {exposed}"
+
+
 def test_the_deepseek_capture_writes_its_scratch_windows_only_under_tmp_path(
     monkeypatch, tmp_path
 ) -> None:
