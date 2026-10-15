@@ -32,6 +32,7 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa:
     _spec_identity,
     _state_for,
 )
+from kiro_crew.testing.wait import until_parked
 
 _SERIALIZED_EFFECTS = (
     "_mutate_index(",  # registers or removes an index entry
@@ -794,16 +795,17 @@ async def test_create_dispatches_its_seed_before_anything_else_can_run(tmp_path,
     client.app["state"] = state
     await client.start_server()
     try:
-        async with routes._turn_lock(dir_key):
+        held = routes._turn_lock(dir_key)
+        async with held:
             post = asyncio.ensure_future(
                 client.post(
                     f"{_BASE}/specs",
                     json={"name": "seeded", "working_dir": str(project), "spec_type": "feature"},
                 )
             )
-            # flake-ok: pre-existing 1 s wait before the no-dispatch check while the turn lock is held, moved verbatim; tracked for a de-flake pass
-            # nosemgrep: kirocrew.test-sleep-as-barrier -- kept verbatim by the test_routes.py split
-            await asyncio.sleep(1.0)
+            # Create has run everything before the lock once it is parked on it,
+            # so the absence below is about the lock, not about how far it got.
+            await until_parked(held, describe=lambda: "create never reached the held turn lock")
             assert dispatched == [], (
                 "create dispatched its seed while the directory's turn lock was held, "
                 "so a concurrent turn could have gone first"

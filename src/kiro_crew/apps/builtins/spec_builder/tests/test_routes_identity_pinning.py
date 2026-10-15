@@ -34,7 +34,7 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa:
     _redirect_state,
     _slot_stub,
 )
-from kiro_crew.testing.wait import async_wait_until
+from kiro_crew.testing.wait import async_wait_until, until_parked
 
 # ── spec_dir revalidation and identity pinning ───────────────────────────────
 
@@ -1254,11 +1254,10 @@ async def test_stop_refuses_a_spec_recreated_at_the_same_path(tmp_path, monkeypa
     client.app["state"] = state
     await client.start_server()
     try:
-        async with routes._turn_lock(dir_key):
+        held = routes._turn_lock(dir_key)
+        async with held:
             stop = asyncio.ensure_future(client.post(f"{_BASE}/specs/s/stop", json={}))
-            # flake-ok: pre-existing 0.75 s barrier while Stop waits on the held turn lock, moved verbatim; tracked for a de-flake pass
-            # nosemgrep: kirocrew.test-sleep-as-barrier -- kept verbatim by the test_routes.py split
-            await asyncio.sleep(0.75)  # let it reach the lock and block there
+            await until_parked(held, describe=lambda: "Stop never reached the held turn lock")
             # The spec is deleted and recreated at the SAME path while Stop waits:
             # same directory, new creation, new slot key.
             index = routes._load_index()

@@ -92,8 +92,7 @@ def _live_state_snapshot() -> dict[str, int]:
 
 
 @pytest.fixture(autouse=True)
-# nosemgrep: kirocrew.test-autouse-shared-monkeypatch -- kept verbatim by the test_routes.py split; no route test calls monkeypatch.undo()
-def _never_touch_the_real_state(monkeypatch, tmp_path):
+def _never_touch_the_real_state(_floor_monkeypatch, tmp_path):
     """Safety net: a test that forgets _redirect_state must still not write to
     the USER's live ~/.kiro/crew/workspace/spec-builder/.
 
@@ -107,10 +106,14 @@ def _never_touch_the_real_state(monkeypatch, tmp_path):
     The decision ledger needs its own watch: it lives under the security keystone's
     ``trust/`` root, OUTSIDE this app's state dir, so the directory comparison above
     cannot see it -- and it holds the user's real recorded answers.
+
+    The redirect goes through ``_floor_monkeypatch``, not the test's shared
+    ``monkeypatch``: a test calling ``monkeypatch.undo()`` reverts every record on
+    that instance, which would put the real paths back for the rest of the test.
     """
     before = _live_state_snapshot()
     before_ledger = _live_decisions_snapshot()
-    _redirect_state(monkeypatch, tmp_path / "_autouse_state")
+    _redirect_state(_floor_monkeypatch, tmp_path / "_autouse_state")
     yield
     assert (
         _live_state_snapshot() == before

@@ -394,16 +394,20 @@ def test_redirect_state_covers_every_path_the_app_writes():
     deleted.json and made their real deleted specs discoverable again.
 
     Enumerated from the module rather than a hand-kept list, so the next file this
-    app learns to write fails here instead of in someone's home directory.
+    app learns to write fails here instead of in someone's home directory. A path
+    still ``None`` counts too: these are bound lazily, and the autouse guard's own
+    redirect is what makes them ``Path`` here, so filtering on ``Path`` alone let a
+    path missing from the redirect stay ``None`` and drop out of the check.
     """
     written = {
         n
         for n, v in backend_namespace().items()
-        if n.endswith("_PATH") and isinstance(v, Path) and n != "SPEC_STATE_PATH"
+        if n.endswith("_PATH") and (v is None or isinstance(v, Path)) and n != "SPEC_STATE_PATH"
     }
     redirected = set(
         re.findall(r'setattr\(routes, "(\w+_PATH)"', inspect.getsource(_redirect_state))
     )
+    assert written, "found no state paths in the backend -- the enumeration has gone blind"
     assert written <= redirected, f"not redirected in tests: {sorted(written - redirected)}"
 
 
