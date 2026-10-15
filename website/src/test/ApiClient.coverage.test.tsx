@@ -1331,9 +1331,9 @@ describe('path encoding', () => {
     expect(call(3).url).toBe('/api/prompts/team/sop%20x')
     await api.steeringFile('project/a b.md')
     expect(call(4).url).toBe('/api/steering/project/a%20b.md')
-    await api.updateSkill('auto/s', '# hi')
+    await api.updateSkill('auto/s', '# hi', 'abc123')
     expect(call(5).url).toBe('/api/skills/auto/s')
-    expect(call(5).body).toEqual({ content: '# hi' })
+    expect(call(5).body).toEqual({ content: '# hi', base_hash: 'abc123' })
   })
 
   it('builds the versioned artifact paths', async () => {

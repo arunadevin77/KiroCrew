@@ -1254,6 +1254,20 @@ def _prompt_audit(op: str, outcome: str, **meta: Any) -> None:
 #: needs no lock: its atomicity is O_EXCL on the open itself.
 _PROMPT_WRITE_LOCK = threading.Lock()
 
+#: Serializes the skill PUT's compare against ``base_hash`` with its write, for
+#: the same reason as the prompt lock: the two are separate filesystem calls.
+#: The pin and inject-on-trigger toggles and pending-candidate approval rewrite
+#: the same SKILL.md, so they take it too; otherwise a write landing between a
+#: PUT's compare and its write would be overwritten with both requests
+#: reporting success.
+_SKILL_WRITE_LOCK = threading.Lock()
+
+
+def _under_skill_write_lock(fn: Any, *args: Any) -> Any:
+    """Run one SKILL.md writer while holding ``_SKILL_WRITE_LOCK``."""
+    with _SKILL_WRITE_LOCK:
+        return fn(*args)
+
 
 def _refuse(op: str, outcome: str, code: str, **meta: Any) -> None:
     """Audit a refused prompt write under the same identifier the response carries.
@@ -2890,10 +2904,14 @@ async def api_skill_pending_approve(request: web.Request) -> web.Response:
             _meta_raw = _detail.get("meta")
             _meta: dict = _meta_raw if isinstance(_meta_raw, dict) else {}
             kind = _detail.get("kind") or _meta.get("kind")
-        if kind == "update":
-            nm = skills.approve_pending_update_checked(slug)
-        else:
-            nm = skills.approve_pending_skill_checked(slug)
+        # Under the skill write lock: an update promotion replaces a live
+        # SKILL.md, so it must not land between a PUT's compare and its write.
+        # The lifecycle bound below archives other skills and stays outside it.
+        with _SKILL_WRITE_LOCK:
+            if kind == "update":
+                nm = skills.approve_pending_update_checked(slug)
+            else:
+                nm = skills.approve_pending_skill_checked(slug)
         if nm:
             # Approving consumes a slot — enforce the bound (archive, never
             # delete). Best-effort; runs in the same off-loop executor job.
@@ -3145,7 +3163,7 @@ async def api_skill_pin(request: web.Request) -> web.Response:
         return web.json_response({"error": "name required"}, status=400)
     try:
         ok = await asyncio.get_running_loop().run_in_executor(
-            discovery_executor(), skills.set_pinned, name, pinned
+            discovery_executor(), _under_skill_write_lock, skills.set_pinned, name, pinned
         )
     except Exception:
         _sel().log_tool_invocation(
@@ -3227,7 +3245,11 @@ async def api_skill_inject_on_trigger(request: web.Request) -> web.Response:
         return web.json_response({"error": "name required", "code": "name_required"}, status=400)
     try:
         ok = await asyncio.get_running_loop().run_in_executor(
-            discovery_executor(), skills.set_inject_on_trigger, name, inject
+            discovery_executor(),
+            _under_skill_write_lock,
+            skills.set_inject_on_trigger,
+            name,
+            inject,
         )
     except Exception:
         _sel().log_tool_invocation(
@@ -3356,7 +3378,64 @@ async def api_skill_detail(request: web.Request) -> web.Response:
         content = body.get("content", "")
         if not content:
             return web.json_response({"error": "content is required"}, status=400)
-        ok = await asyncio.to_thread(skills.update_skill, name, content)
+        # Optional edit base, the same contract as the prompts PUT: the GET
+        # hands out ``hash`` (sha256 of SKILL.md), and an editor that presents
+        # it as ``base_hash`` is refused with 409 ``content_conflict`` when the
+        # file on disk differs from that base. An agent rewrites SKILL.md with
+        # no push to the dashboard, so a save built on an older read would
+        # otherwise silently revert that edit. A PUT without ``base_hash``
+        # writes unconditionally.
+        raw_hash = body.get("base_hash")
+        if raw_hash is not None and (
+            not isinstance(raw_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", raw_hash)
+        ):
+            return web.json_response(
+                {
+                    "error": "base_hash (sha256 of the content the edit was based on) is malformed",
+                    "code": "base_hash_required",
+                },
+                status=400,
+            )
+        base_hash: str | None = raw_hash
+
+        def _compare_and_update() -> str:
+            # Serialized so two dashboard saves cannot both verify the same
+            # base before either writes. A writer outside this process takes
+            # no lock, so the gap between the compare and the write is narrowed
+            # to one thread hop rather than closed.
+            with _SKILL_WRITE_LOCK:
+                if base_hash is not None:
+                    current = skills.load_skill(name)
+                    if current is None:
+                        # An unreadable or refused file cannot be verified
+                        # against the base, so it is not written.
+                        return "not_found"
+                    if hashlib.sha256(current.encode("utf-8")).hexdigest() != base_hash:
+                        return "conflict"
+                return "ok" if skills.update_skill(name, content) else "not_found"
+
+        result = await asyncio.to_thread(_compare_and_update)
+        if result == "conflict":
+            try:
+                _sel().log_tool_invocation(
+                    session_key="",
+                    agent="api",
+                    source="dashboard",
+                    tool_name="api_skill_update",
+                    tool_kind="skill",
+                    outcome="rejected",
+                    metadata={"name": name, "reason": "content_conflict"},
+                )
+            except Exception:  # noqa: BLE001 — never 500 on an audit write
+                logger.debug("Could not audit skill update conflict", exc_info=True)
+            return web.json_response(
+                {
+                    "error": "the skill changed on disk after the edit was started",
+                    "code": "content_conflict",
+                },
+                status=409,
+            )
+        ok = result == "ok"
         try:
             _sel().log_tool_invocation(
                 session_key="",
@@ -3457,7 +3536,14 @@ async def api_skill_detail(request: web.Request) -> web.Response:
             content = content_value
     if content is None:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response({"name": name, "content": content})
+    # ``hash`` is the edit base a PUT presents as ``base_hash``.
+    return web.json_response(
+        {
+            "name": name,
+            "content": content,
+            "hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+    )
 
 
 async def api_skills_create(request: web.Request) -> web.Response:
