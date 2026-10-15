@@ -11,7 +11,6 @@ import asyncio
 import contextlib
 import inspect
 import threading
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -22,7 +21,8 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa:
     _never_touch_the_real_state,
     _redirect_state,
 )
-from kiro_crew.testing.wait import async_wait_until
+from kiro_crew.testing.fixtures import one_pool_thread  # noqa: F401 (fixture)
+from kiro_crew.testing.wait import async_wait_until, default_timeout
 
 # ── abort cleanup spares replacements; status is served reconciled ───────────
 
@@ -136,7 +136,7 @@ async def test_cancelled_persistence_cannot_be_overtaken(tmp_path):
         order.append("write-start")
         loop.call_soon_threadsafe(started.set)
         # A wedge backstop, not an automatic successful release of the writer.
-        if not release.wait(10):
+        if not release.wait(default_timeout()):
             raise TimeoutError("test did not release the persistence worker")
         real_write(payload)
         order.append("write-done")
@@ -164,20 +164,6 @@ async def test_cancelled_persistence_cannot_be_overtaken(tmp_path):
 
     assert order == ["write-start", "write-done"], order
     assert remover.cancelled()  # cancellation still propagates after the drain
-
-
-@pytest.fixture
-def one_pool_thread(event_loop):
-    """Give the test loop a default executor of ONE thread.
-
-    The AutoNudge store write runs on the default executor. A test that waits for
-    it by parking its own wait on that executor (``asyncio.to_thread(event.wait,
-    N)``) takes the only thread the write needs, so the write can only run once
-    the wait gives up. Here that is certain rather than load-dependent: the test
-    passes only if its wait holds no pool thread. The rootdir conftest shuts the
-    executor down at teardown.
-    """
-    event_loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
 
 
 @pytest.mark.asyncio
@@ -421,7 +407,9 @@ async def test_nudge_maintenance_excludes_a_failing_live_remove(tmp_path, monkey
     def _fail_removal(payload):
         if not payload["loops"]:
             write_started.set()
-            release_write.wait(timeout=5)
+            assert release_write.wait(
+                timeout=default_timeout()
+            ), "the test never released the removal write"
             raise OSError("disk unavailable")
         real_write(payload)
 

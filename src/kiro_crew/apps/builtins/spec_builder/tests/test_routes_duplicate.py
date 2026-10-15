@@ -30,7 +30,7 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa:
     _spec_identity,
     _state_for,
 )
-from kiro_crew.testing.wait import async_wait_until
+from kiro_crew.testing.wait import async_wait_until, default_timeout
 
 
 def _stage_identity(path: Path) -> dict[str, int]:
@@ -1075,7 +1075,7 @@ async def test_cancelled_duplicate_finishes_its_published_transaction(tmp_path, 
         result = real_write(*args, **kwargs)
         assert result[0] == ""
         published.set()
-        assert release_write.wait(5), "cancelled transaction was never released"
+        assert release_write.wait(default_timeout()), "cancelled transaction was never released"
         return result
 
     async def _body(_request):
@@ -1233,10 +1233,15 @@ async def test_duplicate_reserves_its_name_before_populating_the_destination(tmp
     real_create = routes._create_spec_doc
     save_started = threading.Event()
     release_save = threading.Event()
+    hold_failures: list[str] = []
 
     def _held_save(*args, **kwargs):
         save_started.set()
-        assert release_save.wait(5), "concurrent create never reached arbitration"
+        if not release_save.wait(default_timeout()):
+            # Raised inside the handler this would surface only as a 500; record it
+            # so the test fails by name below instead.
+            hold_failures.append("the test never released the held save")
+            raise TimeoutError(hold_failures[-1])
         return real_create(*args, **kwargs)
 
     monkeypatch.setattr(routes, "_create_spec_doc", _held_save)
@@ -1265,6 +1270,7 @@ async def test_duplicate_reserves_its_name_before_populating_the_destination(tmp
         create_body = await create.json()
         release_save.set()
         duplicate = await duplicate_request
+        assert not hold_failures, hold_failures[0]
         duplicate_body = await duplicate.json()
     finally:
         release_save.set()

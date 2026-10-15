@@ -30,6 +30,7 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa:
     _noop_await,
     _redirect_state,
 )
+from kiro_crew.testing.wait import default_timeout
 
 # ── handlers offload filesystem work; delete tears down the slot ─────────────
 
@@ -443,6 +444,7 @@ def test_concurrent_tombstone_writes_do_not_lose_deletions(tmp_path, monkeypatch
     release = threading.Event()
     reads: list[str] = []
     attempts: list[str] = []
+    hold_failures: list[str] = []
     bookkeeping = threading.Lock()
 
     class _WatchedLock:
@@ -467,7 +469,8 @@ def test_concurrent_tombstone_writes_do_not_lose_deletions(tmp_path, monkeypatch
                 second_moved.set()
         if first:
             first_parked.set()
-            release.wait(timeout=10)
+            if not release.wait(timeout=default_timeout()):
+                hold_failures.append("the test never released the first writer")
         return current
 
     monkeypatch.setattr(routes, "_INDEX_LOCK", _WatchedLock())
@@ -479,16 +482,19 @@ def test_concurrent_tombstone_writes_do_not_lose_deletions(tmp_path, monkeypatch
     for t in threads:
         t.start()
     try:
-        assert first_parked.wait(timeout=10), "no writer reached its read"
-        assert second_moved.wait(timeout=10), "the second writer neither read nor reached the lock"
+        assert first_parked.wait(timeout=default_timeout()), "no writer reached its read"
+        assert second_moved.wait(
+            timeout=default_timeout()
+        ), "the second writer neither read nor reached the lock"
         # Decide before releasing, so the verdict is about the parked window.
         reads_while_parked = list(reads)
     finally:
         release.set()
         for t in threads:
-            t.join(timeout=10)
+            t.join(timeout=default_timeout())
     for t in threads:
         assert not t.is_alive(), "a tombstone write deadlocked"
+    assert not hold_failures, hold_failures[0]
     assert (
         len(reads_while_parked) == 1
     ), "the second writer read while the first was parked before its write"

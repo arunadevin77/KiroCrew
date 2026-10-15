@@ -8,7 +8,9 @@ fixture on the shared ``monkeypatch``, a promise-sleep, ``waitForTimeout``). Thi
 counts per file only the shapes those patterns miss: patches of ``asyncio.sleep``, the
 ``datetime`` classes or another module's ``time`` binding, ``sys.modules`` evictions,
 raw environment writes, duration bounds, short literal waits, literal listener ports,
-crew-log flush ceilings and unpaused removals, and five frontend shapes (promise-sleeps
+crew-log flush ceilings, unpaused removals, Event waits a test parks on an executor
+(``to_thread(<obj>.wait, ...)`` and ``run_in_executor(<any>, <obj>.wait, ...)``,
+whatever the bound, none included), and five frontend shapes (promise-sleeps
 only in the Electron tests, which the semgrep rule does not read). So no site needs
 both ``# nosemgrep`` and ``# flake-ok``. The tree already holds thousands of these, so
 each file a change touches is held to its own count at the change's merge-base.
@@ -199,6 +201,8 @@ class _Module:
         self.calls: list[ast.Call] = []
         self.asserts: list[ast.Assert] = []
         self.writes: list[ast.AST] = []  # Assign, AugAssign, Delete
+        #: local name -> asyncio name, for ``from asyncio import to_thread as tt``.
+        self.asyncio_names: dict[str, str] = {}
         # One walk; every detector reads these lists instead of walking again.
         stack: list[ast.AST] = [tree]
         while stack:
@@ -216,6 +220,9 @@ class _Module:
                 for alias in node.names:
                     if alias.name in _CLOCK_ATTRS:
                         self.modules[alias.asname or alias.name] = alias.name
+            elif isinstance(node, ast.ImportFrom) and node.module == "asyncio":
+                for alias in node.names:
+                    self.asyncio_names[alias.asname or alias.name] = alias.name
 
     def stdlib_of(self, node: ast.AST) -> str | None:
         """The stdlib module a Name or Attribute names, through this file's aliases."""
@@ -459,6 +466,33 @@ def _k14_unpaused_crew_log_rmtree(module: _Module, source: str) -> Iterable[ast.
             yield node
 
 
+def _is_wait(node: ast.AST) -> bool:
+    return isinstance(node, ast.Attribute) and node.attr == "wait"
+
+
+def _k15_parked_pool_wait(module: _Module) -> Iterable[ast.AST]:
+    """A test parking ``<obj>.wait`` on an executor: ``to_thread(<obj>.wait, ...)`` or
+    ``run_in_executor(<any>, <obj>.wait, ...)``, whatever the bound, none included.
+
+    The parked wait holds a pool thread the code it waits for may need to make the
+    event fire, so a bound only changes how the starvation fails. The callee is matched
+    by its last name, so an aliased module counts too, and a name bound by
+    ``from asyncio import to_thread as tt`` resolves to ``to_thread``. Any ``.wait``
+    counts, which may over-count a little. Known misses: ``functools.partial``, a
+    ``lambda``, a rebound ``w = ev.wait``, a rebound callee (``f = asyncio.to_thread``),
+    ``executor.submit`` and ``getattr``."""
+    for node in module.calls:
+        func = node.func
+        if isinstance(func, ast.Name):
+            callee = module.asyncio_names.get(func.id, func.id)
+        else:
+            callee = func.attr if isinstance(func, ast.Attribute) else ""
+        if callee == "to_thread" and node.args and _is_wait(node.args[0]):
+            yield node
+        elif callee == "run_in_executor" and len(node.args) >= 2 and _is_wait(node.args[1]):
+            yield node
+
+
 #: class -> words one of which every shape of that class contains. A file holding none
 #: is not parsed: each set is deliberately broader than its detector, never narrower.
 PY_TRIGGERS: dict[str, tuple[str, ...]] = {
@@ -470,6 +504,7 @@ PY_TRIGGERS: dict[str, tuple[str, ...]] = {
     "K11-literal-listener-port": ("(",),
     "K13-fixed-flush-ceiling": ("flush",),
     "K14-unpaused-crew-log-rmtree": ("rmtree",),
+    "K15-parked-pool-wait": ("to_thread", "run_in_executor"),
 }
 
 #: class -> detector. K14 also reads the source text.
@@ -482,6 +517,7 @@ PY_DETECTORS: dict[str, Callable[..., Iterable[ast.AST]]] = {
     "K11-literal-listener-port": _k11_literal_listener_port,
     "K13-fixed-flush-ceiling": _k13_fixed_flush_ceiling,
     "K14-unpaused-crew-log-rmtree": _k14_unpaused_crew_log_rmtree,
+    "K15-parked-pool-wait": _k15_parked_pool_wait,
 }
 
 
@@ -889,6 +925,28 @@ PY_CASES: dict[str, tuple[tuple[str, ...], str]] = {
         ),
         "import shutil\ndef test_x():\n    with eager.paused():\n"
         "        shutil.rmtree(crew_log_path('session', sid).parent)\n",
+    ),
+    "K15-parked-pool-wait": (
+        (
+            "import asyncio\nasync def test_x():\n    assert await asyncio.to_thread(ev.wait, 5)\n",
+            "import asyncio\nasync def test_x():\n    await asyncio.to_thread(ev.wait, timeout=2.0)\n",
+            "import asyncio\nasync def test_x():\n    await asyncio.to_thread(self.ev.wait)\n",
+            "import asyncio\nasync def test_x():\n"
+            "    await asyncio.to_thread(ev.wait, default_timeout())\n",
+            "from asyncio import to_thread\nasync def test_x():\n    await to_thread(ev.wait, 5)\n",
+            "from asyncio import to_thread as tt\nasync def test_x():\n    await tt(ev.wait, 5)\n",
+            "import asyncio\nasync def test_x():\n    real = asyncio\n"
+            "    await real.to_thread(ev.wait, 5)\n",
+            "import asyncio\nasync def test_x():\n"
+            "    await asyncio.get_running_loop().run_in_executor(None, started.wait, 5)\n",
+            "async def test_x(loop):\n    await loop.run_in_executor(pool, release.wait)\n",
+        ),
+        # Another callable, a non-blocking read, polling from the loop, a held-side
+        # wait on the code's own thread, and the shape named only in a docstring.
+        "import asyncio\nasync def test_x(loop):\n    'asyncio.to_thread(ev.wait, 5)'\n"
+        "    await asyncio.to_thread(work, 5)\n    await asyncio.to_thread(ev.is_set)\n"
+        "    await loop.run_in_executor(None, work, 5)\n"
+        "    await async_wait_until(ev.is_set)\ndef held():\n    assert ev.wait(5)\n",
     ),
 }
 

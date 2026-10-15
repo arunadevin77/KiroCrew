@@ -34,7 +34,7 @@ from kiro_crew.apps.builtins.spec_builder.tests.routes_helpers import (  # noqa:
     _redirect_state,
     _slot_stub,
 )
-from kiro_crew.testing.wait import async_wait_until, until_parked
+from kiro_crew.testing.wait import async_wait_until, default_timeout, until_parked
 
 # ── spec_dir revalidation and identity pinning ───────────────────────────────
 
@@ -1036,7 +1036,9 @@ async def test_index_and_legacy_runtime_identity_are_captured_under_one_lock(tmp
         load_count += 1
         if load_count == 1:
             snapshot_read.set()
-            assert release_snapshot.wait(timeout=5)
+            assert release_snapshot.wait(
+                timeout=default_timeout()
+            ), "the test never released the snapshot read"
         return index
 
     monkeypatch.setattr(routes, "_load_index", _load_and_pause_once)

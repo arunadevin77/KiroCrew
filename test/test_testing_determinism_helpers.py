@@ -28,6 +28,7 @@ from kiro_crew.testing import clock as clock_mod
 from kiro_crew.testing import ids as ids_mod
 from kiro_crew.testing import wait
 from kiro_crew.testing.clock import DEFAULT_START, ManualClock
+from kiro_crew.testing.fixtures import one_pool_thread  # noqa: F401 (fixture)
 
 pytest_plugins = ("pytester",)
 
@@ -1158,6 +1159,36 @@ class TestLoopHop:
     async def test_the_ceiling_defaults_to_half_the_tests_timeout(self, monkeypatch):
         monkeypatch.setattr(wait, "runner_timeout_secs", 80.0)
         assert wait.LoopHop(asyncio.get_running_loop())._timeout == 40.0
+
+
+class TestOnePoolThreadFixture:
+    @staticmethod
+    async def _second_job_runs_after_the_first() -> tuple[bool, bool]:
+        """Hold the pool's first job, queue a second, release; report what the second saw."""
+        loop = asyncio.get_running_loop()
+        started = threading.Event()
+        release = threading.Event()
+
+        def _held() -> int:
+            started.set()
+            assert release.wait(wait.default_timeout()), "the test never released the first job"
+            return threading.get_ident()
+
+        def _second() -> tuple[int, bool]:
+            return threading.get_ident(), release.is_set()
+
+        first = loop.run_in_executor(None, _held)
+        await wait.async_wait_until(started.is_set, describe=lambda: "the first job never ran")
+        second = loop.run_in_executor(None, _second)
+        release.set()
+        first_thread = await first
+        second_thread, saw_release = await second
+        return first_thread == second_thread, saw_release
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("one_pool_thread")
+    async def test_the_pytest_fixture_installs_it(self):
+        assert await self._second_job_runs_after_the_first() == (True, True)
 
 
 # ── ids ───────────────────────────────────────────────────────────────
