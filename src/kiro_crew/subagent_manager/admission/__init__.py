@@ -14,7 +14,15 @@ mixin over :class:`ManagerComponent` with no state of its own:
 * :mod:`.types` -- the value types (settings, prepared row, claim and defer
   points, capacity reading) and the constants importers read.
 * :mod:`.gate` -- ``spawn_impl``: every policy and capacity check between a
-  request and its row, plus the typed refusal.
+  request and its row, plus the typed refusal. ``_GateMixin`` binds its other
+  members by name from three sibling owners:
+
+  * :mod:`.gate_execution` -- ``resolve_spawn_execution``, the execution a spawn
+    runs under (store, identity, template, app).
+  * :mod:`.gate_pressure` -- the macOS kernel memory-pressure hold.
+  * :mod:`.gate_reporting` -- the done-callback announce (``_safe_announce_impl``,
+    ``_announce_rejection_impl``) and the crew-log pin and entries of a dispatch,
+    a start and a spawn approval prompt.
 * :mod:`.pump` -- stagger, drain and the atomic claim -> dispatch -> register
   -> reservation-release unit (``taskq_claim``, ``claim_and_start``,
   ``release_reservation``, ``_drain_queue_sync_impl`` live together: the

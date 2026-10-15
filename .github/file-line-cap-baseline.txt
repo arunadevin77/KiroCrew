@@ -167,7 +167,6 @@
 3892 src/kiro_crew/slack/interactions.py
 2115 src/kiro_crew/snapshot.py
 4697 src/kiro_crew/subagent.py
-2220 src/kiro_crew/subagent_manager/admission/gate.py
 2464 src/kiro_crew/subagent_manager/admission/taskq_bridge.py
 4774 src/kiro_crew/subagent_manager/run.py
 2594 src/kiro_crew/subagent_persistence.py

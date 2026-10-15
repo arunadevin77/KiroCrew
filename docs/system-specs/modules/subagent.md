@@ -642,7 +642,8 @@ a second input: the kernel's `kern.memorystatus_vm_pressure_level`, read fresh
 on every check through `resource_status.read_memory_pressure_level()`
 (`platform_compat.memory_pressure_level()`, a `sysctlbyname` on the cached libc
 handle; it says once per process, at WARNING, when macOS cannot answer it). This
-section is the one statement of the hold's rules; the code points here.
+section is the one statement of the hold's rules; the code points here. The code is
+`subagent_manager/admission/gate_pressure.py`, and new hold work goes there.
 
 The hold applies (`_memory_pressure_hold`) while all of these are true:
 
@@ -1068,6 +1069,15 @@ Spawns a background agent. Accepted running or queued work returns a stable
 `SubagentInfo`; a legacy in-memory capacity refusal can return `None`. Uses atomic
 `_running_count` to prevent race conditions. `parent_session_key` tracks the
 originating session for completion injection.
+
+The spawn gate is `_GateMixin` in `subagent_manager/admission/gate.py`, which holds
+`spawn_impl` and binds its other members by name from three sibling owners:
+`gate_execution.py` (`resolve_spawn_execution`, the execution a spawn runs under),
+`gate_pressure.py` (the macOS kernel memory-pressure hold) and `gate_reporting.py`
+(the done-callback announce and the crew-log pin and entries of a dispatch, a start
+and a spawn approval prompt). Each owner's member is a module-level function taking
+`self`, so its `__qualname__` is the bare function name and its `__module__` the
+owner; nothing reads either. New work for one of those concerns goes to its owner.
 
 Admission order (`subagent_manager/admission/gate.py::spawn_impl`):
 1. Policy refusals that leave no durable trace: empty task, memory identity,

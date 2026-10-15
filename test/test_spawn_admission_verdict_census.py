@@ -217,7 +217,10 @@ def test_no_capacity_outcome_is_a_refusal() -> None:
     """The capacity outcomes are deferrals by name, and none of the memory or
     posture refusals an older gate wrote can come back."""
     assert all(o.startswith("deferred_") for o in _CAPACITY_OUTCOMES)
-    gate = (_ADMISSION / "gate.py").read_text(encoding="utf-8")
+    gate = "".join(
+        path.read_text(encoding="utf-8")
+        for path in [_ADMISSION / "gate.py", *sorted(_ADMISSION.glob("gate_*.py"))]
+    )
     for retired in ("refused_low_memory", "refused_memory_critical", "deferred_memory_critical"):
         assert retired not in gate, retired
 
