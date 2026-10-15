@@ -14,14 +14,18 @@
  * every retained string renders as TEXT, never HTML.
  */
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { flushSync } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { noteInPlaceResize } from '../hooks/virtualizer/inPlaceResize'
+import { useImeGuard } from '../hooks/useImeGuard'
+import { TOUCH_REPLAY_WINDOW_MS } from './InstantTip'
 import { Check, ChevronRight, Copy, Link2Off, Lock, Shield, TriangleAlert, X } from 'lucide-react'
 import { Trans } from 'react-i18next'
 import type { Element as HastElement, Root as HastRoot, RootContent, Text as HastText } from 'hast'
 import { copyToClipboard } from '../utils/clipboard'
 import ErrorNotice from './ErrorNotice'
 import { api } from '../api/client'
+import { queryClient } from '../api/queryClient'
+import { REDACTION_ALLOWED_HOSTS_QUERY_KEY } from '../api/redactionAllowedHostsQuery'
 import { falsePositiveIssueUrl } from '../prompts/redactionReport'
 import { i18nT } from '../i18n/t'
 import { useLanguageGeneration } from '../i18n/useLanguageGeneration'
@@ -290,6 +294,13 @@ interface RedactionUi {
   triggerRef: React.RefObject<HTMLElement | null>
   toggle: (id: string, trigger: HTMLElement) => void
   close: () => void
+  /** The confirmation a card opened from its hover preview starts on, so the
+   *  preview's action runs through the card's own confirm and nowhere else. */
+  intent: CardIntent | null
+  /** Open card ``id`` (never toggles it shut), optionally armed with one of
+   *  its confirmations; focus returns to ``trigger`` when the card closes. */
+  openCard: (id: string, trigger: HTMLElement, action?: CardIntent['action']) => void
+  clearIntent: () => void
 }
 
 const RedactionUiCtx = createContext<RedactionUi>({
@@ -301,6 +312,9 @@ const RedactionUiCtx = createContext<RedactionUi>({
   triggerRef: { current: null },
   toggle: () => {},
   close: () => {},
+  intent: null,
+  openCard: () => {},
+  clearIntent: () => {},
 })
 
 /** One per rendered reply: holds its records and which card is open. */
@@ -327,7 +341,9 @@ export function RedactionProvider({ credentials, blockedLinks, slotKey, replyKey
     triggerRef.current = null
     el?.focus()
   }, [])
+  const [intent, setIntent] = useState<CardIntent | null>(null)
   const toggle = useCallback((id: string, trigger: HTMLElement) => {
+    setIntent(null)
     setOpenId(cur => {
       if (cur === id) {
         triggerRef.current = null
@@ -337,6 +353,12 @@ export function RedactionProvider({ credentials, blockedLinks, slotKey, replyKey
       return id
     })
   }, [])
+  const openCard = useCallback((id: string, trigger: HTMLElement, action?: CardIntent['action']) => {
+    triggerRef.current = trigger
+    setIntent(action ? { id, action } : null)
+    setOpenId(id)
+  }, [])
+  const clearIntent = useCallback(() => setIntent(null), [])
   // A hold lasts while its card is open: closing it, or opening another card
   // of this reply, lets the reply render from its own records again.
   const holds = useAllowHolds(replyKey)
@@ -353,8 +375,8 @@ export function RedactionProvider({ credentials, blockedLinks, slotKey, replyKey
   const value = useMemo(() => {
     const map = new Map(credentials.map(r => [r.ordinal, r]))
     const first = credentials.length ? Math.min(...credentials.map(r => r.ordinal)) : -1
-    return { credentials: map, firstCredential: first, blockedLinks, slotKey, replyKey, messageTs, coached, openId, triggerRef, toggle, close }
-  }, [credentials, blockedLinks, slotKey, replyKey, messageTs, coached, openId, toggle, close])
+    return { credentials: map, firstCredential: first, blockedLinks, slotKey, replyKey, messageTs, coached, openId, triggerRef, toggle, close, intent, openCard, clearIntent }
+  }, [credentials, blockedLinks, slotKey, replyKey, messageTs, coached, openId, toggle, close, intent, openCard, clearIntent])
   return <RedactionUiCtx.Provider value={value}>{children}</RedactionUiCtx.Provider>
 }
 
@@ -943,6 +965,225 @@ function TerminalAction({ title, note, command, label, primary = true, agentWrit
   )
 }
 
+// ── hover preview ────────────────────────────────────────────────────────
+
+/** How long a mouse rests on a marker before its preview opens, and how long
+ *  the preview stays after the mouse leaves, so it can cross into the panel. */
+export const PREVIEW_OPEN_MS = 300
+export const PREVIEW_CLOSE_MS = 200
+const PREVIEW_MAX_W = 340
+
+/** The controls Tab stops on inside ``root``, in document order. */
+function tabbables(root: ParentNode): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')).filter(el => el.tabIndex >= 0)
+}
+
+/** Focus the control after ``el`` in document order, skipping ``panel``, so Tab
+ *  out of the portalled preview carries on from its marker. */
+function focusAfter(el: HTMLElement, panel: HTMLElement | null): void {
+  const all = tabbables(document).filter(n => !panel?.contains(n))
+  const next = all[all.indexOf(el) + 1]
+  ;(next ?? el).focus()
+}
+
+interface PreviewAnchor { left: number; top: number; below: boolean }
+
+function anchorFor(el: HTMLElement): PreviewAnchor {
+  const r = el.getBoundingClientRect()
+  const below = window.innerHeight - r.bottom >= 160 || r.top < 160
+  return { left: r.left, top: below ? r.bottom + 4 : r.top - 4, below }
+}
+
+/**
+ * The hover/focus preview of one marker. It opens after a mouse rests on the
+ * marker, or at once on keyboard focus; a press (mouse, touch or pen) never
+ * opens it, so a tap still goes straight to the card. It stays hidden while
+ * the marker's card is open, since the card already says everything it says.
+ *
+ * Not `useInstantTip`: that bubble is a `role="tooltip"` hint that closes on
+ * mouse leave and on blur, so the pointer cannot cross into it and focus cannot
+ * reach a button inside it. This panel holds an action, so it keeps a close
+ * delay and lets focus move in. The touch-replay window is the shared one, so
+ * the two cannot drift on what counts as a tap.
+ *
+ * Tab is never taken: it moves on from the marker as it always did. Arrow Down
+ * on the marker moves into the panel's actions when there are any.
+ */
+function useMarkerPreview(cardId: string) {
+  const { openId, openCard } = useRedactionUi()
+  const [open, setOpen] = useState(false)
+  const [anchor, setAnchor] = useState<PreviewAnchor | null>(null)
+  const zoneRef = useRef<HTMLElement | null>(null)
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  // The Tab wraps below go through the shared latch, like every focus trap.
+  const ime = useImeGuard()
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // A press focuses the button too, and on touch that focus lands only after
+  // the tap ends; a focus this soon after a press must not open the preview.
+  const pressedAt = useRef(-Infinity)
+  const shown = open && openId !== cardId
+  const panelId = `${cardId}-preview`
+
+  const cancel = () => clearTimeout(timer.current)
+  const cardOpen = useRef(false)
+  cardOpen.current = openId === cardId
+  const show = useCallback(() => {
+    clearTimeout(timer.current)
+    if (cardOpen.current) return
+    if (zoneRef.current) setAnchor(anchorFor(zoneRef.current))
+    setOpen(true)
+  }, [])
+  const hide = useCallback(() => { clearTimeout(timer.current); setOpen(false) }, [])
+  // An opening card replaces the preview, so it is not waiting behind the
+  // card to reappear when the card closes.
+  useEffect(() => { if (openId === cardId) hide() }, [openId, cardId, hide])
+  /** Focus the marker again without the focus reopening a closed preview. */
+  const refocus = useCallback(() => { pressedAt.current = performance.now(); buttonRef.current?.focus() }, [])
+  const later = (fn: () => void, ms: number) => { clearTimeout(timer.current); timer.current = setTimeout(fn, ms) }
+  useEffect(() => () => clearTimeout(timer.current), [])
+  // Keep the panel on its marker while the transcript scrolls under it, and
+  // close it on Escape pressed anywhere, focus returning to the marker when it
+  // was inside the panel. While focus is on the marker or in the panel the
+  // Escape is caught on the way down and stopped, so a drawer or dialog holding
+  // the transcript stays open and the first Escape closes only the preview. A
+  // preview opened by hover alone closes but lets the Escape through, so it
+  // still reaches the focused composer or dialog it was meant for.
+  useEffect(() => {
+    if (!shown) return
+    const follow = () => { if (zoneRef.current) setAnchor(anchorFor(zoneRef.current)) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const active = document.activeElement
+      const inPanel = !!panelRef.current?.contains(active)
+      if (inPanel || buttonRef.current === active) e.stopPropagation()
+      hide()
+      if (inPanel) refocus()
+    }
+    window.addEventListener('scroll', follow, true)
+    window.addEventListener('resize', follow)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('scroll', follow, true)
+      window.removeEventListener('resize', follow)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [shown, hide, refocus])
+
+  const isMouse = (e: React.PointerEvent) => e.pointerType === 'mouse'
+  const outside = (node: EventTarget | null) => !(node instanceof Node && (panelRef.current?.contains(node) || buttonRef.current?.contains(node)))
+
+  const zoneProps = {
+    onPointerEnter: (e: React.PointerEvent) => { if (isMouse(e)) later(show, PREVIEW_OPEN_MS) },
+    onPointerLeave: (e: React.PointerEvent) => { if (isMouse(e)) later(hide, PREVIEW_CLOSE_MS) },
+    onPointerDown: () => { pressedAt.current = performance.now(); hide() },
+  }
+  const buttonProps = {
+    'aria-describedby': shown ? panelId : undefined,
+    onFocus: (e: React.FocusEvent) => {
+      if (performance.now() - pressedAt.current < TOUCH_REPLAY_WINDOW_MS) return
+      // Focus coming back from the closing card is not a reader arriving.
+      const from = e.relatedTarget
+      if (from instanceof Node && document.getElementById(cardId)?.contains(from)) return
+      show()
+    },
+    onBlur: (e: React.FocusEvent) => { if (outside(e.relatedTarget)) hide() },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (shown && e.key === 'ArrowDown') {
+        const first = panelRef.current ? tabbables(panelRef.current)[0] : undefined
+        if (!first || !ime.claimKey(e)) return
+        e.preventDefault()
+        first.focus()
+      }
+    },
+  }
+  const panelProps = {
+    // A press in the panel keeps focus where it is. Where a click does not
+    // focus the button it lands on (Safari, Firefox on macOS), the marker's
+    // blur would otherwise see no related target and close the panel before
+    // the click arrives.
+    onMouseDown: (e: React.MouseEvent) => e.preventDefault(),
+    onPointerEnter: (e: React.PointerEvent) => { if (isMouse(e)) cancel() },
+    onPointerLeave: (e: React.PointerEvent) => { if (isMouse(e)) later(hide, PREVIEW_CLOSE_MS) },
+    onBlur: (e: React.FocusEvent) => { if (outside(e.relatedTarget)) hide() },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      const items = panelRef.current ? tabbables(panelRef.current) : []
+      if (e.key === 'Tab' && e.shiftKey && document.activeElement === items[0]) {
+        if (!ime.claimKey(e)) return
+        e.preventDefault()
+        buttonRef.current?.focus()
+      } else if (e.key === 'Tab' && !e.shiftKey && document.activeElement === items[items.length - 1]) {
+        if (!ime.claimKey(e)) return
+        e.preventDefault()
+        hide()
+        if (buttonRef.current) focusAfter(buttonRef.current, panelRef.current)
+      }
+    },
+  }
+  /** Hand off to the marker's card, armed with ``action`` when given. */
+  const toCard = (action?: CardIntent['action']) => {
+    hide()
+    const trigger = buttonRef.current
+    if (trigger) openCard(cardId, trigger, action)
+  }
+  return { shown, anchor, panelId, zoneRef, buttonRef, panelRef, zoneProps, buttonProps, panelProps, toCard }
+}
+
+type MarkerPreview = ReturnType<typeof useMarkerPreview>
+
+/**
+ * The preview panel: what was removed, the rule in plain words, and an
+ * actions row. Every action hands off to the marker's card (``toCard``), so
+ * the card's own confirmations and outcomes are the only path that does
+ * anything; the panel never opens, copies or allows on its own.
+ *
+ * ``actions`` is the panel's one extension point: add a button there, wired
+ * through ``preview.toCard(<intent>)`` to the card action it stands for.
+ */
+function PreviewPanel({ preview, title, testId, children, actions }: {
+  preview: MarkerPreview
+  title: string
+  testId: string
+  children: React.ReactNode
+  actions?: React.ReactNode
+}) {
+  // Clamp against the panel's real width, so a short panel near the right
+  // edge stays under its marker instead of moving by the full maximum width.
+  const [width, setWidth] = useState(PREVIEW_MAX_W)
+  useLayoutEffect(() => {
+    const w = preview.panelRef.current?.offsetWidth
+    if (w && w !== width) setWidth(w)
+  }, [preview.shown, preview.anchor, preview.panelRef, width])
+  if (!preview.shown || !preview.anchor) return null
+  const { anchor } = preview
+  return createPortal(
+    <div
+      ref={preview.panelRef}
+      id={preview.panelId}
+      role="dialog"
+      aria-label={title}
+      data-testid={testId}
+      {...preview.panelProps}
+      className="fixed z-[130] w-max rounded-lg border border-border bg-bg-elevated p-2.5 text-[12px] leading-[18px] text-card-fg shadow-lg"
+      style={{
+        maxWidth: `min(${PREVIEW_MAX_W}px, calc(100vw - 16px))`,
+        left: Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8)),
+        top: anchor.below ? anchor.top : undefined,
+        bottom: anchor.below ? undefined : window.innerHeight - anchor.top,
+      }}
+    >
+      <div className="mb-0.5 font-semibold [overflow-wrap:anywhere]">{title}</div>
+      <div data-testid="redaction-preview-body" className="[overflow-wrap:anywhere]">{children}</div>
+      {actions ? (
+        <div role="group" aria-label={i18nT('components.redaction.preview_actions')} data-testid="redaction-preview-actions" className="mt-2 flex flex-wrap gap-2">
+          {actions}
+        </div>
+      ) : null}
+    </div>,
+    document.body,
+  )
+}
+
 // ── credential ───────────────────────────────────────────────────────────
 
 const SESSION_TOKEN_RULES = new Set(['aws_session_token'])
@@ -967,25 +1208,41 @@ function credentialMatched(rule: string): string {
 export function CredentialTag({ ordinal, placeholder }: { ordinal: number; placeholder: string }) {
   useLanguageGeneration()
   const { credentials, firstCredential, openId, toggle } = useRedactionUi()
+  const id = `rx-cred-${ordinal}`
+  const preview = useMarkerPreview(id)
   const record = credentials.get(ordinal)
   if (!record) return <>{placeholder}</>
-  const id = `rx-cred-${ordinal}`
+  const session = SESSION_TOKEN_RULES.has(record.rule)
   return (
     <>
       {record.label}
       <button
         type="button"
+        ref={el => { preview.zoneRef.current = el; preview.buttonRef.current = el }}
         data-testid="credential-tag"
         aria-expanded={openId === id}
         aria-controls={id}
         aria-label={i18nT('components.redaction.cred_tag_aria')}
+        {...preview.zoneProps}
+        {...preview.buttonProps}
         onClick={e => toggle(id, e.currentTarget)}
         className="relative inline-flex min-h-[18px] cursor-pointer items-center gap-1 whitespace-nowrap rounded-[5px] border border-info bg-info-subtle px-1.5 align-[-1px] font-sans text-[11px] leading-4 text-card-fg hover:bg-bg-hover max-[640px]:whitespace-normal [@media(hover:none)]:after:absolute [@media(hover:none)]:after:-inset-[13px] [@media(hover:none)]:after:content-['']"
       >
         <Lock size={12} aria-hidden="true" className="shrink-0" />
-        {i18nT(SESSION_TOKEN_RULES.has(record.rule) ? 'components.redaction.cred_tag_session' : 'components.redaction.cred_tag')}
+        {i18nT(session ? 'components.redaction.cred_tag_session' : 'components.redaction.cred_tag')}
         {ordinal === firstCredential && <span className="text-muted">· {i18nT('components.redaction.cred_why')}</span>}
       </button>
+      <PreviewPanel
+        preview={preview}
+        title={i18nT(session ? 'components.redaction.preview_session_title' : 'components.redaction.preview_cred_title')}
+        testId="credential-preview"
+      >
+        {credentialMatched(record.rule)}
+        <br />
+        {/* The security floor, said instead of offering a reveal: the value
+            was never saved, so nothing here can show it. */}
+        <span data-testid="credential-preview-floor">{i18nT('components.redaction.preview_cred_floor')}</span>
+      </PreviewPanel>
     </>
   )
 }
@@ -1206,14 +1463,18 @@ export function BlockedLinkChip({ domain, placeholder, block }: {
 }) {
   useLanguageGeneration()
   const { blockedLinks, openId, toggle } = useRedactionUi()
+  const id = blockedLinkCardId(domain, block)
+  const preview = useMarkerPreview(id)
   const group = blockedLinksForDomain(blockedLinks, domain)
   if (group.length === 0) return <>{placeholder}</>
-  const id = blockedLinkCardId(domain, block)
   return (
+    <>
     <span
+      ref={preview.zoneRef}
       role="group"
       aria-label={i18nT('components.redaction.link_tag')}
       data-testid="blocked-link-chip"
+      {...preview.zoneProps}
       className="inline-flex min-h-[26px] max-w-full cursor-default flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-warn bg-warn-subtle py-0.5 pl-2 pr-1.5 align-middle text-[12px] leading-5 text-card-fg"
     >
       <Link2Off size={12} aria-hidden="true" className="shrink-0" />
@@ -1221,8 +1482,10 @@ export function BlockedLinkChip({ domain, placeholder, block }: {
       <span className="break-all font-mono text-[12px] text-card-fg [text-box:trim-both_cap_alphabetic]" data-testid="blocked-link-target">{domain}</span>
       <button
         type="button"
+        ref={preview.buttonRef}
         aria-expanded={openId === id}
         aria-controls={id}
+        {...preview.buttonProps}
         onClick={e => toggle(id, e.currentTarget)}
         data-testid="blocked-link-inspect"
         className="relative inline-flex min-h-[18px] cursor-pointer items-center rounded-[5px] border border-warn bg-transparent px-1.5 text-[11px] leading-4 text-card-fg hover:bg-bg-hover [@media(hover:none)]:after:absolute [@media(hover:none)]:after:-inset-[13px] [@media(hover:none)]:after:content-['']"
@@ -1230,6 +1493,59 @@ export function BlockedLinkChip({ domain, placeholder, block }: {
         <span className="[text-box:trim-both_cap_alphabetic]">{i18nT('components.redaction.link_inspect')}</span>
       </button>
     </span>
+    {/* Beside the chip, not inside it: React events bubble out of a portal to
+        its React parent, and a press in the panel must not reach the chip. */}
+    <BlockedLinkPreview preview={preview} domain={domain} group={group} />
+    </>
+  )
+}
+
+/**
+ * What the chip's preview says: the rule in plain words and, for one kept
+ * address, *Open once* through the card's own confirmation. An address that
+ * was not kept says why and offers no way to open it.
+ */
+function BlockedLinkPreview({ preview, domain, group }: { preview: MarkerPreview; domain: string; group: readonly BlockedLink[] }) {
+  const { slotKey } = useRedactionUi()
+  const single = group.length === 1 ? group[0] : null
+  // Offered on the same terms as the card's own button: a kept address, a
+  // rule an allowed host relaxes, and an owner slot to save it against. An
+  // address withheld for a credential stays hidden after any allow, so the
+  // preview does not offer one. The saved state, its Undo and the link to
+  // the Settings list show in the card this hands off to.
+  const allowable = single !== null && single.url !== null && ALLOWABLE_RULES.has(single.rule) && !!slotKey
+  return (
+    <PreviewPanel
+      preview={preview}
+      title={i18nT('components.redaction.preview_link_title', { host: domain })}
+      testId="blocked-link-preview"
+      actions={single?.url != null && (
+        <>
+          <button type="button" className={btnCls} data-testid="blocked-link-preview-open-once" onClick={() => preview.toCard('open')}>
+            {i18nT('components.redaction.link_open_once')}
+          </button>
+          {allowable && (
+            <button type="button" className={btnCls} data-testid="blocked-link-preview-allow" onClick={() => preview.toCard('allow')}>
+              {i18nT('components.redaction.link_allow')}
+            </button>
+          )}
+        </>
+      )}
+    >
+      {single ? (
+        <>
+          {/* A withheld address shows only the withheld sentence: it already
+              gives the reason, and the rule's sentence would repeat it. */}
+          {single.url === null ? (
+            <span data-testid="blocked-link-preview-withheld">
+              {i18nT(single.url_withheld === 'length' ? 'components.redaction.link_withheld_length' : 'components.redaction.link_withheld_credential')}
+            </span>
+          ) : linkReason(single)}
+        </>
+      ) : (
+        i18nT('components.redaction.preview_link_many')
+      )}
+    </PreviewPanel>
   )
 }
 
@@ -1248,13 +1564,29 @@ function MarkedUrl({ url }: { url: string }) {
   )
 }
 
+/**
+ * Refetch the Settings allowed-hosts list after this chat changed it. The
+ * dashboard's queries never go stale on their own, so a list already loaded in
+ * Settings would keep showing the old hosts without this.
+ */
+function refreshAllowedHostsList(): void {
+  void queryClient.invalidateQueries({ queryKey: REDACTION_ALLOWED_HOSTS_QUERY_KEY })
+}
+
 type Confirming = null | 'open' | 'allow'
+/** A card opened from its hover preview, armed with one of its confirmations. */
+export interface CardIntent { id: string; action: Exclude<Confirming, null> }
 type Feedback = null | { kind: 'opened' } | { kind: 'allowed'; workspace: string } | { kind: 'undone' }
 
-function BlockedLinkEntry({ record, showTarget, cardId }: { record: BlockedLink; showTarget: boolean; cardId: string }) {
+function BlockedLinkEntry({ record, showTarget, cardId, armed = null }: { record: BlockedLink; showTarget: boolean; cardId: string; armed?: Confirming }) {
   const { slotKey, replyKey, messageTs, blockedLinks } = useRedactionUi()
   const hold = useAllowHolds(replyKey).get(record.domain)
-  const [confirming, setConfirming] = useState<Confirming>(null)
+  // A confirmation the hover preview armed applies only when this entry
+  // offers that action itself, so the preview can never reach past the card.
+  const [confirming, setConfirming] = useState<Confirming>(() => {
+    if (record.url === null) return null
+    return armed
+  })
   // A card that re-renders after the reply reloads picks its outcome up from
   // the hold, so "Allowed · Undo" stays on screen.
   const [feedback, setFeedback] = useState<Feedback>(() => hold ? (hold.outcome === 'allowed' ? { kind: 'allowed', workspace: hold.workspace } : { kind: 'undone' }) : null)
@@ -1290,6 +1622,7 @@ function BlockedLinkEntry({ record, showTarget, cardId }: { record: BlockedLink;
       // hold keeps this card open over them with its Undo.
       if (replyKey) setAllowHold(replyKey, record.domain, { workspace: res.workspace, records: blockedLinksForDomain(blockedLinks, record.domain), outcome: 'allowed', cardId })
       window.dispatchEvent(new CustomEvent('mc:redaction-hosts-changed', { detail: { slot: slotKey, messageTs } }))
+      refreshAllowedHostsList()
     } catch {
       setError(i18nT('components.redaction.link_allow_failed'))
     }
@@ -1302,6 +1635,7 @@ function BlockedLinkEntry({ record, showTarget, cardId }: { record: BlockedLink;
       setFeedback({ kind: 'undone' })
       if (replyKey && hold) setAllowHold(replyKey, record.domain, { ...hold, outcome: 'undone' })
       if (slotKey) window.dispatchEvent(new CustomEvent('mc:redaction-hosts-changed', { detail: { slot: slotKey, messageTs } }))
+      refreshAllowedHostsList()
       setTimeout(() => setFeedback(null), 1600)
     } catch {
       setError(i18nT('components.redaction.link_undo_failed'))
@@ -1396,7 +1730,7 @@ function BlockedLinkEntry({ record, showTarget, cardId }: { record: BlockedLink;
             {shownFeedback.kind === 'allowed' && (
               <>
                 <button type="button" className={linkBtnCls} data-testid="blocked-link-undo" onClick={() => void undo(shownFeedback.workspace)}>{i18nT('components.redaction.undo')}</button>
-                <a href="/settings/security/redaction" className={`${linkBtnCls} no-underline`}>{i18nT('components.redaction.link_manage')}</a>
+                <a href="/settings/security/redaction" className={`${linkBtnCls} no-underline`} data-testid="blocked-link-manage">{i18nT('components.redaction.link_manage')}</a>
               </>
             )}
           </StatusLine>
@@ -1408,9 +1742,18 @@ function BlockedLinkEntry({ record, showTarget, cardId }: { record: BlockedLink;
 
 function BlockedLinkCard({ id }: { id: string }) {
   useLanguageGeneration()
-  const { blockedLinks } = useRedactionUi()
+  const { blockedLinks, intent, clearIntent } = useRedactionUi()
   const domain = blockedLinkCardDomain(id)
   const group = blockedLinksForDomain(blockedLinks, domain)
+  // The preview's action arms the one entry it named. A card still mounted
+  // (closing, or open already) remounts that entry so the confirm shows.
+  const [armed, setArmed] = useState<{ action: Confirming; n: number }>(() => ({ action: intent?.id === id && group.length === 1 ? intent.action : null, n: 0 }))
+  const mountIntent = useRef(intent)
+  useEffect(() => {
+    if (intent?.id !== id) return
+    if (intent !== mountIntent.current) setArmed(a => ({ action: group.length === 1 ? intent.action : null, n: a.n + 1 }))
+    clearIntent()
+  }, [intent, id, clearIntent, group.length])
   if (group.length === 0) return null
   // The host's distinct blocked links in this reply, in record order: nothing the
   // reply carries ties a chip to one record, so no entry is put first.
@@ -1418,7 +1761,7 @@ function BlockedLinkCard({ id }: { id: string }) {
     <CardShell id={id} title={i18nT('components.redaction.link_title')} testId="blocked-link-card">
       {group.map((record, i) => (
         <div key={i} className={i > 0 ? 'mt-2 border-t border-border pt-2' : undefined}>
-          <BlockedLinkEntry record={record} showTarget={group.length > 1} cardId={id} />
+          <BlockedLinkEntry key={i === 0 ? armed.n : undefined} record={record} showTarget={group.length > 1} cardId={id} armed={i === 0 ? armed.action : null} />
         </div>
       ))}
       <Foot>

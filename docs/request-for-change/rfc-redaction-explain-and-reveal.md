@@ -342,6 +342,58 @@ tapping outside the card or pressing Esc closes it, then restores the user's
 previous focus and scroll position. Every control must provide a touch target
 of at least 44×44 points.
 
+### 4a · A preview before the card
+
+A reader who wants to know why something was removed should not have to open
+a card to find out. Resting the mouse on a lock tag or a Link blocked chip
+shows a small preview after a short delay; focusing the tag or the chip's
+*Inspect* button from the keyboard shows it at once. The preview says what
+was removed and the rule in plain words (the card's *Matched* or *Reason*
+sentence). The marker itself still opens the card, so the preview repeats
+no button for that. It carries an action only where it saves a step:
+
+- **Credential.** No actions. In place of a reveal, the preview states the
+  floor: the value was never saved, so nothing on the page can show it.
+- **Blocked link, address kept.** *Open once*. It opens the card with its own
+  *Open once* confirmation already showing and Cancel focused, so the
+  confirmation is still the only thing that opens anything. When the card
+  would offer *Allow for this host* (a rule an allowed host relaxes, and an
+  owner slot to save it against), the preview offers it beside *Open once*.
+  It opens the card with the card's own allow confirmation showing, and that
+  confirmation alone saves the host. The preview never
+  shows the full address: as in §3, that appears only inside the card, after
+  the reader asks for it.
+- **Blocked link, address withheld.** Only the card's withheld sentence (it
+  looked like a secret, or it was too long to keep), which already gives the
+  reason; nothing offers to open it.
+- **Several links to one host.** A sentence pointing to the card, which lists
+  each one. No actions.
+
+Every action hands off to the card and runs through the card's own controls
+and confirmations; the preview never opens, copies or allows by itself. The
+actions row, shown only when it holds something, is where any later card
+action that earns a shortcut goes, wired the same way.
+
+A press never opens the preview, so on a touch screen, where there is no
+hover, a tap keeps opening the card exactly as before. The preview opens only
+on a pointer whose type is mouse, and a focus that follows a press within the
+same touch-replay window the shared tooltip uses counts as part of the press.
+Tab is never taken: it moves on from the marker as it always did, so a reply
+with many markers costs a keyboard reader no extra stops. Arrow Down on the
+focused marker moves into the preview's actions when there are any, Tab past
+the last one continues to the control after the marker, and Escape closes the
+preview and returns focus to the marker. That Escape is stopped only while
+focus is on the marker or in the preview, so a drawer holding the transcript
+stays open; a preview opened by hover alone closes and lets the Escape reach
+the focused composer or dialog. While the marker's card is open the
+preview stays hidden, because the card already says everything the preview
+would.
+
+The preview is not the shared tooltip primitive: that bubble closes on mouse
+leave and on blur, so neither the pointer nor focus can reach a button inside
+it. Real-device Safari and touch testing is not part of this step; the touch
+rule is covered by jsdom tests and a Chromium touch-emulation run.
+
 ### 5 · Three renderer rules, independent of any UI
 
 1. Do not load an image from agent-written markdown automatically; wait until

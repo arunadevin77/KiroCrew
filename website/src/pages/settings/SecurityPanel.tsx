@@ -15,6 +15,7 @@ import { SettingsSection, SettingsCard, SettingsToggle } from '../../components/
 import Modal from '../../components/Modal'
 import InfoTip from '../../components/InfoTip'
 import { api, ApiError, type DeniedCommandsData, type DeniedCommandRule, type DeniedUserRule, type ArmedFileDeliveryConsent, type CredentialRedactionState, type FileDeliveryConsentStatus, type GovernanceDistributionData, type GovernancePolicyData, type GovernanceScope, type GovernanceScopeDetail, type SecurityPostureData, type TailnetStatusData, type TrustedAppsData, type TrustedRegistriesData, type TrustedRegistryRow } from '../../api/client'
+import { REDACTION_ALLOWED_HOSTS_QUERY_KEY } from '../../api/redactionAllowedHostsQuery'
 import { PostureDisclosureRow, CODE_BASE as POSTURE_CODE_BASE } from './PostureDisclosure'
 import { MobileLoginCard } from './MobileLoginCard'
 
@@ -3144,12 +3145,12 @@ function LayersSection() {
 export function RedactionAllowedHostsCard() {
   const queryClient = useQueryClient()
   const { data, isLoading, error } = useQuery({
-    queryKey: ['redaction-allowed-hosts'],
+    queryKey: REDACTION_ALLOWED_HOSTS_QUERY_KEY,
     queryFn: () => api.redactionAllowedHosts(),
   })
   const revoke = useMutation({
     mutationFn: ({ workspace, host }: { workspace: string; host: string }) => api.redactionRevokeHost(workspace, host),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['redaction-allowed-hosts'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: REDACTION_ALLOWED_HOSTS_QUERY_KEY }),
   })
   const rows = Object.entries(data?.workspaces ?? {}).flatMap(([workspace, hosts]) => hosts.map(host => ({ workspace, host })))
   return (

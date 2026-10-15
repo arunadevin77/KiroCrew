@@ -9829,7 +9829,13 @@
       "term_added": "Comando aggiunto al pannello Terminale — non è stato eseguito nulla.",
       "term_check": "Questo comando l’ha scritto l’agente. Controllalo con attenzione prima di premere Invio.",
       "term_failed": "Impossibile aprire il pannello Terminale.",
-      "undo": "Annulla"
+      "undo": "Annulla",
+      "preview_actions": "Azioni",
+      "preview_cred_floor": "Il valore non è mai stato salvato, quindi qui non può essere mostrato.",
+      "preview_cred_title": "Credenziale rimossa prima del salvataggio",
+      "preview_link_many": "Sono stati bloccati diversi link a questo sito. La scheda elenca ciascuno con il suo motivo.",
+      "preview_link_title": "Link a {{host}} bloccato",
+      "preview_session_title": "Token di sessione rimosso prima del salvataggio"
     },
     "mcpApp": {
       "from_app": "Inviato dall'app {{app}}",
