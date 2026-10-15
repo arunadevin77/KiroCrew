@@ -758,6 +758,33 @@ jobs:
             CRED_VALUE="$val" perl -i -pe 's/\Q$ENV{CRED_VALUE}\E/[REDACTED-CREDENTIAL]/g' claude-review-output.md
           done
 
+      # Turn-budget exhaustion is its own outcome (#13296). A stage stopped at
+      # --max-turns writes a `result` message with subtype `error_max_turns`
+      # and no verdict stamp, so it used to land as the same `review
+      # incomplete` as a hang, a bootstrap fault or a credential error. Read it
+      # from each stage's transcript and hand the steps below one fixed-enum
+      # value. It can only make the lane STRICTER: a spent stage is never a
+      # pass, even beside a stamp. Keep in sync with claude-review.yml.
+      - name: Detect turn-budget exhaustion
+        id: budget
+        if: always() && steps.pr.outputs.obsolete != 'true'
+        env:
+          DISCOVER_EXEC: ${{ steps.discover.outputs.execution_file }}
+          REVIEW_EXEC: ${{ steps.review.outputs.execution_file }}
+        run: |
+          spent=""
+          check_stage() {
+            [ -n "$2" ] && [ -f "$2" ] || return 0
+            hit="$(jq -rs '[ .[] | (if type=="array" then .[] else . end) | select(type=="object" and .type=="result" and .subtype=="error_max_turns") ] | length > 0' "$2" 2>/dev/null)" || hit=""
+            if [ "$hit" = "true" ]; then spent="${spent:+$spent,}$1"; fi
+          }
+          check_stage discovery "${DISCOVER_EXEC:-}"
+          check_stage validation "${REVIEW_EXEC:-}"
+          echo "spent=$spent" >> "$GITHUB_OUTPUT"
+          if [ -n "$spent" ]; then
+            echo "::notice::turn budget spent (error_max_turns) in stage(s): $spent"
+          fi
+
       - name: Post/update summary comment
         id: post
         if: always() && steps.pr.outputs.obsolete != 'true'
@@ -769,6 +796,7 @@ jobs:
           HUMAN_OVERRIDE: ${{ steps.human_override.outputs.active }}
           OVERRIDE_ACTOR: ${{ steps.human_override.outputs.actor }}
           OVERRIDE_SOURCE: ${{ steps.human_override.outputs.source }}
+          BUDGET_SPENT: ${{ steps.budget.outputs.spent }}
         run: |
           set -uo pipefail
           [ -z "${PR:-}" ] && { echo "no PR resolved; skipping comment"; exit 0; }
@@ -780,6 +808,10 @@ jobs:
             else
               kind="clear"; verdict="✅ no blocking findings"
             fi
+          fi
+          # A spent turn budget is its own outcome and never a pass (#13296).
+          if [ -n "${BUDGET_SPENT:-}" ] && [ "$kind" != "blocked" ]; then
+            kind="incomplete"; verdict="⚠️ turn budget spent, needs human review"
           fi
           {
             echo "$MARKER"
@@ -1577,6 +1609,7 @@ jobs:
           HUMAN_OVERRIDE: ${{ steps.human_override.outputs.active }}
           OVERRIDE_ACTOR: ${{ steps.human_override.outputs.actor }}
           PUBLICATION: ${{ steps.post.outputs.publication }}
+          BUDGET_SPENT: ${{ steps.budget.outputs.spent }}
         run: |
           set -uo pipefail
           lane_text="$(printf 'Lane run: %s/%s/actions/runs/%s\n\n<!-- ai-review-fork-lane run=%s -->' \
@@ -1590,6 +1623,17 @@ jobs:
             fi
           fi
           summary="Fork AI review for $HEAD. See the PR comment for details."
+          # A stage stopped at --max-turns reached no whole review: its own
+          # title, never a pass (#13296). A blocking verdict keeps its title
+          # (it already fails). Only a human override, below, replaces this.
+          if [ -n "${BUDGET_SPENT:-}" ] && [ "$title" != "changes requested (blocking)" ]; then
+            case "$BUDGET_SPENT" in
+              discovery | validation | discovery,validation) stage="$BUDGET_SPENT" ;;
+              *) stage="unknown" ;;
+            esac
+            conclusion="failure"; title="turn budget spent, needs human review"
+            summary="The $stage stage stopped at --max-turns (error_max_turns) for $HEAD, so no verdict was reached. A re-run walks into the same cap; a human reviews this diff, or the PR is split."
+          fi
           # The output file proves a verdict was COMPUTED, never that it reached
           # the PR. A slot still holding another head's verdict, or an earlier
           # run's sample for this one, is what every stamp-freshness reader

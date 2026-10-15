@@ -2533,6 +2533,10 @@ still in flight carries an `in_progress` check-run that readiness scores
   well before it, so the timeout exists solely to fail the gate closed on a true
   hang. The Opus lanes sit at 120, because both of their stages share one job and
   the wall therefore bounds their sum.
+- An Opus stage that stops at `--max-turns` (`error_max_turns`) is its own
+  outcome: the lane fails with "turn budget spent, needs human review" instead
+  of the generic "review incomplete", and a spent stage never passes, even beside
+  a verdict stamp. A re-run walks into the same cap.
 
 ### Advisory means advisory, with one exception
 

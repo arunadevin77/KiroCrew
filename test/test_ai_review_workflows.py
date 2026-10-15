@@ -5619,7 +5619,15 @@ class TestOpusTwoStageArchitecture:
             shim = workflow[validate_at:]
             assert "UNTRUSTED EVIDENCE" in shim, lane
             # No interpolation of the discovery transcript into the next prompt.
-            assert "steps.discover.outputs" not in shim, lane
+            # The one later reference is the turn-budget detector's env, which
+            # gets the transcript's PATH and reads it with jq.
+            detect_at = shim.index("      - name: Detect turn-budget exhaustion")
+            detect_end = shim.index("        run: |\n", detect_at)
+            outside = shim[:detect_at] + shim[detect_end:]
+            assert "steps.discover.outputs" not in outside, lane
+            assert re.findall(r"steps\.discover\.outputs\.\w+", shim[detect_at:detect_end]) == [
+                "steps.discover.outputs.execution_file"
+            ], lane
 
     def test_gate_markers_match_what_the_validation_prompt_emits(self) -> None:
         """A typo either side of this contract fails every PR closed, silently."""
@@ -5851,6 +5859,245 @@ class TestOpusTwoStageArchitecture:
         assert "--json-schema" not in _line_containing(workflow, "--allowedTools")
         assert "[OPUS-REVIEWED] $HEAD" in workflow
         assert "[BLOCK-MERGE] $HEAD" in workflow
+
+    def test_a_spent_turn_budget_is_its_own_outcome_in_both_lanes(self) -> None:
+        """A stage stopped at --max-turns must not read as the same generic
+        failure as a hang. Both lanes read `error_max_turns` from BOTH stages'
+        transcripts, and the authoritative step of each lane names it.
+        TestOpusTurnBudgetOutcome executes those steps."""
+        for lane in self.LANES:
+            workflow = _workflow(lane)
+            detect = _step_script(workflow, "Detect turn-budget exhaustion")
+            assert '"error_max_turns"' in detect, lane
+            assert "check_stage discovery" in detect, lane
+            assert "check_stage validation" in detect, lane
+            detect_at = workflow.index("      - name: Detect turn-budget exhaustion")
+            step = workflow[detect_at : workflow.index("        run: |\n", detect_at)]
+            assert "always()" in step, lane
+            assert "steps.discover.outputs.execution_file" in step, lane
+            assert "steps.review.outputs.execution_file" in step, lane
+        gate = "Gate on Opus 5.5 review"
+        finalize = "Finalize check-run (fail closed)"
+        for lane, step_name in (("claude-review.yml", gate), ("fork-opus-review.yml", finalize)):
+            workflow = _workflow(lane)
+            assert "turn budget spent, needs human review" in _step_script(workflow, step_name)
+            at = workflow.index(f"      - name: {step_name}")
+            assert "BUDGET_SPENT: ${{ steps.budget.outputs.spent }}" in workflow[at:], lane
+
+
+#: A transcript whose final `result` message is the one --max-turns writes.
+def _max_turns_transcript(head: str) -> list[dict]:
+    return [
+        {"type": "system", "subtype": "init"},
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": f"[OPUS-DISCOVERY] {head}"}]},
+        },
+        {"type": "result", "subtype": "error_max_turns", "num_turns": 181, "is_error": True},
+    ]
+
+
+class TestOpusTurnBudgetOutcome:
+    """Execute the turn-budget steps of both Opus lanes.
+
+    The bar is one-way: a spent turn budget may only make the lane stricter.
+    So every case that names the budget also asserts the run is NOT a pass,
+    including when a clean `[OPUS-REVIEWED]` stamp sits beside it.
+    """
+
+    LANES = ("claude-review.yml", "fork-opus-review.yml")
+    HEAD = "1234567890abcdef1234567890abcdef12345678"
+
+    def _detect(
+        self, lane: str, tmp_path: Path, discover: object = None, review: object = None
+    ) -> str:
+        bash = _bash()
+        if bash is None or shutil.which("jq") is None:
+            pytest.skip("the detect step needs Bash and jq")
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        env = {"PATH": os.environ.get("PATH", ""), "GITHUB_OUTPUT": str(tmp_path / "out")}
+        for key, payload in (("DISCOVER_EXEC", discover), ("REVIEW_EXEC", review)):
+            if payload is None:
+                env[key] = ""
+                continue
+            path = tmp_path / f"{key}.json"
+            text = payload if isinstance(payload, str) else json.dumps(payload)
+            path.write_text(text, encoding="utf-8")
+            env[key] = str(path)
+        step = tmp_path / "detect.sh"
+        step.write_text(
+            _step_script(_workflow(lane), "Detect turn-budget exhaustion"),
+            encoding="utf-8",
+            newline="\n",
+        )
+        result = subprocess.run(
+            [bash, "-e", str(step)],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=_child_env(env),
+            timeout=60,
+        )
+        assert result.returncode == 0, _proc_log(result)
+        return _github_outputs(tmp_path / "out")["spent"]
+
+    @pytest.mark.parametrize("lane", LANES)
+    def test_detect_names_each_spent_stage(self, lane: str, tmp_path: Path) -> None:
+        spent = _max_turns_transcript(self.HEAD)
+        clean = [{"type": "result", "subtype": "success", "result": "ok"}]
+        assert self._detect(lane, tmp_path / "a", spent, None) == "discovery"
+        assert self._detect(lane, tmp_path / "b", clean, spent) == "validation"
+        assert self._detect(lane, tmp_path / "c", spent, spent) == "discovery,validation"
+        # JSONL transcripts are read the same way as an array.
+        jsonl = "".join(json.dumps(m) + "\n" for m in spent)
+        assert self._detect(lane, tmp_path / "d", jsonl, None) == "discovery"
+
+    @pytest.mark.parametrize("lane", LANES)
+    def test_detect_stays_empty_without_a_top_level_max_turns_result(
+        self, lane: str, tmp_path: Path
+    ) -> None:
+        clean = [{"type": "result", "subtype": "success", "result": "ok"}]
+        # Model text that merely SAYS the subtype is not a transcript record.
+        quoted = [
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": '"subtype": "error_max_turns"'}]},
+            }
+        ]
+        assert self._detect(lane, tmp_path / "a", clean, clean) == ""
+        assert self._detect(lane, tmp_path / "b", None, None) == ""
+        assert self._detect(lane, tmp_path / "c", quoted, None) == ""
+        assert self._detect(lane, tmp_path / "d", "{not json", None) == ""
+
+    def _gate(self, tmp_path: Path, *, budget: str, override: bool = False):
+        bash = _bash()
+        if bash is None:
+            pytest.skip("the gate step needs Bash")
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "claude-review-output.md").write_text(
+            f"No findings.\n[OPUS-REVIEWED] {self.HEAD}\n", encoding="utf-8"
+        )
+        step = tmp_path / "gate.sh"
+        step.write_text(
+            _step_script(_workflow("claude-review.yml"), "Gate on Opus 5.5 review"),
+            encoding="utf-8",
+            newline="\n",
+        )
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HEAD": self.HEAD,
+            "REVIEW_OUTCOME": "success",
+            "ACTOR": "someone",
+            "HUMAN_OVERRIDE": "true" if override else "false",
+            "OVERRIDE_ACTOR": "alice" if override else "",
+            "BUDGET_SPENT": budget,
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
+        }
+        return subprocess.run(
+            [bash, "-e", str(step)],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=tmp_path,
+            env=_child_env(env),
+            timeout=60,
+        )
+
+    @pytest.mark.parametrize("budget", ["discovery", "validation", "discovery,validation", "x"])
+    def test_same_repo_gate_fails_a_spent_budget_even_beside_a_clean_stamp(
+        self, budget: str, tmp_path: Path
+    ) -> None:
+        result = self._gate(tmp_path, budget=budget)
+        assert result.returncode == 1, _proc_log(result)
+        assert "turn budget spent, needs human review" in result.stdout, _proc_log(result)
+        assert "no blocking findings" not in result.stdout
+        summary = (tmp_path / "summary.md").read_text(encoding="utf-8")
+        assert "turn budget spent, needs human review" in summary
+
+    def test_same_repo_gate_unchanged_without_a_spent_budget(self, tmp_path: Path) -> None:
+        clean = self._gate(tmp_path / "clean", budget="")
+        assert clean.returncode == 0, _proc_log(clean)
+        # A human override outranks every model outcome.
+        overridden = self._gate(tmp_path / "override", budget="discovery", override=True)
+        assert overridden.returncode == 0, _proc_log(overridden)
+
+    def _finalize(self, tmp_path: Path, *, budget: str, block: bool = False) -> list[str]:
+        bash = _bash()
+        if bash is None:
+            pytest.skip("the finalize step needs Bash")
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        calls = tmp_path / "patch-argv.txt"
+        # Stubs through BASH_ENV, as in test_ai_review_workflows_fork_verdict.py:
+        # Git for Windows' bash would shadow a PATH stub.
+        stubs = tmp_path / "stubs.sh"
+        stubs.write_text(
+            "gh() {\n"
+            '  if [ "$3" = "PATCH" ]; then printf \'%s\\n\' "$@" >> "$STUB_CALLS"; fi\n'
+            "  return 0\n"
+            "}\n"
+            "sleep() { :; }\n"
+            "jq() { :; }\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        body = f"[OPUS-REVIEWED] {self.HEAD}\n"
+        if block:
+            body = f"[BLOCK-MERGE] {self.HEAD}\n" + body
+        (tmp_path / "claude-review-output.md").write_text(body, encoding="utf-8")
+        step = tmp_path / "finalize.sh"
+        step.write_text(
+            _step_script(_workflow("fork-opus-review.yml"), "Finalize check-run (fail closed)"),
+            encoding="utf-8",
+            newline="\n",
+        )
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": tmp_path.as_posix(),
+            "BASH_ENV": stubs.as_posix(),
+            "STUB_CALLS": calls.as_posix(),
+            "GH_TOKEN": "stub-token",
+            "REPO": "example/repo",
+            "PR": "",
+            "HEAD": self.HEAD,
+            "CHECK_ID": "4242",
+            "WR_RUN_ID": "900",
+            "WR_RUN_ATTEMPT": "1",
+            "GITHUB_SERVER_URL": "https://github.com",
+            "GITHUB_RUN_ID": "5551",
+            "HUMAN_OVERRIDE": "false",
+            "OVERRIDE_ACTOR": "",
+            "PUBLICATION": "published",
+            "BUDGET_SPENT": budget,
+        }
+        result = subprocess.run(
+            [bash, "-e", str(step)],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=tmp_path,
+            env=_child_env(env),
+            timeout=60,
+        )
+        assert result.returncode == 0, _proc_log(result)
+        return calls.read_text(encoding="utf-8").splitlines()
+
+    def test_fork_finalize_titles_a_spent_budget_and_never_passes_it(self, tmp_path: Path) -> None:
+        argv = self._finalize(tmp_path / "spent", budget="discovery")
+        assert "conclusion=failure" in argv, argv
+        assert "output[title]=Opus 5.5 Review — turn budget spent, needs human review" in argv
+        assert any("discovery stage stopped at --max-turns" in a for a in argv), argv
+
+    def test_fork_finalize_unchanged_without_a_spent_budget(self, tmp_path: Path) -> None:
+        argv = self._finalize(tmp_path / "clean", budget="")
+        assert "conclusion=success" in argv, argv
+        assert "output[title]=Opus 5.5 Review — no blocking findings" in argv
+        # A blocking verdict keeps its own, more specific title.
+        argv = self._finalize(tmp_path / "block", budget="validation", block=True)
+        assert "conclusion=failure" in argv, argv
+        assert "output[title]=Opus 5.5 Review — changes requested (blocking)" in argv
 
 
 _CAPTURE_HEAD = "5bba265fbfef8cefb032663993213772debf8c6c"
