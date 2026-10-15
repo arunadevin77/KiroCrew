@@ -95,6 +95,7 @@ from kiro_crew.agent_spec_format import (  # noqa: F401
     NATIVE_SKILL_ALIAS_PREFIX,
     SKILL_VIEW_PROJECTION_CEILING,
     is_agent_spec_name,
+    shadowed_markdown_specs,
 )
 from kiro_crew.agents_janitor import sweep_agents_dir  # noqa: F401
 from kiro_crew.atomic_write import atomic_write
@@ -510,6 +511,19 @@ def _doctor_effective_model(cfg: KiroCrewConfig, project_dir: str, issues: list[
             "               Sessions still start, but the model tier above cannot tell which file"
         )
         print("               pins the model. Rename or remove one of the two files.")
+    # A ``<stem>.md`` beside its ``<stem>.json`` twin is never read: the JSON
+    # wins. The roster says so in the gateway log only, and an author who edited
+    # the markdown copy runs doctor to learn why the agent did not change.
+    shadowed = shadowed_markdown_specs(agents_dir)
+    if shadowed:
+        print(
+            f"  shadowed:    ⚠  {len(shadowed)} markdown agent file(s) ignored beside a .json twin:"
+        )
+        for hidden_md in shadowed:
+            print(
+                f"                 {render._safe_display(str(hidden_md))}"
+                f" ({render._safe_display(hidden_md.stem + '.json')} wins)"
+            )
 
     # Self-check: the marked tier must be what the resolver actually returned.
     if decided_value != effective:

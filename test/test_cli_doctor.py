@@ -2843,6 +2843,37 @@ class TestEffectiveModelSection:
         assert "custom-agent.json" not in out
         assert issues == []
 
+    def test_markdown_specs_shadowed_by_a_json_twin_are_listed(self, capsys) -> None:
+        """A ``<stem>.md`` beside ``<stem>.json`` is never read; the roster says
+        so only in the gateway log, so doctor lists every such file, one line
+        per twin, for any agent in the directory -- not just the bound one."""
+        self._install_spec(None)
+        agents_dir = self._agents_dir()
+        for stem in ("alpha", "beta"):
+            (agents_dir / f"{stem}.json").write_text(json.dumps({"name": stem}), encoding="utf-8")
+            (agents_dir / f"{stem}.md").write_text(f"---\nname: {stem}\n---\n", encoding="utf-8")
+        # A markdown agent with no JSON twin is live, not shadowed.
+        (agents_dir / "solo.md").write_text("---\nname: solo\n---\n", encoding="utf-8")
+        issues: list[str] = []
+
+        cli_doctor._doctor_effective_model(self._cfg("auto"), "", issues)
+
+        out = capsys.readouterr().out
+        assert "shadowed:    \u26a0  2 markdown agent file(s) ignored beside a .json twin:" in out
+        assert f"{str(agents_dir / 'alpha.md')!r} ('alpha.json' wins)" in out
+        assert f"{str(agents_dir / 'beta.md')!r} ('beta.json' wins)" in out
+        assert out.index("alpha.md") < out.index("beta.md")
+        assert "solo.md" not in out
+        assert issues == [], "a shadowed twin is a notice, not a doctor failure"
+
+    def test_no_shadowed_line_without_a_twin(self, capsys) -> None:
+        self._install_spec(None)
+        (self._agents_dir() / "solo.md").write_text("---\nname: solo\n---\n", encoding="utf-8")
+
+        cli_doctor._doctor_effective_model(self._cfg("auto"), "", [])
+
+        assert "shadowed:" not in capsys.readouterr().out
+
     def test_a_bound_agent_with_no_spec_is_reported_as_missing(self, capsys) -> None:
         self._install_spec(None)
         cfg = self._bind_custom_agent(self._cfg("auto"), "custom-agent")
