@@ -121,8 +121,9 @@ override an explicit user choice. When automatic provider backfill changes
 activation snapshot before clearing fallback state. This prevents an automatic
 fallback selection from becoming a persistent user pin.
 
-`TestRunChatModelFallback` and `TestSlotProbeWrapsSharedRestoreBody` in
-`test/test_dashboard_chat.py`, together with the restore tests in
+`TestRunChatModelFallback` in `test/test_dashboard_chat.py` and
+`TestSlotProbeWrapsSharedRestoreBody` in `test/test_dashboard_chat_model_pick.py`,
+together with the restore tests in
 `test/test_llm_helpers.py`, pin the stale-record, explicit-pick, and backfill
 invariants.
 

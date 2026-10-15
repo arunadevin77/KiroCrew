@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from unittest.mock import MagicMock
 
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_app, _make_state
 
@@ -723,3 +725,116 @@ class TestChunkCleanup:
         assert sum(1 for m in slot.messages if m["role"] == "chunk") == 0
         assert slot.messages[-1]["role"] == "assistant"
         assert slot.messages[0]["role"] == "user"
+
+
+class TestSlotsGetWarmsGitLabAllowlist:
+    """GET /api/chat/slots warms the self-managed GitLab allowlist first.
+
+    Slot source-link extraction is synchronous and cannot load the allowlist, so
+    a cold direct GET (no WebSocket yet) would serialize against the empty
+    snapshot and omit every configured self-hosted MR chip. The WS path has its
+    own test; this pins the direct-fetch path, which is a separate entry point.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cold_get_returns_the_authorized_self_hosted_link(self, monkeypatch) -> None:
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from kiro_crew.dashboard.chat_handlers import api_chat_slots
+        from kiro_crew.dashboard.handlers import source_providers as sp
+
+        url = "https://gitlab.acme.internal/team/api/-/merge_requests/7"
+        order: list[str] = []
+
+        # Cold snapshot: nothing has loaded the allowlist yet.
+        monkeypatch.setattr(sp, "_gitlab_hosts_snapshot", frozenset())
+        monkeypatch.setattr(sp, "_gitlab_hosts_loaded_at", 0.0)
+        monkeypatch.setattr(sp, "_gitlab_hosts_generation", 0)
+
+        async def fake_ensure() -> frozenset:
+            order.append("ensure")
+            sp._publish_provider_hosts(frozenset({"gitlab.acme.internal"}), frozenset())
+            return frozenset({"gitlab.acme.internal"})
+
+        monkeypatch.setattr(sp, "ensure_gitlab_hosts_loaded", fake_ensure)
+        monkeypatch.setattr(sp, "schedule_check_refresh", lambda *a, **k: [])
+
+        state = MagicMock()
+        slot = _ChatSlot("s1")
+        slot.append("assistant", f"Opened {url}", ts="t1")
+
+        def serialize(**_kwargs):
+            order.append("serialize")
+            return [slot.to_dict()]
+
+        state.serialize_slots.side_effect = serialize
+
+        @web.middleware
+        async def dashboard_auth_marker(request, handler):
+            request["app"] = ""
+            request["user"] = ""
+            return await handler(request)
+
+        app = web.Application(middlewares=[dashboard_auth_marker])
+        app["state"] = state
+        app.router.add_get("/api/chat/slots", api_chat_slots)
+
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/chat/slots")
+            assert resp.status == 200
+            payloads = await resp.json()
+
+        # Warm-up strictly precedes serialization, and the authorized MR is a link.
+        assert order[:2] == ["ensure", "serialize"]
+        links = [link["url"] for p in payloads for link in p.get("source_links", [])]
+        assert url in links
+
+
+class TestSourceLinkUrlsExcludeIssues:
+    """The chip-status sweep reaches `gh pr view`, which has no meaning for an
+    issue. Issue links must be filtered out before scheduling, not merely
+    refused downstream, so a session that mentions only issues never generates
+    provider work at all."""
+
+    def test_state_sweep_skips_issue_links(self, tmp_path):
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("source")
+        pr = "https://github.com/acme/widgets/pull/12"
+        slot.append("assistant", f"{pr} and https://github.com/acme/widgets/issues/13")
+
+        assert state.source_link_urls() == [pr]
+        assert state.source_link_urls_for_slot("source") == [pr]
+
+    @pytest.mark.asyncio
+    async def test_slots_get_schedules_only_change_links(self, tmp_path, monkeypatch):
+        from kiro_crew.dashboard.handlers import source_providers as sp
+
+        scheduler = MagicMock(return_value=[])
+        monkeypatch.setattr(sp, "schedule_check_refresh", scheduler)
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        state.owner_id = "U_OWNER"
+        slot = state.get_or_create_slot("source")
+        pr = "https://github.com/acme/widgets/pull/12"
+        slot.append("assistant", f"{pr} and https://github.com/acme/widgets/issues/13")
+
+        app = _make_app(state)
+
+        @web.middleware
+        async def owner_auth(request, handler):
+            request["user"] = "U_OWNER"
+            request["app"] = ""
+            return await handler(request)
+
+        app.middlewares.append(owner_auth)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/chat/slots")
+            assert resp.status == 200
+            payload = await resp.json()
+
+        # Both links are serialized for the sidebar...
+        links = next(item for item in payload if item["key"] == "source")["source_links"]
+        assert len(links) == 2
+        # ...but only the pull request is scheduled for a status read.
+        assert scheduler.call_args.args[0] == [pr]

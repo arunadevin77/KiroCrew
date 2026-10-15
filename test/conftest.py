@@ -1168,7 +1168,7 @@ def _restore_autonudge_singleton():
     that starts the service (or drives a dashboard handler that does) leaves a live
     instance behind, holding timer TASKS created on that test's event loop. Every later
     test in the same worker then reaches those tasks through the singleton, on a loop that
-    has since closed — which is how `test_dashboard_chat.py`'s
+    has since closed — which is how `test_dashboard_chat_session_authority.py`'s
     ``TestCloseBroadcastDurability`` came to answer 500 with no production-code change,
     from a leak in a file that has nothing to do with it.
 

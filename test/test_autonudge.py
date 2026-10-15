@@ -1344,7 +1344,7 @@ class TestATimerOutlivesItsEventLoop:
     ``Task.cancel`` schedules through ``loop.call_soon``, so cancelling such a task raises
     ``RuntimeError: Event loop is closed``. That escaped ``remove``/``remove_sync`` and the
     dashboard handler above it answered **500** — which is how a leak in one test file
-    surfaced as a failure in ``test_dashboard_chat.py``'s ``TestCloseBroadcastDurability``,
+    surfaced as a failure in ``test_dashboard_chat_session_authority.py``'s ``TestCloseBroadcastDurability``,
     with no production-code change and nothing in that file to blame.
     """
 

@@ -824,7 +824,7 @@ one scope down:
   a test that starts the service — or drives a dashboard handler that does — leaves a live
   instance holding timer TASKS created on that test's event loop. Every later test in the
   same worker then reaches those tasks through the singleton on a loop that has since
-  closed, which is how `test_dashboard_chat.py`'s `TestCloseBroadcastDurability` came to
+  closed, which is how `test_dashboard_chat_session_authority.py`'s `TestCloseBroadcastDurability` came to
   answer 500 from a leak in an unrelated file. Restored rather than blamed, for the same
   reason the CWD restore is: production really does publish this singleton. The teardown
   retires the leaked instance's timers through `_cancel_timer`, which is the one place

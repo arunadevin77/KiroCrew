@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -715,3 +716,113 @@ class TestHistoryKeyFor:
         from kiro_crew.dashboard.chat import _history_key_for
 
         assert _history_key_for("chat-1-100") == "dashboard:chat-1-100"
+
+
+class TestHistoryResumeInterruptedTurnMarker:
+    """The History resume endpoint shares the startup restore's marker handling."""
+
+    @staticmethod
+    def _saved_state(tmp_path, monkeypatch, name: str, rows: list[tuple], generation: int):
+        from kiro_crew.dashboard.chat_persistence import _save_slot_to_history
+
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot(name)
+        for row in rows:
+            slot.append(*row[:3], meta=row[3] if len(row) > 3 else None)
+        slot._turn_in_flight_generation = generation
+        assert _save_slot_to_history(state, slot, force=True)
+        del state._slots[slot.key]
+        return state
+
+    @pytest.mark.asyncio
+    async def test_resume_reconciles_partial_assistant_and_tool_tail(self, tmp_path, monkeypatch):
+        state = self._saved_state(
+            tmp_path,
+            monkeypatch,
+            "resume-interrupted",
+            [
+                ("user", "inspect it", "msg msg-u"),
+                ("assistant", "partial result", "msg msg-a"),
+                ("tool", "read complete", "tool", {"done": True}),
+            ],
+            generation=18,
+        )
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            response = await client.post(
+                "/api/chat/slots/resume-interrupted/resume",
+                json={"key": "dashboard:resume-interrupted"},
+            )
+            payload = await response.json()
+
+        assert response.status == 200
+        restored = state.get_slot("resume-interrupted")
+        assert restored is not None
+        assert restored.to_dict()["interrupted"] is True
+        assert restored.messages[-1]["meta"]["kind"] == "gateway_restart_interruption"
+        # The paging cursor counts the recovered row, so the next older page
+        # starts where this response's rows end.
+        assert payload["total"] == 4
+        assert payload["messages"][-1]["role"] == "error"
+        assert payload["next_before"] == 0
+        assert payload["has_more"] is False
+
+    @pytest.mark.asyncio
+    async def test_resume_preserves_a_deliberate_stop(self, tmp_path, monkeypatch):
+        state = self._saved_state(
+            tmp_path,
+            monkeypatch,
+            "resume-stopped",
+            [
+                ("user", "inspect it", "msg msg-u"),
+                ("system", "Stopped", json.dumps({"kind": "stop_event"})),
+            ],
+            generation=19,
+        )
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            response = await client.post(
+                "/api/chat/slots/resume-stopped/resume",
+                json={"key": "dashboard:resume-stopped"},
+            )
+            payload = await response.json()
+
+        assert response.status == 200
+        restored = state.get_slot("resume-stopped")
+        assert restored is not None
+        assert restored.to_dict()["interrupted"] is False
+        assert all(
+            (m.get("meta") or {}).get("kind") != "gateway_restart_interruption"
+            for m in restored.messages
+        )
+        assert payload["total"] == 2
+
+    @pytest.mark.asyncio
+    async def test_resume_ignores_a_malformed_boolean_marker(self, tmp_path, monkeypatch):
+        state = self._saved_state(
+            tmp_path,
+            monkeypatch,
+            "resume-malformed",
+            [("user", "hi", "msg msg-u"), ("assistant", "complete", "msg msg-a")],
+            generation=0,
+        )
+        assert state.conversation_log is not None
+        state.conversation_log.update_metadata(
+            "dashboard:resume-malformed", {"turn_in_flight_generation": True}
+        )
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            response = await client.post(
+                "/api/chat/slots/resume-malformed/resume",
+                json={"key": "dashboard:resume-malformed"},
+            )
+
+        assert response.status == 200
+        restored = state.get_slot("resume-malformed")
+        assert restored is not None
+        assert restored.to_dict()["interrupted"] is False
+        assert all(
+            (m.get("meta") or {}).get("kind") != "gateway_restart_interruption"
+            for m in restored.messages
+        )
