@@ -243,7 +243,7 @@ class TestOrphanedChildrenOnlyReportsChildrenOfTerminalParents:
 class TestFairFetchHonoursThePerLaneCap:
     """``fetch_dispatchable_fair``'s ``WHERE lane_rank<=?`` is the per-lane cap.
 
-    ``taskq_bridge`` passes ``per_lane_limit=1``, which is what stops one busy
+    ``taskq_bridge_window`` passes ``per_lane_limit=1``, which is what stops one busy
     lane from filling a dispatch batch on its own. No test passed the argument at
     all before this pin, so widening the comparison changed nothing observable.
 
