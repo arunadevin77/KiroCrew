@@ -16532,7 +16532,7 @@
         "turn_time_limit_hint": "Un turno que llega a este límite se detiene y conserva el trabajo ya escrito en disco; reanúdalo para continuar. Súbelo para turnos largos sin supervisión, como suites de pruebas completas. Se aplica desde el siguiente turno.",
         "failed_to_save_compaction_wait_budget": "No se pudo guardar el tiempo de espera de compactación",
         "failed_to_save_turn_time_limit": "No se pudo guardar el límite de tiempo por turno",
-        "kiro_harness_fallback_body": "En los harnesses Kiro CLI y kiro-agent, los fallbacks por modelo que gestionas en app.kiro.dev se ejecutan dentro del harness. Los fallbacks de abajo son propios de {{productName}} y se aplican además de ellos.",
+        "kiro_harness_fallback_body": "Al usar un harness de Kiro, los fallbacks que gestionas en app.kiro.dev se ejecutan dentro del harness. Los fallbacks de abajo son propios de {{productName}} y se aplican además de ellos.",
         "kiro_harness_fallback_link": "Gestionar fallbacks de Kiro",
         "kiro_harness_fallback_title": "Los fallbacks del harness de Kiro se aplican primero"
       },
