@@ -314,6 +314,10 @@ class TestAttributeValuesAreBounded:
             "adaptive/controller.py",
             "dashboard/session_health.py",
             "taskq/store.py",
+            "taskq/store_vocab.py",
+            "taskq/store_events.py",
+            "taskq/store_waits.py",
+            "taskq/store_reads.py",
             "recovery/ladder.py",
         ],
     )

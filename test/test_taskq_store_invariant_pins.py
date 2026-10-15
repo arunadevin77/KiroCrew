@@ -1,8 +1,9 @@
 """Mutation pins for the load-bearing lines in ``taskq.store`` that carried no test.
 
-Five lines in ``kiro_crew.taskq.store`` carry invariants that no other test
-observes: delete any one of them and the whole suite stays green. This file pins
-those five -- the reachable ones, whose silent removal loses or double-runs work.
+Five lines in ``kiro_crew.taskq.store``'s ``store_waits`` and ``store_reads`` owners
+carry invariants that no other test observes: delete any one of them and the whole
+suite stays green. This file pins those five -- the reachable ones, whose silent
+removal loses or double-runs work.
 Lines whose invariant is unreachable are deliberately left unpinned, because a
 pin on an unreachable line freezes dead code instead of protecting behaviour.
 
@@ -15,9 +16,9 @@ red under three mutations, not one:
 3. the HEALTHY side asserted -- under a satisfied fence the write COMMITS and the
    row moves.
 
-Every class below carries all three. Each was verified by applying the audit's own
-mutation to ``store.py`` and observing this file red; the counts are in the PR
-description.
+Every class below carries all three. Each is verified by applying the audit's own
+mutation to its line in ``store_waits.py`` / ``store_reads.py`` and observing this file
+red; the counts are in the PR description.
 """
 
 from __future__ import annotations

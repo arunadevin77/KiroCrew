@@ -26,9 +26,9 @@ superseded-by: []
   and the linked module specifications they reference. The delivery plan below
   is the pre-merge record.
 - Names in this design versus code. Several sections below use design names
-  that the code does not carry. `taskq/` holds `store.py`, `model.py`,
-  `lanes.py`, `migrate.py`, `reconcile.py`, `waits.py`, `dependency.py` and
-  `adapters/`; there is no `taskq/state.py`, `scheduler.py`, `budget.py`,
+  that the code does not carry. `taskq/` holds `store.py` (with its `store_*`
+  owners), `model.py`, `lanes.py`, `migrate.py`, `reconcile.py`, `waits.py`,
+  `dependency.py` and `adapters/`; there is no `taskq/state.py`, `scheduler.py`, `budget.py`,
   `controller.py` or `recovery.py`. The shipped homes are:
 
   | Design name | Shipped as |
