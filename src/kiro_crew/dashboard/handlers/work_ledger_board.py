@@ -232,6 +232,22 @@ def _redact_deep(value: Any) -> Any:
     return value
 
 
+def task_records(
+    slot_key: str,
+) -> tuple[work_ledger.ConductorRecord | None, list[work_ledger.WorkItem]]:
+    """Return this slot's conductor and work items for gateway-owned readers.
+
+    The slot comes from server state, never caller input. Keeping this read on the
+    existing dashboard seam preserves the store's identity boundary.
+    """
+    return work_ledger.read_conductor(slot_key), work_ledger.list_work_items(slot_key)
+
+
+def work_item_is_terminal(state: object) -> bool:
+    """Whether a stored work-item state is terminal."""
+    return state in work_ledger.TERMINAL_ITEM_STATES
+
+
 def closed_items(slot_key: str) -> list[dict[str, Any]]:
     """The closed items on thread *slot_key*'s own ledger, as this board reads them.
 

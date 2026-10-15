@@ -122,6 +122,13 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
         "exfiltration-URL then the credential redactor before it is stored.",
     ),
     (
+        "A return-triggered warm task brief",
+        "dashboard/warm_task_brief.py",
+        "The original request and model-generated task facts written into a chat "
+        "transcript and rendered in the browser. Each string passes the "
+        "exfiltration-URL then the credential redactor before it is stored.",
+    ),
+    (
         "Change-card details shown before Apply",
         "change_card_catalog.py",
         "Values a change card shows in full so the user sees what Apply runs: an "

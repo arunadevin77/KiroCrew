@@ -327,6 +327,12 @@ export function createTranscriptRenderers(
   const crewmateTranscript = o.crewmateTranscript
 
   return [
+    {
+      id: 'warm_task_brief_claim',
+      roles: ['notice'],
+      match: m => m.meta?.kind === 'warm_task_brief_claim',
+      render: () => null,
+    },
     // ── Shape-matched rows, ahead of anything keyed only by role ──
     {
       // A dollar-picked skill is gateway-authored context, not a conversational

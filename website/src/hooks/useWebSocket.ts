@@ -56,7 +56,7 @@ import {
 import { DASHBOARD_FIELDS_FRAME, handleDashboardFields } from './websocket/dashboardFields'
 import { useChatStream } from './websocket/chatStream'
 import { useTurnCompletion } from './websocket/turnCompletion'
-import { attachFocusRelay } from './websocket/attention'
+import { attachFocusRelay, focusedSlotForCurrentSurface } from './websocket/attention'
 import { emitAppReload, emitChannelEvent, emitComputerUseFrame, emitCronHistory } from './websocket/browserEvents'
 import { runFirstConnect, runReconnectCatchUp } from './websocket/reconnectCatchUp'
 
@@ -196,6 +196,7 @@ export function useWebSocket() {
         syncPendingApprovals,
         syncPendingQuestions: cards.syncPendingQuestions,
         syncWorkflowRuns,
+        focusedSlot: focusedSlotForCurrentSurface,
       }
       if (socket.wasConnectedRef.current) {
         // No frame could arrive while the socket was down (a gateway restart is

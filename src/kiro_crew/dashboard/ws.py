@@ -27,6 +27,7 @@ from kiro_crew.dashboard.state import (
     _slots_serialization_note,
 )
 from kiro_crew.dashboard.status_counts import cached_status_snapshot
+from kiro_crew.dashboard.warm_task_brief import handle_focus_frame
 from kiro_crew.dashboard.websocket_hub import SLOT_PATCH_CAPABILITY, SLOT_PATCH_WS_FLAG
 from kiro_crew.dashboard.ws_event_scope import (
     DASHBOARD_USER_AUDITEE,
@@ -1744,6 +1745,15 @@ async def _serve_ws(
                             state, data.get("slot"), _focus_task, owner=owner_request
                         )
                         if owner_request:
+                            # Warm presence reads the registry's PREVIOUS row, so
+                            # it must run before retention applies this frame.
+                            # Socket-finally cleanup intentionally never calls it.
+                            handle_focus_frame(
+                                state,
+                                id(ws),
+                                data.get("slot"),
+                                hidden=data.get("hidden", False),
+                            )
                             note_foreground(state, id(ws), data.get("slot"))
                     elif msg_type == "slot_read":
                         _relayed = _handle_slot_read(

@@ -1,0 +1,25 @@
+"""Shared transcript contract for return-triggered task brief rows."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+WARM_TASK_BRIEF_CLAIM_KIND = "warm_task_brief_claim"
+WARM_TASK_BRIEF_PREPARING_KIND = "warm_task_brief_preparing"
+WARM_TASK_BRIEF_RESULT_KIND = "warm_task_brief_result"
+WARM_TASK_BRIEF_FAILURE_KIND = "warm_task_brief_failure"
+WARM_TASK_BRIEF_MESSAGE_KINDS = frozenset(
+    {
+        WARM_TASK_BRIEF_PREPARING_KIND,
+        WARM_TASK_BRIEF_RESULT_KIND,
+        WARM_TASK_BRIEF_FAILURE_KIND,
+    }
+)
+WARM_TASK_BRIEF_KINDS = WARM_TASK_BRIEF_MESSAGE_KINDS | {WARM_TASK_BRIEF_CLAIM_KIND}
+
+
+def is_warm_task_brief_message(row: Mapping[str, Any]) -> bool:
+    """Whether *row* belongs to a task brief, including its hidden claim."""
+    meta = row.get("meta")
+    return isinstance(meta, Mapping) and meta.get("kind") in WARM_TASK_BRIEF_KINDS

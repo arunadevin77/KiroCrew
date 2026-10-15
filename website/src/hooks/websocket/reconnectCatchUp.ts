@@ -24,6 +24,7 @@ export interface CatchUpContext {
   syncPendingApprovals: () => Promise<void>
   syncPendingQuestions: () => Promise<void>
   syncWorkflowRuns: () => Promise<void>
+  focusedSlot: () => string | null
 }
 
 /** The first successful open of this hook: register as connected and take
@@ -72,11 +73,11 @@ export function runFirstConnect(ws: WebSocket, ctx: CatchUpContext): void {
   // lines at all until an unrelated reconnect. The reconnect path does
   // this too; the two paths must stay symmetric.
   if (socket.logCbRef.current) ws.send(JSON.stringify({ type: 'subscribe_logs' }))
-  // Announce the restored active slot so a resumable session prefetches
-  // while the user reads its transcript (resume prefetch).
-  ws.send(
-    JSON.stringify({ type: 'slot_focused', slot: store.getState().chat.activeSlot || null })
-  )
+  // Announce only a visible mounted transcript. A hidden first connect has no
+  // return edge; visibilitychange will send the later visible frame.
+  if (!document.hidden) {
+    ws.send(JSON.stringify({ type: 'slot_focused', slot: ctx.focusedSlot() }))
+  }
 }
 
 /** A later open: re-fetch state instead of reloading the page, which keeps
@@ -179,7 +180,9 @@ export function runReconnectCatchUp(ws: WebSocket, ctx: CatchUpContext): void {
   dispatch(clearSubagentsForSnapshot())
   ws.send(JSON.stringify({ type: 'subscribe_subagents' }))
   if (socket.logCbRef.current) ws.send(JSON.stringify({ type: 'subscribe_logs' }))
-  // Re-announce focus: the server lost this socket's focus state with
-  // the old connection, and the store subscription only fires on change.
-  ws.send(JSON.stringify({ type: 'slot_focused', slot: active || null }))
+  // Re-announce only while visible. Reconnect itself is never a return edge;
+  // a hidden reconnect waits for visibilitychange.
+  if (!document.hidden) {
+    ws.send(JSON.stringify({ type: 'slot_focused', slot: ctx.focusedSlot() }))
+  }
 }

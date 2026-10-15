@@ -149,6 +149,7 @@ from kiro_crew.security import (
     redact_local_paths,
 )
 from kiro_crew.sel import sel
+from kiro_crew.warm_task_brief_contract import is_warm_task_brief_message
 
 logger = logging.getLogger(__name__)
 
@@ -1283,6 +1284,8 @@ def _assemble_bundle(
     """
     messages: list[dict[str, Any]] = []
     for m in all_messages:
+        if is_warm_task_brief_message(m):
+            continue
         role = m.get("role")
         if role not in _VISIBLE_ROLES:
             continue

@@ -15,6 +15,7 @@ import { PILL_ACTIVITY_MAX_CHARS } from './pillActivity'
 import { MEMBERS_ROSTER_QUERY_KEY, memberThreadQueryKey } from '../../api/membersQuery'
 import { __resetPaneDraftsForTests, readPaneDraft, writePaneDraft } from '../../utils/chatPaneDrafts'
 import { getViewedThreadSlot, _resetViewedThreadForTests } from '../../lib/viewedThread'
+import { getMountedMemberThreadSlot } from '../../lib/mountedMemberThread'
 import { bindSlotReadSender, emitSlotRead, _resetSlotReadRelayForTest } from '../../lib/slotReadRelay'
 import {
   __resetErrorJournalForTests,
@@ -2628,6 +2629,20 @@ describe('MembersPage viewed-thread registration', () => {
     fireEvent.click(await rosterRow('oncall'))
     await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
     await waitFor(() => expect(getViewedThreadSlot()).toBe('member-oncall'))
+    expect(getMountedMemberThreadSlot()).toBe('member-oncall')
+  })
+
+  it('window blur retires unread state but keeps visible mounted presence', async () => {
+    await renderPage()
+    fireEvent.click(await rosterRow('oncall'))
+    await waitFor(() => expect(getViewedThreadSlot()).toBe('member-oncall'), PANE_READY)
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('blur')))
+    await waitFor(() => expect(getViewedThreadSlot()).toBeNull())
+    expect(getMountedMemberThreadSlot()).toBe('member-oncall')
+    focus.mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    focus.mockRestore()
   })
 
   it('re-registers on switch: the new thread replaces the old one', async () => {
@@ -2646,6 +2661,9 @@ describe('MembersPage viewed-thread registration', () => {
     try {
       act(() => { document.dispatchEvent(new Event('visibilitychange')) })
       await waitFor(() => expect(getViewedThreadSlot()).toBeNull())
+      // The mounted identity stays available for the synchronous return frame;
+      // the hidden frame already cleared server presence.
+      expect(getMountedMemberThreadSlot()).toBe('member-oncall')
       hidden.mockReturnValue(false)
       act(() => { document.dispatchEvent(new Event('visibilitychange')) })
       await waitFor(() => expect(getViewedThreadSlot()).toBe('member-oncall'))
@@ -2690,6 +2708,7 @@ describe('MembersPage viewed-thread registration', () => {
     await waitFor(() => expect(getViewedThreadSlot()).toBe('member-oncall'), PANE_READY)
     unmount()
     expect(getViewedThreadSlot()).toBeNull()
+    expect(getMountedMemberThreadSlot()).toBeNull()
   })
 })
 
@@ -4831,14 +4850,17 @@ describe('MembersPage create links open the New crewmate card', () => {
     vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     await openAssistant()
     await waitFor(() => expect(getViewedThreadSlot()).toBe('member-mate'))
+    expect(getMountedMemberThreadSlot()).toBe('member-mate')
     await clickAddAdvanced()
     await screen.findByRole('dialog')
     // Messages arriving now must badge: the create surface is open over this
     // chat (keyed off createOpen, not off a hidden column), so it is not the
     // viewed thread even though the chat stays mounted behind the modal.
     await waitFor(() => expect(getViewedThreadSlot()).toBeNull())
+    expect(getMountedMemberThreadSlot()).toBeNull()
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(getViewedThreadSlot()).toBe('member-mate'))
+    expect(getMountedMemberThreadSlot()).toBe('member-mate')
   })
 
   it('Advanced opens the full form as a modal over the chat: chat still mounted and visible behind the scrim', async () => {
@@ -6484,7 +6506,7 @@ describe('MembersPage cold welcome (a new or long-idle thread)', () => {
   })
 })
 
-describe('MembersPage warm greeting (a return in the middle of a goal)', () => {
+describe('MembersPage active task greeting', () => {
   const midGoal = {
     conductor: { schema: 1, slot_key: 'member-oncall', goal: 'Ship the crew page', round: 1, depth: 0, parent_item: null, created_at: '' },
     conductor_alive: 'idle',
@@ -6497,107 +6519,49 @@ describe('MembersPage warm greeting (a return in the middle of a goal)', () => {
   }
   beforeEach(() => { sessionStorage.clear() })
 
-  it('opening a crewmate mid-goal says where the goal stands and the next step, as its message in the chat, without a chat turn', async () => {
+  it('opening a crewmate mid-goal shows no immediate static warm card', async () => {
     vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
     await renderPage([row()])
     fireEvent.click(await rosterRow('oncall'))
-    const card = await screen.findByTestId('member-resume-card', undefined, PANE_READY)
-    expectCrewmateMessage(card)
-    expect(api.crewBoard).toHaveBeenCalledExactlyOnceWith('member-oncall')
-    expect(within(card).getByTestId('member-resume-goal')).toHaveTextContent('Ship the crew page')
-    expect(within(card).getByTestId('member-resume-counts')).toHaveTextContent('Finished 1 · Running 1 · Idle 0 · Needs a look 1')
-    expect(within(card).getByTestId('member-resume-attention')).toHaveTextContent('Write the RFC has a question waiting')
-    expect(within(card).getByTestId('member-resume-next')).toHaveTextContent('Next: tell oncall here how to answer the question on Write the RFC.')
-    expect(api.sendChat).not.toHaveBeenCalled()
-
-    fireEvent.click(within(card).getByTestId('member-resume-dismiss'))
+    await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+    await waitFor(() => expect(api.crewBoard).toHaveBeenCalledExactlyOnceWith('member-oncall'))
     expect(screen.queryByTestId('member-resume-card')).toBeNull()
+    expect(api.memberRecap).not.toHaveBeenCalled()
+    expect(api.sendChat).not.toHaveBeenCalled()
   })
 
-  it('a failed status read is said through ErrorNotice, not hidden as "no ledger"', async () => {
+  it('return summary rows stay ordinary crewmate messages', async () => {
+    vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
+    const { store } = await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
+    fireEvent.click(await rosterRow('oncall'))
+    await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+    act(() => {
+      store.dispatch(sseChatMessage({
+        slot: 'member-oncall',
+        role: 'assistant',
+        cls: 'msg msg-a',
+        content: 'Preparing your current-task summary. You can wait here.',
+        meta: { kind: 'warm_task_brief_preparing' },
+      }))
+      store.dispatch(sseChatMessage({
+        slot: 'member-oncall',
+        role: 'assistant',
+        cls: 'msg msg-a',
+        content: 'Problem\nFix the current task\n\nCurrent status\n- Ready\n\nSuggested actions\n1. Review it',
+        meta: { kind: 'warm_task_brief_result' },
+      }))
+    })
+    const messages = store.getState().chat.slotMessages['member-oncall']
+    expect(messages.slice(-2).map(message => message.role)).toEqual(['assistant', 'assistant'])
+    expect(screen.queryByTestId('warm-task-brief-card')).toBeNull()
+  })
+
+  it('a failed board read uses the cold-welcome error surface', async () => {
     vi.mocked(api.crewBoard).mockRejectedValue(Object.assign(new Error('ledger needs repair'), { status: 409 }))
     await renderPage([row()])
     fireEvent.click(await rosterRow('oncall'))
-    expect(await screen.findByTestId('member-resume-error', undefined, PANE_READY)).toHaveTextContent("Could not read where oncall's task stands.")
+    expect(await screen.findByTestId('member-resume-error', undefined, PANE_READY)).toHaveTextContent("Couldn't read what oncall was working on.")
     expect(screen.queryByTestId('member-resume-card')).toBeNull()
   })
 
-  it('a crewmate opened while its own turn runs gets no greeting: its reply is about to speak', async () => {
-    vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
-    const { store } = await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
-    act(() => {
-      store.dispatch(sseSlots([{ key: 'member-oncall', mode: 'member', running: true, messages: 1 }] as never))
-    })
-    fireEvent.click(await rosterRow('oncall'))
-    await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
-    expect(api.crewBoard).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('member-resume-card')).toBeNull()
-  })
-
-  // A conductor's monitor loop wakes it every few minutes. Those patrol turns
-  // are not a reply to the user, so they neither skip nor take down the card.
-  const TURN_TEXT = { nudge: '[auto-nudge cycle 2] Checking on round 3', subagent: 'Worker K finished: CODED', user: 'how is it going?' }
-  const turnStarts = (store: { dispatch: (a: unknown) => unknown }, role: 'nudge' | 'subagent' | 'user') => {
-    store.dispatch(sseChatMessage({ slot: 'member-oncall', role, content: TURN_TEXT[role] }))
-    store.dispatch(sseSlots([{ key: 'member-oncall', mode: 'member', running: true, messages: 2 }] as never))
-  }
-
-  it('a patrol turn starting keeps the card up; a turn the user starts takes it down', async () => {
-    vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
-    const { store } = await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
-    fireEvent.click(await rosterRow('oncall'))
-    await screen.findByTestId('member-resume-card', undefined, PANE_READY)
-    act(() => { turnStarts(store, 'nudge') })
-    expect(screen.getByTestId('member-resume-card')).toBeInTheDocument()
-    act(() => { turnStarts(store, 'user') })
-    expect(screen.queryByTestId('member-resume-card')).toBeNull()
-  })
-
-  it('a worker finishing after the user\'s turn wakes the crewmate in the background: the card stays up', async () => {
-    vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
-    const { store } = await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
-    act(() => { store.dispatch(sseChatMessage({ slot: 'member-oncall', role: 'user', content: TURN_TEXT.user })) })
-    fireEvent.click(await rosterRow('oncall'))
-    await screen.findByTestId('member-resume-card', undefined, PANE_READY)
-    act(() => { turnStarts(store, 'subagent') })
-    expect(screen.getByTestId('member-resume-card')).toBeInTheDocument()
-  })
-
-  it('a crewmate opened during a patrol turn still greets with where its goal stands', async () => {
-    vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
-    const { store } = await renderPage([row()])
-    // The patrol turn runs before the roster lands; the page then opens its
-    // only crewmate on its own (a click now would be a re-click repair).
-    act(() => { turnStarts(store, 'nudge') })
-    await screen.findByTestId('member-resume-card', undefined, PANE_READY)
-    expect(api.crewBoard).toHaveBeenCalledExactlyOnceWith('member-oncall')
-  })
-
-  it('a running crewmate whose transcript lands after the open is judged by it: a patrol still greets', async () => {
-    vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
-    const { store } = await renderPage([row()])
-    act(() => { store.dispatch(sseSlots([{ key: 'member-oncall', mode: 'member', running: true, messages: 1 }] as never)) })
-    await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
-    expect(api.crewBoard).not.toHaveBeenCalled()
-    act(() => { store.dispatch(sseChatMessage({ slot: 'member-oncall', role: 'nudge', content: '[auto-nudge cycle 2] Checking on round 3' })) })
-    await screen.findByTestId('member-resume-card', undefined, PANE_READY)
-    expect(api.crewBoard).toHaveBeenCalledExactlyOnceWith('member-oncall')
-  })
-
-  it('a monitor wake whose slot runs before its row is written keeps the card up', async () => {
-    vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
-    const { store } = await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
-    act(() => { store.dispatch(sseChatMessage({ slot: 'member-oncall', role: 'user', content: TURN_TEXT.user })) })
-    fireEvent.click(await rosterRow('oncall'))
-    await screen.findByTestId('member-resume-card', undefined, PANE_READY)
-    // A structured monitor writes its row only once its turn is accepted, so the
-    // slot runs first while the user's older row is still the newest; the frame
-    // says a wake is starting.
-    act(() => {
-      store.dispatch(sseSlots([{ key: 'member-oncall', mode: 'member', running: true, wake_starting: true, messages: 1 }] as never))
-    })
-    expect(screen.getByTestId('member-resume-card')).toBeInTheDocument()
-    act(() => { turnStarts(store, 'nudge') })
-    expect(screen.getByTestId('member-resume-card')).toBeInTheDocument()
-  })
 })

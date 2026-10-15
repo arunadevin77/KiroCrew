@@ -734,6 +734,12 @@ export const defaultMessageRenderers: readonly MessageRenderer[] = [
     },
   },
   {
+    id: 'warm_task_brief_claim',
+    roles: ['*'],
+    match: m => m.meta?.kind === 'warm_task_brief_claim',
+    render: () => null,
+  },
+  {
     id: 'notice',
     roles: ['notice'],
     render: (m, ctx) => ctx.row(<NoticeCard content={m.content} />),

@@ -1796,6 +1796,9 @@ async def api_member_fresh_start(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found", "code": "slot_not_found"}, status=404)
     name = slot.key
     key = effective_session_key(slot)
+    from kiro_crew.dashboard.warm_task_brief import cancel_warm_task_brief
+
+    cancel_warm_task_brief(state, name)
 
     # A soft stop keeps the queue and the unconsumed steers, and the runner
     # drains them the moment the turn ends: they would start on the conversation

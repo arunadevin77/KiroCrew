@@ -49,6 +49,7 @@ from kiro_crew import validation as _validation
 from kiro_crew.decisions.log import MAX_VERDICT_ID_CHARS as _MAX_VERDICT_ID_CHARS
 from kiro_crew.decisions.points import nudge_wake as point
 from kiro_crew.hooks import _HOST_READ_ONLY_BUILTIN_TOOLS
+from kiro_crew.warm_task_brief_contract import is_warm_task_brief_message
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +239,8 @@ def session_evidence(
         if not isinstance(row, Mapping):
             continue
         if str(row.get("role", "") or "") not in EVIDENCE_ROLES:
+            continue
+        if is_warm_task_brief_message(row):
             continue
         text = row.get("content", "")
         if not isinstance(text, str) or not text.strip():

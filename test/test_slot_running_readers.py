@@ -188,6 +188,10 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("slot_retention.py", "_still_idle_check"),
                 ("slot_retention.py", "select_idle_slot_keys"),
                 ("state.py", "_ChatSlot.enqueue_or_run_prompt"),
+                # A return brief must not start or publish after a send has
+                # reserved the slot, even before its model turn begins.
+                ("warm_task_brief.py", "_prepare_warm_task_brief"),
+                ("warm_task_brief.py", "_still_current"),
                 ("ws.py", "_handle_slot_focused"),
             }
         },

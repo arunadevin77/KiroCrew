@@ -25,6 +25,8 @@ superseded-by: []
   cold welcome [#17822](https://github.com/kirodotdev/KiroCrew/pull/17822)
   (stacked on #17797).
 
+> Warm branch amended by [rfc-delayed-task-brief.md](rfc-delayed-task-brief.md); the cold welcome is unchanged.
+
 ## 1. Summary
 
 When the user opens a crewmate's chat on the Crewmates page, the chat can open

@@ -246,6 +246,7 @@ from kiro_crew.security import (
 from kiro_crew.sel import sel
 from kiro_crew.session_surface import has_dashboard_surface
 from kiro_crew.skills import PROJECT_SKILL_BODY_CAP, SkillsLoader
+from kiro_crew.warm_task_brief_contract import is_warm_task_brief_message
 
 if TYPE_CHECKING:
     from kiro_crew.agent_sdk import ContextPromptProvider
@@ -1540,6 +1541,10 @@ def build_cancelled_turn_preamble(
 # ── Provider-Agnostic Session Replay ──
 
 
+def _without_warm_task_brief_messages(messages: list[dict]) -> list[dict]:
+    return [row for row in messages if not is_warm_task_brief_message(row)]
+
+
 def _replay_rows(
     conversation_log: "ConversationLog | None",
     session_key: str,
@@ -1558,6 +1563,7 @@ def _replay_rows(
         messages = _merge_replay_rows(messages, pending_messages or [], current_message)
     elif exclude_last_n > 0:
         messages = messages[:-exclude_last_n]
+    messages = _without_warm_task_brief_messages(messages)
     return _replay._quota_tail(
         messages, conv_max=_REPLAY_CONVERSATION_MAX_ROWS, inject_max=_REPLAY_INJECT_MAX_ROWS
     )
@@ -1593,6 +1599,7 @@ def _recall_rows(
     messages = conversation_log.read_messages(session_key)
     if exclude_last_n > 0:
         messages = messages[:-exclude_last_n]
+    messages = _without_warm_task_brief_messages(messages)
     return _replay._quota_tail(messages, conv_max=conv_max, inject_max=inject_max)
 
 

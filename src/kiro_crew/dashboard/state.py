@@ -5019,6 +5019,18 @@ class _ChatSlot:
         meta: dict | None = None,
         mint_mid: bool = True,
     ) -> dict[str, Any]:
+        # A live human/model task row makes any in-flight return summary stale.
+        # The local import avoids a state -> warm_task_brief -> state cycle, and
+        # replay appends (broadcast=False) deliberately do not cancel current work.
+        if broadcast and role in {"user", "assistant"}:
+            try:
+                from kiro_crew.dashboard.warm_task_brief import cancel_warm_task_brief
+
+                owner = getattr(self._on_message, "__self__", None)
+                if owner is not None:
+                    cancel_warm_task_brief(owner, self.key)
+            except Exception:
+                logger.debug("warm task brief cancellation failed for %s", self.key, exc_info=True)
         # A LIVE user row retires every unanswered STATELESS question: that row
         # IS the next message the card's answer was contracted to arrive as.
         # Retiring here rather than at the composer covers every entrance —
@@ -6509,6 +6521,15 @@ class DashboardState:
         # connection (``slot_retention.note_foreground``). The idle sweep never
         # archives a slot someone is looking at.
         self._foreground_slots: dict[int, str] = {}
+        # Return-triggered warm task briefs keep only presence episodes and live
+        # generation tasks in memory. The durable claim itself lives beside the
+        # transcript, so a gateway restart can deduplicate but can never infer a
+        # leave that this process did not observe.
+        self._warm_task_brief_away: dict[str, tuple[float, int]] = {}
+        self._warm_task_brief_generation = 0
+        self._warm_task_brief_slot_generation: dict[str, int] = {}
+        self._warm_task_brief_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._warm_task_brief_model_active: set[str] = set()
         self._slack_to_slot: dict[str, str] = {}  # Slack session_key → slot name
         # Live OPTIONS controls, keyed by the SESSION KEY that owns them.
         #

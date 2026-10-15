@@ -205,6 +205,25 @@ cue beside the select, until the new answer arrives (`keepPreviousData`); each
 answer carries the dimension it was split by, so the stand-in keeps its own
 labels and caption rather than the new selection's.
 
+## Crewmate return summary
+
+Opening an active crewmate thread no longer draws a static warm card. The cold
+welcome is unchanged: it still runs only with no open goal, after the existing
+six-hour threshold, through `GET /api/members/{slug}/recap`.
+
+The warm path is a return edge, not an idle timer. The Crewmates route keeps
+its confirmed mounted-thread identity separate from the focus-aware unread
+registry. The focus sender reads that identity only while visible. Only
+`document.hidden` clears server presence with `hidden: true`; window blur does
+not. A hidden first connect or reconnect sends no focus frame. The later visible
+transition names the mounted thread. New-crewmate view, roster-only view,
+non-chat routes, and split placeholders name no member thread.
+
+The gateway posts the preparing, result and failure lines as ordinary crewmate
+messages. The two fixed lines are English; the model writes the status and
+suggested actions in the user's language. No new
+route, listener, provider, or data destination is involved.
+
 ## Gateway restart
 
 The dashboard restart endpoint and successful update applies share

@@ -38,6 +38,7 @@ from kiro_crew.jsonl_util import (
 )
 from kiro_crew.preview_text import speech_preview
 from kiro_crew.transcript_count import count_messages, message_row
+from kiro_crew.warm_task_brief_contract import is_warm_task_brief_message
 
 if TYPE_CHECKING:
     from kiro_crew.history import ConversationLog
@@ -235,6 +236,7 @@ class TranscriptReadProjection:
         messages = self._log._read_messages(key)
         if exclude_last_n > 0:
             messages = messages[:-exclude_last_n]
+        messages = [message for message in messages if not is_warm_task_brief_message(message)]
         if roles:
             messages = [message for message in messages if message["role"] in roles]
         return [
@@ -254,6 +256,7 @@ class TranscriptReadProjection:
         messages = self._log.read_messages_chained(key)
         if exclude_last_n > 0:
             messages = messages[:-exclude_last_n]
+        messages = [message for message in messages if not is_warm_task_brief_message(message)]
         if roles:
             messages = [message for message in messages if message["role"] in roles]
         return [
@@ -276,7 +279,9 @@ class TranscriptReadProjection:
         cited = [
             item
             for item in messages
-            if item.get("source_thread") and item.get("role") not in DISPLAY_ONLY_ROLES
+            if item.get("source_thread")
+            and item.get("role") not in DISPLAY_ONLY_ROLES
+            and not is_warm_task_brief_message(item)
         ]
         for message in cited[-max_messages:]:
             content = message["content"]
@@ -337,6 +342,7 @@ class TranscriptReadProjection:
                 continue
             included += 1
             candidates.extend(self._log._read_tail_messages(path, 50, None))
+        candidates = [message for message in candidates if not is_warm_task_brief_message(message)]
         candidates.sort(key=lambda message: message.get("ts", ""))
         return [
             {"role": message["role"], "content": message["content"]}
@@ -1261,7 +1267,11 @@ class TranscriptReadProjection:
         if recent is not None and recent[0] == identity and recent[1] == self._log._cache_gen(key):
             return [dict(message) for message in recent[2]]
         tail = self._log._read_tail_messages(path, max_messages, roles)
-        formatted = [{"role": message["role"], "content": message["content"]} for message in tail]
+        formatted = [
+            {"role": message["role"], "content": message["content"]}
+            for message in tail
+            if not is_warm_task_brief_message(message)
+        ]
         self._log._publish_if_current(
             self._log._recent_cache,
             recent_key,
