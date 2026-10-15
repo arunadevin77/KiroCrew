@@ -49,7 +49,7 @@ def _cwd_is_the_scratch_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     """Run every test here with the process cwd inside its own ``tmp_path``.
 
     The clones these tests drive are scratch repositories under ``tmp_path``, and the
-    product's git helpers (``backend/commit._git``, ``spine/driver._git``,
+    product's git helpers (``backend/commit._git``, ``spine/driver_git._git``,
     ``spine/proposer._git``, ``spine/gate._changed_paths``, ``spine/scope.scoped_relpaths``
     and the ``git apply`` calls beside them) address that clone with ``-C`` and pass no
     ``cwd``: each of those ~100 spawns per run inherits the process cwd. By default that
@@ -2137,7 +2137,7 @@ class TestTheCredentialScanCannotSelfDiff:
     unscanned. Measured on a real bare repo: 0 bytes with the local name (credential
     invisible) vs 132 bytes with `origin/work` (caught).
 
-    Same self-diffing failure already fixed in `driver._direct_push`; the recipe had its own
+    Same self-diffing failure already fixed in `Driver._direct_push`; the recipe had its own
     copy. Raised by the GPT review of this branch.
     """
 

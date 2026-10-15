@@ -15,7 +15,7 @@ must be pushed before ``gh pr create`` can reference it.
 
 That is a real relaxation of the app's #1 safety control, so it is narrowed the
 same way the spine's F10 direct-commit mode narrows it (see
-``spine/driver.py::_direct_push``):
+``spine/driver_publish.py::_direct_push``):
 
   * the push targets a **generated, app-namespaced branch**
     (``auto-improvement/<kind>-<fingerprint>``) that no human works on — never
@@ -269,7 +269,7 @@ class GitHubPRRecipe:
         **0 bytes** and the planted `AKIAIOSFODNN7EXAMPLE` was invisible; with
         `base_ref="origin/work"` it was 132 bytes and caught.
 
-        This is the same self-diffing failure already fixed in `driver._direct_push` (which
+        This is the same self-diffing failure already fixed in `Driver._direct_push` (which
         moved to `HEAD~1..HEAD` for the same reason) — the recipe had its own copy. Resolution
         order: use the ref as given if it already names something OTHER than HEAD, else try the
         remote-tracking form, else refuse. Refusing beats falling back to the single-commit

@@ -138,7 +138,7 @@ and never drive the verdict, or one flaky optional job would nudge forever.
 | Edit allowlist | `spine/gate.py` + profile | ruler/harness/tests/auth are mechanically off-limits |
 | Do-not-pollute gate | `spine/pollute.py` | host state hashed before/after; drift blocks the run |
 | Second reproduce | `spine/pr_pipeline.py` | an independent A/B must confirm before a PR is drafted |
-| Pre-push review gate | `spine/driver.py:_prepush_review_clean` | optional, fail-closed; an unfounded "clean" cannot pass it |
+| Pre-push review gate | `spine/driver_publish.py:_prepush_review_clean` | optional, fail-closed; an unfounded "clean" cannot pass it |
 | Tool-request gate | `spine/agent_runner.py:_tool_permitted` + `shell_command_refusal` | the caller's `allowed_tools` is ENFORCED, and state-mutating shell verbs are refused even when Bash is allowed |
 | Audit-or-deny approval | `spine/agent_runner.py:_approve` | the unattended auto-approve is logged to the SEL with `critical=True` **before** it is granted; an unwritable audit REJECTS the tool |
 | Audited MCP dispatch | `backend/mcp_server.py:_audit` | every `tools/call` is logged, rejected ones included; the pre-dispatch `invoked` event is `critical=True` (audit-or-DENY — an unauditable call is refused), outcome events stay fail-soft since the handler has already run |
@@ -540,7 +540,7 @@ plain LOCAL name if the operator set one — and with HEAD on that branch the di
 so `scan_content_for_secrets("")` would report clean. `_scannable_base` therefore resolves to a
 ref distinct from HEAD (trying the remote-tracking form) and REFUSES when it cannot: refusing
 beats degrading to the narrower single-commit scan, because a narrower range that happens to pass
-is exactly the silent downgrade this guards. `driver._direct_push` follows the same rule.
+is exactly the silent downgrade this guards. `Driver._direct_push` follows the same rule.
 
 A REFUSED direct push rolls its commit back. The direct-push scan range is `HEAD~1..HEAD` — one
 commit — so a refused commit left at HEAD would be outside the next winner's scan range while its
@@ -1223,6 +1223,29 @@ trusts it. Adding a target never edits the engine, but it does touch
 - `runner` imports `build_profile` lazily, keeping the profile and spine off the gateway boot path; `test_perf_boot_path.py` ratchets it. (D-76)
 - MCP stdio registration resolves a bare `python`/`python3`/`py` to the running interpreter (`bridges.resolve_stdio_command`), so the server launches on every platform. (D-90)
 
+### Driver layout
+
+`spine/driver.py` holds `Driver`: the loop, the per-cycle workflow and the keep
+decisions (`_apply_verdict`, `_apply_bug_winner`). Three owner modules beside it hold the
+mechanics those decisions call. The class binds each owner function by name
+(`_direct_push = driver_publish._direct_push`), so every member stays a `Driver` method
+that callers and tests patch on the class or on an instance, and the run's state stays on
+the instance.
+
+| Module | Owns |
+|---|---|
+| `spine/driver_git.py` | `_git`, the host-side git chokepoint, and the object-id reads built on it |
+| `spine/driver_publish.py` | the F10 direct push: its gates, the credential scan and the one rebase-and-retry |
+| `spine/driver_commit.py` | the winner's provisional commit: stage, commit, amend, discard, roll back, quarantine |
+
+`driver.py` stays the import path. It serves the git helpers from `driver_git`, and a
+patch through it (`monkeypatch.setattr(driver, "_git", ...)`) reaches every owner that
+binds the name (`kiro_crew._facade_mirror`). A bound member reports its owner module as
+`__module__` and its bare name as `__qualname__`; nothing reads either. New publish or
+commit mechanics go to their owner, and new loop behaviour stays in `driver.py`.
+`test/test_driver_owner_bindings.py` pins the member inventory, the bindings and the
+patch reach.
+
 ## Frontend
 
 `website/src/apps/auto-improvement/AutoImprovementPage.tsx`, routed at
@@ -1325,6 +1348,7 @@ integration test — nothing in the tree runs the full loop against a live repos
 - Repo-level handler and coverage tests under `test/`: `test_ai_backend_routes_coverage.py`,
   `test_ai_agent_runner_coverage.py`, `test_ai_runner_coverage.py`,
   `test_ai_pr_watchers_coverage.py`, `test_ai_spine_driver_coverage.py`,
+  `test_driver_owner_bindings.py`,
   `test_ai_github_profile_coverage.py`, `test_ai_runner_purpose_not_identity.py`,
   `test_auto_improvement_owner_gate.py`, `test_auto_improvement_members.py` and
   `test_handlers_auto_improvement_deny_notice.py`.

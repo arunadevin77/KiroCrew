@@ -682,7 +682,7 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "Auto-Improvement commit messages",
-        "apps/builtins/auto_improvement/spine/driver.py",
+        "apps/builtins/auto_improvement/spine/driver_commit.py",
         "Agent-authored commit subjects/bodies redacted before they become PERMANENT git "
         "history — both the local keep commit and the direct-push commit. A pushed commit "
         "message cannot be edited without rewriting history, so this is a one-way egress "
@@ -2167,8 +2167,12 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         #   backend routes (the registered sink for this app).
         # - profile.py's GateResult.detail follows the same ledger/candidate path as
         #   gate.py's verdicts.
+        # - driver_publish.py's failed-push note (git's push stderr) goes to the run
+        #   ledger, and its log line through redact_log_via_context; the ledger reaches
+        #   the dashboard only through the backend routes.
         "apps/builtins/auto_improvement/backend/clone_setup.py",
         "apps/builtins/auto_improvement/profiles/github_repo/profile.py",
+        "apps/builtins/auto_improvement/spine/driver_publish.py",
         "apps/builtins/auto_improvement/spine/gate.py",
         # Inbound: the crew worker's slot title is derived from an issue title,
         # which is untrusted text anyone who can open an issue wrote. It is

@@ -234,7 +234,7 @@ def _repo_root(tree: Path) -> Path:
     not cosmetic:
 
     * **flat** — no ``src/`` at all, so the path does not exist; the run root is its
-      parent. (This is ``driver.py``'s own ``if not src.exists(): src = clone`` idiom.)
+      parent. (This is ``driver_publish.py``'s own ``if not src.exists(): src = clone`` idiom.)
     * **src-layout** — ``<repo>/src`` DOES exist but holds only the package, while the
       suite sits at ``<repo>/tests``. Running pytest inside ``src/`` collects nothing
       and exits 5, which every caller here would read as a RED suite. A perfectly green

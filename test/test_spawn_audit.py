@@ -637,10 +637,10 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # here; it only edits FILES inside the worktree, and executing those files is
         # routed separately (profiles/github_repo/profile.py::_run).
         "apps/builtins/auto_improvement/spine/agent_discovery.py::_git",
-        "apps/builtins/auto_improvement/spine/driver.py::_apply",
-        "apps/builtins/auto_improvement/spine/driver.py::_stage_winner",
-        "apps/builtins/auto_improvement/spine/driver.py::_git",
-        "apps/builtins/auto_improvement/spine/driver.py::_push_with_rebase",
+        "apps/builtins/auto_improvement/spine/driver_commit.py::_apply",
+        "apps/builtins/auto_improvement/spine/driver_commit.py::_stage_winner",
+        "apps/builtins/auto_improvement/spine/driver_git.py::_git",
+        "apps/builtins/auto_improvement/spine/driver_publish.py::_push_with_rebase",
         "apps/builtins/auto_improvement/spine/gate.py::_changed_paths",
         "apps/builtins/auto_improvement/spine/gate.py::_changed_status_paths",
         "apps/builtins/auto_improvement/spine/gate.py::_head_sha",
