@@ -1387,7 +1387,7 @@ def cli_lifecycle_env_support() -> tuple[SeamSupport, str]:
     daemon turns a future rename/removal into a loud fail-back instead of
     silently putting sockets under scratch again.
 
-    Three-valued on purpose. ``UNSUPPORTED`` means both bundles were read and a
+    Three-valued on purpose. ``UNSUPPORTED`` means a bundle was read and its
     hook is gone -- a real capability gap upstream. ``UNVERIFIED`` means the
     serving tree could not be attributed to the resolved launcher, or a bundle
     could not be read, and comes with the detail a caller needs to say so.

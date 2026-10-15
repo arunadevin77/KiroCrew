@@ -649,7 +649,7 @@ def test_an_unverified_seam_warns_about_attribution_not_capability(
 def test_a_measured_missing_hook_still_names_the_installed_cli(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Both bundles were read and a hook is gone: the capability claim is earned."""
+    """A bundle was read and its hook is gone: the capability claim is earned."""
     monkeypatch.setattr(mod, "_warned_lifecycle_losses", set())
     monkeypatch.setattr(mod, "cli_lifecycle_env_support", lambda: (mod.SeamSupport.UNSUPPORTED, ""))
 
