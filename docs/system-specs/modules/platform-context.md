@@ -644,6 +644,15 @@ Wired sites:
   exfil-then-credential two-pass (the Default `CredentialPolicy.redact` delegates
   to `security.redact`); a loaded companion adds its internal-token regexes
   uniformly across every egress surface.
+- Code text (`kiro_crew.platform.context.redact_code_via_context`) — `redact_via_context` run
+  inside a `security.redaction_switch.code_text()` scope, where pass 3 of the core credential pass
+  (the entropy-and-shape guess at a secret key) spares an ordered alphabet and a data URI payload of
+  64 characters or more and judges every other run as it does anywhere, while every other pass, the
+  exfiltration-URL pass and a loaded companion's patterns run as they do for `redact_via_context`.
+  Its one caller is the member dashboard page scrub, which takes `redact_via_context` over the whole
+  page as its baseline and puts what this returns in place of the baseline's for the text of the
+  page's `<script>` and `<style>` elements. Like `redact_owner_view_via_context` it is a scope the
+  caller must open, so a sink that does not call it keeps the full pass.
 - Content scans (`binary_content_is_flagged`, `wide_content_is_flagged`) are serialized
   behind one re-entrant lock (`_SCAN_LOCK`) and their verdicts are kept in a 256-entry LRU
   (`_SCAN_VERDICTS`) keyed by (scan kind, SHA-256 of the bytes, `governance_generation()`),

@@ -37,7 +37,7 @@ from collections.abc import Callable, Iterator
 from typing import NamedTuple
 
 from kiro_crew.credential_patterns import AWS_KEY_ID, JWT_MULTI_SEGMENT
-from kiro_crew.security.redaction_switch import credential_pass_bypassed
+from kiro_crew.security.redaction_switch import bare_secret_pass_enabled, credential_pass_bypassed
 
 # ── Credential Output Redaction ──
 # Catches raw credential patterns in LLM output / tool results,
@@ -608,6 +608,57 @@ _BARE_SECRET_RUN_RE = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{40,}(?![A-Za-
 # (rather than ">=40") is what lets the structural gates below cleanly separate
 # real keys from 64-char sha256 hex, base64 document blobs, etc.
 _SECRET_KEY_LEN = 40
+
+#: Inside code text (``redaction_switch.code_text``) pass 3 leaves a run alone only when it is
+#: one of two things that can be told from a key by what they are, never by a name near them.
+#: A data URI payload: a run of ``_DATA_URI_PAYLOAD_MIN`` characters or more that follows
+#: ``data:<type>;base64,``. An alphabet: every 40-character window of the run has at least
+#: ``_ALPHABET_STEPS`` adjacent pairs that step up by one character code (``abc...``,
+#: ``ABC...``, ``012...``), which a table a program indexes into has and a random key does
+#: not. Everything else, a glued run included, is judged exactly as outside the scope.
+_DATA_URI_BEFORE_RE = re.compile(
+    r"data:[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+(?:;[A-Za-z0-9=.+-]+)*;base64,\Z", re.IGNORECASE
+)
+#: How far back from a run the data URI header may start.
+_DATA_URI_REACH = 128
+#: A payload shorter than this is judged, so a lone key behind a ``data:`` header is masked.
+_DATA_URI_PAYLOAD_MIN = 64
+#: An alphabet run longer than this is judged, which bounds the cost of reading one.
+_ALPHABET_RUN_MAX = 4096
+#: Adjacent pairs in a 40-character window (39) that must step up by one. A table of the
+#: letters and digits has 59 of 61 per 62; a random key has one such pair in about 64.
+_ALPHABET_STEPS = 30
+
+
+def _steps_up(run: str, at: int) -> int:
+    """1 when the character after ``run[at]`` is the next character code, else 0."""
+    return 1 if ord(run[at + 1]) == ord(run[at]) + 1 else 0
+
+
+def _is_code_literal(text: str, start: int, run: str) -> bool:
+    """Whether the run at *start* is a data URI payload or an ordered alphabet.
+
+    Both are read off the run and the few characters before it, and a run that is neither
+    stops the read at the first window that fails, so the cost of one run is fixed by
+    ``_DATA_URI_REACH`` and ``_ALPHABET_RUN_MAX`` whatever the text holds. A run this cannot
+    place is judged, which is the side that masks.
+    """
+    if len(run) >= _DATA_URI_PAYLOAD_MIN and _DATA_URI_BEFORE_RE.search(
+        text, max(0, start - _DATA_URI_REACH), start
+    ):
+        return True
+    if not _SECRET_KEY_LEN <= len(run) <= _ALPHABET_RUN_MAX:
+        return False
+    window = _SECRET_KEY_LEN - 1
+    total = sum(_steps_up(run, i) for i in range(window))
+    if total < _ALPHABET_STEPS:
+        return False
+    for i in range(window, len(run) - 1):
+        total += _steps_up(run, i) - _steps_up(run, i - window)
+        if total < _ALPHABET_STEPS:
+            return False
+    return True
+
 
 # Shannon-entropy floor (bits/char). A uniformly-random 40-char base64 string
 # averages ~4.78 bits/char and empirically almost never drops below ~4.4;
@@ -2135,6 +2186,8 @@ def _credential_redaction_plan(
     A later pass's span never rewrites text an earlier pass already claimed; it
     redacts only the part of its span still standing in plaintext, so no
     character is redacted twice and no character a pass flagged is left behind.
+
+    Inside a ``redaction_switch.code_text()`` scope pass 3 alone stands down.
     """
     if credential_pass_bypassed():
         return [], [], {}
@@ -2214,10 +2267,20 @@ def _credential_redaction_plan(
     #
     # Only windows sharing >= _HOST_ID_EXEMPT_OVERLAP bytes with this host's id are exempt;
     # whole-run context preserves every other base verdict, including smaller overlaps.
+    #
+    # A `redaction_switch.code_text()` scope leaves alone a data URI payload and an ordered
+    # alphabet (see `_is_code_literal`); every other run is judged as outside the scope.
+    bare_runs = (
+        b64_matches
+        if bare_secret_pass_enabled()
+        else [
+            m for m in b64_matches if not _is_code_literal(text, m.start(), m.group().rstrip("="))
+        ]
+    )
     withheld = _darwin_user_dir_ids(text)
     pass3: list[_RedactionSpan] = []
     link_spans: list[tuple[int, int]] | None = None
-    for m in b64_matches:
+    for m in bare_runs:
         run_end = m.start() + len(m.group().rstrip("="))
         run = text[m.start() : run_end]
         pieces = _uncovered(m.start(), run_end, withheld)

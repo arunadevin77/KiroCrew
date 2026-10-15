@@ -343,7 +343,12 @@ def _url_payload_command(n: int) -> str:
 #: file falls through to the DNS layer on the first ssh vet. Nineteen lines, five
 #: of them code and the rest the docstrings that say which half may move and why
 #: each answer stays fail-closed. No rule, threshold or pass moved.
-_PACKAGE_LINE_BUDGET = 29_315
+#:
+#: Raised again, from 29,315, for ``redaction_switch.code_text``: a scope inside which pass 3
+#: spares an ordered alphabet and a data URI payload, the flag it sets, the one place pass 3
+#: reads it, and the two checks that tell those shapes from a key. No credential branch, gate
+#: verdict or other pass moved.
+_PACKAGE_LINE_BUDGET = 29_411
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

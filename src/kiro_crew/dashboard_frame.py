@@ -55,7 +55,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Final, Mapping
+from typing import Any, Callable, Final, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +184,288 @@ def validate_page(html: Any) -> int:
             "<body>, and owns the page's security policy",
         )
     return size
+
+
+#: HTML white space. Not ``\s``: the tokenizer splits on these five characters only, so
+#: ``<script`` followed by U+00A0 is another element, and reading it as a script would hand
+#: the text after it to a relaxed rule.
+_WS = r"\t\n\f\r "
+
+#: ASCII case folding only, as the tokenizer does. Python's Unicode folding reads U+017F as
+#: an ``s``, so ``<\u017fcript>`` would be a script to the scan and plain text to a browser.
+_ASCII_FOLD = re.IGNORECASE | re.ASCII
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+#: Elements whose content the tokenizer reads as raw text, or as character data for
+#: ``textarea`` and ``title``, up to their own end tag. A ``<script`` inside one is text.
+#: ``plaintext`` has no end tag, and ``noscript`` is raw text only while scripting is on,
+#: which a frame without ``allow-scripts`` is not, so the scan stops at both.
+_RAW_TEXT_NAMES = (
+    "script",
+    "style",
+    "textarea",
+    "title",
+    "xmp",
+    "iframe",
+    "noembed",
+    "noframes",
+    "noscript",
+    "plaintext",
+)
+_RAW_END = {name: re.compile(rf"</{name}(?=[{_WS}/>])", _ASCII_FOLD) for name in _RAW_TEXT_NAMES}
+_CODE_ELEMENT_START = re.compile(rf"<(?:script|style)(?=[{_WS}/>])", _ASCII_FOLD)
+_COMMENT_END = re.compile(r"--!?>")
+
+#: What can change where a script ends: ``<!--`` escapes the text after it, ``<script``
+#: inside an escape nests, ``-->`` leaves the escape, and ``</script`` ends the element or,
+#: nested, only the nesting.
+_SCRIPT_MARKER = re.compile(rf"<!--|-->|<script(?=[{_WS}/>])|</script(?=[{_WS}/>])", _ASCII_FOLD)
+
+#: Elements inside which the tree builder, not the tokenizer, decides how a tag reads:
+#: ``<svg>`` and ``<math>`` switch to foreign content, where ``<script>``, ``<style>`` and
+#: ``<title>`` are ordinary elements, ``<select>`` ignores some start tags in some browsers,
+#: and ``<template>`` has insertion modes of its own, one of which (a column group inside it)
+#: ignores ``<style>`` and ``<script>``. A simple ``<svg>`` or ``<select>`` is skipped whole;
+#: any other, and every ``<math>`` and ``<template>``, ends the scan.
+_MODAL_NAMES = ("svg", "math", "select", "template")
+
+#: More that a simple element may not hold: ``<desc>`` and ``<foreignObject>`` switch the
+#: mode back inside ``<svg>``.
+_NESTED_STOPPERS = ("desc", "foreignobject")
+
+_TAG_NAME = rf"[A-Za-z][^{_WS}/>]*+"
+
+
+def _attributes(value: str) -> str:
+    """The attributes of a tag as the tokenizer reads them, each value matching *value*.
+
+    Possessive throughout, so a tag that does not fit fails in time linear in its length.
+    """
+    gap = rf"[{_WS}]*+"
+    separator = rf"[{_WS}/]++"
+    attribute = rf"[^{_WS}/>=]++(?:{gap}={gap}(?:{value}))?+"
+    return rf"(?:{separator}|{attribute})*+"
+
+
+#: A value as the tokenizer ends it: quoted, which may hold anything, or bare, which runs
+#: to white space or ``>`` and may not start with a quote.
+_ANY_VALUE = rf"\"[^\"]*+\"|'[^']*+'|(?![\"'])[^{_WS}>]*+"
+
+#: Any start or end tag.
+_TAG = re.compile(rf"</?+(?P<name>{_TAG_NAME}){_attributes(_ANY_VALUE)}>", _ASCII_FOLD)
+
+#: What the bulk run below may take as a value: one the tokenizer ends at the same place. A
+#: quoted value without ``<``, or a bare one that is followed by white space or ``>``. A bare
+#: value runs on through quotes and ``=``, so one cut short by either would leave the rest to
+#: be read as more attributes, and the tag to end somewhere the tokenizer does not end it.
+_PLAIN_VALUE = rf"\"[^\"<]*+\"|'[^'<]*+'|[^{_WS}\"'<>=`]++(?=[{_WS}>])"
+
+
+def _plain_tag(names: tuple[str, ...]) -> str:
+    """An ordinary tag: a name that is none of *names*, and only values the bulk run may take."""
+    guard = rf"(?!(?:{'|'.join(names)})(?![^{_WS}/>]))"
+    return rf"</?+{guard}{_TAG_NAME}{_attributes(_PLAIN_VALUE)}>"
+
+
+_ORDINARY_HERE = _plain_tag(_RAW_TEXT_NAMES + _MODAL_NAMES)
+_ORDINARY_INSIDE = _plain_tag(_RAW_TEXT_NAMES + _MODAL_NAMES + _NESTED_STOPPERS)
+
+#: A run of text and ordinary tags, which the scan skips in one match. Whatever it cannot
+#: take (a comment, a special element, an odd tag) the scan reads one construct at a time,
+#: so this only makes the common page fast and never changes what the scan finds.
+_PLAIN_RUN = re.compile(rf"(?:[^<]++|{_ORDINARY_HERE})++", _ASCII_FOLD)
+
+
+def _region(name: str) -> "re.Pattern[str]":
+    """The rest of a simple ``<name>`` element: text and ordinary tags up to its end tag.
+
+    With no special element inside, the tokenizer stays in its data state throughout and
+    the first end tag closes the element. Anything else makes the pattern fail, and the
+    scan stops.
+    """
+    end = rf"</{name}(?![^{_WS}/>]){_attributes(_PLAIN_VALUE)}>"
+    return re.compile(rf"(?:[^<]++|{_ORDINARY_INSIDE})*+{end}", _ASCII_FOLD)
+
+
+_SIMPLE_REGION = {"svg": _region("svg"), "select": _region("select")}
+
+#: Constructs the scan reads before it gives up. Comments, special elements and odd tags
+#: each cost one; ordinary markup costs nothing, so a real page uses a few hundred.
+_MAX_SCAN_STEPS: Final[int] = 50_000
+
+
+def _script_end(html: str, start: int) -> int | None:
+    """Where the script data that begins at *start* ends, as the tokenizer's escape states place it.
+
+    ``<!--`` escapes the text that follows and ``-->`` ends the escape. Inside an escape
+    ``<script`` nests, and its ``</script`` ends the nesting rather than the element. The
+    element ends at the first ``</script`` outside a nesting, or never (``None``). A scan
+    that stopped at the first ``</script`` would resume reading markup inside script data.
+    """
+    state = 0  # 0 script data, 1 escaped, 2 double escaped
+    pos = start
+    while (marker := _SCRIPT_MARKER.search(html, pos)) is not None:
+        text = marker.group()
+        pos = marker.end()
+        if text == "-->":
+            state = 0
+        elif text == "<!--":
+            state = state or 1
+            pos -= 2  # its two dashes also begin a ``-->``
+        elif text[1] == "/":
+            if state != 2:
+                return marker.start()
+            state = 1
+        elif state == 1:
+            state = 2
+    return None
+
+
+def _read_construct(html: str, pos: int) -> tuple[int, tuple[int, int] | None] | None:
+    """Read the markup that starts at the ``<`` at *pos*.
+
+    ``(next_pos, span)``, *span* being the text of the script or style element this tag
+    opens. ``None`` when the scan can go no further: a comment or tag that never ends, an
+    element that is never closed, or a form whose reading depends on the document around
+    it (``<script/>`` is empty inside ``<svg>`` and a script in HTML; ``<plaintext>``
+    swallows the rest of the page; ``<noscript>`` is raw text with scripting on and markup
+    with it off; ``<math>``, ``<template>`` and a complex ``<svg>`` or ``<select>`` read
+    their children by the tree builder's rules).
+    """
+    if html.startswith("<!--", pos):
+        body = pos + 4
+        if html.startswith(">", body):
+            return body + 1, None
+        if html.startswith("->", body):
+            return body + 2, None
+        ended = _COMMENT_END.search(html, body)
+        return (ended.end(), None) if ended is not None else None
+    after = html[pos + 1 : pos + 2]
+    letter = html[pos + 2 : pos + 3] if after == "/" else after
+    if not (letter.isascii() and letter.isalpha()):
+        if after in ("!", "?", "/"):
+            # A doctype, a CDATA section, a processing instruction or a stray ``</``: a
+            # comment up to the first ``>``.
+            close = html.find(">", pos + 2)
+            return (close + 1, None) if close != -1 else None
+        return pos + 1, None
+    tag = _TAG.match(html, pos)
+    if tag is None:
+        return None
+    end = tag.end()
+    if after == "/":
+        return end, None
+    name = tag.group("name").translate(_ASCII_LOWER)
+    if name in _MODAL_NAMES:
+        region = _SIMPLE_REGION.get(name)
+        skipped = region.match(html, end) if region is not None else None
+        return (skipped.end(), None) if skipped is not None else None
+    if name not in _RAW_TEXT_NAMES:
+        return end, None
+    if name in ("plaintext", "noscript") or html.startswith("/>", end - 2):
+        return None
+    if name == "script":
+        stop = _script_end(html, end)
+    else:
+        closing = _RAW_END[name].search(html, end)
+        stop = closing.start() if closing is not None else None
+    if stop is None:
+        return None
+    is_code = name in ("script", "style") and stop > end
+    return stop, ((end, stop) if is_code else None)
+
+
+def code_spans(html: str, limit: int | None = None) -> list[tuple[int, int]]:
+    """``(start, end)`` of the text inside each ``<script>`` and ``<style>`` element of *html*.
+
+    The text only: the start tag with its attributes and the end tag are markup. Spans are
+    ordered, disjoint and never empty; *limit* stops the scan after that many.
+
+    What a span licenses is a weaker rule over that text, so the scan reads the page as the
+    HTML tokenizer does where that decides what is code: a ``<script`` inside a comment, a
+    quoted attribute value or a ``<textarea>`` opens nothing, a ``>`` inside a quoted value
+    does not end its tag, and a script ends where its escape states end it. Where the tree
+    builder decides instead (``<svg>``, ``<math>``, ``<select>``, ``<template>``) it reads a
+    simple ``<svg>`` or ``<select>`` whole and stops at any other, and at every ``<math>`` and
+    ``<template>``. A page is read the same with scripting on and off, so it
+    stops at ``<noscript>``, whose content is text in one and markup in the other. It stops,
+    rather than guess, at anything it cannot read, and after ``_MAX_SCAN_STEPS`` constructs.
+    Text past that point has no span, so a doubtful page gets more rules, never fewer.
+    """
+    spans: list[tuple[int, int]] = []
+    if (limit is not None and limit <= 0) or _CODE_ELEMENT_START.search(html) is None:
+        return spans
+    size = len(html)
+    pos = 0
+    for _ in range(_MAX_SCAN_STEPS):
+        run = _PLAIN_RUN.match(html, pos)
+        if run is not None:
+            pos = run.end()
+        if pos >= size:
+            break
+        read = _read_construct(html, pos)
+        if read is None:
+            break
+        pos, span = read
+        if span is not None:
+            spans.append(span)
+            if limit is not None and len(spans) >= limit:
+                break
+    return spans
+
+
+#: How many script and style texts :func:`map_page_text` leaves out of the markup function.
+#: Each stretch between them is a separate call, so a page of thousands of tiny elements
+#: would cost far more than one call over the whole page. Past this many, the rest of the
+#: page goes to the markup function, which is the stricter of the two.
+MAX_CODE_PIECES: Final[int] = 256
+
+
+def map_page_text(html: str, markup: Callable[[str], str], code: Callable[[str], str]) -> str:
+    """What *markup* makes of *html*, except that the text of its script and style elements is *code*'s.
+
+    *markup* is the baseline: the answer for the whole page is its answer, and the one change
+    allowed is to put *code*'s result for an element's text where *markup*'s was. So the page
+    differs from the baseline only inside script and style text, and only by what *code* leaves
+    out. A page with no such text, and a page *markup* does not change, never reaches *code*.
+
+    The baseline is cut at the script and style text :func:`code_spans` finds in *html*, and
+    the pieces are scrubbed one by one. A rule that reaches across a cut (a PEM block, a
+    labelled value) makes the pieces differ from the baseline, and then the baseline is the
+    answer. The browser reads the page this returns, so the result is scanned again, and unless
+    the kept text is still exactly its script and style text the baseline is the answer as well.
+    """
+    baseline = markup(html)
+    spans = code_spans(html, MAX_CODE_PIECES)
+    if not spans or baseline == html:
+        return baseline
+    pieces: list[str] = []
+    swapped: list[str] = []
+    kept: list[tuple[int, int]] = []  # where each kept text sits in the joined pieces
+    at = served_len = 0
+    for (start, end), is_text in zip(
+        (*spans, (len(html), len(html))), (*([True] * len(spans)), False)
+    ):
+        outside = html[at:start]
+        if outside:
+            scrubbed = markup(outside)
+            pieces.append(scrubbed)
+            swapped.append(scrubbed)
+            served_len += len(scrubbed)
+        if is_text:
+            text = html[start:end]
+            pieces.append(markup(text))
+            kept_text = code(text)
+            swapped.append(kept_text)
+            kept.append((served_len, served_len + len(kept_text)))
+            served_len += len(kept_text)
+        at = end
+    if "".join(pieces) != baseline:
+        return baseline
+    served = "".join(swapped)
+    if code_spans(served, MAX_CODE_PIECES) != kept:
+        return baseline
+    return served
 
 
 #: Escapes applied inside the data island's JSON string literals.

@@ -19,7 +19,10 @@ Four claims:
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import string
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -68,7 +71,7 @@ PAGE = (
 )
 
 
-def _package(bound_to: str = f"crewmate:{SLUG}") -> dict[str, Any]:
+def _package(bound_to: str = f"crewmate:{SLUG}", *, html: str = PAGE) -> dict[str, Any]:
     return dp.validate_package(
         {
             "kind": "dashboard",
@@ -82,7 +85,7 @@ def _package(bound_to: str = f"crewmate:{SLUG}") -> dict[str, Any]:
                     }
                 }
             },
-            "view": {"html": PAGE},
+            "view": {"html": html},
             "theme": {"tokens": {}},
         }
     )
@@ -207,6 +210,35 @@ async def test_the_route_serves_the_owners_own_page_through_the_frame(wired: Any
     assert "kirocrew-dashboard-data" in page
     assert body["fields"] == ["goal"], "the body does not name the allowlist"
     assert body["instance_version"] == 4
+
+
+@pytest.mark.asyncio
+async def test_the_route_serves_a_script_as_written_and_still_masks_visible_text(
+    wired: Any,
+) -> None:
+    """The scrub that runs before the page is framed must not rewrite the page's code.
+
+    An 80-character palette in a script was replaced by ``[REDACTED: credential]``: the
+    script still loaded, so nothing reported an error, and every lookup into the palette
+    answered the wrong index. Composing the same page with ``dashboard_frame`` alone
+    served it intact, which is why only the route shows it. A key-shaped run in the
+    page's VISIBLE text is still masked, in the same response.
+    """
+    palette = string.ascii_lowercase + string.ascii_uppercase + string.digits + "#$%&*+-=?@^_~:;<>!"
+    key = base64.b64encode(hashlib.sha256(b"kc-bare-0").digest()).decode()[:40]
+    page = (
+        '<p data-dashboard-field="goal"></p>'
+        f"<script>var ART_CHARS = '{palette}'; window.kirocrew.subscribe('goal', (v) => v);</script>"
+        f"<p>{key}</p>"
+    )
+    assert redact_via_context(page) != page, "the premise: the whole-page pass rewrites it"
+    wired.store.content = dp.dump_package(_package(html=page))
+    status, body = await _call(md.api_member_dashboard, _request(wired.app, "GET", PATH))
+    assert status == 200
+    rendered = body["rendered_html"]
+    assert f"var ART_CHARS = '{palette}';" in rendered
+    assert key not in rendered, "visible text kept a key-shaped run"
+    assert "[REDACTED: credential]" in rendered
 
 
 @pytest.mark.asyncio
