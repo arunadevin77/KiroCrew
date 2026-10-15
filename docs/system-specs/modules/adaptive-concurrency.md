@@ -455,6 +455,19 @@ answers does the tool print `agent.max_subagents`, and then it is labelled a
 ceiling rather than the cap in force -- the number a caller sizes a fan-out from
 has to be the effective one.
 
+**`kirocrew doctor` is another process outside the gateway.** Its overload
+section prints the configured adaptive bounds, then reads the same `GET
+/api/spawn/adaptive` snapshot with the local secret resolved for the
+`127.0.0.1` listener it dials (over the gateway's unix socket when that file
+exists, TCP loopback otherwise) and prints it through
+`adaptive_summary_lines()` under "adaptive controller (running gateway on port
+N)": the mode, both caps against their ceilings, the last pressure cut while
+the exec cap is below its ceiling, the last decision, and the last five cap
+changes, newest last. With no credential for the port nothing is sent; with no
+answer, a refusal or a snapshot-less reply it prints one "not read" line naming
+why, and none of those is a doctor issue, since the Connectivity section reports
+a gateway that is down (`doctor_checks/workload.py::_doctor_adaptive_live`).
+
 The two other places the model is handed a fan-out figure -- the spawn tool
 descriptions (`mcp_tools/spawn.py::schemas`, "You can run up to N sub-agents
 concurrently", followed in both branches by the note that each start also waits
