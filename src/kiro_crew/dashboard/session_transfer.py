@@ -170,13 +170,14 @@ _SUPPORTED_BUNDLE_VERSIONS = (1, 2)
 
 
 class TransferBundle(dict[str, Any]):
-    """Wire bundle plus the transcript chain validated during assembly."""
+    """Wire bundle, the transcript chain validated during assembly, and the raw rows assembled."""
 
-    __slots__ = ("publication_keys",)
+    __slots__ = ("publication_keys", "source_rows")
 
     def __init__(self, payload: dict[str, Any], *, publication_keys: Sequence[str]) -> None:
         super().__init__(payload)
         self.publication_keys = tuple(publication_keys)
+        self.source_rows: tuple[dict[str, Any], ...] | None = None
 
 
 #: Structural cap on the title. NOT a size wall: an overlong title is TRUNCATED
@@ -1256,7 +1257,9 @@ def _read_and_assemble(
         layer_b_skipped = True
     try:
         payload = _assemble_bundle(history, title, agent, origin, layer_b, layer_b_skipped, source)
-        return TransferBundle(payload, publication_keys=publication_keys)
+        bundle = TransferBundle(payload, publication_keys=publication_keys)
+        bundle.source_rows = tuple(history)
+        return bundle
     except BaseException:
         release_bundle_files({"layer_b": layer_b})
         raise

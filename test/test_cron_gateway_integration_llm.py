@@ -15,12 +15,17 @@ from cron_gateway_integration_helpers import (
     _make_command_job,
     _make_gw,
     _make_gw_for_llm,
+    _make_gw_for_llm_with_update_job,
     _make_llm_job,
     _make_script_job,
+    _resolved_binding,
     _run_command_callback,
     _run_llm_callback,
+    _run_llm_callback_unresolved_default,
     _run_script_callback,
 )
+
+from kiro_crew.cron import CronSchedule
 
 # ── Per-job model override: _acquire_with_model_fallback / _annotate_model_downgrade ──
 
@@ -214,6 +219,121 @@ class TestLlmCronAdmission:
         with pytest.raises(ValueError, match="no canonical execution context"):
             await _run_llm_callback(gw, _make_llm_job(member_id="deleted"))
         gw.dashboard_state.notify.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unbound_unresolved_one_shot_survives(self, tmp_path):
+        """A vanished global agent skips; it never consumes scheduled work."""
+        from kiro_crew.cron import CronService
+
+        gw = _make_gw_for_llm()
+        job = _make_llm_job(
+            agent_id="ghost-agent",
+            delete_after_run=True,
+            schedule=CronSchedule(kind="at", at_ts=9999999999.0),
+        )
+        svc = CronService(base_dir=tmp_path)
+        svc._jobs = [job]
+        svc._save()
+
+        result, stream = await _run_llm_callback_unresolved_default(gw, job)
+
+        svc._merge_job_result(job)
+        stored = next(
+            (
+                candidate
+                for candidate in svc.list_jobs(include_disabled=True)
+                if candidate.id == job.id
+            ),
+            None,
+        )
+        assert stored is not None, "unresolved one-shot was deleted"
+        assert result is None
+        assert stored.last_status == "error"
+        assert stored.last_error == (
+            "Agent 'ghost-agent' is no longer configured. Pick another agent for "
+            "this job, or restore that one in your agent settings."
+        )
+        assert job.run_never_started is True
+        gw.sessions.get_or_create.assert_not_called()
+        stream.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_skipped_past_due_one_shot_is_parked_not_refired(self, tmp_path):
+        """A skipped ``at`` job survives AND is parked -- it must not spin.
+
+        Every ``delete_after_run`` job is an ``at`` job. When its agent stops
+        resolving, the named skip sets ``run_never_started`` so the one-shot is
+        retained (the sibling test above) -- but retention alone left it ENABLED:
+        ``_execute`` parks an at-job only on ``fire_time_denied``, and
+        ``_merge_job_result`` propagated the park only on that same flag.
+        ``_is_due`` answers True for a past-due ``at`` job on every scan and
+        ``_next_wake_secs`` yields ``0.0`` for it, so the timer re-entered the
+        fire path with no delay -- the zero-delay refire loop the denial park
+        exists to prevent, here for a condition that is just as permanent (the
+        agent does not come back on its own). The skip must park the job like
+        the denial does, and the park must reach DISK: ``enabled`` is re-derived
+        from ``user_paused`` on reload, so an in-memory park alone comes back
+        live. Read back through a FRESH service so that half is what is pinned.
+        """
+        import time
+
+        from kiro_crew.cron import CronService
+
+        gw = _make_gw_for_llm()
+        job = _make_llm_job(
+            agent_id="ghost-agent",
+            delete_after_run=True,
+            schedule=CronSchedule(kind="at", at_ts=time.time() - 60.0),
+        )
+        svc = CronService(base_dir=tmp_path)
+        svc._jobs = [job]
+        svc._save()
+
+        result, stream = await _run_llm_callback_unresolved_default(gw, job)
+
+        assert result is None
+        assert job.run_never_started is True, "the skip must still retain the one-shot"
+        assert job.enabled is False, "a skipped past-due one-shot was left enabled in memory"
+        svc._merge_job_result(job)
+
+        reloaded = CronService(base_dir=tmp_path)
+        stored = next(
+            (j for j in reloaded.list_jobs(include_disabled=True) if j.id == job.id), None
+        )
+        assert stored is not None, "unresolved one-shot was deleted"
+        assert stored.enabled is False, (
+            "a skipped past-due one-shot came back ENABLED from disk -- due again on "
+            "every scan, a zero-delay refire loop"
+        )
+        assert stored.user_paused is True, "the park must be persisted as user_paused"
+        assert stored.last_status == "error"
+        assert "ghost-agent" in (stored.last_error or "")
+        # The scheduler's own reading: nothing is due, nothing arms a zero wake.
+        assert reloaded._next_wake_secs() is None, "the parked one-shot still arms the timer"
+        gw.sessions.get_or_create.assert_not_called()
+        stream.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_skipped_recurring_job_is_not_parked(self, tmp_path):
+        """Control: the park is one-shot-only. A recurring job waits for its
+        next slot and resumes on its own once the name resolves again, so the
+        skip must leave ``enabled`` alone for it -- the same asymmetry the
+        fire-time denial keeps. Project-bound, because that is the recurring
+        shape the fire-time guard validates at all (an unbound recurring job
+        dispatches from its frozen capture and reads no config)."""
+        gw = _make_gw_for_llm_with_update_job()
+        job = _make_llm_job(project_path=str(tmp_path), agent_id="ghost-agent")
+        assert job.schedule.kind == "every"
+
+        with _resolved_binding() as mock_resolve:
+            mock_resolve.return_value.requested_resolved = False
+            mock_resolve.return_value.kiro_agent = "default-agent"
+            mock_resolve.return_value.resolved_source = "default"
+            result, _stream = await _run_llm_callback(gw, job)
+
+        assert result is None
+        assert job.run_never_started is True
+        assert job.enabled is True, "a skipped RECURRING job must not be parked"
 
 
 class TestModelFallback:

@@ -445,6 +445,18 @@ async def api_chat_slot_export(request: web.Request) -> web.StreamResponse:
     if slot.memory_mode != "persistent":
         return _refuse_restricted(f"memory_mode={slot.memory_mode}")
 
+    # A project-bound scheduled job's output is owner-only, and a file leaves the
+    # dashboard whole: a non-owner exports a cron transcript only when every row
+    # is provably from an unbound run (the same proof slot detail filters by).
+    from kiro_crew.dashboard.handlers.cron import (
+        non_owner_cron_copied_rows_refusal,
+        non_owner_cron_transcript_copy_refusal,
+    )
+
+    refused = await non_owner_cron_transcript_copy_refusal(request, state, slot, "chat.slot_export")
+    if refused is not None:
+        return refused
+
     try:
         bundle = await build_transfer_bundle_async(
             state,
@@ -540,6 +552,21 @@ async def api_chat_slot_export(request: web.Request) -> web.StreamResponse:
             {"error": "the session could not be exported", "code": "export_failed"},
             status=500,
         )
+
+    # The early check above read its own snapshot; a bound run can append before
+    # the builder's read, so the rows this bundle was built from are checked too.
+    # A bundle that does not say what it was built from proves nothing.
+    copied_rows = getattr(bundle, "source_rows", None)
+    refused = await non_owner_cron_copied_rows_refusal(
+        request,
+        state,
+        slot,
+        "chat.slot_export",
+        list(copied_rows) if copied_rows is not None else None,
+    )
+    if refused is not None:
+        release_bundle_files(bundle)
+        return refused
 
     if not bundle.get("messages"):
         # Refused here rather than handed over, because the importer's floor

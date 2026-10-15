@@ -7,6 +7,7 @@ test modules import from it.
 
 from __future__ import annotations
 
+import contextlib
 from contextlib import nullcontext
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,6 +27,7 @@ def _make_gw():
     gw._owner_id = "U000"
     gw.subagent_mgr = None
     gw._cron_injecting = {}
+    gw._cron_session_binding_overflow_count = 0
     gw._running_script_ids = set()
     gw._no_crons = False
     gw.cron_svc = MagicMock()
@@ -177,6 +179,7 @@ def _make_gw_for_llm():
     gw._owner_id = "U000"
     gw.subagent_mgr = None
     gw._cron_injecting = {}
+    gw._cron_session_binding_overflow_count = 0
     gw._running_script_ids = set()
     gw._no_crons = False
     gw.cron_svc = MagicMock()
@@ -196,7 +199,16 @@ def _make_gw_for_llm():
     return gw
 
 
-async def _run_llm_callback(gw, job, *, get_or_create_side_effect=None, fires=1):
+async def _run_llm_callback(
+    gw,
+    job,
+    *,
+    get_or_create_side_effect=None,
+    fires=1,
+    sel_factory=None,
+    real_session_context=False,
+    embed_calls=None,
+):
     """Run the cron callback for an LLM-based job through _init_cron.
 
     get_or_create_side_effect: if provided, set as the side_effect on
@@ -204,6 +216,10 @@ async def _run_llm_callback(gw, job, *, get_or_create_side_effect=None, fires=1)
     fires: how many times to run the ONE callback the gateway built, as one
     gateway process fires a job on successive schedule slots; the last result
     is returned.
+    real_session_context: build the prompt with the real
+    ``build_cron_session_context`` instead of the bare-message stub.
+    embed_calls: a list that receives the ``run_in_embed_pool`` mock, so a caller
+    can read the prompt and ``compressed_history`` the fire built.
     """
     captured_cb = None
 
@@ -215,22 +231,35 @@ async def _run_llm_callback(gw, job, *, get_or_create_side_effect=None, fires=1)
 
     _embed_mock = AsyncMock(return_value=("full prompt", None))
     _stream_mock = AsyncMock(return_value="Agent response here")
+    sel_patch = (
+        patch("kiro_crew.slack.gateway.sel", new=sel_factory)
+        if sel_factory is not None
+        else patch("kiro_crew.slack.gateway.sel")
+    )
 
     with (
         patch("kiro_crew.slack.gateway.CronService") as mock_cron_cls,
         patch("kiro_crew.slack.gateway.run_in_embed_pool", _embed_mock),
         patch("kiro_crew.slack.gateway.stream_and_collect", _stream_mock),
-        patch("kiro_crew.slack.gateway.sel"),
+        sel_patch,
         patch("kiro_crew.slack.gateway.build_cron_session_context") as mock_ctx,
     ):
 
-        mock_ctx.return_value = (f"cron:{job.id}", job.message)
+        if real_session_context:
+            from kiro_crew.cron_service.identity import build_cron_session_context
+
+            mock_ctx.side_effect = build_cron_session_context
+        else:
+            mock_ctx.return_value = (f"cron:{job.id}", job.message)
+        if embed_calls is not None:
+            embed_calls.append(_embed_mock)
 
         def capture_cron(on_job=None, **kw):
             nonlocal captured_cb
             captured_cb = on_job
             svc = MagicMock()
             svc.start = AsyncMock()
+            svc.update_job_async = AsyncMock()
             svc.remove_job_async = AsyncMock(return_value=True)
             return svc
 
@@ -240,3 +269,88 @@ async def _run_llm_callback(gw, job, *, get_or_create_side_effect=None, fires=1)
         for _ in range(fires):
             result = await captured_cb(job)
         return result, _stream_mock
+
+
+@contextlib.contextmanager
+def _resolved_binding():
+    """Patch the two calls every fire-time agent-resolution test stubs: same
+    two patches, same nesting order, same lifetime as the inlined ``with``
+    block, just given a name. Yields the ``resolve_agent_bindings`` mock for
+    the caller to configure; ``warm_project_agent_names`` has no reader."""
+    with (
+        patch("kiro_crew.slack.gateway.resolve_agent_bindings") as mock_resolve,
+        patch("kiro_crew.slack.gateway.warm_project_agent_names", AsyncMock()),
+    ):
+        yield mock_resolve
+
+
+def _set_alias_pinned_model_binding(mock_resolve):
+    """Shared resolved-alias binding for the two alias-model-precedence
+    tests (``..._is_not_dropped`` / ``..._outranks_the_alias_model``)."""
+    mock_resolve.return_value.requested_resolved = True
+    mock_resolve.return_value.kiro_agent = "raw-kiro-agent-name"
+    mock_resolve.return_value.model = "alias-pinned-model"
+    mock_resolve.return_value.memory_store_name = ""
+    mock_resolve.return_value.execution_context = None
+    mock_resolve.return_value.resolved_alias = "ea-dev"
+    mock_resolve.return_value.resolved_source = "alias"
+
+
+def _set_project_resolved_ea_dev_binding(mock_resolve):
+    """Shared resolved-project ``ea-dev`` binding for the two control tests."""
+    mock_resolve.return_value.requested_resolved = True
+    mock_resolve.return_value.kiro_agent = "ea-dev"
+    mock_resolve.return_value.model = ""
+    mock_resolve.return_value.memory_store_name = ""
+    mock_resolve.return_value.execution_context = None
+    mock_resolve.return_value.resolved_alias = None
+    mock_resolve.return_value.resolved_source = "project"
+
+
+def _set_member_template_alias_binding(mock_resolve):
+    """Shared resolved-member-template-alias binding; callers keep their own
+    ``with`` patch tuple (count/order varies) and just configure it here."""
+    mock_resolve.return_value.requested_resolved = True
+    mock_resolve.return_value.kiro_agent = "member-template"
+    mock_resolve.return_value.model = ""
+    mock_resolve.return_value.resolved_alias = "someone-else"
+    mock_resolve.return_value.resolved_source = "alias"
+    mock_resolve.return_value.memory_store_name = ""
+    mock_resolve.return_value.execution_context = None
+
+
+async def _run_llm_callback_unresolved_default(gw, job):
+    """Fire through ``_run_llm_callback`` with ``resolve_agent_bindings``
+    stubbed as unresolved-default -- the four call sites below repeat this
+    one-patch setup verbatim."""
+    with patch("kiro_crew.slack.gateway.resolve_agent_bindings") as mock_resolve:
+        mock_resolve.return_value.requested_resolved = False
+        mock_resolve.return_value.resolved_source = "default"
+        return await _run_llm_callback(gw, job)
+
+
+def _make_gw_for_llm_with_update_job():
+    """``_make_gw_for_llm()`` plus the ``update_job_async`` override seven
+    skip-path tests below each repeat verbatim."""
+    gw = _make_gw_for_llm()
+    gw.cron_svc.update_job_async = AsyncMock()
+    return gw
+
+
+def _recording_cron_provider_factory(created: list[tuple[object, str | None, str | None]]):
+    """Build live providers while recording the binding used for each allocation."""
+
+    def factory(session_key=None, agent=None, channel_id=None, **kwargs):
+        provider = MagicMock()
+        provider.start = AsyncMock()
+        provider.shutdown = AsyncMock()
+        provider.memory_mode = kwargs.get("memory_mode", "persistent")
+        provider.is_process_alive = lambda: True
+        provider.context_usage_pct = lambda: 0.0
+        provider.context_window_tokens = lambda: 0
+        provider.has_active_turn = lambda: False
+        provider.runtime_info = lambda: (None, None)
+        created.append((provider, agent, kwargs.get("cwd")))
+        return provider
+
+    return factory

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from aiohttp import web
 
@@ -278,6 +279,17 @@ async def api_chat_slot_fork(request: web.Request) -> web.Response:
     denied = deny_app_slot_access(request_app, slot, name, "chat.slot_fork")
     if denied is not None:
         return denied
+    # A fork copies the parent transcript into a new tab, so a non-owner forks a
+    # scheduled job's slot only when every row is provably from an unbound run --
+    # project-bound output is owner-only (the same proof slot detail filters by).
+    from kiro_crew.dashboard.handlers.cron import (
+        non_owner_cron_copied_rows_refusal,
+        non_owner_cron_transcript_copy_refusal,
+    )
+
+    refused = await non_owner_cron_transcript_copy_refusal(request, state, slot, "chat.slot_fork")
+    if refused is not None:
+        return refused
 
     source = await resolve_fork_source(slot, audit_caller=request_app or "dashboard")
     if isinstance(source, web.Response):
@@ -390,6 +402,11 @@ async def api_chat_slot_fork(request: web.Request) -> web.Response:
         # pin rides the child's birth save. Agent ``session_fork`` children
         # never get it: pinned marks a session as human-owned.
         stamp=_inherit_pin(source.slot),
+        # The early check above read its own snapshot; this judges the rows the
+        # fork actually copies.
+        check_rows=functools.partial(
+            non_owner_cron_copied_rows_refusal, request, state, slot, "chat.slot_fork"
+        ),
     )
     if isinstance(result, web.Response):
         return result
@@ -427,6 +444,7 @@ async def fork_slot(
     audit_operation: str = FORK_AUDIT_OPERATION,
     stamp: "Callable[[_ChatSlot], None] | None" = None,
     recheck: "Callable[[], None] | None" = None,
+    check_rows: "Callable[[list[dict]], Awaitable[web.Response | None]] | None" = None,
 ) -> "ForkResult | web.Response":
     """Copy *source*'s transcript up to (or after) the fork point into a new slot.
 
@@ -462,6 +480,11 @@ async def fork_slot(
     eligibility, the source's addressability, the folder's existence -- true at
     the act rather than at the moment they were first read, across the
     suspensions this function takes for the transcript read and the memory bind.
+
+    ``check_rows``, when given, is awaited with the exact rows the child will
+    receive, once the fork point has sliced them and before the child is minted;
+    a response it returns is the fork's answer. The human route passes the
+    non-owner cron-copy check here, so the rows judged are the rows copied.
 
     Returns a :class:`ForkResult` on success. A refusal is returned as the
     finished ``web.Response`` -- this module's refusal shape, kept so its coded
@@ -920,6 +943,10 @@ async def fork_slot(
             )
     elif at_index is not None:
         visible = visible[: at_index + 1]
+    if check_rows is not None:
+        rows_refused = await check_rows(visible)
+        if rows_refused is not None:
+            return rows_refused
 
     # A fork of a member DM thread is an ordinary chat, never a second "member"
     # slot: the fork mints a chat-* key, so member mode would make it invisible

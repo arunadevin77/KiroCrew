@@ -256,6 +256,7 @@ from kiro_crew.dashboard.agent_admin.roster import (  # noqa: F401
     _agent_roster_row,
     _carries_mask,
     _name_would_be_masked,
+    _query_project_dir,
     _roster_avatar,
     _roster_mask,
 )
@@ -300,6 +301,7 @@ from kiro_crew.dashboard.handlers._shared import (  # noqa: F401
     enumerate_skill_catalog,
     read_bounded_json,
     rebuild_agent_spec,
+    requesting_slot_project,
 )
 from kiro_crew.dashboard.handlers.agent_templates import (  # noqa: F401
     TEMPLATE_DEFINITION_KEYS,
@@ -345,6 +347,7 @@ from kiro_crew.sandbox import (
     scrub_agent_subprocess_env,
     wrap_argv,
 )
+from kiro_crew.security import resolve_project_path  # noqa: F401  (roster reads it)
 from kiro_crew.user_json import loads_user_json  # noqa: F401
 from kiro_crew.validation import TEMPLATE_NAME_RE  # noqa: F401
 
@@ -1552,9 +1555,11 @@ async def api_kirocrew_agents(request: web.Request) -> web.Response:
     Also surfaces the requesting session's project-scope agents
     (``<project>/.kiro/agents``, resolved via ``X-Session-Key``) tagged
     ``scope="project"`` — these dispatch from that slot because kiro-cli runs
-    with the slot's project as cwd, so the picker must offer them. A config
-    alias of the same name is listed once, as the alias:
-    dispatch resolves aliases first, so the alias is what would answer.
+    with the slot's project as cwd, so the picker must offer them. An alias whose
+    ``kiro_agent`` template the project declares loses its global row
+    (``_resolve_agent_selection``'s project-override step, mirroring kiro-cli's
+    project-first lookup of that template); a project name equal only to an
+    alias's name stays the alias's global row.
     """
     cfg = KiroCrewConfig.load()
     # Caller class, resolved once for the whole response. It decides only VALUE
@@ -1587,7 +1592,31 @@ async def api_kirocrew_agents(request: web.Request) -> web.Response:
     # Project rows come from a directory scan, so it runs on the discovery
     # pool — same rule as every other agent listing: no filesystem I/O on the
     # event loop. Failure costs only the project rows, never the roster.
-    project_dir = active_project_dir(state, _read_session_key(request)) if state else ""
+    #
+    # Two sources of a project scope, in precedence order:
+    #   1. sessionKey -> the live in-memory slot's own .project. This is the
+    #      ONLY source for a real chat session, and it must win when present:
+    #      the slot is the thing that will actually run in that directory, so
+    #      its own project is authoritative over anything a caller separately
+    #      claims. Deliberately `requesting_slot_project`, NOT
+    #      `active_project_dir`: the latter's step 2 falls back to "the single
+    #      project shared by every open slot" for ANY session key, including
+    #      the dashboard-wide `dashboard:ui` sentinel every client call sends
+    #      when it has no real chat slot to name (see api/client.ts's `_sk`
+    #      fallback). That fallback silently won here whenever exactly one
+    #      chat tab happened to have a project bound, hijacking every caller
+    #      of THIS raw-path fallback (the cron job form's picker) regardless
+    #      of which project it actually asked for.
+    #   2. project_path query param -> a raw path with NO live slot behind it
+    #      (e.g. the Schedule page's job form, populating a project-scoped
+    #      agent picker for a cron job that has no session to key off of).
+    #      Falls back to this ONLY when sessionKey resolved to no project, so
+    #      a caller cannot override a real slot's project by also passing a
+    #      stale project_path.
+    slot_project = requesting_slot_project(state, _read_session_key(request)) if state else None
+    project_dir = str(slot_project) if slot_project else ""
+    if not project_dir:
+        project_dir = await _query_project_dir(request, redact=redact)
     if project_dir:
         try:
             project_names = await asyncio.get_running_loop().run_in_executor(
@@ -1605,10 +1634,31 @@ async def api_kirocrew_agents(request: web.Request) -> web.Response:
         # One shared default record for every project row — they carry no
         # per-agent config of their own (nothing on disk to read without a
         # second scan), so the row is the default record under a project tag.
+        # On a collision this is deliberately NOT the shadowed alias's record:
+        # the winner lands on ``default_agent``'s bindings like any project-only
+        # agent, because letting a ``<project>/.kiro/agents/*.json`` inherit the
+        # shadowed crew's private memory store would turn "land a branch" into a
+        # read of that crew's memory.
         project_default = KiroCrewAgentConfig()
+        # An alias whose ``kiro_agent`` TEMPLATE the project declares has its
+        # global row dropped: kiro-cli resolves that template project-first in
+        # this cwd, so the project file is what answers. A project file sharing
+        # only an alias's NAME displaces nothing -- the alias dispatches its own
+        # template -- so that name keeps its global row and gets no project row.
+        #
+        # Re-derived from ``cfg.agents`` instead of filtering ``agents`` in
+        # place: ``redact`` masks a row's ``name`` for an app token, so a row
+        # name cannot be compared against a raw project name.
+        shadowed = {n for n, a in cfg.agents.items() if a.kiro_agent in project_names}
+        if shadowed:
+            agents = [
+                _agent_roster_row(name, "global", agent_cfg, redact=redact)
+                for name, agent_cfg in cfg.agents.items()
+                if name not in shadowed
+            ]
         agents.extend(
             _agent_roster_row(name, "project", project_default, redact=redact)
-            for name in sorted(project_names - set(cfg.agents.keys()))
+            for name in sorted(project_names - (set(cfg.agents) - shadowed))
         )
 
     # Reorder by usage frequency (most-used first). Derived read-only from chat

@@ -52,6 +52,31 @@ async def api_chat_slot_summary(request: web.Request) -> web.Response:
     cfg = await asyncio.to_thread(KiroCrewConfig.load)
     enabled = bool(cfg.session_summary.enabled)
 
+    # A summary restates the transcript it came from, and a scheduled job's
+    # transcript can carry a project-bound run's output, which is owner-only
+    # (the non-owner disclosure table in ``learn-cron-dashboard.md``). It cannot
+    # be filtered per row, so -- as History's summaries do -- a non-owner gets
+    # none for a slot showing a ``cron:`` transcript under any name
+    # (``cron_slot_job_id``). Imported here, not at module level: this owner's
+    # functions run on the facade's namespace.
+    from kiro_crew.dashboard.handlers.source_providers import is_owner_dashboard_request
+    from kiro_crew.dashboard.state import cron_slot_job_id
+
+    owner_only = bool(cron_slot_job_id(slot)) and not is_owner_dashboard_request(request)
+    if owner_only:
+        return web.json_response(
+            {
+                "enabled": enabled,
+                "stale": False,
+                "intents": [],
+                "constraints": [],
+                "generated_at": None,
+                "user_turns": None,
+                "last_activity": None,
+                "generate_state": "unavailable",
+            }
+        )
+
     payload: dict | None = None
     stale = False
     log = state.conversation_log
@@ -148,6 +173,26 @@ async def api_chat_slot_summary_generate(request: web.Request) -> web.Response:
     denied = deny_app_slot_access(request.get("app", ""), slot, name, "slot_summary_generate")
     if denied is not None:
         return denied
+
+    # A summary restates the transcript it came from, and a scheduled job's
+    # transcript can carry a project-bound run's output, which is owner-only
+    # (the non-owner disclosure table in ``learn-cron-dashboard.md``). It cannot
+    # be filtered per row, and generating one writes a sidecar the caller could
+    # read back, so a non-owner may not generate one for a slot showing a
+    # ``cron:`` transcript under any name (``cron_slot_job_id``). Imported here,
+    # not at module level: this owner's functions run on the facade's namespace.
+    from kiro_crew.dashboard.handlers.source_providers import is_owner_dashboard_request
+    from kiro_crew.dashboard.state import cron_slot_job_id
+
+    owner_only = bool(cron_slot_job_id(slot)) and not is_owner_dashboard_request(request)
+    if owner_only:
+        return web.json_response(
+            {
+                "error": "only the dashboard owner can summarize a scheduled job's session",
+                "code": "summary_owner_only",
+            },
+            status=403,
+        )
 
     cfg = await asyncio.to_thread(KiroCrewConfig.load)
     if request.get("app", "") and state._slots.get(name) is not slot:
