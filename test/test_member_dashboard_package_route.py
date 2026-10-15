@@ -1892,7 +1892,7 @@ class TestTheRenderPathServesAnAppliedVersion:
     The render path must serve a page a PERSON put there. The marker already exists on
     main and needs no new field: a version is cut only by
     ``ArtifactStore.update(..., snapshot=True)``, each cut appends a lifecycle event
-    carrying ``by=actor`` (``artifacts.py:1504``), and that actor is derived from HOW
+    carrying ``by=actor`` (``artifacts_writes.update``), and that actor is derived from HOW
     the request authenticated -- ``actor = "agent" if is_mcp else "user"`` where
     ``is_mcp`` is the presence of the ``X-Internal-Secret`` header
     (``dashboard/handlers/artifacts.py:1960``). So:

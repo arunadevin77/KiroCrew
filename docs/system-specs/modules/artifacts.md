@@ -290,7 +290,12 @@ and are imported from their owner.
 
 | Owner | Responsibility |
 |---|---|
-| `kiro_crew.artifacts` | `ArtifactStore`: the shared per-root lock, the directory layout, the fenced file IO (`_read_text` / `_write_text` / `_read_bytes` / `_write_bytes`), versions and pruning, the live `source_path` pointer and its allowed roots, publication-record reads and writes, comment and retention orchestration, the change listener and the `kirocrew.artifact.created` counter. Also the caps (`MAX_VERSIONS`, `MAX_CONTENT_BYTES`, `MAX_COMMENTS_PER_ARTIFACT`, `MAX_EVENTS_PER_ARTIFACT`, `MAX_AUTO_WIDGET_ARTIFACTS`), the clock (`_now_iso`), the `slug_is_well_formed` predicate and the `get_default_store` / `get_default_folder_store` singletons |
+| `kiro_crew.artifacts` | `ArtifactStore` itself: construction and the shared per-root lock, the change listener, `get` and `read_image_bytes`, `list`, and the per-record metadata verbs (pin, webapp expiry, `delete`, impressions, publication, fork metadata and folder), with the member bindings of the owners below. Also the `slug_is_well_formed` predicate, the `get_default_store` / `get_default_folder_store` singletons, and the re-export of every moved name |
+| `kiro_crew.artifacts_disk` | How a store keeps artifacts on disk: the directory layout and slug claiming, the fenced file IO (`_read_text` / `_write_text` / `_read_bytes` / `_write_bytes`) and its pinned, durable primitives, the meta / version / image-asset writes, the lifecycle event append, version listing and pruning, the meta scan and the pinned `rmtree`. Also the caps (`MAX_VERSIONS`, `MAX_CONTENT_BYTES`, `MAX_COMMENTS_PER_ARTIFACT`, `MAX_EVENTS_PER_ARTIFACT`, `MAX_AUTO_WIDGET_ARTIFACTS`), the clock (`_now_iso`), the content token and the content check |
+| `kiro_crew.artifacts_source_link` | The live `source_path` pointer: its allowed roots, the descriptor-pinned read and the write-back, and `relocate` |
+| `kiro_crew.artifacts_writes` | Content writes: `create`, `create_image`, `update` and `settle_blank`, and the `kirocrew.artifact.created` counter |
+| `kiro_crew.artifacts_scans` | Lookups and sweeps over every `meta.json`: by upstream artifact id (one and the batch index), by source path, the kind migration and the auto-widget retention sweep |
+| `kiro_crew.artifacts_comments` | The `comments.json` sidecar: comment CRUD, the provider merge, the anchor rescan and the comment events |
 | `kiro_crew.artifact_store.model` | The error hierarchy, the `EXPECT_ABSENT` generation sentinel and the record dataclasses (`Artifact`, `ArtifactPublication`, `ForkMetadata`, `ArtifactComment`, `ImageMetadata`) |
 | `kiro_crew.artifact_store.rules` | Field limits and grammar (slug, tag, name, description, `source_path`), `slugify`, the kind policy (`_infer_kind`, `detect_editor_kind`, `USER_SELECTABLE_KINDS`), the theme-colour lint, the document-path test and session-scope matching |
 | `kiro_crew.artifact_store.images` | The raster mime allowlist and the standard-library header sniffers |
@@ -299,6 +304,22 @@ and are imported from their owner.
 | `kiro_crew.artifact_store.folders` | `ArtifactFolderStore` and `artifact_folders.json` |
 | `dashboard/handlers/artifacts.py` | The HTTP projection: request parsing, the owner gate on write routes, the restricted-session gate, SEL audit, response redaction (`_serialize`), the publish governance gates and the live-refresh broadcast |
 | `kiro_crew.mcp_tools.artifacts` | The MCP projection: tool schemas and handlers, which reach the artifact store only through the HTTP API |
+
+`ArtifactStore` keeps its class in `kiro_crew.artifacts`, and its class body binds each
+moved member by name from the `kiro_crew.artifacts_*` owner that holds its body
+(`create = _artifacts_writes.create`, `_rmtree = staticmethod(_artifacts_disk._rmtree)`).
+The class attribute IS the owner's function, so a patch of a member on the class or on
+an instance reaches every caller, and members still call each other through `self`. A
+bound function reports its owner as `__module__` and its bare name as `__qualname__`;
+nothing reads either. Three members stay in the class body whatever else moves:
+`clear_publication`, because `test_publish_delete_race` treats every line naming it
+as a caller that must pin both generations; `list`, whose module-level `def list`
+would shadow the builtin `list` for its whole owner; and `__init__`, which reads the
+facade-only seams. New store code goes to the owner whose responsibility it shares.
+The owners import the facade for type checking only, import each other lowest layer
+first (`artifacts_disk` under the rest), and log on the `kiro_crew.artifacts` logger.
+`test/test_artifacts_bindings.py` freezes the member inventory (kind, signature,
+owner) and pins the rest of this shape.
 
 No module under `kiro_crew.artifact_store` imports `kiro_crew.artifacts` at import
 time (`folders` names `ArtifactStore` for type checking only), and none performs
@@ -314,8 +335,10 @@ dataclasses, the class of `EXPECT_ABSENT` and `ArtifactFolderStore` -- reports
 the owner module that defines it, so the source lookup and a debugger find its
 definition.
 
-The store's seams belong to the facade, which hands them to the owners at call
-time, so they are patched on `kiro_crew.artifacts`: `config_dir`, `_now_iso`,
+The store's seams are patched on `kiro_crew.artifacts`, which binds every one of
+them; its mirror (`kiro_crew._facade_mirror`) sends a write or a delete of one to every
+`artifacts_*` owner that binds the same object, so the moved code that reads it as its
+own global sees the patch: `config_dir`, `_now_iso`,
 `MAX_VERSIONS`, `MAX_CONTENT_BYTES`, `MAX_COMMENTS_PER_ARTIFACT`,
 `MAX_EVENTS_PER_ARTIFACT`, the fence helpers (`_open_pinned_for_read`,
 `canonical_path_refusal`, `sensitive_path_refusal`, `is_sensitive_path`) and the
@@ -323,8 +346,10 @@ time, so they are patched on `kiro_crew.artifacts`: `config_dir`, `_now_iso`,
 builds its store on the facade's `config_dir`, so the default
 `artifact_folders.json` follows the same patch as the default store's root.
 
-The store calls every owner helper through its facade name, so rebinding one on
-`kiro_crew.artifacts` steers the store: `slugify`, `_validate_slug`,
+The facade's own methods read the facade's binding of each owner helper, and the
+moved members read their owner module's binding, which the mirror keeps in step with
+a patch through `kiro_crew.artifacts`, so rebinding one there steers the store:
+`slugify`, `_validate_slug`,
 `_validate_name`, `_validate_description`, `_validate_tags`, `_validate_kind`,
 `_validate_source`, `_validate_source_path`, `_infer_kind`, `detect_editor_kind`,
 `_markdown_misclassification_reason`, `_session_touched` and
@@ -340,8 +365,16 @@ the same `kiro_crew.artifacts` logger object.
 
 Rule data an owner's own code reads has one binding, in the owner, and the
 facade forwards it instead of holding a copy: `_EXPORTS` maps each such name to
-its owner, the module `__getattr__` answers a read from the owner in
-`sys.modules`, and the module's class sends a write or a delete to the owner. A
+its owner, and the module's class (`_facade_mirror.MirroredModule`, installed with
+that table as its forwards) answers a read from the owner in `sys.modules` and sends
+a write or a delete to the owner; the module-level `__getattr__` declines every name
+the mirror serves. The forwarding table is the one the install saw: a name added to
+`_EXPORTS` later is answered on a read, but a write or a delete of it acts on the facade
+and its owners (the mirror's creation rule), not on the name's module. A read of a
+forwarded name a patch has deleted from its owner
+raises the facade's own `AttributeError` (`module 'kiro_crew.artifacts' has no
+attribute ...`), so `hasattr` and `getattr(..., default)` answer as for any missing
+name. A
 patch through `kiro_crew.artifacts` (`monkeypatch`, or `mock.patch` without
 `create`) and a patch of the owner module therefore both reach every reader that
 looks the name up on the owner or the facade when it runs (a module that imports a
@@ -359,19 +392,23 @@ folder limits (`FOLDER_PATH_SEP`, `MAX_FOLDER_DEPTH`, `_NO_GENERATIONS`) in
 `folders`, and the per-format sniffers (`_sniff_jpeg_dimensions`,
 `_sniff_webp_dimensions`) in `images`. The moved classes stay ordinary bindings
 of the facade, since a class is never rebound and the store's string annotations
-resolve through them. The forwarding `__getattr__` is hidden from type checkers,
+resolve through them. The module-level `__getattr__` is hidden from type checkers,
 which see each forwarded name through a `TYPE_CHECKING` import from its owner.
 `mock.patch(..., create=True)` on a forwarded name is not supported, because its
 exit deletes the owner's binding, and `test_artifacts_refactor_create_guard`
 refuses one anywhere in the test trees. `_IMAGE_MIME_EXT` is read only by the
 store, so its facade binding is the live one. `MAX_AUTO_WIDGET_ARTIFACTS` is the
-default argument of `prune_auto_widgets`, bound when the class is defined.
+default argument of `prune_auto_widgets`, bound when `artifacts_scans` is imported.
 
 `test_artifacts_refactor_store_contract` derives, from the tests themselves, every
 name a test rebinds on `kiro_crew.artifacts`, and fails when one is neither
 forwarded nor held by the facade alone with no owner function reading its own
-binding of it. Its one listed exception is `config_dir`, which `folders` reads for
-a directly constructed `ArtifactFolderStore`.
+binding of it. Its listed exceptions are `config_dir`, which `folders` reads for
+a directly constructed `ArtifactFolderStore`, and `get_default_store`, which
+`dashboard_package` falls back to. It reads the `artifact_store` owners, which the
+mirror does not serve; for the `artifacts_*` owners, `test_artifacts_bindings` and
+`test_facade_mirror_guards` check that every name the tests patch on the facade
+reaches each owner that reads it.
 
 `list()` returns newest first on a TOTAL order, `(updated_at, slug)` descending.
 The tie-break is load-bearing, not cosmetic: `updated_at` is microsecond ISO, so
@@ -1085,7 +1122,8 @@ every write-side unit test still green — so test the round-trip
 ## Validation & Limits
 
 The field limits and grammar are `kiro_crew.artifact_store.rules`; the content,
-version and auto-widget caps are the store's, in `kiro_crew.artifacts`.
+version and auto-widget caps are the store's, defined in `kiro_crew.artifacts_disk`
+and re-exported by `kiro_crew.artifacts`.
 
 | Field | Limit |
 |---|---|
@@ -1163,7 +1201,7 @@ migration that rewrites or drops the stranded tags first.
 A `dashboard` artifact holds one crewmate's layout package — `bound_to`,
 `model`, `view` and `theme` — canonicalised by
 `kiro_crew.artifact_store.dashboard_package` on every write. Five rules differ
-from every other kind. The first three are enforced in `kiro_crew.artifacts`,
+from every other kind. The first three are enforced in `ArtifactStore`,
 because they are about the record a write lands on; the last two are enforced
 where the thing they judge is known — the writer's identity at the HTTP layer,
 the page's shape in the canonicaliser:

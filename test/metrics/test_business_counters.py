@@ -41,6 +41,12 @@ def _admission_modules():
     return sorted(f"subagent_manager/admission/{p.name}" for p in pkg.glob("*.py"))
 
 
+def _artifact_store_modules():
+    """The artifact store's modules: the facade and every ``artifacts_*`` owner."""
+    pkg = Path(ev.__file__).resolve().parent.parent
+    return sorted(p.name for p in pkg.glob("artifacts*.py"))
+
+
 def _named(rec, name):
     return [c for c in rec.counters if c["name"] == name]
 
@@ -245,7 +251,7 @@ class TestCallSitesAreWired:
     OWNERS = {
         "SUBAGENTS_SPAWNED": "subagent_manager/admission/pump.py",
         "CRON_FIRES": "cron.py",
-        "ARTIFACTS_CREATED": "artifacts.py",
+        "ARTIFACTS_CREATED": "artifacts_writes.py",
         "WORKFLOW_RUNS": "workflows/runner.py",
         "CONTEXT_COMPACTIONS": "session_compaction.py",
         "MCP_RECONNECTS": "mcp_gateway/stub.py",
@@ -299,7 +305,7 @@ class TestAttributeValuesAreBounded:
             # leave a sibling's future emit unscanned.
             *_admission_modules(),
             "cron.py",
-            "artifacts.py",
+            *_artifact_store_modules(),
             "workflows/runner.py",
             "session_compaction.py",
             "mcp_gateway/stub.py",
