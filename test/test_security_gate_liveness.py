@@ -331,7 +331,11 @@ def _url_payload_command(n: int) -> str:
 #: docstring, the runner and opener tables and the redirection and hidden-command
 #: patterns. It only narrows what auto-approves; no deny rule, threshold or pass
 #: moved.
-_PACKAGE_LINE_BUDGET = 29_293
+#:
+#: Raised again, from 29,293, for provider-attested SharePoint locator validation
+#: and its fail-closed credential-redaction boundary. No deny rule or threshold
+#: moved.
+_PACKAGE_LINE_BUDGET = 29_329
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from kiro_crew.providers.base import LLMEvent
     from kiro_crew.slack.outbound import PostedOptions
 
+from kiro_crew import locator_attestations
 from kiro_crew.context_blocks import attributable_user_chars
 from kiro_crew.dashboard import display_verdicts as _display_verdicts
 from kiro_crew.dashboard.display_battery import display_battery
@@ -2372,7 +2373,9 @@ _NO_BASE = object()
 
 
 def _display_redaction_cache_key(
-    text: str, base: object = _NO_BASE
+    text: str,
+    base: object = _NO_BASE,
+    locator_snapshot: tuple[int, frozenset[str]] | None = None,
 ) -> tuple[_DisplayRedactionKey, int]:
     """Digest the exact string entering the battery together with the exempt sets it reads.
 
@@ -2391,7 +2394,10 @@ def _display_redaction_cache_key(
         "utf-8", errors="surrogatepass"
     )
     prefixes = _token_param_exempt_prefixes()
+    if locator_snapshot is None:
+        locator_snapshot = locator_attestations.snapshot()
     tail = hosts
+    tail += b"\x02" + str(locator_snapshot[0]).encode("ascii")
     if prefixes:
         tail += b"\x01" + "\0".join(prefixes).encode("utf-8", errors="surrogatepass")
     if base is _NO_BASE:
@@ -2493,8 +2499,9 @@ def _display_clean_add(ck: int) -> None:
 
 def _redact_for_display(text: str) -> str:
     """Apply all display redactors, reusing only an exact content-hash match."""
+    locator_snapshot = locator_attestations.snapshot()
     stored, base = _display_verdicts.active()
-    key, input_bytes = _display_redaction_cache_key(text, base)
+    key, input_bytes = _display_redaction_cache_key(text, base, locator_snapshot)
     ck = _clean_verdict_key(key)
     tag = key[0]
     with _display_redaction_cache_lock:
@@ -2522,7 +2529,7 @@ def _redact_for_display(text: str) -> str:
             _remember_redacted(key, input_bytes, verdict)
             return verdict
 
-    redacted = display_battery(text)
+    redacted = display_battery(text, attested_sharepoint_digests=locator_snapshot[1])
     if redacted == text:
         with _display_redaction_cache_lock:
             _display_clean_add(ck)

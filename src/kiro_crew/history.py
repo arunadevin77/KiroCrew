@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, overload
 
-from kiro_crew import platform_compat
+from kiro_crew import locator_attestations, platform_compat
 from kiro_crew.atomic_write import append_line, atomic_write, atomic_write_at, fsync_dir
 from kiro_crew.chat_attachments import persist_inline_images, same_text_modulo_images
 from kiro_crew.config.loader import KiroCrewConfig, config_dir
@@ -1581,7 +1581,9 @@ def _redact_at_write_boundary(role: str, content: str) -> str:
     if role == "user":
         return content
     content, _ = redact_exfiltration_urls(content)
-    content, _ = redact_credentials(content)
+    content, _ = redact_credentials(
+        content, attested_sharepoint_digests=locator_attestations.digests_for_text(content)
+    )
     return content
 
 
