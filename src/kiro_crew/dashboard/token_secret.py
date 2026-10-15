@@ -194,26 +194,14 @@ def _inside_agent_sandbox(cgroup_path: str = "/proc/self/cgroup") -> bool:
         return False
 
 
-#: Directory (a direct child of the crew data home) both gateway auth stores stage their
-#: temp files in: this module's ``token_signing.key`` and ``refresh_tokens``'
-#: ``refresh_chains.json``. Spelled as a literal rather than imported from
-#: ``kiro_crew.sandbox`` to keep this module off that import chain, exactly as
-#: ``service/live_target.py`` spells ``live-target-staging``; the equality is pinned by a
-#: test instead.
-#:
-#: Staging beside either leaf is what this exists to avoid. Both are masked in an agent
-#: sandbox as individual FILES, and a mask covers a PATH rather than an inode, so a temp
-#: beside one of them sits in the data-home root -- visible in every sandbox, and
-#: ``link(2)``-able by a same-uid agent for as long as the write takes. The temp carries
-#: the FULL key or chain state, so a link taken in that window keeps reading the bytes
-#: after the publish, and a crash between write and publish leaves the same unmasked file
-#: on disk. The spawn-time hard-link refusal cannot close this: it runs BEFORE a spawn,
-#: while this window opens during one.
-#:
-#: The sandbox launcher masks this directory in every namespace and precreates it, and
-#: ``security.paths`` fences it, both as a whole DIRECTORY -- so every temp name inside it,
-#: present and future, is covered without a second entry to remember.
-_AUTH_STORE_STAGING_LEAF = "auth-store-staging"
+# The staging directory and its validator live in ``kiro_crew.hidden_leaf_staging`` so
+# writers that only need them do not import this signing-key module; re-exported here for
+# this module's own publish and for ``refresh_tokens``.
+from kiro_crew.hidden_leaf_staging import (  # noqa: E402,F401
+    _AUTH_STORE_STAGING_LEAF,
+    AuthStoreStagingRefused,
+    auth_store_staging_dir,
+)
 
 # Bounded retry budget for the create-then-read interleaving window. The SOLE
 # creator opens the key file with O_EXCL, then writes 32 bytes; a racing reader
@@ -254,28 +242,6 @@ _LINK_UNSUPPORTED_ERRNOS = frozenset(
 _LINK_UNSUPPORTED_WINERRORS = frozenset({1, 50})
 
 
-class AuthStoreStagingRefused(OSError):
-    """The staging directory is REFUSED because another account could write it.
-
-    Raised for the two permission refusals only -- a POSIX mode that keeps a group or world
-    write bit, and a Windows directory that could not be locked to its owner. A home that
-    simply cannot stage (a non-directory occupying the name) raises a plain ``OSError``,
-    because the two need opposite answers.
-
-    An ``OSError`` subclass so every existing caller keeps its handler: the refresh store
-    marks itself degraded on either kind and does not need to tell them apart.
-
-    The signing key does. Its publish loop treats a plain failure as "this home cannot
-    stage", which unlocks :func:`_create_key_in_place` -- and that writer creates the
-    destination EMPTY before writing, which is the truncation window the staged publish
-    exists to remove. Buying that window is worth it where no key would be persisted
-    otherwise. It is not worth it here: the refusal is a one-``chmod`` misconfiguration this
-    module reports in full, and an in-place publish answers nothing about it, so the key
-    degrades to an ephemeral secret with the stored file untouched rather than leaving a host
-    that published atomically yesterday with a zero-byte key today.
-    """
-
-
 def _is_link_unsupported(exc: OSError) -> bool:
     """Whether *exc* says this filesystem cannot hard-link at all.
 
@@ -286,118 +252,6 @@ def _is_link_unsupported(exc: OSError) -> bool:
     if exc.errno in _LINK_UNSUPPORTED_ERRNOS:
         return True
     return getattr(exc, "winerror", None) in _LINK_UNSUPPORTED_WINERRORS
-
-
-def auth_store_staging_dir(home: Path) -> Path:
-    """Return the auth-store staging directory under *home*, creating it if absent.
-
-    Shared by this module's signing-key publish and ``refresh_tokens``' state publish so
-    the two cannot drift onto different staging policies. The directory is validated
-    rather than trusted, on the same grounds ``service.live_target._publish_pointer``
-    validates its own: the name sits in the data-home root, so a directory found there is
-    not necessarily one this process created.
-
-    Refuses the two shapes that defeat the mask, and repairs the one that does not:
-
-    * not a directory (a symlink included, via ``lstat``) -- REFUSED. Following it would
-      stage the full key or chain state wherever it points, outside both the mask and the
-      fence, which is the exposure this directory exists to close.
-    * cannot be locked to its owner ON WINDOWS -- REFUSED. There
-      :func:`platform_compat.restrict_dir_to_owner` writes an inheriting owner-only DACL,
-      which no POSIX mode test can express, so a directory a foreign principal can write
-      would otherwise pass unexamined and that principal could replace a staged file
-      between the write and the publish.
-    * group- or world-WRITABLE on POSIX where the narrowing does not stick -- REFUSED.
-      Another local account can replace the staged file between ``atomic_write`` and the
-      publish ``os.link``, which installs a signing key it chose. Nothing downstream would
-      notice: the publishing process returns its own bytes while every later boot reads the
-      substituted file as authoritative. A mount that cannot express modes can still
-      hard-link, so "the mode did not stick" does not imply the publish will fail.
-    * group- or world-READABLE or executable on POSIX -- narrowed, and WARNED when the
-      narrowing does not stick. A wider read bit lets another local account enumerate the
-      temps' names, so it is worth closing, but it moves no byte and grants no
-      substitution. This is the ``dir_mode=0755`` class of mount (CIFS, vfat, exFAT),
-      which is a real configuration rather than a hostile one.
-
-    Refusing drops no persisted record, because each caller reaching a refusal answers it
-    rather than returning silently. Both answers are DEGRADATIONS that leave the stored file
-    untouched, raised as :class:`AuthStoreStagingRefused` so a caller can tell a refusal from
-    a home that merely could not be staged in. The signing key degrades to an ephemeral
-    secret for this process, which costs a re-login after a restart and keeps the persisted
-    key byte-for-byte as it was -- it does NOT take the in-place writer, whose empty-create
-    would trade a one-``chmod`` misconfiguration for a zero-byte key on a host that was
-    publishing atomically. The refresh store marks itself degraded, and its own reader fails
-    closed on that mark, so a spent or revoked token is REFUSED rather than accepted -- it
-    does not publish a full copy of the chain state through the state file's own
-    sandbox-visible directory, which is the exposure this staging directory exists to close.
-
-    ``EXDEV`` is not a concern for the caller that publishes with ``os.link``: this is a
-    subdirectory of the key's own parent, so the staged file and its destination are
-    always on one filesystem.
-    """
-    staging = home / _AUTH_STORE_STAGING_LEAF
-    try:
-        st = os.lstat(staging)
-    except FileNotFoundError:
-        home.mkdir(parents=True, exist_ok=True)
-        # exist_ok: the sandbox materialiser precreates the same directory, and the two
-        # auth stores publish concurrently.
-        staging.mkdir(mode=0o700, exist_ok=True)
-        st = os.lstat(staging)
-    if not stat.S_ISDIR(st.st_mode):
-        # NOT AuthStoreStagingRefused: this says the home cannot stage at all, not that
-        # another account could substitute the staged file. The key's publish loop is meant to
-        # reach its in-place writer here, because the alternative is no persisted key on any
-        # boot while a working path to one exists.
-        raise OSError(
-            errno.ENOTDIR,
-            f"{staging} is not a directory; refusing to stage a gateway auth store through it",
-        )
-    # Owner-only on BOTH platforms, through the directory-shaped helper. Its Windows
-    # arm writes an inheriting owner-only DACL, which no mode test can express, so a
-    # POSIX-only check would leave a Windows staging directory a foreign principal can
-    # write -- and that principal could then replace a staged file between the write
-    # and the publish. Its POSIX arm is the same owner-only narrowing the mode split
-    # below measures. The helper is fail-loud, and on Windows it writes only when the
-    # directory's own descriptor does not already match, so the ordinary publish pays
-    # nothing.
-    try:
-        platform_compat.restrict_dir_to_owner(staging)
-    except OSError as exc:
-        if os.name == "nt":
-            raise AuthStoreStagingRefused(
-                errno.EPERM,
-                f"{staging} could not be locked to its owner ({exc}); refusing to stage a "
-                "gateway auth store through it. Another account that can write this "
-                "directory can replace the staged file between the write and the publish "
-                "link, which installs a signing key or refresh state it chose. Grant only "
-                "this account access to it, or remove it, then restart the gateway.",
-            ) from exc
-        # POSIX falls through: the mode test below can SEE what survived, and it
-        # separates the bit that permits substitution from the bit that only leaks
-        # names. Refusing on the read bit too would fail an ordinary mount.
-    else:
-        st = os.lstat(staging)
-    if os.name != "nt" and st.st_mode & 0o022:
-        raise AuthStoreStagingRefused(
-            errno.EPERM,
-            f"{staging} is group- or world-WRITABLE (mode {stat.S_IMODE(st.st_mode):o}) and "
-            "the mode could not be narrowed; refusing to stage a gateway auth store through "
-            "it. Another local account can replace the staged file between the write and the "
-            "publish link, which installs a signing key it chose as the one that signs every "
-            "dashboard token. chmod 700 it or remove it, then restart the gateway.",
-        )
-    if os.name != "nt" and st.st_mode & 0o055:
-        logger.warning(
-            "gateway auth-store staging directory %s is readable beyond its owner (mode %o) "
-            "and could not be narrowed; other local accounts can list the publish temps' "
-            "names. The bytes stay owner-only and the directory is still masked in every "
-            "agent namespace and fenced from the file tools. chmod 700 it to close the "
-            "listing.",
-            staging,
-            stat.S_IMODE(st.st_mode),
-        )
-    return staging
 
 
 def _enforce_owner_only(key_path: Path) -> None:

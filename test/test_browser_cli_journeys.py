@@ -79,7 +79,13 @@ class TestOperatorConfigIsNotOurs:
             for lineno, line in enumerate(source.read_text().splitlines(), 1):
                 if any(
                     call in line
-                    for call in ("write_text(", "write_bytes(", "rmtree(", "atomic_write(")
+                    for call in (
+                        "write_text(",
+                        "write_bytes(",
+                        "rmtree(",
+                        "atomic_write(",
+                        "publish_through_auth_store_staging(",
+                    )
                 ):
                     writes.append(f"{source.name}:{lineno}")
         unexpected = [w for w in writes if w.split(":", 1)[0] not in sanctioned]
@@ -963,15 +969,24 @@ class TestTokenIsOwnerRestricted:
     ):
         from unittest.mock import patch
 
+        from kiro_crew import hidden_leaf_staging
         from kiro_crew.browser_cli import token
 
         monkeypatch.setattr(token, "config_dir", lambda: tmp_path)
 
-        with patch.object(token, "atomic_write") as mock_aw:
+        # set_token publishes through the masked staging helper, which hands the
+        # staged write to atomic_write; assert on that write's lockdown arguments.
+        with (
+            patch.object(hidden_leaf_staging, "atomic_write") as mock_aw,
+            patch.object(hidden_leaf_staging, "replace_with_retry"),
+        ):
             token.set_token("secret-value")
 
         mock_aw.assert_called_once()
         _args, kwargs = mock_aw.call_args
+        assert (
+            Path(_args[0]).parent == tmp_path / "auth-store-staging"
+        ), "set_token must stage inside the masked staging directory, not beside the token"
         # restrict_to_owner must be True so the secret is locked down on Windows too.
         assert kwargs.get("restrict_to_owner") is True or (
             len(_args) > 2 and _args[2] is True

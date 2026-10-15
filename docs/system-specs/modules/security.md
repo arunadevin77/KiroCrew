@@ -400,7 +400,16 @@ appear.
 Masking a credential leaf as a FILE leaves its publish temp to account for separately,
 because a mask covers a path and the temp has a different one. The gateway's two auth
 stores — `token_signing.key` and `refresh_chains.json` — publish through
-`auth-store-staging`, a direct child of the data home that is masked
+`auth-store-staging`, and so does every other gateway-written hidden FILE leaf in the
+data-home root that would otherwise stage beside itself with `atomic_write`: the browser
+extension token (`playwright-extension-token`) and the Ops Mission Control secret store
+and policy ceiling (`ops_mission_control_secrets.json`, `ops_mission_control_policy.json`).
+Those three go through
+`hidden_leaf_staging.publish_through_auth_store_staging`,
+which stages with `atomic_write` inside the validated staging directory, renames onto the
+leaf, removes its staged copy on a failed publish, and refuses (writing nothing) rather
+than falling back to a sibling temp when the directory is unusable.
+`auth-store-staging` is a direct child of the data home that is masked
 (`sandbox._CREW_HIDDEN_LEAVES`), precreated so a sandbox spawned before the first write does
 not watch the directory appear (`_CREW_PRECREATE_HIDDEN_DIR_LEAVES`), and fenced from the
 agent file tools (`security.paths._CREW_SECRET_LEAVES`) — all three as whole DIRECTORY
