@@ -1,10 +1,11 @@
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppDispatch, useAppStore } from '../store'
-import { switchSlot, deleteSlot, openActivityToTab } from '../store/chatSlice'
+import { switchSlot, deleteSlot, openActivityToTab, resumeFromHistory, setAgentSwitchNotice } from '../store/chatSlice'
 import { sessionIsBusyForClose } from '../lib/closeBusyGate'
+import { hasRecentlyClosedSession, rememberClosedSession, restoreClosedSession, takeRecentlyClosedSession } from '../lib/recentlyClosedSessions'
 import { loadChatConfig } from '../pages/chat/ChatSettings'
-import { focusComposerElement, queryComposerOrExpand, queryPendingApprovalAction, releaseComposerForKeyboardSwitch } from '../pages/chat/composerFocus'
+import { focusComposerElement, focusComposerForResumedSession, queryComposerOrExpand, queryPendingApprovalAction, releaseComposerForKeyboardSwitch } from '../pages/chat/composerFocus'
 import { reportSeamCollision } from '../apps/seamCollision'
 import {
   loadPanelToggleOverrides,
@@ -34,7 +35,7 @@ import {
 } from '../lib/shortcutRegistry'
 import { i18nT } from '../i18n/t'
 import { canGoBack, canGoForward } from '../lib/routeHistoryPosition'
-import { useGuardedHistoryStep } from '../components/NavigationLeaveGuard'
+import { useGuardedHistoryStep, useGuardedLeave } from '../components/NavigationLeaveGuard'
 import { MOBILE_BREAKPOINT } from './useIsMobile'
 import { isEditableTarget } from '../utils/editableTarget'
 import { closeShownCrewWindow, crewWindowShown } from '../pages/chat/crew-window/crewWindowStore'
@@ -272,6 +273,7 @@ export const SHORTCUT_LABEL_KEY: Record<string, string> = {
   // controls, so the reference list and the buttons cannot drift apart.
   'new-chat': 'pages.chatSidebar.new_chat',
   'close-chat': 'pages.chatSidebar.close_session',
+  'reopen-chat': 'hooks.useKeyboardShortcuts.reopen_closed_session',
   'shortcuts-modal': 'hooks.useKeyboardShortcuts.open_shortcuts_help',
   'open-settings': 'hooks.useKeyboardShortcuts.open_settings',
   'cycle-agent': 'hooks.useKeyboardShortcuts.cycle_agent',
@@ -727,6 +729,7 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
   const dispatch = useAppDispatch()
   const navigate = useNavigate()
   const guardedHistoryStep = useGuardedHistoryStep()
+  const guardedLeave = useGuardedLeave()
   const appStore = useAppStore()
   const mruIndexRef = useRef(-1)
   const [enabled, setEnabled] = useState(() => localStorage.getItem(SHORTCUTS_ENABLED_KEY) !== '0')
@@ -1021,8 +1024,43 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
           const mustConfirm = loadChatConfig().confirmCloseSession
             || (modChord && sessionIsBusyForClose(appStore.getState(), activeSlot))
           if (!mustConfirm || confirm(i18nT('hooks.useKeyboardShortcuts.close_this_session'))) {
-            dispatch(deleteSlot(activeSlot))
+            // Read before the close removes the row; recorded only once the
+            // close lands, so a refused close is not offered for reopening.
+            const slot = appStore.getState().dashboard.slots.find(s => s.key === activeSlot)
+            void dispatch(deleteSlot(activeSlot)).then(action => { if (deleteSlot.fulfilled.match(action)) rememberClosedSession(slot) })
           }
+        },
+        // ⌘⇧T / Ctrl+Shift+T (alias Option/Alt+Shift+T): reopen the session
+        // this tab closed most recently (#18969) — the browser's reopen-closed-
+        // tab, so repeated presses walk further back. Through the same resume
+        // as History and the command palette, so the transcript and state come
+        // back exactly as those paths restore them. Claimed with nothing to
+        // reopen: a browser host never delivers the primary chord, and the
+        // alias would otherwise type a character into the composer. Through
+        // the draft guard, like the notification panel's resume: the hop to
+        // /chat unmounts the page on screen. Nothing to reopen asks nothing and
+        // says so through the shell's transient notice in its neutral tone,
+        // since a chord that does nothing visible reads as broken. The entry is
+        // popped only once leaving is allowed, so a declined ask keeps it for
+        // the next press.
+        'reopen-chat': () => {
+          const isOpen = (key: string) => appStore.getState().dashboard.slots.some(s => s.key === key)
+          if (!hasRecentlyClosedSession(isOpen)) {
+            dispatch(setAgentSwitchNotice({ message: i18nT('hooks.useKeyboardShortcuts.no_recently_closed_session'), tone: 'info' }))
+            return
+          }
+          guardedLeave(() => {
+            const ref = takeRecentlyClosedSession(isOpen)
+            if (!ref) return
+            const resumed = dispatch(resumeFromHistory({ key: ref.historyKey, title: ref.title })).unwrap()
+            // A failed resume puts the entry back, so the next press retries
+            // this session instead of skipping to an older one.
+            resumed.catch(() => restoreClosedSession(ref))
+            focusComposerForResumedSession(resumed)
+            // resumeFromHistory only activates the slot in the store; land on
+            // the chat surface that renders it, from whichever page fired.
+            navigate('/chat')
+          }, '/chat')
         },
       }
       // Every `registry` entry has an action here (shortcutRegistry.test pins the
@@ -1144,7 +1182,7 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
       navigate(panelMap[code])
       return
     }
-  }, [dispatch, navigate, guardedHistoryStep, appStore, onToggleShortcutsModal, onNewChat, onCycleAgent, onCyclePrevAgent, onCycleReasoningEffort, onCyclePrevReasoningEffort, onCycleApprovalMode, onCyclePrevApprovalMode, onCycleModel, onCyclePrevModel, onToggleFocusMode, panelToggleActions, disabled, enabled, ctrlDigits, panelBindings, bindings])
+  }, [dispatch, navigate, guardedHistoryStep, guardedLeave, appStore, onToggleShortcutsModal, onNewChat, onCycleAgent, onCyclePrevAgent, onCycleReasoningEffort, onCyclePrevReasoningEffort, onCycleApprovalMode, onCyclePrevApprovalMode, onCycleModel, onCyclePrevModel, onToggleFocusMode, panelToggleActions, disabled, enabled, ctrlDigits, panelBindings, bindings])
 
   // Escape stops in-progress voice read-back. CAPTURE phase so it runs before the command palette's bubble-phase Escape
   // handler, which stopPropagation()s and would otherwise close the palette while

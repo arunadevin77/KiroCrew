@@ -1750,7 +1750,7 @@ describe('onCycleAgent keyboard shortcut', () => {
     const noticeText = await screen.findByText(
       REAL_FAILURE,
     )
-    expect(noticeText.closest('[role="status"]')).not.toBeNull()
+    expect(noticeText.closest('[role="alert"]')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
     expect(screen.queryByText(
       REAL_FAILURE,
