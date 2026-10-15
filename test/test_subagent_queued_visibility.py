@@ -18,6 +18,7 @@ import kiro_crew.subagent as subagent_mod
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.subagent import QUEUED_REASON_LOW_MEMORY, SubagentManager
 from kiro_crew.subagent_manager.admission import SpawnAdmissionCoordinator
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 pytestmark = pytest.mark.usefixtures("healthy_host_memory")
 
@@ -96,6 +97,94 @@ async def test_a_deferred_spawn_is_readable_until_it_starts(monkeypatch) -> None
         for task in tasks:
             task.cancel()
         await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 5)
+        mgr._taskq.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_an_entry_with_no_row_is_readable_while_the_pump_rechecks_it(monkeypatch) -> None:
+    """A memory-deferred spawn with no durable row (temporary memory here) is
+    popped from the window for each re-check, and the re-check awaits off-loop
+    reads before the gate starts or re-queues it. For that whole span the spawn
+    is in neither the window nor the registry; the queued reads still answer
+    it, so ``GET /api/spawn/{id}`` and its ownership check do not read the
+    caller's own accepted spawn as an unknown run."""
+    cfg = KiroCrewConfig()
+    cfg.agent.subagent_cost_gb = 0.5
+    cfg.agent.spawn_min_memory_gb = 4.0
+    monkeypatch.setattr(KiroCrewConfig, "load", lambda: cfg)
+    monkeypatch.setattr(subagent_mod, "Stats", MagicMock())
+    monkeypatch.setattr(subagent_mod, "sel", MagicMock())
+    monkeypatch.setattr(SpawnAdmissionCoordinator, "open_store_off_loop", True)
+    monkeypatch.setattr(SpawnAdmissionCoordinator, "pump_off_loop", True)
+    free = {"gb": 3.0}
+
+    def memory_check(*, min_gb, **_kw):
+        return free["gb"] >= min_gb, free["gb"]
+
+    monkeypatch.setattr(subagent_mod, "check_memory_available", memory_check)
+    mgr = SubagentManager(sessions=mock_sessions(), ctx_builder=mock_ctx(), max_concurrent=3)
+    await wait_taskq_open(mgr)
+    mgr._spawn_stagger_secs = 0.0
+    mgr._taskq_admit_wait_secs = 0.05
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def worker(info) -> None:
+        started.set()
+        await finish.wait()  # runs until the teardown cancels it
+
+    monkeypatch.setattr(mgr, "_run", AsyncMock(side_effect=worker))
+    try:
+        info = await mgr.spawn_async(
+            "summarize the log", parent_session_key="dash:vis", _memory_mode="temporary"
+        )
+        assert info is not None and info.queued is True
+        assert mgr.get(info.id) is None, "fixture: a deferred spawn has no registered run"
+
+        # Hold the next re-check inside its off-loop agent read.
+        entered, release = asyncio.Event(), asyncio.Event()
+        check_agent = mgr._check_agent_off_loop
+
+        async def held_check(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await check_agent(*args, **kwargs)
+
+        monkeypatch.setattr(mgr, "_check_agent_off_loop", held_check)
+
+        def rechecking() -> bool:
+            mgr._drain_queue()
+            return entered.is_set()
+
+        await async_wait_until(rechecking, describe=lambda: "the pump never re-checked the spawn")
+        windowed = [p.get("_preassigned_id") for p in mgr._queue]
+        assert (
+            info.id not in windowed and mgr.get(info.id) is None
+        ), "fixture: the re-check holds the spawn outside the window and the registry"
+
+        queued = await mgr.queued_run_async(info.id)
+        assert queued is not None and queued.id == info.id
+        assert queued.parent_session_key == "dash:vis"
+        assert queued.task == "summarize the log"
+        assert [q.id for q in (await mgr.queued_runs_async("dash:vis")).runs] == [info.id]
+        assert (await mgr.queued_runs_async("dash:other")).runs == ()
+
+        # Memory recovers and the held re-check goes on: the run starts, and from
+        # then on the registry answers for it, not the queued reads.
+        free["gb"] = 32.0
+        release.set()
+        await await_until(started, what="the deferred spawn to start")
+        assert mgr.get(info.id) is not None
+        assert await mgr.queued_run_async(info.id) is None
+        assert (await mgr.queued_runs_async("dash:vis")).runs == ()
+    finally:
+        mgr._shutting_down = True
+        tasks = [task for task in mgr._tasks.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        await await_until(
+            asyncio.gather(*tasks, return_exceptions=True), what="the cancelled runs to end"
+        )
         mgr._taskq.close()
 
 
@@ -354,7 +443,9 @@ async def test_an_unreadable_store_makes_the_listing_partial() -> None:
 
     store = types.SimpleNamespace(run=_down)
     fake = types.SimpleNamespace(
-        _manager=types.SimpleNamespace(_agents={}, _queue=[], _queue_wait={}),
+        _manager=types.SimpleNamespace(
+            _agents={}, _queue=[], _undurable_in_dispatch={}, _queue_wait={}
+        ),
         taskq_store=lambda: store,
     )
     fake._manager._queued_listing_partial = False

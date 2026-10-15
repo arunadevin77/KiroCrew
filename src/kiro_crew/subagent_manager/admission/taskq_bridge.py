@@ -152,6 +152,19 @@ def _read_queued_rows(
     return [(rec, details.get(rec.id, "")) for rec in recs], truncated
 
 
+def _in_memory_queued_entries(manager: Any) -> list[dict[str, Any]]:
+    """The accepted entries *manager* holds in memory with no registered run.
+
+    The dispatch window (``_queue``) and the entries with no durable row the
+    pump holds while it re-checks them (``_undurable_in_dispatch``): popped
+    from the window, they are in neither the window nor the registry until
+    the gate starts, re-queues or refuses them, and that re-check awaits
+    off-loop reads. The cancellation paths read the same two halves. A copy,
+    since the loop changes both while a caller iterates.
+    """
+    return [*manager._queue, *manager._undurable_in_dispatch.values()]
+
+
 if TYPE_CHECKING:
     # Lazy, as everywhere in this module: the bridge loads taskq on first use.
     from kiro_crew import taskq as _taskq
@@ -1673,8 +1686,9 @@ class _TaskqBridgeMixin(ManagerComponent):
         The store row may be claimable or ``admitted``: a claim the pump is
         awaiting (or a retained one) has left ``queued`` but is not registered,
         and answering "not found" for it is the gap this read closes. A
-        registered id is never answered here; the registry answers it. An
-        unreadable store answers from the window, and when the window has no
+        registered id is never answered here; the registry answers it. An entry
+        with no store row answers from :func:`_in_memory_queued_entries`. An
+        unreadable store answers from those entries too, and when they hold no
         such entry raises :class:`QueuedReadUnavailable`: "not
         queued" is not knowable then, and a caller must not read it as gone.
         """
@@ -1698,7 +1712,7 @@ class _TaskqBridgeMixin(ManagerComponent):
             if found is not None and agent_id not in manager._agents:
                 rec, detail = found
                 return self._queued_run_from_row(rec, detail)
-        for params in list(manager._queue):
+        for params in _in_memory_queued_entries(manager):
             if str(params.get("_preassigned_id") or "") == agent_id and not params.get(
                 "_resume_id"
             ):
@@ -1760,12 +1774,13 @@ class _TaskqBridgeMixin(ManagerComponent):
                 continue
             out.append(self._queued_run_from_row(rec, detail))
             seen.add(rec.id)
-        # Window entries the store did not return: legacy in-memory and
-        # restricted work, which has no row, and every entry while the store is
+        # In-memory entries the store did not return: legacy in-memory and
+        # restricted work, which has no row (in the window, or held by the pump
+        # while it re-checks the entry), and every entry while the store is
         # unreadable. A ``_resume_id`` entry belongs to a resident run, not to an
         # unstarted one. A page cut at the cap may simply not have reached an
         # entry's row, so a truncated store half adds none.
-        for params in [] if truncated else list(manager._queue):
+        for params in [] if truncated else _in_memory_queued_entries(manager):
             aid = str(params.get("_preassigned_id") or "")
             if not aid or params.get("_resume_id") or aid in seen or aid in manager._agents:
                 continue
@@ -1775,6 +1790,7 @@ class _TaskqBridgeMixin(ManagerComponent):
             if app is not None and str(params.get("app") or "") != app:
                 continue
             out.append(self._queued_run(aid, params, parent, 0.0, ""))
+            seen.add(aid)
         return QueuedRunListing(tuple(out), partial)
 
     def _queued_run_from_row(self, rec: "_taskq.TaskRecord", detail: str) -> QueuedRun:
