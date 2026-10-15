@@ -29,13 +29,12 @@ import copy
 import importlib
 import importlib.util
 import re
-from collections import deque
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Iterator
 from unittest import mock
 
 import pytest
+from source_corpus import iter_statements as _statements
 from stale_package_attribute import package_attribute_replaced
 
 from kiro_crew import platform_compat, sandbox
@@ -101,32 +100,11 @@ _IMPORTERS = frozenset({"importlib.import_module", "pytest.importorskip"})
 
 #: The one expression that binds a name. Every other binding the scan reads -- an
 #: import, a def, a class, an assignment -- is a statement, so a tree whose source
-#: spells no ``:=`` can be read from its statement bodies alone.
+#: spells no ``:=`` can be read from its statement bodies alone, through
+#: ``source_corpus.iter_statements`` (bound here as ``_statements``): every statement at
+#: any depth, in ``ast.walk``'s own breadth-first order, because a name bound twice
+#: keeps the binding that order visits last.
 _WALRUS = ":="
-
-#: The fields that hold a list of statements, or the handlers and cases whose bodies do.
-_BLOCKS = frozenset({"body", "orelse", "finalbody", "handlers", "cases"})
-
-
-def _statements(tree: ast.AST) -> Iterator[ast.stmt]:
-    """Every statement in *tree*, at any depth, without entering an expression.
-
-    Expression nodes are most of a module's tree and bind nothing but a ``NamedExpr``,
-    so a caller that has read the source and seen no ``:=`` walks a fraction of the
-    nodes ``ast.walk`` visits for the same bindings. The order is ``ast.walk``'s own --
-    breadth first, children in field order -- because a name bound twice keeps the
-    binding that order visits last.
-    """
-    pending: deque[ast.AST] = deque([tree])
-    while pending:
-        node = pending.popleft()
-        if isinstance(node, ast.stmt):
-            yield node
-        for field in node._fields:
-            if field in _BLOCKS:
-                block = getattr(node, field)
-                if isinstance(block, list):
-                    pending.extend(block)
 
 
 def _facade_spelling(dotted: str) -> str:

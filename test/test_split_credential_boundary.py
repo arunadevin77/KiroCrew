@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+from source_corpus import parsed_candidates, src_root
 
 import kiro_crew
 from kiro_crew.discord.client import DISCORD_MAX_TEXT
@@ -294,13 +295,23 @@ def _modules_that_split() -> dict[str, list[SplitterCall]]:
 
     ``messaging/split.py`` itself is skipped: it DEFINES these functions and its
     own recursive cut deliberately passes no redactor one level down.
+
+    Parses only the files whose text spells a splitter's name
+    (``test/source_corpus.py``'s shared, narrowed read): a call is recorded by the
+    identifier it calls or hands to ``to_thread``, so a file without that identifier
+    holds no call to record, and the narrowing drops no module. This runs at import,
+    which is collection time here and the body of any test elsewhere that imports
+    this module to drive one of its gates, so it must cost a few files, not the tree.
     """
     found: dict[str, list[tuple[str, set[str]]]] = {}
-    for path in sorted(SRC.rglob("*.py")):
-        relative = path.relative_to(SRC).as_posix()
+    root = src_root()
+    for path, _text, tree in parsed_candidates(
+        require_any=sorted(SPLITTERS), skip_syntax_errors=False
+    ):
+        relative = path.relative_to(root).as_posix()
         if relative == "messaging/split.py":
             continue
-        calls = _splitter_calls(ast.parse(path.read_text(encoding="utf-8")))
+        calls = _splitter_calls(tree)
         if calls:
             found[relative] = calls
     return found

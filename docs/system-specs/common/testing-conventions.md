@@ -5574,6 +5574,29 @@ Two more, from a 5x full-suite run whose per-test probe recorded wall time and R
   costs nothing. The per-part check asserts `found <= listed`; only the whole-census
   one asserts equality, because a stale entry is visible only to the whole. Prove it
   with the planted-violation check below, on a part and on the whole.
+- **The walk is usually three walks, and a gate that reads statements can skip the
+  expressions.** The spawn census in `test_spawn_audit.py` ran `ast.walk` three times
+  per file (imports, defs, calls) and then keyed each call to its function by comparing
+  line ranges against every `def`; it sat at 120 s on shard 6 beside the facade census,
+  as did the two composition contracts' patch censuses, whose alias fixpoint re-walked
+  every node per round and whose patch scan walked every function and then the module.
+  One walk per file in `ast.walk`'s own order, carrying the innermost enclosing `def`
+  down to each call (a decorator belongs to the scope around the `def`), reads the
+  same census from a third of the visits; and a gate that reads only imports, defs or
+  assignments reads statements, so `source_corpus.iter_statements` -- the shared form
+  of the statement walk above -- yields every statement from a sixth of the nodes, in
+  the same breadth-first order. Both censuses then take the parts shape above, with the
+  stale-entry and known-rebind checks reading the whole from the parts' caches.
+- **A collection-time scan is paid by whoever imports the module.** A ratchet that
+  resolves its parametrize population at module scope (`SPLITTING_MODULES =
+  _modules_that_split()`) runs that scan at collection on its own shard, and again in
+  the BODY of any test elsewhere that imports the module to drive one of its checks:
+  `test_the_splitter_offload_ratchet_reads_the_owners` was 25 s idle and 117 s on CI,
+  all of it the sibling's import-time `rglob` + `ast.parse` of the package. Narrow the
+  scan to the files that can match (`source_corpus.parsed_candidates(require_any=...)`
+  with the splitter names the pattern has to spell) and it is a dozen files; the
+  general rule is that a module-level walk must cost a few files, not the tree, because
+  nothing bounds where it runs.
 
 Neither of these shows up as a *failure*, which is why they survive: the suite is
 green, just three times slower than it needs to be, and every timing-sensitive test

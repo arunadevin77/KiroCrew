@@ -74,17 +74,24 @@ from __future__ import annotations
 import ast
 import functools
 import textwrap
+from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from source_corpus import candidate_sources, parsed_candidates
+from source_corpus import (
+    candidate_sources,
+    iter_candidate_sources,
+    iter_statements,
+    parsed_candidates,
+)
 
 _SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "kiro_crew"
 
-# One xdist worker for the whole module: every test here derives from ONE module-cached
-# scan of src/ (rglob + ast.parse, ~30s). Under `--dist loadgroup` an unmarked module is
-# spread across workers and each worker re-pays that scan -- measured at 5 workers x 40-75s
-# per full run for this file alone. Grouping keeps the cache single-copy per run.
+# One xdist worker for the whole module: every audit test here reads the module-cached
+# spawn census (``_spawn_functions_in``, one cached scan per census part). Under
+# `--dist loadgroup` an unmarked module is spread across workers and each worker re-pays
+# the scan of every part it touches. Grouping keeps each part's cache single-copy per run.
 pytestmark = pytest.mark.xdist_group(name="tree_scan_test_spawn_audit")
 
 
@@ -2008,10 +2015,11 @@ def _spawn_module_bindings(tree: ast.Module) -> set[str]:
     import futures`` binds neither.
 
     The canonical names are always included, so a file that imports nothing under an
-    alias is scanned exactly as before.
+    alias is scanned exactly as before. An import is a statement, so the walk reads
+    statement bodies only and skips the expressions that make up most of a module.
     """
     bound = set(_SPAWN_MODULES)
-    for node in ast.walk(tree):
+    for node in iter_statements(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             # ``from x import subprocess as y`` is rare but binds a name that
             # spawns, and skipping it would leave the same shape of hole this
@@ -2064,93 +2072,159 @@ def test_an_unrelated_import_binds_no_spawn_receiver() -> None:
     assert "pool" not in bound
 
 
-@functools.lru_cache(maxsize=1)
-def _collect_spawn_functions() -> dict[str, str]:
-    """Map ``<relpath>::<func>`` -> the enclosing function's source, for every
-    function containing a subprocess spawn. ``<module>`` marks a module-level
-    spawn (no enclosing function).
+#: How many parts the spawn census is read in. The per-test timeout bounds ONE test, and
+#: the whole census -- every candidate file parsed and walked, under coverage, on a shared
+#: runner -- is more than one test's budget. Each part is one test of each per-part audit,
+#: so the budget bounds a quarter of the tree; the parts hold about the same amount of
+#: source, and the sum of the work does not change.
+CENSUS_PARTS = 4
 
-    Cached: all six audit tests derive from this one scan, so re-scanning per
-    test multiplies pure duplicated wall-clock. The source tree cannot change
-    mid-run and callers only read the mapping, so a shared instance is safe.
-    Parses only files whose text already contains one of the spawn attribute
-    or bare-name tokens (``test/source_corpus.py``'s shared, narrowed read)
-    instead of a private ``rglob`` + ``read_text`` of the whole tree: the
-    matched ``ast.Call`` always spells one of these tokens verbatim in the
-    source, so narrowing cannot drop a real spawn site. Released with the rest
-    of the corpus by ``test/conftest.py::_release_source_corpus_after_module``
-    at module end.
+#: Nodes with no call inside and no binding: a name, a constant, an expression context.
+_LEAVES = frozenset({ast.Name, ast.Constant, ast.Load, ast.Store, ast.Del})
+_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+@functools.lru_cache(maxsize=1)
+def _spawn_census_parts() -> tuple[tuple[Path, ...], ...]:
+    """The files the spawn census parses, dealt into ``CENSUS_PARTS`` parts of about
+    equal source size: each file, largest first, joins the lightest part so far.
+
+    Only files whose text already contains one of the spawn attribute or bare-name
+    tokens are candidates (``test/source_corpus.py``'s shared, narrowed read): the
+    matched ``ast.Call`` always spells one of these tokens verbatim in the source, so
+    narrowing cannot drop a real spawn site. A skill's own helper scripts and a
+    container image's own source are not gateway runtime code paths -- see
+    ``_is_bundled_skill_asset`` and ``_is_container_image_asset`` for why they are out
+    of scope. Only the paths are kept; the text is read again by the part that parses
+    it, so nothing here retains the tree's source for the process lifetime.
     """
-    out: dict[str, str] = {}
     needles = tuple(_SPAWN_ATTRS | _SPAWN_NAMES)
-    for path, source in candidate_sources(require_any=needles):
-        # A skill's own helper scripts are not gateway runtime code paths --
-        # see ``_is_bundled_skill_asset`` for why they are out of scope. A container
-        # image's own source is the same kind of exclusion for a different shape.
+    sizes: list[tuple[int, Path]] = []
+    for path, source in iter_candidate_sources(require_any=needles):
         if _is_bundled_skill_asset(path) or _is_container_image_asset(path):
             continue
-        tree = ast.parse(source, str(path))
-        spawn_bases = _spawn_module_bindings(tree)
-        funcs = [
-            n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-        ]
-        lines = source.splitlines()
-        rel = path.relative_to(_SRC_ROOT).as_posix()
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if isinstance(node.func, ast.Name):
-                if node.func.id not in _SPAWN_NAMES:
-                    continue
-            elif isinstance(node.func, ast.Attribute):
-                if node.func.attr in _SPAWN_NAMES:
-                    pass  # e.g. sandbox.create_subprocess_limited(...)
-                elif node.func.attr in _SPAWN_ATTRS:
-                    base = node.func.value
-                    base_name = (
-                        base.id
-                        if isinstance(base, ast.Name)
-                        else base.attr if isinstance(base, ast.Attribute) else ""
-                    )
-                    if base_name not in spawn_bases:
-                        continue
-                else:
-                    continue
+        sizes.append((len(source), path))
+    parts: list[list[Path]] = [[] for _ in range(CENSUS_PARTS)]
+    loads = [0] * CENSUS_PARTS
+    for size, path in sorted(sizes, key=lambda item: (-item[0], item[1])):
+        lightest = loads.index(min(loads))
+        parts[lightest].append(path)
+        loads[lightest] += size
+    return tuple(tuple(sorted(part)) for part in parts)
+
+
+def _spawn_functions_in_file(path: Path, source: str) -> dict[str, str]:
+    """Map ``<relpath>::<func>`` -> the enclosing function's source, for every function
+    in one file that contains a subprocess spawn. ``<module>`` marks a module-level
+    spawn (no enclosing function), with an empty source.
+
+    One walk of the tree, in ``ast.walk``'s own order, carrying the innermost enclosing
+    ``def`` down to each call. A decorator belongs to the scope that holds the ``def``,
+    not to the function it decorates; every other child of a ``def`` -- its parameters
+    and their defaults, its annotations, its body -- belongs to that function. A lambda
+    opens no scope. Names, constants and expression contexts hold no call and are not
+    entered: they are most of a module's nodes, and this walk runs over every candidate
+    file in the tree.
+    """
+    tree = ast.parse(source, str(path))
+    spawn_bases = _spawn_module_bindings(tree)
+    lines = source.splitlines()
+    rel = path.relative_to(_SRC_ROOT).as_posix()
+    out: dict[str, str] = {}
+    pending: deque[tuple[ast.AST, ast.FunctionDef | ast.AsyncFunctionDef | None]] = deque(
+        [(tree, None)]
+    )
+    while pending:
+        node, enclosing = pending.popleft()
+        if isinstance(node, ast.Call) and _is_spawn_site(node, spawn_bases):
+            if enclosing is None:
+                out[f"{rel}::<module>"] = ""
             else:
-                continue
-            enc = "<module>"
-            enc_node: ast.AST | None = None
-            best = -1
-            for f in funcs:
-                if f.lineno <= node.lineno <= (f.end_lineno or f.lineno) and f.lineno > best:
-                    best = f.lineno
-                    enc = f.name
-                    enc_node = f
-            fsrc = (
-                "\n".join(lines[enc_node.lineno - 1 : (enc_node.end_lineno or enc_node.lineno)])
-                if enc_node is not None
-                else ""
-            )
-            out[f"{rel}::{enc}"] = fsrc
+                start, end = enclosing.lineno - 1, enclosing.end_lineno or enclosing.lineno
+                out[f"{rel}::{enclosing.name}"] = "\n".join(lines[start:end])
+        inner = node if isinstance(node, _FUNCTIONS) else enclosing
+        for field in node._fields:
+            child = getattr(node, field, None)
+            scope = enclosing if field == "decorator_list" else inner
+            if isinstance(child, ast.AST):
+                if type(child) not in _LEAVES:
+                    pending.append((child, scope))
+            elif isinstance(child, list):
+                pending.extend(
+                    (item, scope)
+                    for item in child
+                    if isinstance(item, ast.AST) and type(item) not in _LEAVES
+                )
     return out
 
 
-def _collect_unrouted_spawns() -> set[str]:
+def _is_spawn_site(node: ast.Call, spawn_bases: set[str]) -> bool:
+    """Whether *node* calls a spawn helper by bare name, or a spawn attribute of a
+    receiver the file binds to a spawn-capable module (``subprocess.run``,
+    ``sp.Popen``, ``asyncio.create_subprocess_exec``); ``proc.communicate`` and
+    ``pool.run`` are not."""
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id in _SPAWN_NAMES
+    if not isinstance(func, ast.Attribute):
+        return False
+    if func.attr in _SPAWN_NAMES:
+        return True  # e.g. sandbox.create_subprocess_limited(...)
+    if func.attr not in _SPAWN_ATTRS:
+        return False
+    base = func.value
+    base_name = (
+        base.id
+        if isinstance(base, ast.Name)
+        else base.attr if isinstance(base, ast.Attribute) else ""
+    )
+    return base_name in spawn_bases
+
+
+@functools.lru_cache(maxsize=CENSUS_PARTS)
+def _spawn_functions_in(part: int) -> dict[str, str]:
+    """Map ``<relpath>::<func>`` -> the enclosing function's source, for every
+    function containing a subprocess spawn in the files of census part *part*.
+
+    Cached: every audit test derives from these scans, so re-scanning per test
+    multiplies pure duplicated wall-clock. The source tree cannot change mid-run
+    and callers only read the mapping, so a shared instance is safe. The mapping
+    holds the spawning functions' source only, never a whole file's.
+    """
+    out: dict[str, str] = {}
+    for path in _spawn_census_parts()[part]:
+        out.update(_spawn_functions_in_file(path, path.read_text(encoding="utf-8")))
+    return out
+
+
+def _collect_spawn_functions(part: int | None = None) -> dict[str, str]:
+    """The spawn census of part *part*, or of the whole tree: the union of the parts,
+    each read on its first use. A key names one function of one file, so the parts
+    hold disjoint keys and the union is order-free."""
+    parts = range(CENSUS_PARTS) if part is None else (part,)
+    out: dict[str, str] = {}
+    for index in parts:
+        out.update(_spawn_functions_in(index))
+    return out
+
+
+def _collect_unrouted_spawns(part: int | None = None) -> set[str]:
     """Return ``<relpath>::<func>`` for every spawn whose enclosing function
-    does NOT reference the sandbox chokepoint."""
+    does NOT reference the sandbox chokepoint, in census part *part* or the whole."""
     return {
         key
-        for key, fsrc in _collect_spawn_functions().items()
+        for key, fsrc in _collect_spawn_functions(part).items()
         if not any(tok in fsrc for tok in _ROUTED_TOKENS)
     }
 
 
-def _collect_routed_spawns_without_preexec() -> set[str]:
+def _collect_routed_spawns_without_preexec(part: int | None = None) -> set[str]:
     """Return ``<relpath>::<func>`` for every sandbox-routed spawn function that
-    does NOT also apply the resource-limit ``preexec_fn``."""
+    does NOT also apply the resource-limit ``preexec_fn``, in census part *part* or
+    the whole."""
     return {
         key
-        for key, fsrc in _collect_spawn_functions().items()
+        for key, fsrc in _collect_spawn_functions(part).items()
         if any(tok in fsrc for tok in _ROUTED_TOKENS)
         and not any(tok in fsrc for tok in _PREEXEC_TOKENS)
     }
@@ -2166,20 +2240,65 @@ _CGROUP_TOKENS = (
 )
 
 
-def _collect_routed_spawns_without_cgroup() -> set[str]:
+def _collect_routed_spawns_without_cgroup(part: int | None = None) -> set[str]:
     """Return ``<relpath>::<func>`` for every sandbox-routed spawn function that
-    does NOT also apply the cgroup v2 scope (pids.max / memory.max)."""
+    does NOT also apply the cgroup v2 scope (pids.max / memory.max), in census part
+    *part* or the whole."""
     return {
         key
-        for key, fsrc in _collect_spawn_functions().items()
+        for key, fsrc in _collect_spawn_functions(part).items()
         if any(tok in fsrc for tok in _ROUTED_TOKENS)
         and not any(tok in fsrc for tok in _CGROUP_TOKENS)
     }
 
 
-def test_every_spawn_is_routed_or_allowlisted():
-    """No spawn may be unrouted-and-unlisted (security-review 92e24570 tripwire)."""
-    unrouted = _collect_unrouted_spawns()
+def test_the_scoped_walk_attributes_a_call_the_way_the_line_ranges_do() -> None:
+    """A spawn is keyed by the innermost ``def`` whose lines hold it: a decorator's
+    spawn belongs to the scope around the ``def``, a default argument's and a nested
+    function's to the ``def`` itself, a lambda's to the function holding the lambda,
+    a method's to the method, and a module-level one to ``<module>``."""
+    source = textwrap.dedent("""
+        import subprocess as sp
+        subprocess.run(["top"])
+        @decorate(sp.run(["deco"]))
+        def outer(arg=sp.call(["default"])):
+            sp.check_call(["body"])
+            handler = lambda: sp.Popen(["lam"])
+            def inner():
+                return sp.check_output(["nested"])
+        class C:
+            def method(self):
+                return sp.run(["method"])
+        """)
+    tree = ast.parse(source)
+    assert _spawn_module_bindings(tree) == {"subprocess", "asyncio", "sp"}
+    path = _SRC_ROOT / "planted.py"
+    found = _spawn_functions_in_file(path, source)
+    assert set(found) == {
+        "planted.py::<module>",
+        "planted.py::outer",
+        "planted.py::inner",
+        "planted.py::method",
+    }
+    assert found["planted.py::<module>"] == ""
+    assert found["planted.py::outer"].startswith("def outer(")
+    assert found["planted.py::outer"].endswith('["nested"])')
+    assert (
+        found["planted.py::inner"].strip()
+        == 'def inner():\n        return sp.check_output(["nested"])'
+    )
+    assert (
+        found["planted.py::method"].strip()
+        == 'def method(self):\n        return sp.run(["method"])'
+    )
+
+
+@pytest.mark.parametrize("part", range(CENSUS_PARTS))
+def test_every_spawn_is_routed_or_allowlisted(part: int):
+    """No spawn may be unrouted-and-unlisted (security-review 92e24570 tripwire). One
+    census part per test keeps each test's work a bounded share of the tree; a new
+    unrouted spawn is visible in the part that holds its file."""
+    unrouted = _collect_unrouted_spawns(part)
     unexpected = unrouted - BENIGN_SPAWNS
     assert not unexpected, (
         "New unrouted subprocess spawn(s) found in src/kiro_crew:\n  "
@@ -2229,7 +2348,8 @@ def test_prerequisite_async_adapter_keeps_sandbox_chokepoint():
 def test_benign_allowlist_has_no_stale_entries():
     """Every BENIGN_SPAWNS entry must still name a real unrouted spawn, so the
     allowlist cannot silently accumulate dead exemptions (e.g. after a spawn is
-    later routed through the chokepoint)."""
+    later routed through the chokepoint). A stale entry is visible only to the whole
+    census, read here from the parts' caches."""
     unrouted = _collect_unrouted_spawns()
     stale = BENIGN_SPAWNS - unrouted
     assert not stale, (
@@ -2254,8 +2374,10 @@ def test_agent_influenced_sites_are_routed():
         )
 
 
-def test_every_routed_spawn_applies_resource_limits():
-    """Every sandbox-routed spawn must ALSO cap the child's resources.
+@pytest.mark.parametrize("part", range(CENSUS_PARTS))
+def test_every_routed_spawn_applies_resource_limits(part: int):
+    """Every sandbox-routed spawn must ALSO cap the child's resources, checked one
+    census part per test.
 
     The sandbox chokepoint gives a child filesystem + credential isolation; a
     ``preexec_fn`` from ``resource_limit_preexec()`` gives it a kernel-enforced
@@ -2267,7 +2389,7 @@ def test_every_routed_spawn_applies_resource_limits():
     fixed-argv internal probe with no agent-influenced child, add its
     ``file::function`` key to ``PREEXEC_EXEMPT`` with a justification.
     """
-    missing = _collect_routed_spawns_without_preexec() - PREEXEC_EXEMPT
+    missing = _collect_routed_spawns_without_preexec(part) - PREEXEC_EXEMPT
     assert not missing, (
         "Sandbox-routed spawn(s) missing a resource-limit preexec_fn:\n  "
         + "\n  ".join(sorted(missing))
@@ -2281,7 +2403,7 @@ def test_every_routed_spawn_applies_resource_limits():
 def test_preexec_exempt_has_no_stale_entries():
     """Every PREEXEC_EXEMPT entry must still name a routed spawn function that
     lacks the preexec token, so the exemption list cannot accumulate dead
-    entries that would mask a future regression."""
+    entries that would mask a future regression. Read from the whole census."""
     routed_missing = _collect_routed_spawns_without_preexec()
     stale = PREEXEC_EXEMPT - routed_missing
     assert not stale, (
@@ -2290,8 +2412,10 @@ def test_preexec_exempt_has_no_stale_entries():
     )
 
 
-def test_every_routed_spawn_applies_cgroup_scope():
-    """Every sandbox-routed spawn must ALSO be placed in a cgroup v2 scope.
+@pytest.mark.parametrize("part", range(CENSUS_PARTS))
+def test_every_routed_spawn_applies_cgroup_scope(part: int):
+    """Every sandbox-routed spawn must ALSO be placed in a cgroup v2 scope, checked
+    one census part per test.
 
     The RLIMIT preexec caps a single process's FDs; the cgroup scope
     (``cgroup_scope_argv`` → pids.max + memory.max) is the actual default-on
@@ -2301,7 +2425,7 @@ def test_every_routed_spawn_applies_cgroup_scope():
     scope internally). The ``PREEXEC_EXEMPT`` fixed-argv internal probes are
     also exempt here — same rationale (no agent-influenced child to bound).
     """
-    missing = _collect_routed_spawns_without_cgroup() - PREEXEC_EXEMPT
+    missing = _collect_routed_spawns_without_cgroup(part) - PREEXEC_EXEMPT
     assert not missing, (
         "Sandbox-routed spawn(s) missing a cgroup v2 scope:\n  "
         + "\n  ".join(sorted(missing))
@@ -2310,6 +2434,57 @@ def test_every_routed_spawn_applies_cgroup_scope():
         "spawn through sandboxed_spawn_argv which applies it. "
         "See security-review finding bdf0d7e5."
     )
+
+
+def test_the_census_reads_enough_of_the_tree() -> None:
+    """The narrowed read still parses a real share of the package, and the census
+    saw enough spawn sites to have measured anything: a prefilter that dropped the
+    tree, or a walk that stopped recording, would otherwise pass every audit green.
+    In file order this follows the per-part audits and reads their cached parts."""
+    parts = _spawn_census_parts()
+    assert sum(len(part) for part in parts) > 500, "the census parses too few files"
+    assert all(parts), "an empty census part parses nothing and so cannot fail"
+    assert len(_collect_spawn_functions()) > 100, "the census saw too few spawn sites"
+
+
+@functools.lru_cache(maxsize=1)
+def _import_sites() -> tuple[tuple[Path, str, tuple[tuple[int, str], ...]], ...]:
+    """``(path, relpath, ((line, module), ...))`` per file in the package, listing every
+    absolute import: each name of an ``import a.b`` and the module of a ``from a.b
+    import x``; a relative import names nothing this audit lists. One parse of the
+    tree, read from statements only (an import is a statement), shared by the two
+    asset-import tests below so the tree is parsed once per run rather than once per
+    test; a file that does not parse is a hole in both tests' coverage and raises
+    rather than being skipped."""
+    files: list[tuple[Path, str, tuple[tuple[int, str], ...]]] = []
+    for path, _source, tree in parsed_candidates(skip_syntax_errors=False):
+        sites: list[tuple[int, str]] = []
+        for node in iter_statements(tree):
+            if isinstance(node, ast.Import):
+                sites.extend((node.lineno, alias.name) for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                sites.append((node.lineno, node.module))
+        files.append((path, path.relative_to(_SRC_ROOT).as_posix(), tuple(sites)))
+    return tuple(files)
+
+
+def _asset_imports(assets: list[Path], exempt: Callable[[Path], bool]) -> list[str]:
+    """``<relpath>:<line> imports <module>`` for every import, outside the files *exempt*
+    names, of one of *assets* or of a package holding one."""
+    asset_modules = {
+        "kiro_crew." + p.relative_to(_SRC_ROOT).with_suffix("").as_posix().replace("/", ".")
+        for p in assets
+    }
+    asset_packages = {
+        "kiro_crew." + p.relative_to(_SRC_ROOT).parent.as_posix().replace("/", ".") for p in assets
+    }
+    return [
+        f"{rel}:{line} imports {name}"
+        for path, rel, sites in _import_sites()
+        if not exempt(path)
+        for line, name in sites
+        if name in asset_modules or name in asset_packages
+    ]
 
 
 def test_bundled_skill_assets_are_not_imported():
@@ -2336,29 +2511,7 @@ def test_bundled_skill_assets_are_not_imported():
     app_bundled = [p for p in assets if "builtin_skills" not in p.relative_to(_SRC_ROOT).parts]
     assert app_bundled, "app-bundled skill assets (apps/builtins/*/skills/**) not matched"
 
-    asset_modules = {
-        "kiro_crew." + p.relative_to(_SRC_ROOT).with_suffix("").as_posix().replace("/", ".")
-        for p in assets
-    }
-    asset_packages = {
-        "kiro_crew." + p.relative_to(_SRC_ROOT).parent.as_posix().replace("/", ".") for p in assets
-    }
-
-    offenders: list[str] = []
-    for path, _source, tree in parsed_candidates():
-        if _is_bundled_skill_asset(path):
-            continue
-        rel = path.relative_to(_SRC_ROOT).as_posix()
-        for node in ast.walk(tree):
-            names: list[str] = []
-            if isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-                names = [node.module]
-            for name in names:
-                if name in asset_modules or name in asset_packages:
-                    offenders.append(f"{rel}:{node.lineno} imports {name}")
-
+    offenders = _asset_imports(assets, _is_bundled_skill_asset)
     assert not offenders, (
         "Gateway code imports a bundled skill asset, which the spawn audit "
         "exempts:\n  " + "\n  ".join(sorted(offenders)) + "\n\nEither move the "
@@ -2388,30 +2541,7 @@ def test_container_image_assets_are_not_imported():
     # nothing, and would mean the exemption itself is dead.
     assert assets, "no container image assets found -- the exemption matches nothing"
 
-    asset_modules = {
-        "kiro_crew." + p.relative_to(_SRC_ROOT).with_suffix("").as_posix().replace("/", ".")
-        for p in assets
-    }
-    asset_packages = {
-        "kiro_crew." + p.relative_to(_SRC_ROOT).parent.as_posix().replace("/", ".") for p in assets
-    }
-
-    offenders: list[str] = []
-    for path in _SRC_ROOT.rglob("*.py"):
-        if _is_container_image_asset(path):
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
-        rel = path.relative_to(_SRC_ROOT).as_posix()
-        for node in ast.walk(tree):
-            names: list[str] = []
-            if isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-                names = [node.module]
-            for name in names:
-                if name in asset_modules or name in asset_packages:
-                    offenders.append(f"{rel}:{node.lineno} imports {name}")
-
+    offenders = _asset_imports(assets, _is_container_image_asset)
     assert not offenders, (
         "Gateway code imports a container image asset, which the spawn audit "
         "exempts:\n  " + "\n  ".join(sorted(offenders)) + "\n\nThat tree runs inside a "
