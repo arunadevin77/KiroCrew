@@ -331,7 +331,15 @@ def _url_payload_command(n: int) -> str:
 #: docstring, the runner and opener tables and the redirection and hidden-command
 #: patterns. It only narrows what auto-approves; no deny rule, threshold or pass
 #: moved.
-_PACKAGE_LINE_BUDGET = 29_293
+#:
+#: Raised again, from 29,293, for ``_sequential_run_exceeds``: one structural gate
+#: on ``_looks_like_secret_key`` that rejects a token holding a run of characters
+#: consecutive in the base64 alphabet longer than 12, so a hand-written alphabet
+#: literal a page's own script carries reads as benign rather than as a bare secret.
+#: About 34 lines -- the gate, its ``_B64_ORDER`` map and comments. A pure
+#: NARROWING: one more reason to return ``False``, so it only ever redacts less;
+#: no credential branch, threshold or pass moved.
+_PACKAGE_LINE_BUDGET = 29_327
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

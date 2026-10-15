@@ -34,7 +34,7 @@ import secrets
 import zlib
 from collections import Counter
 from collections.abc import Callable, Iterator
-from typing import NamedTuple
+from typing import Final, NamedTuple
 
 from kiro_crew.credential_patterns import AWS_KEY_ID, JWT_MULTI_SEGMENT
 from kiro_crew.security.redaction_switch import credential_pass_bypassed
@@ -634,6 +634,12 @@ _SECRET_ENTROPY_MIN = 4.3
 _SECRET_MAX_LOWER_RUN = 5
 _SECRET_MAX_VOWEL_RATIO = 0.30
 
+# A random key almost never holds a long run of characters CONSECUTIVE in the base64
+# alphabet (ascending/descending); a hand-written alphabet literal is almost entirely
+# one. Max run 4 over 200k random keys vs 26 for a 64-char alphabet, so a cap of 12
+# rejects the literal and no real key. Pure narrowing: it only redacts less.
+_SECRET_MAX_SEQUENTIAL_RUN = 12
+
 # Ceiling on the separators a window CUT OUT OF A LONGER RUN may hold, applied by
 # :func:`_contains_bare_secret`. A window straddling several path components is a
 # token nobody wrote, and it clears both gates above; its separator density is
@@ -901,6 +907,32 @@ def _vowel_ratio(token: str) -> float:
     return sum(1 for ch in letters if ch in _VOWELS) / len(letters)
 
 
+#: Position of each base64-alphabet character in canonical order (A-Z, a-z, 0-9, +, /),
+#: so a "consecutive" test is one integer comparison.
+_B64_ORDER: Final[dict[str, int]] = {
+    ch: i for i, ch in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+}
+
+
+def _sequential_run_exceeds(token: str, cap: int) -> bool:
+    """Return True if a run CONSECUTIVE in the base64 alphabet (ascending OR
+    descending) is longer than *cap*. A character outside the alphabet breaks the run.
+    """
+    ascending = descending = 1
+    prev = _B64_ORDER.get(token[0]) if token else None
+    for ch in token[1:]:
+        here = _B64_ORDER.get(ch)
+        if prev is None or here is None:
+            ascending = descending = 1
+        else:
+            ascending = ascending + 1 if here == prev + 1 else 1
+            descending = descending + 1 if here == prev - 1 else 1
+            if ascending > cap or descending > cap:
+                return True
+        prev = here
+    return False
+
+
 def _looks_like_secret_key(token: str) -> bool:
     """Return True if *token* has the shape of a bare AWS secret access key.
 
@@ -970,6 +1002,8 @@ def _looks_like_secret_key(token: str) -> bool:
     if _lowercase_run_exceeds(token, _SECRET_MAX_LOWER_RUN):
         return False
     if _vowel_ratio(token) > _SECRET_MAX_VOWEL_RATIO:
+        return False
+    if _sequential_run_exceeds(token, _SECRET_MAX_SEQUENTIAL_RUN):
         return False
     if _shannon_entropy(token) < _SECRET_ENTROPY_MIN:
         return False

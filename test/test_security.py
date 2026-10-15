@@ -2038,6 +2038,63 @@ class TestBareSecretKeyRedaction:
         assert result == blob
         assert not warnings
 
+    # ── a page's own ordered index literal is not a bare secret ──
+
+    def test_a_base64_alphabet_literal_is_not_redacted(self) -> None:
+        """A pixel-art palette's 64-char base64-alphabet literal is served, not masked.
+
+        A script indexes a palette through ``ABC…XYZabc…xyz0123456789+/``. It is
+        high-entropy (every character distinct) and mixed-case with digits, so it
+        clears the entropy and vowel gates; the bare-secret heuristic would rewrite
+        it to ``[REDACTED: credential]`` and the served page would then compute on
+        the wrong bytes. A hand-written alphabet is almost entirely a run of
+        characters CONSECUTIVE in the base64 ordering, which a random key never is,
+        so the sequential-run gate rejects it and the literal is served verbatim.
+        """
+        # Assembled from runs so the literal here is not itself a diff finding.
+        alphabet = "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789+/"
+        result, warnings = redact_credentials(alphabet)
+        assert result == alphabet, "the page's own alphabet literal was rewritten"
+        assert not warnings
+
+    def test_the_alphabet_literal_is_served_whole_in_a_page(self) -> None:
+        """Through the whole-page scrub the dashboard route runs, the alphabet in a
+        page's own ``<script>`` is served byte-for-byte -- the end-to-end check at the
+        redaction layer the route calls."""
+        alphabet = "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789+/"
+        page = f'<div data-dashboard-field="credits"></div><script>const A = "{alphabet}";</script>'
+        result, _ = redact_credentials(page)
+        assert alphabet in result, "the script's alphabet was rewritten"
+        assert "credits" in result
+
+    def test_the_sequential_run_gate_rejects_only_ordered_runs(self) -> None:
+        """The gate is a NARROWING: it rejects a long consecutive-alphabet run and
+        leaves a real key (whose longest such run is tiny) alone."""
+        from kiro_crew.security import redaction as _r
+
+        assert _r._sequential_run_exceeds("ABCDEFGHIJKLMNOPQRST", 12)
+        assert _r._sequential_run_exceeds("9876543210zyxwvuts", 12)  # descending
+        assert not _r._sequential_run_exceeds("wJalrXUtnFEMI/K7MDENG/bPxRfiCYabcdEFGHIJK", 12)
+
+    def test_a_real_secret_beside_an_ordered_run_still_redacts(self) -> None:
+        """A real 40-char key whose longest consecutive run is short still redacts,
+        so the gate narrows nothing a real secret relies on."""
+        key = "wJalrXUtnFEMI" + "/K7MDENG/" + "bPxRfiCYEXAMPLEKEY"
+        assert len(key) == 40
+        result, warnings = redact_credentials(key)
+        assert "[REDACTED" in result and key not in result
+        assert warnings
+
+    def test_a_connection_string_credential_with_a_gt_still_redacts(self) -> None:
+        """A URI credential whose password holds a ``>`` (the shape a segmenting
+        scanner split and leaked) is caught by its own connection-string rule, which
+        this change does not touch -- so whole-page redaction masks it."""
+        token = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+        dsn = f"postgres://user:pass>word@db.example.com:5432/{token}"
+        result, warnings = redact_credentials(dsn)
+        assert token not in result, "a connection-string credential was served"
+        assert warnings
+
 
 class TestPathWindowsAreNotBareSecrets:
     """A deep CamelCase absolute path must survive ``redact_credentials``.
