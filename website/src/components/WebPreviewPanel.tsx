@@ -24,7 +24,7 @@ import WebPreviewPanelNativeSurface from './WebPreviewPanelNativeSurface'
 import { i18nT } from '../i18n/t'
 
 export {
-  httpEmbedRefusal, isDashboardOrigin, isPotentiallyTrustworthyHost, isolatePreviewHost, normalizeUrl,
+  EMBEDDABLE_LOOPBACK_HOSTS, httpEmbedRefusal, isDashboardOrigin, isPotentiallyTrustworthyHost, isolatePreviewHost, normalizeUrl,
   setSessionPreviewPending, setSessionPreviewUrl,
 } from './webPreviewPanelUrl'
 

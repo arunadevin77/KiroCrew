@@ -80,6 +80,7 @@ describe('WebPreviewPanel module boundary', () => {
   it('exports every value name its consumers import', () => {
     expect(Object.keys(facadeModule).sort()).toEqual(expect.arrayContaining([
       'DEVICE_LABEL_KEY',
+      'EMBEDDABLE_LOOPBACK_HOSTS',
       'PREVIEW_EXPAND_EVENT',
       'PREVIEW_SNIP_EVENT',
       'default',

@@ -96,8 +96,11 @@ export function isLoopbackHost(h: string): boolean {
  *  A host missing either condition keeps the explanatory card, which is strictly
  *  better than a frame the engine or the CSP silently blanks. IPv6 loopback still
  *  reaches the frame: `isolatePreviewHost` canonicalizes `[::1]` to `127.0.0.1`
- *  before the target is ever framed. */
-const EMBEDDABLE_LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost'])
+ *  before the target is ever framed.
+ *
+ *  `WebPreviewPanel.frameSrcPin.test.ts` reads `_LOOPBACK_FRAME_SRC` out of
+ *  `server.py` and fails if any host here lacks its `http://<host>:*` entry. */
+export const EMBEDDABLE_LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost'])
 
 /** Whether an `http://` document on *h* is a potentially trustworthy origin under
  *  W3C Secure Contexts — `localhost`, the `*.localhost` reserved TLD, all of
