@@ -7636,6 +7636,7 @@
       "collapse_unchanged": "Contraer sin cambios",
       "copy_content": "Copiar el contenido",
       "copy_path": "Copiar la ruta",
+      "diff_change_not_shown": "Git indica un cambio en este archivo que la vista de diff no puede mostrar",
       "diff_failed_to_compute": "No se pudo calcular el diff: git falló con este archivo",
       "diff_no_baseline_not_git": "Este archivo no está en un repositorio git, así que no hay una versión base con la que comparar",
       "diff_view": "Vista de diff",

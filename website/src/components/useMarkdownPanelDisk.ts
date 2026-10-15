@@ -500,6 +500,15 @@ export function useMarkdownPanelDiff({ filePath, isRichType, canTextDiff, partia
   // baseline (content diverges) flips this off automatically.
   const zeroDiff = diffMode && !diffChecking && diffData != null && !diffUnavailable
     && (gitPatch != null ? !gitPatch : originalContent === comparedContent)
+  // `status` comes from git's diff of the raw file, the patch from the two
+  // masked bodies. An empty patch on a `modified` file is a change the patch
+  // cannot draw: inside a masked credential, or in the file mode or line
+  // endings. "No changes" would be false there, so the notice says git saw a
+  // change, naming no cause and no line (a line would point at the secret that
+  // changed). A whole buffer is compared line by line, so its equal bodies do
+  // mean unchanged text and keep "no changes".
+  const zeroDiffText = zeroDiff && gitPatch != null && diffData?.status === 'modified'
+    ? i18nT('components.markdownPanel.diff_change_not_shown') : undefined
   // Resolved in render position so a language switch re-renders it; the notice
   // reuses ZeroDiffNotice so the "Show full file" escape hatch is identical
   // across all three empty-diff states.
@@ -538,5 +547,5 @@ export function useMarkdownPanelDiff({ filePath, isRichType, canTextDiff, partia
     }
   }, [canTextDiff, isRichType, diffData, filePath, initialDiffMode, onDiffModeChange, setDiffMode])
 
-  return { diffData, diffChecking, diffQueryError, originalContent, comparedContent, gitPatch, diffUnavailable, diffViewShown, zeroDiff, diffErrorText, diffNoBaselineText }
+  return { diffData, diffChecking, diffQueryError, originalContent, comparedContent, gitPatch, diffUnavailable, diffViewShown, zeroDiff, zeroDiffText, diffErrorText, diffNoBaselineText }
 }

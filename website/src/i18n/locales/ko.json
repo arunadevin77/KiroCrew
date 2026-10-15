@@ -7392,6 +7392,7 @@
       "collapse_unchanged": "변경되지 않은 부분 접기",
       "copy_content": "콘텐츠 복사",
       "copy_path": "경로 복사",
+      "diff_change_not_shown": "Git에서 이 파일의 변경을 보고했지만 차이 보기에서는 표시할 수 없습니다",
       "diff_failed_to_compute": "차이를 계산할 수 없습니다. 이 파일에서 git이 실패했습니다",
       "diff_no_baseline_not_git": "이 파일은 git 저장소에 없으므로 비교할 기준 버전이 없습니다",
       "diff_view": "차이 보기",

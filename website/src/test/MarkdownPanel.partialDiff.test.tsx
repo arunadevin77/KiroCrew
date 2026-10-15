@@ -6,6 +6,10 @@
  * partial buffer is drawn and counted from git's patch, in the viewer and in
  * the editor alike, and that patch is refetched whenever a read of the file
  * may have seen a change the cut body cannot show.
+ *
+ * A redacted read is partial too. When its only change sits inside a masked
+ * span, the patch is empty while git's status says `modified`, and the panel
+ * says git saw a change rather than "no changes".
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, within, waitFor, fireEvent, act } from '@testing-library/react'
@@ -54,6 +58,13 @@ const gitDiff = [
 ].join('\n')
 const modified = { diff: gitDiff, original: headBody, status: 'modified' as const }
 const clean = { diff: '', original: headBody, status: 'clean' as const }
+
+// A token rotated in the working tree. The read and HEAD are both served
+// masked, so they match and the masked patch is empty; git's status is taken
+// from the raw files and says `modified`.
+const maskedBody = 'API_TOKEN = "[REDACTED: credential]"\n'
+const maskedChangeOnly = { diff: '', original: maskedBody, status: 'modified' as const }
+const changeNotShown = "Git reports a change to this file that the diff view can't show"
 
 // Every /api/file-read answers with `readBody` under `readHeader`; reads that
 // have LANDED are counted so a test waits on a read, not on a delay.
@@ -309,5 +320,49 @@ describe('MarkdownPanel diff of a partial (capped) read', () => {
     render(<Panel partial={false} content={whole} />)
     await screen.findByTestId('pierre-diff')
     expect(screen.queryByTestId('pierre-patch')).toBeNull()
+  })
+
+  it('keeps "no changes" for a whole buffer whose text matches HEAD, even when git calls it modified', async () => {
+    vi.mocked(api.fileDiff).mockResolvedValue({ diff: '', original: headBody, status: 'modified' })
+    render(<Panel partial={false} content={headBody} />)
+    await screen.findByText('No changes in this file')
+    expect(screen.queryByText(changeNotShown)).toBeNull()
+  })
+})
+
+describe('MarkdownPanel diff of a redacted read whose only change is masked', () => {
+  beforeEach(() => {
+    readHeader = 'X-Redacted'
+    readBody = maskedBody
+    vi.mocked(api.fileDiff).mockResolvedValue(maskedChangeOnly)
+  })
+
+  it.each([
+    ['viewer', true],
+    ['editor', false],
+  ])('says git saw a change, not "no changes", in the %s', async (_view, readOnly) => {
+    render(<Panel readOnly={readOnly} content={maskedBody} />)
+    await screen.findByText(changeNotShown)
+    expect(screen.queryByText('No changes in this file')).toBeNull()
+    expect(removedCount()).toBeNull()
+    expect(screen.queryByTestId('pierre-patch')).toBeNull()
+    expect(screen.queryByTestId('pierre-editor')).toBeNull()
+  })
+
+  it('says the same in full screen', async () => {
+    render(<Panel content={maskedBody} />)
+    await screen.findByText(changeNotShown)
+    fireEvent.click(screen.getByTestId('markdown-panel-more-options'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /full screen/i }))
+    const dialog = await screen.findByRole('dialog')
+    await within(dialog).findByText(changeNotShown)
+    expect(within(dialog).queryByText('No changes in this file')).toBeNull()
+  })
+
+  it('still says "no changes" when git calls the file clean', async () => {
+    vi.mocked(api.fileDiff).mockResolvedValue({ ...maskedChangeOnly, status: 'clean' })
+    render(<Panel content={maskedBody} />)
+    await screen.findByText('No changes in this file')
+    expect(screen.queryByText(changeNotShown)).toBeNull()
   })
 })

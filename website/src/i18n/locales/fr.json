@@ -7636,6 +7636,7 @@
       "collapse_unchanged": "Replier les parties inchangées",
       "copy_content": "Copier le contenu",
       "copy_path": "Copier le chemin",
+      "diff_change_not_shown": "Git signale une modification de ce fichier que la vue diff ne peut pas afficher",
       "diff_failed_to_compute": "Impossible de calculer le diff — git a échoué sur ce fichier",
       "diff_no_baseline_not_git": "Ce fichier n'est pas dans un dépôt git, il n'y a donc aucune version de référence à comparer",
       "diff_view": "Vue diff",

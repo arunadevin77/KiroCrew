@@ -7392,6 +7392,7 @@
       "collapse_unchanged": "変更なしを折りたたむ",
       "copy_content": "コンテンツをコピー",
       "copy_path": "パスをコピー",
+      "diff_change_not_shown": "Git はこのファイルの変更を報告していますが、差分ビューでは表示できません",
       "diff_failed_to_compute": "差分を計算できませんでした（このファイルで git が失敗しました）",
       "diff_no_baseline_not_git": "このファイルは git リポジトリ内にないため、比較する基準となるバージョンがありません",
       "diff_view": "差分ビュー",

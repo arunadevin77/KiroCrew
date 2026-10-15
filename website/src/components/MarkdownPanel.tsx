@@ -397,7 +397,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
   } = useMarkdownPanelDisk({ filePath, content, binary, partial, liveWatch, editing, dirty, dirtyRef, active, qc, onDiskContent, onContentChange, reportActionError })
 
 
-  const { diffData, diffChecking, diffQueryError, originalContent, comparedContent, gitPatch, diffUnavailable, diffViewShown, zeroDiff, diffErrorText, diffNoBaselineText } =
+  const { diffData, diffChecking, diffQueryError, originalContent, comparedContent, gitPatch, diffUnavailable, diffViewShown, zeroDiff, zeroDiffText, diffErrorText, diffNoBaselineText } =
     useMarkdownPanelDiff({ filePath, isRichType, canTextDiff, partial, editing, dirty, diffMode, content, initialDiffMode, onDiffModeChange, setDiffMode, diskTickRef, diffStartTickRef, patchOwedTick, qc })
   // Every failure the panel owns, rendered in ONE place (both layouts mount it
   // under the header). The three background reads used to fail silently: a
@@ -1286,7 +1286,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
               pr-6 keeps the text clear of the ticks. */}
           <div ref={sidePanelScrollRef} onScroll={scrollMemory.onScroll} className={`flex-1 min-h-0 overflow-auto ${isMarkdown && !editing ? 'scrollbar-overlay pr-6' : ''}`}>
             {showBinaryCard && <BinaryFileCard filePath={filePath} />}
-            {!showBinaryCard && zeroDiff && <ZeroDiffNotice onExitDiff={readOnly ? undefined : toggleDiffMode} />}
+            {!showBinaryCard && zeroDiff && <ZeroDiffNotice message={zeroDiffText} onExitDiff={readOnly ? undefined : toggleDiffMode} />}
             {!showBinaryCard && diffErrorText && !editing && (
               <div className="p-3"><ErrorNotice message={diffErrorText} askAgent={!dirty} testId="markdown-panel-diff-compute-error" /></div>
             )}
@@ -1375,7 +1375,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
           {findBar}
           <div ref={fullscreenBodyRef} className="h-full overflow-auto px-16 py-4">
             {showBinaryCard && <BinaryFileCard filePath={filePath} />}
-            {!showBinaryCard && zeroDiff && <ZeroDiffNotice onExitDiff={readOnly ? undefined : toggleDiffMode} />}
+            {!showBinaryCard && zeroDiff && <ZeroDiffNotice message={zeroDiffText} onExitDiff={readOnly ? undefined : toggleDiffMode} />}
             {!showBinaryCard && diffErrorText && !editing && (
               <div className="p-3"><ErrorNotice message={diffErrorText} askAgent={!dirty} testId="markdown-panel-diff-compute-error-fullscreen" /></div>
             )}
