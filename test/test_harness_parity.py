@@ -100,13 +100,13 @@ def _field_enum(name: str) -> object:
 
 
 # ---------------------------------------------------------------------------
-# Group A: Kiro is the default and the floor
+# Group A: KAS is the default; Kiro is the floor
 # ---------------------------------------------------------------------------
 
 
-def test_kiro_is_the_default_backend() -> None:
-    """H1: configuring nothing yields the Kiro harness."""
-    assert _field_default("acp_backend") == ACP_BACKEND_KIRO
+def test_kas_is_the_default_backend() -> None:
+    """H1: configuring nothing yields the KAS harness."""
+    assert _field_default("acp_backend") == ACP_BACKEND_KAS
 
 
 def test_kiro_is_always_selectable() -> None:
@@ -135,22 +135,18 @@ def test_provider_enum_is_acp_only() -> None:
 
 
 @pytest.mark.parametrize("persisted", ["", "kas", "byo-harness", "claude", None, 7])
-def test_unselectable_backend_degrades_to_kiro(persisted: object) -> None:
-    """H3: an unusable persisted value degrades to Kiro and never raises.
+def test_unselectable_backend_degrades_to_default(persisted: object) -> None:
+    """H3: an unusable persisted value degrades safely and never raises.
 
-    Includes the non-string shapes a hand-edited config.json can hold: a gate
-    that raises here turns a typo into a gateway that will not boot.
-
-    ``claude`` is in the list on purpose, and now for the opposite reason: it ships in
-    the public baseline, so it must SURVIVE rather than degrade. The assertion below is
-    conditional on membership precisely so this row proves the gate reads the registry
-    instead of hardcoding a verdict. ``byo-harness`` covers the unknown-id case, and a
-    known id that policy has denied is covered in
-    ``test_agent_backend_governance.py``.
+    Only an absent value (``None``) earns the KAS default. A malformed, denied
+    or host-unservable explicit value takes the unconditional Kiro floor, so the
+    resolved value always belongs to the live selectable set.
     """
     resolved = _normalize_acp_backend(persisted)
     assert resolved in selectable_backends()
-    if persisted not in selectable_backends():
+    if persisted is None:
+        assert resolved == ACP_BACKEND_KAS
+    elif persisted not in selectable_backends():
         assert resolved == ACP_BACKEND_KIRO
 
 

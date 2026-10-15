@@ -126,8 +126,9 @@ provider.
 
 | Value | Harness | Notes |
 |-------|---------|-------|
-| `""` (default) | kiro-cli | The built-in default path. |
+| absent or `""` | Kiro Agent (KAS) | No choice: the default. Falls back to kiro-cli when KAS is unavailable. |
 | `kas` | Kiro Agent (KAS) | Served through kiro-cli's `acp --agent-engine v3` relay. |
+| `kiro` | kiro-cli | The Kiro CLI choice. |
 | `claude` | Claude Code | Uses the public `claude-agent-acp` adapter. |
 | `codex` | Codex | Uses the Codex ACP adapter. |
 | `opencode` | OpenCode | Uses OpenCode's native ACP server. |
@@ -176,7 +177,8 @@ contract](../../../docs/system-specs/modules/agent-host-contract.md) for the
 per-harness capability matrix.
 
 Set a registered value with, for example,
-`kirocrew config set agent.acp_backend kas`.
+`kirocrew config set agent.acp_backend kiro`. `agent.member_acp_backend`, the
+harness for crew-member DM sessions, reads the same values.
 
 ## Key Settings
 
@@ -184,7 +186,6 @@ Set a registered value with, for example,
 {
   "agent": {
     "provider": "acp",
-    "acp_backend": "",
     "approval_mode": "auto",
     "model": "auto",
     "reasoning_effort": "",

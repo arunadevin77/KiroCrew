@@ -35,7 +35,7 @@ from kiro_crew import model_registry
 # The one gate stays inside ``_normalize_acp_backend`` on the way out of
 # config.json. Only what it reads changed: the registry, instead of a frozen
 # literal.
-from kiro_crew.acp_backends import resolve_selected_backend
+from kiro_crew.acp_backends import DEFAULT_ACP_BACKEND, resolve_selected_backend
 from kiro_crew.appearance_packs import safe_pack_id as _safe_pack_id
 from kiro_crew.config.fields import (  # noqa: F401
     _COLOR_HEX_RE,
@@ -1593,12 +1593,12 @@ class AgentConfig:
         ),
     )
     acp_backend: str = field(
-        default="",
+        default=DEFAULT_ACP_BACKEND,
         metadata=_meta(
             "ACP Backend",
-            "Which ACP agent to drive: '' = kiro-cli (default), or any other "
-            "registered selectable backend id (e.g. 'kas' = kiro-agent). The live "
-            "list of values is served by GET /api/config/schema.",
+            "Which ACP agent to drive. Omitted or '' means no choice: KAS is the "
+            "default. 'kiro' selects kiro-cli; any other value must be a registered "
+            "selectable backend id. The live list is served by GET /api/config/schema.",
             # Deliberately NO ``enum``. A literal here was frozen at import and fed
             # two import-time structures (``JSON_SCHEMA`` and ``SCHEMA_REGISTRY``),
             # both strictly earlier than an edition registering a backend at boot.
@@ -1615,8 +1615,9 @@ class AgentConfig:
         default="kas",
         metadata=_meta(
             "Crew member ACP backend",
-            "Backend for crew-member DM sessions: 'kas' (default) or another "
-            "dispatch-capable backend (claude, codex, opencode, goose). "
+            "Backend for crew-member DM sessions: 'kas' (default when omitted or '') "
+            "or another dispatch-capable backend (claude, codex, opencode, goose); "
+            "'kiro' selects kiro-cli. "
             "Members dispatch work into worker sessions through session-control "
             "tools mounted per session over the wire, which the kiro-cli v2 "
             "backend cannot carry — a value resolving to kiro leaves member "

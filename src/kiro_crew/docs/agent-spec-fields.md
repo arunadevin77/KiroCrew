@@ -54,8 +54,8 @@ seam spawned (`src/kiro_crew/agent_sdk/provider_identity.py`,
 
 | Surface | Config | How the spec reaches it | Consequence |
 |---|---|---|---|
-| kiro-cli | `provider=acp`, `acp_backend=""` (default) | not at all — kiro-cli opens the file itself, named by `--agent <name>` on the spawn argv (`src/kiro_crew/acp/client.py`, `_spawn`) | the file IS the contract; an unknown key drops the whole spec |
-| KAS | `provider=acp`, `acp_backend="kas"` | Crew parses it and projects it onto `_meta.kiro.customAgents` (`src/kiro_crew/acp/kas_agents.py`, `to_client_custom_agent`) | only fields with a wire slot survive |
+| kiro-cli | `provider=acp`, `acp_backend="kiro"` | not at all — kiro-cli opens the file itself, named by `--agent <name>` on the spawn argv (`src/kiro_crew/acp/client.py`, `_spawn`) | the file IS the contract; an unknown key drops the whole spec |
+| KAS | `provider=acp`, `acp_backend="kas"` (also the default when absent or `""`) | Crew parses it and projects it onto `_meta.kiro.customAgents` (`src/kiro_crew/acp/kas_agents.py`, `to_client_custom_agent`) | only fields with a wire slot survive |
 | Claude Code seam | `provider=claude_code` | not at all — nothing reads the spec | Crew injects the spec's effect into context itself (the `is_cc` branches) |
 | claude-agent-acp harness | `acp_backend="claude"` | not as a spec file — Crew projects field by field | `providers/mirrors/claude_code.py` is the per-field ruling; [How the other backends consume a spec](#how-the-other-backends-consume-a-spec) is the table |
 

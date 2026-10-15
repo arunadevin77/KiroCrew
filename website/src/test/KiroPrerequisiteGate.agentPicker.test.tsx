@@ -53,7 +53,7 @@ describe('KiroPrerequisiteGate agent picker copy (UX round 5)', () => {
     vi.clearAllMocks()
     localStorage.clear()
     vi.mocked(api.kiroPrerequisite).mockResolvedValue(status())
-    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: {} })
+    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: 'kiro' } })
     vi.mocked(api.acpBackends).mockResolvedValue({ backends: [] })
   })
 
@@ -198,7 +198,7 @@ describe('KiroPrerequisiteGate agent picker copy (UX round 5)', () => {
       backends: [probe({ installed: 'missing', install_command: 'npm install -g x' })],
     })
     vi.mocked(api.patchConfig).mockImplementation(async () => {
-      vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: {} })
+      vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: 'kiro' } })
       return {}
     })
     render()
@@ -206,7 +206,7 @@ describe('KiroPrerequisiteGate agent picker copy (UX round 5)', () => {
     await screen.findByText(/is set to use Claude Code, which isn't ready/)
     expect(screen.getAllByText(SWITCH_LATER)).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'Use Kiro CLI instead' }))
-    await waitFor(() => expect(api.patchConfig).toHaveBeenCalledWith('agent.acp_backend', ''))
+    await waitFor(() => expect(api.patchConfig).toHaveBeenCalledWith('agent.acp_backend', 'kiro'))
     await waitFor(() => expect(screen.queryByText(/which isn't ready on this host/)).not.toBeInTheDocument())
     // Still on setup (Kiro CLI is not installed), the list still open.
     expect(screen.getByRole('radio', { name: 'Claude Code' })).toBeInTheDocument()
@@ -281,7 +281,7 @@ describe('KiroPrerequisiteGate shared probe eligibility', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
-    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: {} })
+    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: 'kiro' } })
     vi.mocked(api.kiroPrerequisite).mockResolvedValue(status())
   })
 

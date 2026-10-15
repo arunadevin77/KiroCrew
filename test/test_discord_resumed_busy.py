@@ -415,6 +415,9 @@ async def test_run_chat_hands_a_commands_off_message_to_the_model_as_text(
 ) -> None:
     """With the switch, "/clear" goes to ``stream`` as text; without it, to
     ``stream_command`` -- the dashboard's own path is the parity half."""
+    from chat_test_helpers import pin_kiro_cli_harness
+
+    pin_kiro_cli_harness()
     from kiro_crew.providers.base import EVENT_COMPLETE, LLMEvent
 
     monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
@@ -458,6 +461,9 @@ async def test_a_recovery_requeue_keeps_the_commands_off_stamp(tmp_path, monkeyp
     runner's recovery; the requeued entry carries the stamp, so the retry's drain
     hands "/clear" to the model again instead of running it. A plain turn's requeue
     carries no stamp, so the composer's own retried command still runs."""
+    from chat_test_helpers import pin_kiro_cli_harness
+
+    pin_kiro_cli_harness()
     from kiro_crew.acp.client import AcpError
 
     monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)

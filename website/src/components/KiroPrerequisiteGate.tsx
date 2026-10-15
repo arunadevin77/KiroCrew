@@ -19,7 +19,7 @@ import {
   type AcpBackendProbe,
   type KiroPrerequisiteStatus,
 } from '../api/client'
-import { ACP_BACKEND_KAS, ACP_BACKEND_KIRO, acpBackendName, acpProbeConfirmsUse, agentChoiceSaved, setupMarkerErrorBody, setupMarkerErrorMessage } from '../api/acpBackend'
+import { ACP_BACKEND_KAS, ACP_BACKEND_KIRO, acpBackendName, acpProbeConfirmsUse, agentChoiceSaved, configuredAcpBackend, setupMarkerErrorBody, setupMarkerErrorMessage } from '../api/acpBackend'
 import { clearCachedModels } from '../providers/adapters/acp'
 import {
   PANEL_CLASS,
@@ -916,17 +916,14 @@ function AgentSpecsRejected({
 
 // ── Agent choice ─────────────────────────────────────────────────────────────
 //
-// Kiro CLI is the DEFAULT agent, not the only one: the gateway can drive any
-// selectable ACP harness (Settings → Agent Harness). This gate used to check Kiro CLI
-// alone, so an operator who runs Claude Code (or Codex, …) and has no Kiro CLI
-// was held on "Set up Kiro" forever. The gate now asks the configured backend:
-// Kiro checks apply only while Kiro CLI is the configured agent.
+// KAS is the DEFAULT agent, while Kiro CLI remains selectable. This gate asks the
+// resolved backend, so Kiro-only checks apply only after an explicit Kiro choice.
 
 /** The config field Settings → Agent Harness owns; the same key is written here. */
 const ACP_BACKEND_CONFIG_KEY = 'agent.acp_backend'
 /**
- * The core spells the Kiro CLI backend as the empty string — a real value. The
- * one definition lives in acpBackend.ts, beside `isKiroBackend`, so this gate
+ * Kiro CLI as the config and probe rows spell it (`'kiro'`; `''` is "no choice").
+ * The one definition lives in acpBackend.ts, beside `isKiroBackend`, so this gate
  * and Settings → Agent Harness cannot drift on what "kiro" is spelled as.
  */
 const KIRO_BACKEND = ACP_BACKEND_KIRO
@@ -1525,7 +1522,7 @@ export default function KiroPrerequisiteGate({ children }: { children: ReactNode
     retry: false,
   })
   const configuredBackend = configQuery.data
-    ? (configQuery.data.agent?.acp_backend ?? KIRO_BACKEND)
+    ? configuredAcpBackend(configQuery.data)
     : undefined
   const otherBackendConfigured = configuredBackend !== undefined && configuredBackend !== KIRO_BACKEND
   const kiroBlocking = kiroPrerequisiteIsBlocking(statusQuery.data)

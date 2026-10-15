@@ -1070,6 +1070,9 @@ async def test_a_slash_command_does_not_settle_an_undelivered_recovery(
     """The debt is paid by the turn that carries the block. A slash command
     never carries it (the block is not prepended to a command), so its provider
     events must not clear it; the next plain turn still re-sends the block."""
+    from chat_test_helpers import pin_kiro_cli_harness
+
+    pin_kiro_cli_harness()
     from unittest.mock import AsyncMock
 
     from kiro_crew.providers.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent

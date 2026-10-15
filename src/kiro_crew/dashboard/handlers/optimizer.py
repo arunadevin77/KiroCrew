@@ -192,7 +192,9 @@ OPTIMIZER_SYSTEM = (
     'by a file path, such as "@src/main.ts". Each one attaches that file to the '
     "message. In your rewrite you MUST keep every file mention verbatim (the same @ "
     "and the same path characters, followed by a space or the end of the text). "
-    "NEVER reword a mention into prose, shorten it, or drop it.\n\n"
+    "NEVER reword a mention into prose, shorten it, or drop it. A folder mention is "
+    'the same with a trailing slash, such as "@src/utils/"; it attaches that folder '
+    "and is kept verbatim the same way, trailing slash included.\n\n"
     "## Rules (earlier rules win on conflict)\n\n"
     "1. NEVER change the user's intent, add requirements they didn't ask for, or invent "
     "specific values they left open.\n"

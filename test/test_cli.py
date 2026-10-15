@@ -145,12 +145,18 @@ def _pin_default_config(monkeypatch) -> None:
     runner installed that wheel, and on POSIX an absent one is a hard issue: the
     tests asserting ``_doctor()`` does not exit would then report the host rather
     than the behaviour they name. The STT arms pin it back on for themselves.
+
+    The harness is pinned to kiro-cli: a fresh config defaults to KAS, whose
+    engine check needs a kiro-cli with ``--agent-engine`` that the stubbed
+    ``kiro-cli 1.0.0`` does not report.
     """
+    from kiro_crew.agent_sdk.backends import ACP_BACKEND_KIRO
     from kiro_crew.config.loader import KiroCrewConfig
 
     def _pristine() -> KiroCrewConfig:
         cfg = KiroCrewConfig()
         cfg.stt.enabled = False
+        cfg.agent.acp_backend = ACP_BACKEND_KIRO
         return cfg
 
     monkeypatch.setattr(KiroCrewConfig, "load", classmethod(lambda cls: _pristine()))
@@ -245,10 +251,14 @@ class TestDoctor:
         The autouse ``_hermetic_config`` fixture pins STT OFF so unrelated doctor
         tests never reach this section, so any test that wants it has to ask.
         """
+        from kiro_crew.agent_sdk.backends import ACP_BACKEND_KIRO
         from kiro_crew.config.loader import KiroCrewConfig
 
         def _cfg() -> KiroCrewConfig:
             cfg = KiroCrewConfig()
+            # kiro-cli, like ``_pin_default_config``: the KAS engine row is not
+            # the subject here.
+            cfg.agent.acp_backend = ACP_BACKEND_KIRO
             cfg.stt.enabled = True
             for name, value in fields.items():
                 setattr(cfg.stt, name, value)
@@ -5627,10 +5637,14 @@ class TestDoctorStt:
         Applied last, so a test that wants the off arm asks for it explicitly
         (``enabled=False``) rather than relying on what the autouse pin left behind.
         """
+        from kiro_crew.agent_sdk.backends import ACP_BACKEND_KIRO
         from kiro_crew.config.loader import KiroCrewConfig
 
         def _cfg() -> KiroCrewConfig:
             cfg = KiroCrewConfig()
+            # kiro-cli, like ``_pin_default_config``: the KAS engine row is not
+            # the subject here.
+            cfg.agent.acp_backend = ACP_BACKEND_KIRO
             cfg.stt.enabled = True
             for name, value in fields.items():
                 setattr(cfg.stt, name, value)

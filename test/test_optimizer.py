@@ -54,6 +54,13 @@ class TestOptimizerSystem:
         assert "FILE MENTIONS" in OPTIMIZER_SYSTEM
         assert "keep every file mention verbatim" in OPTIMIZER_SYSTEM
 
+    def test_system_prompt_keeps_folder_mentions_verbatim(self):
+        # A folder chip is derived from its "@rel/" token, and the composer
+        # refuses a rewrite that changes the folder tokens, so the model is
+        # told to keep them too.
+        assert '"@src/utils/"' in OPTIMIZER_SYSTEM
+        assert "trailing slash included" in OPTIMIZER_SYSTEM
+
 
 class TestOptimizerEndpoint:
     """Test the handle_optimize handler logic."""

@@ -11,18 +11,32 @@ import type { AcpBackendProbe } from './client/config'
  * that would silently hand Kiro-only behaviour to every harness added later.
  */
 
-/** The kiro-cli backend's id (`ACP_BACKEND_KIRO` on the gateway). It is the
- *  empty string, which is also what an UNSET key means: the gateway itself falls
- *  back to kiro-cli when the key is absent, so an absent key names kiro too. */
-export const ACP_BACKEND_KIRO = ''
+/**
+ * The kiro-cli backend's id in the config vocabulary the dashboard reads and
+ * writes (`STORED_BACKEND_KIRO` on the gateway). The config body, the schema
+ * enum and the `/api/acp-backends` rows all spell Kiro CLI `'kiro'`; an empty
+ * or absent `agent.acp_backend` means "no choice", which is the default.
+ */
+export const ACP_BACKEND_KIRO = 'kiro'
 
 /** The KAS backend's id (`ACP_BACKEND_KAS` on the gateway): kiro-cli's relay,
  *  which completes first-run setup on kiro-cli ACP support, not a kiro-cli login. */
 export const ACP_BACKEND_KAS = 'kas'
 
+/** The harness an install runs when it holds no choice (absent or `''`). */
+export const DEFAULT_ACP_BACKEND = ACP_BACKEND_KAS
+
 /** The slice of the config body this check reads. */
 export interface AcpBackendConfig {
   agent?: { acp_backend?: string }
+}
+
+/**
+ * The harness a LOADED config runs: its `agent.acp_backend`, with absent and
+ * `''` ("no choice") read as the default.
+ */
+export function configuredAcpBackend(cfg: AcpBackendConfig): string {
+  return cfg.agent?.acp_backend || DEFAULT_ACP_BACKEND
 }
 
 /**
@@ -32,7 +46,7 @@ export interface AcpBackendConfig {
  */
 export function isKiroBackend(cfg: AcpBackendConfig | undefined): boolean {
   if (cfg === undefined) return false
-  return (cfg.agent?.acp_backend ?? ACP_BACKEND_KIRO) === ACP_BACKEND_KIRO
+  return configuredAcpBackend(cfg) === ACP_BACKEND_KIRO
 }
 
 /**
@@ -46,7 +60,7 @@ export function isKiroBackend(cfg: AcpBackendConfig | undefined): boolean {
  */
 export function reportsCredits(cfg: AcpBackendConfig | undefined): boolean {
   if (cfg === undefined) return false
-  const backend = cfg.agent?.acp_backend ?? ACP_BACKEND_KIRO
+  const backend = configuredAcpBackend(cfg)
   return backend === ACP_BACKEND_KIRO || backend === ACP_BACKEND_KAS
 }
 

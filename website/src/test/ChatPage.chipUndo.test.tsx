@@ -632,6 +632,32 @@ describe('ChatPage file chip remove + undo', { timeout: 15_000 }, () => {
   })
 })
 
+/** Render the page, let `prepare` shape the draft and return the textarea,
+ *  click Optimize prompt with the optimizer answering `optimized`, and wait
+ *  for the composer to settle. */
+async function optimizePageWith(optimized: string, prepare: () => Promise<HTMLTextAreaElement>) {
+  let calls = 0
+  const realFetch = globalThis.fetch
+  vi.stubGlobal('fetch', (url: string) => {
+    if (typeof url === 'string' && url.includes('/api/optimizer/optimize')) {
+      calls += 1
+      return Promise.resolve({ ok: true, json: async () => ({ changed: true, optimized }) })
+    }
+    return Promise.resolve({ ok: true, json: async () => [] } as unknown as Response)
+  })
+  try {
+    const store = makeStore('slot-a', [{ key: 'slot-a', project: '/repo' }])
+    await renderPage(store)
+    const ta = await prepare()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Optimize prompt' })) })
+    await waitFor(() => expect(calls).toBe(1))
+    await waitFor(() => expect(ta).not.toHaveAttribute('readonly'))
+    return ta
+  } finally {
+    vi.stubGlobal('fetch', realFetch)
+  }
+}
+
 // #13063: the prompt optimizer's rewrite lands in the draft as a whole-text
 // replacement, and the chip reconciliation then reads it like any other edit.
 // A rewrite that drops or rewords a picked `@rel` mention would unstage that
@@ -643,32 +669,14 @@ describe('ChatPage prompt optimizer keeps picked file mentions (#13063)', { time
 
   /** Pick main.ts, let `edit` shape the draft, click Optimize prompt with the
    *  optimizer answering `optimized`, and wait for the composer to settle. */
-  async function optimizeWith(optimized: string, edit = async (ta: HTMLTextAreaElement) => {
+  const optimizeWith = (optimized: string, edit = async (ta: HTMLTextAreaElement) => {
     fireEvent.change(ta, { target: { value: DRAFT } })
     await waitFor(() => expect(ta.value).toBe(DRAFT))
-  }) {
-    let calls = 0
-    const realFetch = globalThis.fetch
-    vi.stubGlobal('fetch', (url: string) => {
-      if (typeof url === 'string' && url.includes('/api/optimizer/optimize')) {
-        calls += 1
-        return Promise.resolve({ ok: true, json: async () => ({ changed: true, optimized }) })
-      }
-      return Promise.resolve({ ok: true, json: async () => [] } as unknown as Response)
-    })
-    try {
-      const store = makeStore('slot-a', [{ key: 'slot-a', project: '/repo' }])
-      await renderPage(store)
-      const ta = await pickFile()
-      await edit(ta)
-      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Optimize prompt' })) })
-      await waitFor(() => expect(calls).toBe(1))
-      await waitFor(() => expect(ta).not.toHaveAttribute('readonly'))
-      return ta
-    } finally {
-      vi.stubGlobal('fetch', realFetch)
-    }
-  }
+  }) => optimizePageWith(optimized, async () => {
+    const ta = await pickFile()
+    await edit(ta)
+    return ta
+  })
 
   it('a rewrite that drops the mention leaves the draft and its chip alone', async () => {
     const ta = await optimizeWith('Review the main entry file and fix the bug.')
@@ -701,5 +709,50 @@ describe('ChatPage prompt optimizer keeps picked file mentions (#13063)', { time
     })
     expect(ta.value).toBe('please review the bug')
     expect(screen.queryByLabelText('Remove')).toBeNull()
+  })
+})
+
+// A folder chip is derived from its `@rel/` token in the draft, so a rewrite
+// that rewords, drops or adds a folder token would change the folder chips
+// while the composer was readOnly -- no user edit -- and the send would go out
+// with a different set of folders. A rewrite is kept only when its folder
+// tokens are exactly the draft's.
+describe('ChatPage prompt optimizer keeps folder mentions', { timeout: 15_000 }, () => {
+  const DRAFT = 'please review @src/utils/ for the bug'
+
+  /** Type DRAFT, click Optimize prompt with the optimizer answering
+   *  `optimized`, and wait for the composer to settle. */
+  const optimizeWith = (optimized: string) => optimizePageWith(optimized, async () => {
+    const ta = screen.getByLabelText('Message input') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: DRAFT } })
+    await waitFor(() => expect(ta.value).toBe(DRAFT))
+    await screen.findByLabelText('Remove folder')
+    return ta
+  })
+
+  it('a rewrite that turns the folder mention into prose leaves the draft and its chip alone', async () => {
+    const ta = await optimizeWith('Review the utils folder and fix the bug.')
+    expect(ta.value).toBe(DRAFT)
+    expect(screen.getByLabelText('Remove folder')).toBeInTheDocument()
+  })
+
+  it('a rewrite that keeps the text but breaks the folder token boundary is refused too', async () => {
+    // `@src/utils/` is still a substring, but a folder token must end at
+    // whitespace or the end of the text, so `.` would drop the chip.
+    const ta = await optimizeWith('Fix the bug in @src/utils/.')
+    expect(ta.value).toBe(DRAFT)
+    expect(screen.getByLabelText('Remove folder')).toBeInTheDocument()
+  })
+
+  it('a rewrite that adds a folder mention is refused', async () => {
+    const ta = await optimizeWith('Review @src/utils/ and @src/lib/ for the bug.')
+    expect(ta.value).toBe(DRAFT)
+    expect(screen.getAllByLabelText('Remove folder')).toHaveLength(1)
+  })
+
+  it('a rewrite that keeps the folder mention is applied and the chip stays', async () => {
+    const ta = await optimizeWith('Review @src/utils/ and fix the bug.')
+    await waitFor(() => expect(ta.value).toBe('Review @src/utils/ and fix the bug.'))
+    expect(screen.getByLabelText('Remove folder')).toBeInTheDocument()
   })
 })

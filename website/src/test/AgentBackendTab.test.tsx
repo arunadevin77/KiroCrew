@@ -34,7 +34,7 @@ const {
   acpBackendRecheckMock,
 } = vi.hoisted(() => ({
   patchConfigMock: vi.fn(() => Promise.resolve({})),
-  kirocrewConfigMock: vi.fn(() => Promise.resolve({ agent: { acp_backend: '' } })),
+  kirocrewConfigMock: vi.fn(() => Promise.resolve({ agent: { acp_backend: 'kiro' } })),
   schemaMock: vi.fn(),
   acpBackendsMock: vi.fn(),
   acpBackendRecheckMock: vi.fn(),
@@ -70,6 +70,7 @@ vi.mock('../pages/developer/KasBundleCard', () => ({
 }))
 
 import { AgentBackendTab } from '../pages/developer/AgentBackendTab'
+import { DEFAULT_ACP_BACKEND } from '../api/acpBackend'
 
 /** A schema map advertising exactly `values` for the backend field. */
 function schemaWith(values: string[] | undefined) {
@@ -235,12 +236,12 @@ beforeEach(() => {
   patchConfigMock.mockClear()
   patchConfigMock.mockResolvedValue({})
   kirocrewConfigMock.mockClear()
-  kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: '' } })
+  kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: 'kiro' } })
   acpBackendRecheckMock.mockClear()
   // The shipped core: every known agent is selectable. Claude Code is in the public
   // baseline because acp/client.py owns its whole spawn path and the adapter it needs
   // is a public npm package -- the only thing that used to be missing was the switch.
-  schemaMock.mockReturnValue(schemaWith(['', 'claude', 'kas']))
+  schemaMock.mockReturnValue(schemaWith(['kiro', 'claude', 'kas']))
   // Default to NO probe information — a 404 from a gateway that predates the
   // endpoint. Every test that does not opt in therefore pins the pre-probe
   // behaviour: schema-only gating, nothing dead or annotated by the probe.
@@ -256,18 +257,14 @@ describe('AgentBackendTab list', () => {
     expect(row('KAS (kiro-agent)')).toBeInTheDocument()
   })
 
-  it('puts the two kiro-family harnesses first and sorts the adapters after', async () => {
-    // KAS is not an adapter: it is kiro-cli's own relay, sharing kiro's install
-    // verdict, so the two harnesses that are really one install stay adjacent at the
-    // head. Under `policy_id` alone KAS sorts on 'k' and lands behind 'claude', which
-    // reads as a rank rather than an alphabet.
+  it('puts KAS first, Kiro CLI second, and sorts adapters after', async () => {
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow(''), probeRow('claude'), probeRow('kas'), probeRow('zephyr')],
+      backends: [probeRow('kiro'), probeRow('claude'), probeRow('kas'), probeRow('zephyr')],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'claude', 'kas', 'zephyr']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'claude', 'kas', 'zephyr']))
     wrap()
     await waitFor(() => expect(screen.getAllByRole('radio')).toHaveLength(4))
-    expect(rows()).toEqual(['Kiro CLI', 'KAS (kiro-agent)', 'Claude Code', 'zephyr'])
+    expect(rows()).toEqual(['KAS (kiro-agent)', 'Kiro CLI', 'Claude Code', 'zephyr'])
   })
 
   it('marks the configured backend as the current one', async () => {
@@ -277,10 +274,10 @@ describe('AgentBackendTab list', () => {
     expect(row('Kiro CLI')).not.toHaveAttribute('aria-current')
   })
 
-  it('treats a missing acp_backend as kiro-cli rather than as unset', async () => {
+  it('treats a missing acp_backend as the KAS default', async () => {
     kirocrewConfigMock.mockResolvedValue({})
     wrap()
-    await waitFor(() => expect(row('Kiro CLI')).toHaveAttribute('aria-current', 'true'))
+    await waitFor(() => expect(row('KAS (kiro-agent)')).toHaveAttribute('aria-current', 'true'))
   })
 
   it('opens on the current backend detail', async () => {
@@ -294,7 +291,7 @@ describe('AgentBackendTab list', () => {
   it('hides a backend the deployment may not select, rather than dimming it', async () => {
     // A greyed row invites the reader to find out how to enable it, and under a
     // managed policy there is nothing they can do.
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
     expect(screen.queryByRole('radio', { name: 'Claude Code' })).toBeNull()
@@ -304,7 +301,7 @@ describe('AgentBackendTab list', () => {
   it('keeps the current backend listed even if it reads as unselectable', async () => {
     // A control that lists no active harness is a worse failure than one extra row.
     kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: 'claude' } })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('Claude Code')).toHaveAttribute('aria-current', 'true'))
   })
@@ -312,7 +309,7 @@ describe('AgentBackendTab list', () => {
   it('lists a backend the schema starts advertising, with no edit here', async () => {
     // The whole point of reading the option set from the server: an edition that
     // registers a harness lights it up with no frontend change.
-    schemaMock.mockReturnValue(schemaWith(['', 'claude', 'kas', 'future-agent']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'claude', 'kas', 'future-agent']))
     wrap()
     await waitFor(() => expect(row('future-agent')).toBeInTheDocument())
   })
@@ -321,9 +318,9 @@ describe('AgentBackendTab list', () => {
     // `nameOf` falls back to `policy_id`, which is already a word rather than an
     // internal token -- it is what a governance rule spells.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow(''), probeRow('plugin-agent', { ...card() })],
+      backends: [probeRow('kiro'), probeRow('plugin-agent', { ...card() })],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'plugin-agent']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'plugin-agent']))
     wrap()
     await waitFor(() => expect(row('plugin-agent')).toBeInTheDocument())
     highlight('plugin-agent')
@@ -335,9 +332,9 @@ describe('AgentBackendTab list', () => {
     // so honouring both means the two cannot disagree in a way that lets a dead
     // switch look live.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow(''), probeRow('claude', { selectable: false })],
+      backends: [probeRow('kiro'), probeRow('claude', { selectable: false })],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'claude']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'claude']))
     wrap()
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
     await waitFor(() => expect(screen.queryByRole('radio', { name: 'Claude Code' })).toBeNull())
@@ -439,7 +436,7 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
     // The reason the panel was redesigned: every harness's whole card used to render
     // stacked down the page.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card()), probeRow('kas', card()), probeRow('claude', card())],
+      backends: [probeRow('kiro', card()), probeRow('kas', card()), probeRow('claude', card())],
     })
     wrap()
     await waitFor(() => expect(screen.getAllByTestId('agent-harness-detail')).toHaveLength(1))
@@ -471,11 +468,11 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
     // then be named after its own problem.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('kas', { installed: 'missing', missing_components: ['kiro-cli'], ...card() }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'kas']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'kas']))
     wrap()
     await waitFor(() => expect(row('KAS (kiro-agent)')).toBeInTheDocument())
     // The name is the name -- the row also carries a badge, and neither of them is
@@ -500,7 +497,7 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
     kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: 'claude' } })
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('claude', {
           installed: 'missing',
           missing_components: ['claude-agent-acp'],
@@ -530,7 +527,7 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
     kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: 'claude' } })
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('claude', { installed: 'missing', missing_components: ['x'], ...card() }),
       ],
     })
@@ -567,7 +564,7 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
     // click is answered by silence, so the button must not read as pressable.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('claude', { installed: 'missing', missing_components: ['x'], ...card() }),
       ],
     })
@@ -583,7 +580,7 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
     // The contrast, in the same render: a pressable one is enabled and accent-filled.
     highlight('Kiro CLI')
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card()), probeRow('kas', card())],
+      backends: [probeRow('kiro', card()), probeRow('kas', card())],
     })
     highlight('KAS (kiro-agent)')
     await waitFor(() => expect(useButton('KAS (kiro-agent)')).toBeEnabled())
@@ -615,14 +612,14 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
     // them -- they just stop competing with the line that answers the question.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('deepseek', {
           selectable: false,
           ...card({ offered_by_build: false, tool_approval: 'unverified' }),
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('deepseek')).toBeInTheDocument())
     highlight('deepseek')
@@ -667,7 +664,7 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
     // picker shows, so a harness reads the same on both screens.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('claude', { installed: 'missing', missing_components: ['x'], ...card() }),
         probeRow('codex', { installed: 'unknown', ...card() }),
         probeRow('pi', { restart_required: true, ...card() }),
@@ -677,7 +674,7 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'claude', 'codex', 'pi']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'claude', 'codex', 'pi']))
     wrap()
     await waitFor(() => expect(row('deepseek')).toBeInTheDocument())
 
@@ -694,12 +691,12 @@ describe('AgentBackendTab checking a row is not selecting an agent', () => {
   it('falls back to the current backend when the highlighted row stops being listed', async () => {
     // The listed set moves as the schema answers, and a stored id that dropped out of
     // it would render an empty pane.
-    schemaMock.mockReturnValue(schemaWith(['', 'claude', 'kas']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'claude', 'kas']))
     wrap()
     await waitFor(() => expect(row('Claude Code')).toBeInTheDocument())
     highlight('Claude Code')
     expect(row('Claude Code')).toBeChecked()
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     // A re-render with the narrower schema: Claude is gone and the pane follows the
     // active backend rather than emptying.
     fireEvent.click(row('Kiro CLI'))
@@ -715,6 +712,24 @@ describe('AgentBackendTab switching', () => {
     highlight('Claude Code')
     fireEvent.click(useButton('Claude Code'))
     await waitFor(() => expect(patchConfigMock).toHaveBeenCalledWith('agent.acp_backend', 'claude'))
+  })
+
+  it('stores an explicit Kiro CLI choice even though KAS is the default', async () => {
+    kirocrewConfigMock.mockResolvedValue({})
+    wrap()
+    await waitFor(() => expect(row('KAS (kiro-agent)')).toHaveAttribute('aria-current', 'true'))
+    highlight('Kiro CLI')
+    fireEvent.click(useButton('Kiro CLI'))
+    // "kiro", never "": on disk an empty value means "no choice", which is KAS.
+    await waitFor(() => expect(patchConfigMock).toHaveBeenCalledWith('agent.acp_backend', 'kiro'))
+  })
+
+  it('reads a stored empty harness as no choice: KAS is in use, not Kiro CLI', async () => {
+    kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: '' } })
+    wrap()
+    await waitFor(() => expect(row('KAS (kiro-agent)')).toHaveAttribute('aria-current', 'true'))
+    expect(row('Kiro CLI')).not.toHaveAttribute('aria-current')
+    expect(screen.queryByRole('radio', { name: '' })).toBeNull()
   })
 
   it('saves the Claude Code selection the shipped build offers', async () => {
@@ -776,14 +791,14 @@ describe('AgentBackendTab switching', () => {
     // No Use button there either: a PATCH the wire refuses is not a switch.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('codex', {
           selectable: false,
           ...card({ offered_by_build: false, tool_approval: 'unverified' }),
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('codex')).toBeInTheDocument())
     highlight('codex')
@@ -869,7 +884,7 @@ describe('AgentBackendTab switching', () => {
 function missingClaude() {
   acpBackendsMock.mockResolvedValue({
     backends: [
-      probeRow('', card()),
+      probeRow('kiro', card()),
       probeRow('claude', {
         installed: 'missing',
         missing_components: ['claude-agent-acp'],
@@ -886,10 +901,52 @@ describe('AgentBackendTab status strip', () => {
     // supported. Those claims were not measured anywhere and were wrong.
     wrap()
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
-    expect(detail().textContent).toContain('Default.')
     highlight('KAS (kiro-agent)')
+    expect(detail().textContent).toContain('Default.')
+    highlight('Claude Code')
     expect(detail().textContent).toContain('Experimental')
     expect(screen.queryByText(/OS sandbox|Anthropic|steered mid-turn/)).toBeNull()
+  })
+
+  it('puts the default line on DEFAULT_ACP_BACKEND, not on Kiro CLI', async () => {
+    // New installs run KAS. A page that called Kiro CLI the default and tagged KAS
+    // Experimental would tell a new user the harness they are on is the risky one.
+    acpBackendsMock.mockResolvedValue({
+      backends: [probeRow('kiro', card()), probeRow('kas', card()), probeRow('claude', card())],
+    })
+    wrap()
+    await waitFor(() => expect(row('KAS (kiro-agent)')).toBeInTheDocument())
+    expect(DEFAULT_ACP_BACKEND).toBe('kas')
+
+    highlight('KAS (kiro-agent)')
+    await waitFor(() => expect(detail().textContent).toContain('Default.'))
+    expect(panel().queryByText('Experimental')).toBeNull()
+    expect(document.getElementById('agent-backend-row-status-kas')?.textContent).toBe('Default.')
+
+    // Kiro CLI is the stable floor: neither the default nor Experimental.
+    highlight('Kiro CLI')
+    await waitFor(() =>
+      expect(detail().textContent).toContain('Kiro CLI is installed and ready to use.'),
+    )
+    expect(detail().textContent).not.toContain('Default.')
+    expect(panel().queryByText('Experimental')).toBeNull()
+    const kiroStatus = document.getElementById('agent-backend-row-status-kiro')?.textContent ?? ''
+    expect(kiroStatus).not.toMatch(/Default|Experimental/)
+
+    // Any other harness is still Experimental.
+    highlight('Claude Code')
+    await waitFor(() => expect(panel().getByText('Experimental')).toBeInTheDocument())
+    expect(detail().textContent).not.toContain('Default.')
+    expect(document.getElementById('agent-backend-row-status-claude')?.textContent).toBe(
+      'Experimental',
+    )
+  })
+
+  it('says neither Default nor Experimental for Kiro CLI with no probe answer', async () => {
+    wrap()
+    await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
+    highlight('Kiro CLI')
+    expect(detail().textContent).not.toMatch(/Default\.|Experimental/)
   })
 
   it('says what to install and offers the install command to copy', async () => {
@@ -901,7 +958,7 @@ describe('AgentBackendTab status strip', () => {
     // row's description still carries them, so a screen reader is told what is gone.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('claude', {
           installed: 'missing',
           missing_components: ['claude-agent-acp'],
@@ -986,7 +1043,7 @@ describe('AgentBackendTab status strip', () => {
     // honestly print, so the probe reports `""` rather than an invented command.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', {
+        probeRow('kiro', {
           installed: 'missing',
           missing_components: ['kiro-cli'],
           install_command: '',
@@ -994,7 +1051,7 @@ describe('AgentBackendTab status strip', () => {
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(panel().getByText('Missing: kiro-cli')).toBeInTheDocument())
     expect(panel().getByText('Install Kiro CLI on the gateway host.')).toBeInTheDocument()
@@ -1006,7 +1063,7 @@ describe('AgentBackendTab status strip', () => {
     // `unknown` means the CHECK failed. Collapsing it onto `missing` would tell
     // someone to run a global install for something they may already have.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card()), probeRow('claude', { installed: 'unknown', ...card() })],
+      backends: [probeRow('kiro', card()), probeRow('claude', { installed: 'unknown', ...card() })],
     })
     wrap()
     await waitFor(() => expect(row('Claude Code')).toBeInTheDocument())
@@ -1040,7 +1097,7 @@ describe('AgentBackendTab status strip', () => {
 
   it('leaves a selectable, installed backend reading exactly as it did before', async () => {
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card()), probeRow('claude', card())],
+      backends: [probeRow('kiro', card()), probeRow('claude', card())],
     })
     wrap()
     await waitFor(() => expect(row('Claude Code')).toBeInTheDocument())
@@ -1054,7 +1111,7 @@ describe('AgentBackendTab status strip', () => {
     // click would reach a spawn that reuses the cached absence and fails.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('claude', { installed: 'installed', restart_required: true, ...card() }),
       ],
     })
@@ -1083,11 +1140,11 @@ describe('AgentBackendTab status strip', () => {
   it('says nothing about restarting for a row the deployment cannot select anyway', async () => {
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('claude', { selectable: false, restart_required: true, ...card() }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
     await waitFor(() => expect(screen.queryByRole('radio', { name: 'Claude Code' })).toBeNull())
@@ -1101,7 +1158,7 @@ describe('AgentBackendTab status strip', () => {
     // reload.
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
-      acpBackendsMock.mockResolvedValue({ backends: [probeRow('', card())] })
+      acpBackendsMock.mockResolvedValue({ backends: [probeRow('kiro', card())] })
       const qc = new QueryClient({
         defaultOptions: { queries: { retry: false, staleTime: Infinity } },
       })
@@ -1158,7 +1215,7 @@ describe('AgentBackendTab check again', () => {
     expect(acpBackendsMock.mock.calls.length).toBe(listCalls)
     // The untouched row kept its own answer.
     highlight('Kiro CLI')
-    expect(detail().textContent).toContain('Default.')
+    expect(detail().textContent).toContain('Kiro CLI is installed and ready to use.')
   })
 
   it('cancels the in-flight poll so it cannot land on top of the fresh row', async () => {
@@ -1209,7 +1266,7 @@ describe('AgentBackendTab check again', () => {
     // resolution alone, so this disclosure survives a re-probe. The panel renders
     // whatever came back and never assumes a re-check cleared it.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card()), probeRow('claude', { restart_required: true, ...card() })],
+      backends: [probeRow('kiro', card()), probeRow('claude', { restart_required: true, ...card() })],
     })
     acpBackendRecheckMock.mockResolvedValue({
       backend: probeRow('claude', { restart_required: true, ...card() }),
@@ -1287,10 +1344,10 @@ describe('AgentBackendTab check again', () => {
     // move does not fix it either -- the rejection lands after the move.
     const FAILED = 'Could not check whether this is installed on this machine.'
     let reject: (reason: Error) => void = () => {}
-    schemaMock.mockReturnValue(schemaWith(['', 'claude', 'kas', 'codex']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'claude', 'kas', 'codex']))
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('claude', {
           installed: 'missing',
           missing_components: ['claude-code'],
@@ -1335,14 +1392,14 @@ describe('AgentBackendTab check again', () => {
     // re-measured the machine would answer a question nobody asked.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('deepseek', {
           selectable: false,
           ...card({ offered_by_build: false, tool_approval: 'unverified' }),
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('deepseek')).toBeInTheDocument())
     highlight('deepseek')
@@ -1350,12 +1407,12 @@ describe('AgentBackendTab check again', () => {
   })
 
   it('offers no re-check for a harness that is simply installed', async () => {
-    acpBackendsMock.mockResolvedValue({ backends: [probeRow('', card())] })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    acpBackendsMock.mockResolvedValue({ backends: [probeRow('kiro', card())] })
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
     await waitFor(() =>
-      expect(detail().textContent).toContain('Default.'),
+      expect(detail().textContent).toContain('Kiro CLI is installed and ready to use.'),
     )
     expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull()
   })
@@ -1381,8 +1438,8 @@ describe('AgentBackendTab detail card', () => {
     // The state has to be TEXT. A mark that differs only by icon shape and colour
     // is unreadable to a screen reader and to anyone who cannot tell the two
     // colours apart, so each row carries its verdict as a visually hidden word.
-    acpBackendsMock.mockResolvedValue({ backends: [probeRow('', card())] })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    acpBackendsMock.mockResolvedValue({ backends: [probeRow('kiro', card())] })
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText('Kiro Crew tools work in the chat')).toBeInTheDocument(),
@@ -1396,7 +1453,7 @@ describe('AgentBackendTab detail card', () => {
   it('counts the card for the harness on screen', async () => {
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow(
           'kas',
           card({
@@ -1408,7 +1465,7 @@ describe('AgentBackendTab detail card', () => {
         ),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'kas']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'kas']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText('Kiro CLI supports 1 of 2 features')).toBeInTheDocument(),
@@ -1423,8 +1480,8 @@ describe('AgentBackendTab detail card', () => {
   it('shows the capability list without needing a click', async () => {
     // The disclosure existed because eight open cards buried the control. One card
     // does not, and the capability set is what the reader came for.
-    acpBackendsMock.mockResolvedValue({ backends: [probeRow('', card())] })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    acpBackendsMock.mockResolvedValue({ backends: [probeRow('kiro', card())] })
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText('Kiro Crew tools work in the chat')).toBeInTheDocument(),
@@ -1438,7 +1495,7 @@ describe('AgentBackendTab detail card', () => {
     acpBackendsMock.mockResolvedValue({
       backends: [
         probeRow(
-          '',
+          'kiro',
           card({
             capabilities: [{ id: 'crew_tools', available: true }],
             details: [
@@ -1449,7 +1506,7 @@ describe('AgentBackendTab detail card', () => {
         ),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText('Kiro CLI supports 1 of 1 features')).toBeInTheDocument(),
@@ -1468,8 +1525,8 @@ describe('AgentBackendTab detail card', () => {
   })
 
   it('renders no disclosure when the gateway sends no detail lines', async () => {
-    acpBackendsMock.mockResolvedValue({ backends: [probeRow('', card())] })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    acpBackendsMock.mockResolvedValue({ backends: [probeRow('kiro', card())] })
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText('Kiro Crew tools work in the chat')).toBeInTheDocument(),
@@ -1485,7 +1542,7 @@ describe('AgentBackendTab detail card', () => {
     acpBackendsMock.mockResolvedValue({
       backends: [
         probeRow(
-          '',
+          'kiro',
           card({
             capabilities: [
               { id: 'crew_tools', available: true },
@@ -1495,7 +1552,7 @@ describe('AgentBackendTab detail card', () => {
         ),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText('Kiro Crew tools work in the chat')).toBeInTheDocument(),
@@ -1513,7 +1570,7 @@ describe('AgentBackendTab detail card', () => {
     acpBackendsMock.mockResolvedValue({
       backends: [
         probeRow(
-          '',
+          'kiro',
           card({
             capabilities: [
               { id: 'crew_tools', available: true, measured: true },
@@ -1529,7 +1586,7 @@ describe('AgentBackendTab detail card', () => {
         ),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(screen.getByText('The /compact command works')).toBeInTheDocument())
     const row = screen.getByText('The /compact command works').parentElement
@@ -1564,7 +1621,7 @@ describe('AgentBackendTab detail card', () => {
     acpBackendsMock.mockResolvedValue({
       backends: [
         probeRow(
-          '',
+          'kiro',
           card({
             capabilities: [
               { id: 'crew_tools', available: true, measured: true },
@@ -1580,7 +1637,7 @@ describe('AgentBackendTab detail card', () => {
         ),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText(/Kiro CLI supports 1 of 2 features/)).toBeInTheDocument(),
@@ -1595,8 +1652,8 @@ describe('AgentBackendTab detail card', () => {
     // A gateway that predates the third state sends `available` alone. Absent is
     // MEASURED, so its card renders exactly as it does today -- tick and cross, and
     // no remainder line claiming a gap nobody reported.
-    acpBackendsMock.mockResolvedValue({ backends: [probeRow('', card())] })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    acpBackendsMock.mockResolvedValue({ backends: [probeRow('kiro', card())] })
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText('You can add a message while it works')).toBeInTheDocument(),
@@ -1614,7 +1671,7 @@ describe('AgentBackendTab detail card', () => {
     acpBackendsMock.mockResolvedValue({
       backends: [
         probeRow(
-          '',
+          'kiro',
           card({
             capabilities: [
               {
@@ -1628,7 +1685,7 @@ describe('AgentBackendTab detail card', () => {
         ),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(screen.getByText('The /compact command works')).toBeInTheDocument())
     const row = screen.getByText('The /compact command works').parentElement
@@ -1641,9 +1698,9 @@ describe('AgentBackendTab detail card', () => {
     // agent cannot be picked, so it must not need a click. It is also the one
     // GRADED line: the label comes from the mechanism, not from a boolean.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card()), probeRow('kas', card({ tool_approval: 'seeded_settings' }))],
+      backends: [probeRow('kiro', card()), probeRow('kas', card({ tool_approval: 'seeded_settings' }))],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'kas']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'kas']))
     wrap()
     await waitFor(() =>
       expect(
@@ -1657,9 +1714,9 @@ describe('AgentBackendTab detail card', () => {
 
   it('says nothing about a mechanism this frontend has no label for', async () => {
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card({ tool_approval: 'a_future_mechanism' }))],
+      backends: [probeRow('kiro', card({ tool_approval: 'a_future_mechanism' }))],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText('Kiro Crew tools work in the chat')).toBeInTheDocument(),
@@ -1673,9 +1730,9 @@ describe('AgentBackendTab detail card', () => {
     // lines rather than behind a heading: the card keeps one where-it-lives fact, the
     // credential store, and one line needs no toggle to hide it.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card({ operator_notes: ['own_credential_store'] }))],
+      backends: [probeRow('kiro', card({ operator_notes: ['own_credential_store'] }))],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText(/Signs in with its own file/)).toBeInTheDocument(),
@@ -1693,7 +1750,7 @@ describe('AgentBackendTab detail card', () => {
     acpBackendsMock.mockResolvedValue({
       backends: [
         probeRow(
-          '',
+          'kiro',
           card({
             security_notes: ['crew_sandbox_stands_down'],
             operator_notes: ['own_credential_store'],
@@ -1701,7 +1758,7 @@ describe('AgentBackendTab detail card', () => {
         ),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(screen.getByText(/Has its own sandbox/)).toBeInTheDocument())
     expect(screen.getByText(/Has its own sandbox/).closest('details')).toBeNull()
@@ -1712,11 +1769,11 @@ describe('AgentBackendTab detail card', () => {
     // The same rule as every other absent probe field: absent information is not
     // a verdict, so the panel says nothing rather than rendering an empty card
     // that reads as "supports nothing".
-    acpBackendsMock.mockResolvedValue({ backends: [probeRow('')] })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    acpBackendsMock.mockResolvedValue({ backends: [probeRow('kiro')] })
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
-      expect(detail().textContent).toContain('Default.'),
+      expect(detail().textContent).toContain('Kiro CLI is installed and ready to use.'),
     )
     expect(screen.queryByText(/supports \d+ of/)).toBeNull()
     expect(screen.queryByText('Good to know')).toBeNull()
@@ -1728,14 +1785,14 @@ describe('AgentBackendTab detail card', () => {
     // the detail already carries, and hiding it answers with silence.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('deepseek', {
           selectable: false,
           ...card({ offered_by_build: false, tool_approval: 'unverified' }),
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('deepseek')).toBeInTheDocument())
     highlight('deepseek')
@@ -1751,9 +1808,9 @@ describe('AgentBackendTab detail card', () => {
     // not the reader's to fix and stays hidden; only a BUILD exclusion is
     // listed. Claude here carries a full card and is denied by the schema.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card()), probeRow('claude', card())],
+      backends: [probeRow('kiro', card()), probeRow('claude', card())],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() =>
       expect(screen.getByText('Kiro CLI supports 1 of 2 features')).toBeInTheDocument(),
@@ -1774,7 +1831,7 @@ describe('AgentBackendTab MCP ability card', () => {
    * states it for whoever is diagnosing a route.
    */
   beforeEach(() => {
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
   })
 
   it('states the deny rule outside any disclosure, on an agent that can lose a server', async () => {
@@ -1782,7 +1839,7 @@ describe('AgentBackendTab MCP ability card', () => {
     // says nothing about servers, so a reader meets the difference by accident unless
     // the card states it before they pick.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', { ...card(), ...mcp({ per_tool_deny: 'whole-server' }) })],
+      backends: [probeRow('kiro', { ...card(), ...mcp({ per_tool_deny: 'whole-server' }) })],
     })
     wrap()
     const rule = await screen.findByText(/stops every tool on the same server/)
@@ -1794,7 +1851,7 @@ describe('AgentBackendTab MCP ability card', () => {
     // Two sentences that qualify each other without saying so read as a contradiction,
     // which is what a reader reported. The exception names itself and follows the rule.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', { ...card(), ...mcp({ per_tool_deny: 'per-call' }) })],
+      backends: [probeRow('kiro', { ...card(), ...mcp({ per_tool_deny: 'per-call' }) })],
     })
     wrap()
     const rule = await screen.findByText(/stops every tool on the same server/)
@@ -1808,7 +1865,7 @@ describe('AgentBackendTab MCP ability card', () => {
     // `settings-file` stops the tool it names and nothing else. A line saying so would
     // be a caveat that always fires, which is a line nobody reads.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', { ...card(), ...mcp({ per_tool_deny: 'settings-file' }) })],
+      backends: [probeRow('kiro', { ...card(), ...mcp({ per_tool_deny: 'settings-file' }) })],
     })
     wrap()
     await waitFor(() => expect(panel().getByText(/Crew tools/)).toBeInTheDocument())
@@ -1822,7 +1879,7 @@ describe('AgentBackendTab MCP ability card', () => {
     // the mirror maintainer's, and the reader's question is the same either way.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', {
+        probeRow('kiro', {
           ...card(),
           ...mcp({ ineffective: ['auto_approve', 'permission_mode', 'hooks'] }),
         }),
@@ -1843,7 +1900,7 @@ describe('AgentBackendTab MCP ability card', () => {
     // Stated only where it holds: a reader never reads a row of "delivered" marks that
     // mean "as expected".
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', { ...card(), ...mcp({ ineffective: [] }) })],
+      backends: [probeRow('kiro', { ...card(), ...mcp({ ineffective: [] }) })],
     })
     wrap()
     await waitFor(() => expect(panel().getByText(/Crew tools/)).toBeInTheDocument())
@@ -1855,7 +1912,7 @@ describe('AgentBackendTab MCP ability card', () => {
     // is searchable, where a dropped line tells the reader nothing exists.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', { ...card(), ...mcp({ ineffective: ['auto_approve', 'some_future_setting'] }) }),
+        probeRow('kiro', { ...card(), ...mcp({ ineffective: ['auto_approve', 'some_future_setting'] }) }),
       ],
     })
     wrap()
@@ -1869,7 +1926,7 @@ describe('AgentBackendTab MCP ability card', () => {
     // working, so no line states it and no phrase for it survives in this file.
     for (const reach of ['whole-server', 'per-call', 'settings-file']) {
       acpBackendsMock.mockResolvedValue({
-        backends: [probeRow('', { ...card(), ...mcp({ per_tool_deny: reach }) })],
+        backends: [probeRow('kiro', { ...card(), ...mcp({ per_tool_deny: reach }) })],
       })
       wrap()
       await waitFor(() => expect(panel().getByText(/Crew tools/)).toBeInTheDocument())
@@ -1888,7 +1945,7 @@ describe('AgentBackendTab MCP ability card', () => {
     for (const reach of ['whole-server', 'per-call', 'settings-file']) {
       acpBackendsMock.mockResolvedValue({
         backends: [
-          probeRow('', {
+          probeRow('kiro', {
             ...card(),
             ...mcp({ per_tool_deny: reach, ineffective: ['auto_approve', 'hooks'] }),
           }),
@@ -1908,11 +1965,11 @@ describe('AgentBackendTab MCP ability card', () => {
     // half: one card at a time, so the reader can compare by arrowing.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', { ...card(), ...mcp({ per_tool_deny: 'settings-file' }) }),
+        probeRow('kiro', { ...card(), ...mcp({ per_tool_deny: 'settings-file' }) }),
         probeRow('opencode', { ...card(), ...mcp({ per_tool_deny: 'whole-server' }) }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'opencode']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'opencode']))
     wrap()
     await waitFor(() => expect(row('opencode')).toBeInTheDocument())
     expect(screen.queryByText(/stops every tool on the same server/)).toBeNull()
@@ -1925,7 +1982,7 @@ describe('AgentBackendTab MCP ability card', () => {
   it('renders nothing MCP for a gateway that sent no mcp group', async () => {
     // An older gateway sends no group at all, and the card then says nothing about MCP
     // rather than guessing.
-    acpBackendsMock.mockResolvedValue({ backends: [probeRow('', { ...card() })] })
+    acpBackendsMock.mockResolvedValue({ backends: [probeRow('kiro', { ...card() })] })
     wrap()
     await waitFor(() => expect(panel().getByText(/Crew tools/)).toBeInTheDocument())
     expect(panel().queryByText(/stops every tool on the same server/)).toBeNull()
@@ -1936,7 +1993,7 @@ describe('AgentBackendTab MCP ability card', () => {
     // The whole half is advisory: nothing on it refuses a selection and nothing on it
     // saves one.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', { ...card(), ...mcp({ per_tool_deny: 'whole-server' }) })],
+      backends: [probeRow('kiro', { ...card(), ...mcp({ per_tool_deny: 'whole-server' }) })],
     })
     wrap()
     await screen.findByText(/stops every tool on the same server/)
@@ -1968,7 +2025,7 @@ describe('AgentBackendTab standing caveats', () => {
     // on the gating line -- so the one harness with two facts showed one of them.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('claude', {
           auth: { sign_in_remedy: 'Run: claude login', signs_in_separately: true },
           ...card(),
@@ -1983,7 +2040,7 @@ describe('AgentBackendTab standing caveats', () => {
   })
 
   it('drops the caveat with the row when Claude Code is not selectable', async () => {
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
     expect(screen.queryByText(/\.claude\/settings\.json/)).toBeNull()
@@ -1995,14 +2052,14 @@ describe('AgentBackendTab standing caveats', () => {
     // frontend has never heard of -- is the one that would get no sentence at all.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('codex', {
           auth: { sign_in_remedy: 'Run: codex login', signs_in_separately: true },
           ...card(),
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'codex']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'codex']))
     wrap()
     await waitFor(() => expect(row('codex')).toBeInTheDocument())
     highlight('codex')
@@ -2014,27 +2071,27 @@ describe('AgentBackendTab standing caveats', () => {
     // sign-in to finish.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('kas', {
           auth: { sign_in_remedy: 'Run: kiro login', signs_in_separately: false },
           ...card(),
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'kas']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'kas']))
     wrap()
     await waitFor(() => expect(row('KAS (kiro-agent)')).toBeInTheDocument())
     highlight('KAS (kiro-agent)')
-    await waitFor(() => expect(panel().getByText('Experimental')).toBeInTheDocument())
+    await waitFor(() => expect(detail().textContent).toContain('Default.'))
     expect(screen.queryByText('Run: kiro login')).toBeNull()
   })
 
   it('renders a row with no auth object at all, and says nothing about signing in', async () => {
     // An older gateway sends none, which is absent information like every other.
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow('', card()), probeRow('codex', card())],
+      backends: [probeRow('kiro', card()), probeRow('codex', card())],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'codex']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'codex']))
     wrap()
     await waitFor(() => expect(row('codex')).toBeInTheDocument())
     highlight('codex')
@@ -2045,14 +2102,14 @@ describe('AgentBackendTab standing caveats', () => {
   it("does not put one harness's sign-in remedy on the others", async () => {
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('codex', {
           auth: { sign_in_remedy: 'Run: codex login', signs_in_separately: true },
           ...card(),
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['', 'codex']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'codex']))
     wrap()
     await waitFor(() => expect(row('codex')).toBeInTheDocument())
     // Kiro CLI is the open detail and carries no remedy.
@@ -2094,7 +2151,7 @@ describe('AgentBackendTab kiro sign-in', () => {
 
   it('renders no sign-in card when this deployment cannot select KAS', async () => {
     // On a build or policy that hides that option there is nothing to sign in for.
-    schemaMock.mockReturnValue(schemaWith(['', 'claude']))
+    schemaMock.mockReturnValue(schemaWith(['kiro', 'claude']))
     wrap()
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
     expect(screen.queryByRole('radio', { name: 'KAS (kiro-agent)' })).toBeNull()
@@ -2106,7 +2163,7 @@ describe('AgentBackendTab kiro sign-in', () => {
 
   it('opens on KAS with the sign-in while KAS is the saved backend, even if it reads as unselectable', async () => {
     kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: 'kas' } })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('KAS (kiro-agent)')).toHaveAttribute('aria-current', 'true'))
     expect(row('KAS (kiro-agent)')).toBeChecked()
@@ -2119,14 +2176,14 @@ describe('AgentBackendTab kiro sign-in', () => {
     // pick.
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow('kas', {
           selectable: false,
           ...card({ offered_by_build: false, tool_approval: 'unverified' }),
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['']))
+    schemaMock.mockReturnValue(schemaWith(['kiro']))
     wrap()
     await waitFor(() => expect(row('KAS (kiro-agent)')).toBeInTheDocument())
     highlight('KAS (kiro-agent)')
@@ -2193,7 +2250,7 @@ describe('AgentBackendTab new backend', () => {
     const unheardOf = 'wireweave'
     acpBackendsMock.mockResolvedValue({
       backends: [
-        probeRow('', card()),
+        probeRow('kiro', card()),
         probeRow(unheardOf, {
           install_command: 'npm i -g wireweave-acp',
           auth: { sign_in_remedy: 'Run: wireweave auth', signs_in_separately: true },
@@ -2210,7 +2267,7 @@ describe('AgentBackendTab new backend', () => {
         }),
       ],
     })
-    schemaMock.mockReturnValue(schemaWith(['', unheardOf]))
+    schemaMock.mockReturnValue(schemaWith(['kiro', unheardOf]))
     wrap()
 
     // A row, named from the server's policy_id because this file has no name for it.
@@ -2260,7 +2317,7 @@ describe('AgentBackendTab shared probe eligibility', () => {
     ['check failed', { installed: 'unknown' }, true],
   ] as const)('%s: Use enabled = %s', async (_label, over, enabled) => {
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow(''), probeRow('claude', { ...over })],
+      backends: [probeRow('kiro'), probeRow('claude', { ...over })],
     })
     wrap()
     await waitFor(() => expect(row('Claude Code')).toBeInTheDocument())
@@ -2271,7 +2328,7 @@ describe('AgentBackendTab shared probe eligibility', () => {
 
   it('unselectable: not offered at all', async () => {
     acpBackendsMock.mockResolvedValue({
-      backends: [probeRow(''), probeRow('claude', { selectable: false }), probeRow('kas')],
+      backends: [probeRow('kiro'), probeRow('claude', { selectable: false }), probeRow('kas')],
     })
     wrap()
     await waitFor(() => expect(row('KAS (kiro-agent)')).toBeInTheDocument())

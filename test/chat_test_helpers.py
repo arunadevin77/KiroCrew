@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import os
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,6 +22,40 @@ from kiro_crew.messaging.link import ChannelLink, binding_token
 #: forever fails the test instead of hanging until the 120s pytest timeout, whose
 #: report names the timeout and not the task.
 _DRAIN_ROUNDS = 20
+
+
+def pin_harness_choice(**choices: str) -> None:
+    """Store harness choices in this test's ``config.json``, the way a user does.
+
+    Keyword names are ``agent`` keys (``acp_backend``, ``member_acp_backend``);
+    values are RUNTIME ids and are written in the config-file spelling (Kiro CLI
+    is ``"kiro"``). ``save()`` writes these keys back from disk rather than from
+    memory, so setting them on a loaded config object does not persist them.
+    """
+    from kiro_crew.acp_backends import backend_to_stored
+    from kiro_crew.config.loader import _invalidate_config_cache, config_path
+
+    path = config_path()
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    agent = data.setdefault("agent", {})
+    for key, backend in choices.items():
+        agent[key] = backend_to_stored(backend)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    _invalidate_config_cache()
+
+
+def pin_kiro_cli_harness() -> None:
+    """Record kiro-cli as the chosen harness in this test's data home.
+
+    A config with no ``agent.acp_backend`` resolves to KAS, which answers native
+    slash commands (``/tools``, ``/clear``, an in-turn agent switch) locally. A
+    test of the kiro-cli path through those commands states the choice the way a
+    user does, in ``config.json``, so every reader in the turn agrees on it.
+    """
+    from kiro_crew.agent_sdk.backends import ACP_BACKEND_KIRO
+
+    pin_harness_choice(acp_backend=ACP_BACKEND_KIRO)
 
 
 def move_transcript_past(log: ConversationLog, key: str, sig: float) -> None:

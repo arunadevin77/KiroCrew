@@ -599,6 +599,29 @@ def validate_config_data(data: dict) -> dict:
                 custom_sha256=stt.get("custom_model_sha256", ""),
             )
 
+    # 3d. The harness fields have a product default distinct from their safety
+    # floor. Absent or "" is "no choice" and takes the default, but a PRESENT
+    # malformed value must not be deleted into that same absence by jsonschema:
+    # it is an unusable explicit choice and resolves to the Kiro CLI floor,
+    # stored as ``"kiro"`` (harness-parity H3). Normalize it before type
+    # validation so jsonschema-backed loads keep that distinction. jsonschema is
+    # a pinned runtime dependency; the early no-jsonschema return is an
+    # import-failure survival path and keeps its field-default fallback.
+    if isinstance(agent, dict):
+        for harness_key in ("acp_backend", "member_acp_backend"):
+            if harness_key in agent and not isinstance(agent[harness_key], str):
+                from kiro_crew.acp_backends import (
+                    GOVERNANCE_FLOOR_BACKEND,
+                    backend_to_stored,
+                )
+
+                logger.warning(
+                    "Ignoring agent.%s %r (not a backend id); using the Kiro CLI floor",
+                    harness_key,
+                    agent[harness_key],
+                )
+                agent[harness_key] = backend_to_stored(GOVERNANCE_FLOOR_BACKEND)
+
     # 4. Preserve numeric values written by older config writers.
     _coerce_legacy_numeric_values(data, JSON_SCHEMA)
 
@@ -646,8 +669,7 @@ def validate_config_data(data: dict) -> dict:
                 actual = _actual_type_name(value)
                 removed = _apply_field_default(data, dot_path)
                 logger.warning(
-                    "Config: type mismatch at '%s': "
-                    "expected %s, got %s (value: %s); %s",
+                    "Config: type mismatch at '%s': " "expected %s, got %s (value: %s); %s",
                     dot_path,
                     expected,
                     actual,

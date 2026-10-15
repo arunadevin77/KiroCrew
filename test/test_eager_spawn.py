@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from kiro_crew.agent_sdk.backends import ACP_BACKEND_KAS
+from kiro_crew.agent_sdk.backends import ACP_BACKEND_KAS, ACP_BACKEND_KIRO
 from kiro_crew.config import live
 from kiro_crew.config.loader import (
     KiroCrewAgentConfig,
@@ -68,6 +68,9 @@ def _mock_state(slot: _ChatSlot) -> DashboardState:
 def _cfg(enabled: bool) -> MagicMock:
     cfg = KiroCrewConfig(agents={"default": KiroCrewAgentConfig()})
     cfg.session.eager_spawn = enabled
+    # Pin the harness: the tool-search replay gate is kiro-cli only, and a
+    # fresh config defaults to KAS.
+    cfg.agent.acp_backend = ACP_BACKEND_KIRO
     cfg_loader = MagicMock(return_value=cfg)
     return cfg_loader
 

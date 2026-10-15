@@ -7,18 +7,29 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { ACP_BACKEND_KAS, ACP_BACKEND_KIRO, isKiroBackend, reportsCredits } from './acpBackend'
+import { ACP_BACKEND_KAS, ACP_BACKEND_KIRO, configuredAcpBackend, DEFAULT_ACP_BACKEND, isKiroBackend, reportsCredits } from './acpBackend'
 
 describe('isKiroBackend', () => {
   it('is false while the config has not loaded: nothing Kiro-only renders on a guess', () => {
     expect(isKiroBackend(undefined)).toBe(false)
   })
 
-  it('names kiro by its own id, which is also what an unset key means on the gateway', () => {
-    expect(ACP_BACKEND_KIRO).toBe('')
+  it('names kiro by its own id only: an unset or empty key means KAS on the gateway', () => {
+    expect(ACP_BACKEND_KIRO).toBe('kiro')
     expect(isKiroBackend({ agent: { acp_backend: ACP_BACKEND_KIRO } })).toBe(true)
-    expect(isKiroBackend({ agent: {} })).toBe(true)
-    expect(isKiroBackend({})).toBe(true)
+    expect(isKiroBackend({ agent: { acp_backend: '' } })).toBe(false)
+    expect(isKiroBackend({ agent: {} })).toBe(false)
+    expect(isKiroBackend({})).toBe(false)
+  })
+})
+
+describe('configuredAcpBackend', () => {
+  it('reads "no choice" (absent or empty) as the default, KAS', () => {
+    expect(DEFAULT_ACP_BACKEND).toBe(ACP_BACKEND_KAS)
+    expect(configuredAcpBackend({})).toBe(ACP_BACKEND_KAS)
+    expect(configuredAcpBackend({ agent: { acp_backend: '' } })).toBe(ACP_BACKEND_KAS)
+    expect(configuredAcpBackend({ agent: { acp_backend: 'kiro' } })).toBe(ACP_BACKEND_KIRO)
+    expect(configuredAcpBackend({ agent: { acp_backend: 'claude' } })).toBe('claude')
   })
 
   it('is false for every other harness, not just claude', () => {
@@ -33,7 +44,7 @@ describe('reportsCredits', () => {
     expect(reportsCredits(undefined)).toBe(false)
   })
 
-  it('is true for kiro-cli (also what an unset key means) and for its KAS relay', () => {
+  it('is true for kiro-cli and for its KAS relay (also what an unset key means)', () => {
     expect(reportsCredits({ agent: { acp_backend: ACP_BACKEND_KIRO } })).toBe(true)
     expect(reportsCredits({})).toBe(true)
     expect(reportsCredits({ agent: { acp_backend: ACP_BACKEND_KAS } })).toBe(true)

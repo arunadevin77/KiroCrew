@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import type { useAppStore } from '../../store'
 import { selectSlotMessages } from '../../store/chatSlice'
 import { pruneBlocks, type PasteBlock } from '../../utils/pasteTokens'
+import { parseDirTokens } from '../../utils/fileTokens'
 import { i18nT } from '../../i18n/t'
 import type { ComposerControl } from '../composerControl'
 import { terminalCommand } from '../../hooks/useTerminalCommand'
@@ -12,6 +13,16 @@ import type { ChatInputProps } from './props'
    write-back. The result is never sent; it lands in the draft of the slot
    that asked, or goes to `onOptimizeResult` when that slot is no longer the
    one on screen. */
+
+/** Whether `rewrite` mentions exactly the folders `draft` does. A folder chip
+ *  is derived from its `@rel/` token in the text in every composer, so a
+ *  rewrite that rewords, drops or adds a folder token changes the folders the
+ *  message attaches. */
+function keepsFolderMentions(draft: string, rewrite: string): boolean {
+  const before = new Set(parseDirTokens(draft).map(t => t.rel))
+  const after = parseDirTokens(rewrite).map(t => t.rel)
+  return after.length === before.size && after.every(rel => before.has(rel))
+}
 
 export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, onChange, onOptimizeResult, lexicalComposer, lexicalLoadFailed, composerControl, inputRef, valueFromUserRef, optimizingRef, appendUndoBoundary, terminalCommands, optimizerMentionGuard }: {
   slotId: string | null
@@ -90,7 +101,7 @@ export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, o
         prompt: string
         context: string
         pastes?: Array<{ seq: number; content: string }>
-        /** The host's mention check, taken with `prompt` (see onSuccess). */
+        /** The mention check, taken with `prompt` (see onSuccess). */
         keepsMentions?: (rewrite: string) => boolean
         slotId: string | null
       },
@@ -107,9 +118,10 @@ export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, o
     onSuccess: (data, variables) => {
       // A rewrite that would change what the draft attaches is discarded, the
       // way the server discards one that breaks a paste placeholder: it
-      // replaces the whole draft, so a picked mention it dropped or reworded
-      // would unstage that file's chip with no user edit and the send would
-      // leave the file out. The draft stays as the user wrote it.
+      // replaces the whole draft, so a picked file or folder mention it
+      // dropped or reworded would remove that chip with no user edit and the
+      // send would leave the file or folder out. The draft stays as the user
+      // wrote it.
       const rewrite: string | null = data.changed && data.optimized && (variables.keepsMentions?.(data.optimized) ?? true)
         ? data.optimized
         : null
@@ -233,10 +245,12 @@ export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, o
     // send. Only referenced blocks are sent (pruneBlocks drops stale ones).
     const referenced = pruneBlocks(txt, pasteBlocks)
     const pastes = referenced.map(b => ({ seq: b.seq, content: b.content }))
-    // The host's file-mention guard, taken against THIS draft now, so the
-    // result is judged against the attachments it was asked about even if it
-    // lands after a session switch.
-    const keepsMentions = optimizerMentionGuard?.(txt)
+    // The mention checks, taken against THIS draft now, so the result is
+    // judged against the attachments it was asked about even if it lands
+    // after a session switch: the draft's folder tokens, and the host's
+    // file-mention guard when it has one.
+    const keepsFiles = optimizerMentionGuard?.(txt)
+    const keepsMentions = (rewrite: string) => keepsFolderMentions(txt, rewrite) && (keepsFiles?.(rewrite) ?? true)
     runOptimize({ prompt: txt, context, pastes, keepsMentions, slotId })
   }, [runOptimize, pasteBlocks, slotId, chatStore, valueRef, terminalCommands, optimizerMentionGuard])
 

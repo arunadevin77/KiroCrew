@@ -25,7 +25,7 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 import kiro_crew
 import kiro_crew.config.resolution as _resolution
 from kiro_crew import aws_consent, beacon, platform_compat, stt
-from kiro_crew.acp_backends import selectable_backend_values
+from kiro_crew.acp_backends import selectable_backend_values, selectable_stored_backend_values
 from kiro_crew.apps.manifest import KEBAB_RE
 from kiro_crew.computer_use.types import MAX_SCREENSHOT_MAX_PX as _CU_MAX_SCREENSHOT_MAX_PX
 from kiro_crew.computer_use.types import MAX_TREE_NODES_LIMIT as _CU_MAX_TREE_NODES_LIMIT
@@ -2978,6 +2978,15 @@ def _selectable_acp_backends() -> list[str]:
     return selectable_backend_values()
 
 
+def _acp_backend_patch_values() -> list[str]:
+    """What a PATCH may store in ``agent.acp_backend``: the config-file vocabulary.
+
+    Every selectable backend in its stored spelling (Kiro CLI is ``"kiro"``),
+    plus ``""``, which stores "no choice" so the install follows the default.
+    """
+    return [*selectable_stored_backend_values(), ""]
+
+
 # The grammar of every model PIN a Settings picker writes and `_validate_role_model`
 # then checks against the account's entitlement. The pickers list the advertised
 # model names, which OpenCode spells `provider/model`, so a pin accepts a bare id
@@ -2991,14 +3000,15 @@ _MODEL_PIN_PATTERN = rf"(?:[A-Za-z0-9][A-Za-z0-9._\-\[\]]*|{QUALIFIED_MODEL_PATT
 
 _EDITABLE_CONFIG: dict[str, dict] = {
     "agent.provider": {"type": "enum", "values": ["acp"]},
-    # Which ACP agent drives a session: "" = kiro-cli, "kas" = kiro-agent.
+    # Which ACP agent drives a session, in the config-file vocabulary: "kiro" =
+    # kiro-cli, "kas" = kiro-agent, "" = no choice (the default).
     # ``values_fn`` rather than a literal, because the set WIDENS after this module
     # is imported: an edition registers a backend from
     # ``ProviderRegistry.register_acp_backends`` at boot, and a literal would
     # reject it here with a misleading "invalid value". Resolved per request
     # against the one code owner, so this cannot drift from what ``AcpProvider``
     # will actually serve.
-    "agent.acp_backend": {"type": "enum", "values_fn": _selectable_acp_backends},
+    "agent.acp_backend": {"type": "enum", "values_fn": _acp_backend_patch_values},
     # The KAS bundle route switch (Settings → Agent Harness → KAS). Boot-only on the
     # schema; the card says so after a save. No install is implied by turning it on:
     # a true value with nothing installed refuses the next KAS spawn by name.

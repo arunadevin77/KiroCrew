@@ -186,7 +186,7 @@ The source install below remains the fully supported path.
 | Tool | Why | Get it |
 |------|-----|--------|
 | **Git for Windows** | clone the repo | https://git-scm.com/download/win |
-| **kiro-cli** | the default agent backend (ACP); install and sign in separately | https://kiro.dev/cli/ |
+| **kiro-cli** | the agent backend (ACP); it also relays the default KAS harness; install and sign in separately | https://kiro.dev/cli/ |
 | **Python 3.12-3.13** | the venv runtime. `python_requires` is `>=3.12` and 3.13 is in the supported range, but **3.12 is the tested Windows runtime** (it is what the Windows CI shard runs, and numpy 1.x ships no 3.13 Windows wheel) | https://python.org (install user-scoped), or `winget install Python.Python.3.12` |
 | **Node.js 22.12+** | required by `make.ps1 build` to build and stage the React dashboard; installed desktop/wheel artifacts already contain the bundle | `winget install OpenJS.NodeJS.LTS` |
 
@@ -279,9 +279,17 @@ spawned.
 ## Kiro sandbox delegation and the unsandboxed-exec opt-in
 
 Windows has no Kiro Crew OS sandbox backend. The official Kiro CLI does have its
-own sandbox, so Kiro Crew delegates the default chat backend, model list, account
-identity and usage reads to it automatically. A fresh desktop install therefore
-does **not** need a config edit before the first chat.
+own sandbox, so Kiro Crew delegates the Kiro CLI chat backend, model list, account
+identity and usage reads to it automatically.
+
+**The default chat harness, KAS, runs UNCONFINED on Windows.** KAS has no OS
+sandbox of its own on this platform, and it is not a Kiro CLI spawn, so it takes
+the same no-backend path as the other harnesses below: it can read your home
+directory, including `.aws` and `.ssh`. A fresh desktop install still needs no
+config edit before the first chat. To keep chat inside Kiro CLI's sandbox, pick
+**Kiro CLI** in Settings → Agent Harness (stored as `"acp_backend": "kiro"`).
+With the opt-out below declared, a KAS chat is refused with a message naming
+`sandbox_allow_unsandboxed_exec`; pick Kiro CLI to chat under that posture.
 
 Everything else — scripts, hooks, third-party ACP backends, app backends, MCP
 probes and the `gh`/`glab` provider CLIs — has no proven internal sandbox to
@@ -340,7 +348,7 @@ while the other 503s. Concretely:
 
 | Feature | Status on Windows |
 |---------|-------------------|
-| Core gateway / chat / dashboard | works without `sandbox_allow_unsandboxed_exec` — the official Kiro backend delegates to Kiro CLI's built-in sandbox, while the parent scrubs sensitive environment variables. A source install with a built `website/dist` is linked into `src/kiro_crew/static/dist` at gateway start via a **directory junction** (`platform_compat.symlink_or_junction`), which needs no privilege; a symlink there would need `SeCreateSymbolicLinkPrivilege` and would leave a non-elevated install serving the "not built" page |
+| Core gateway / chat / dashboard | works without `sandbox_allow_unsandboxed_exec`. The default KAS harness runs unconfined under this platform's default (declare `sandbox_allow_unsandboxed_exec=false` to refuse it); the Kiro CLI harness delegates to Kiro CLI's built-in sandbox. The parent scrubs sensitive environment variables either way. A source install with a built `website/dist` is linked into `src/kiro_crew/static/dist` at gateway start via a **directory junction** (`platform_compat.symlink_or_junction`), which needs no privilege; a symlink there would need `SeCreateSymbolicLinkPrivilege` and would leave a non-elevated install serving the "not built" page |
 | Project skills (`<project>/.kiro/skills`) | not yet — Python on Windows does not expose handle-relative directory traversal that can reject every reparse point before resolving it. Catalog, consent and loading fail closed before canonicalizing the project path, preventing a raced junction to a UNC share from initiating SMB authentication. Global and installed skills continue to work. |
 | Theme-pack install, detail, assets, overlays, topbars, and removal | works — opened pack files are contained with `GetFinalPathNameByHandleW`; descriptor resolution fails closed instead of trusting a pathname-only check |
 | LLM cron jobs (the `message` kind) | works |

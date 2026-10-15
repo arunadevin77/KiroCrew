@@ -44,11 +44,12 @@ from kiro_crew import agent_state  # noqa: F401
 from kiro_crew import crew_teams as teams_mod  # noqa: F401
 from kiro_crew import model_registry, model_scope
 from kiro_crew.acp.client import advertised_model_ids, model_is_unusable
-from kiro_crew.acp_backends import (
+from kiro_crew.acp_backends import (  # noqa: F401 - selectable_backend_values is a facade name
     ACP_BACKEND_CLAUDE,
     ACP_BACKEND_KIRO,
     model_registry_namespace,
     selectable_backend_values,
+    selectable_stored_backend_values,
 )
 from kiro_crew.agent import (  # noqa: F401
     AGENT_FILENAME,
@@ -440,12 +441,13 @@ def _supply_live_enum(entry: dict) -> None:
     backend from the dashboard while the PATCH allowlist accepted it.
 
     Resolved from the same owner as the PATCH allowlist and the config load path,
-    so the three cannot disagree. One binding today, so it is spelled once rather
+    so the three cannot disagree, and in the config-file vocabulary the PATCH
+    stores (Kiro CLI is ``"kiro"``). One binding today, so it is spelled once rather
     than made a registry; turn it into a path -> callable map when a second
     dynamic enum appears.
     """
     if entry.get("path") == _CONFIG_SCHEMA_ACP_BACKEND:
-        entry["enumValues"] = selectable_backend_values()
+        entry["enumValues"] = selectable_stored_backend_values()
 
 
 async def api_config_schema(request: web.Request) -> web.Response:

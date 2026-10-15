@@ -976,7 +976,8 @@ class TestEndpointPayloadShape:
 
         by_policy = {r["policy_id"]: r for r in rows}
         assert by_policy["kiro"] == {
-            "id": "",
+            # The config-file spelling, which is what the panel PATCHes.
+            "id": "kiro",
             "policy_id": "kiro",
             "selectable": True,
             "independent_setup": False,
@@ -1552,6 +1553,24 @@ class TestRecheckEndpoint:
         assert response.status == 200
         assert seen == [ACP_BACKEND_KIRO]
         assert json.loads(response.text or "{}")["backend"]["id"] == ACP_BACKEND_KIRO
+
+    def test_the_row_id_kiro_rechecks_the_kiro_cli_backend(self, monkeypatch):
+        """The panel re-checks by row id, and the Kiro CLI row id is "kiro"."""
+        from kiro_crew.dashboard.handlers import acp_backend_status as handler
+
+        monkeypatch.setattr(handler, "sel", lambda: MagicMock())
+        seen: list[str] = []
+
+        def _recheck(backend: str):
+            seen.append(backend)
+            return {"id": "kiro", "installed": "installed"}
+
+        monkeypatch.setattr(handler, "_recheck", _recheck)
+        response = asyncio.run(
+            handler.api_acp_backend_recheck(_request(json_body={"backend": "kiro"}))
+        )
+        assert response.status == 200
+        assert seen == [ACP_BACKEND_KIRO]
 
     def test_it_answers_one_row_in_the_shape_the_list_sends(self, monkeypatch):
         """Same builder as the GET, so a field cannot go missing from one verb.

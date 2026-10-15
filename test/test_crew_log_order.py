@@ -605,6 +605,9 @@ async def test_the_turn_ordinal_keeps_rising_across_a_native_clear(tmp_path):
     Mutation guard: dropping the base advance at the clear site makes the third
     ordinal fall back to the low single digits and reddens both assertions.
     """
+    from chat_test_helpers import pin_kiro_cli_harness
+
+    pin_kiro_cli_harness()
     events: list[AcpEvent] = [AcpEvent(kind=EVENT_TEXT_CHUNK, text="ok")]
     state, slot = _state_and_slot(tmp_path, events)
     # Several prior rows, so a window rebuilt from scratch is visibly shorter.

@@ -21,11 +21,11 @@ vi.mock('../api/client', async importOriginal => {
     ...mod,
     api: {
       ...mod.api,
-      kirocrewConfig: vi.fn(() => Promise.resolve({ agent: { acp_backend: '' } })),
+      kirocrewConfig: vi.fn(() => Promise.resolve({ agent: { acp_backend: 'kiro' } })),
       patchConfig: vi.fn(() => Promise.resolve({})),
       acpBackends: vi.fn(() =>
         Promise.resolve({
-          backends: ['', 'kas', 'claude'].map(id => ({
+          backends: ['kiro', 'kas', 'claude'].map(id => ({
             id,
             policy_id: id || 'kiro',
             selectable: true,
@@ -47,7 +47,7 @@ vi.mock('../api/client', async importOriginal => {
 
 vi.mock('../components/settingRef/useConfigSchema', () => ({
   useConfigSchema: () =>
-    new Map([['agent.acp_backend', { path: 'agent.acp_backend', type: 'enum', enum: ['', 'claude', 'kas'] }]]),
+    new Map([['agent.acp_backend', { path: 'agent.acp_backend', type: 'enum', enum: ['kiro', 'claude', 'kas'] }]]),
 }))
 
 // The run cards beside the switch (Subagent Settings + Warm Pool) read a config

@@ -700,6 +700,34 @@ class TestReadConfig:
         assert len(kas_records) == 1, "kas fallback warned more than once"
         assert "acp_client_spawnable" in kas_records[0].getMessage()
 
+    @pytest.mark.parametrize("agent", [{}, {"acp_backend": ""}])
+    def test_undeclared_backend_falls_back_to_kiro_without_warning(self, caplog, agent):
+        """No declared ``agent.acp_backend`` resolves to the KAS default, which
+        is not ``acp_client_spawnable``. The pool still uses Kiro, but the user
+        chose nothing, so no WARNING names a backend they never configured; a
+        later declared ``kas`` still warns once."""
+        from kiro_crew.knowledge import llm_pool as llm_pool_mod
+
+        llm_pool_mod._WARNED_UNSAFE_BACKENDS.clear()
+        with caplog.at_level("WARNING", logger="kiro_crew.knowledge.llm_pool"):
+            assert _get_acp_backend({"agent": agent}) == ACP_BACKEND_KIRO
+            assert _get_acp_backend({}) == ACP_BACKEND_KIRO
+        assert [r for r in caplog.records if r.levelname == "WARNING"] == []
+
+        with caplog.at_level("WARNING", logger="kiro_crew.knowledge.llm_pool"):
+            assert _get_acp_backend({"agent": {"acp_backend": ACP_BACKEND_KAS}}) == (
+                ACP_BACKEND_KIRO
+            )
+            assert _get_acp_backend({"agent": {"acp_backend": ACP_BACKEND_KAS}}) == (
+                ACP_BACKEND_KIRO
+            )
+        kas_warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and ACP_BACKEND_KAS in r.getMessage()
+        ]
+        assert len(kas_warnings) == 1
+
     @pytest.mark.asyncio
     async def test_start_defaults_backend_to_kiro(self, tmp_path):
         mock_client = _zero_tool_client()

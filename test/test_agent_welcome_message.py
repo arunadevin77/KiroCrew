@@ -607,6 +607,9 @@ class TestWelcomeMessageInARunnerTurn:
         """A provider-side switch (kiro-cli's own ``/agent swap``, which Crew
         passes through); the greeting must follow the "Switched to agent" line it
         belongs beside."""
+        from chat_test_helpers import pin_kiro_cli_harness
+
+        pin_kiro_cli_harness()
         from kiro_crew.providers.base import EVENT_AGENT_SWITCHED, EVENT_COMPLETE, LLMEvent
 
         state, slot, client, _run_chat = self._harness(

@@ -344,6 +344,9 @@ def test_a_governance_denied_spec_hook_does_not_spawn(tmp_path, monkeypatch):
 async def test_an_in_turn_agent_switch_reloads_the_new_agents_spec_hooks(tmp_path, monkeypatch):
     """After a provider-side switch, the turn's remaining tool calls meet the NEW
     agent's spec hooks: the runner re-prepares them for the agent it switched to."""
+    from chat_test_helpers import pin_kiro_cli_harness
+
+    pin_kiro_cli_harness()
     from unittest.mock import AsyncMock, MagicMock
 
     from chat_test_helpers import _make_state
@@ -416,6 +419,9 @@ async def test_an_in_turn_switch_that_leaves_the_session_stale_stops_the_turn(
     """A switch to an agent whose hooks cover what the session auto-approves ends
     the turn before anything after it is handled: those calls would never reach the
     permission request, so the hooks could not see them."""
+    from chat_test_helpers import pin_kiro_cli_harness
+
+    pin_kiro_cli_harness()
     from unittest.mock import AsyncMock, MagicMock
 
     from chat_test_helpers import _make_state

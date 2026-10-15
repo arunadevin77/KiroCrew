@@ -3,7 +3,7 @@ import { useInRouterContext, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Bot, Boxes, Check, CircleHelp, Sparkles, Terminal, X } from 'lucide-react'
 
-import { acpBackendName, acpProbeBlocksUse, agentChoiceSaved, setupMarkerErrorBody, setupMarkerErrorMessage } from '../../api/acpBackend'
+import { ACP_BACKEND_KAS, ACP_BACKEND_KIRO, acpBackendName, acpProbeBlocksUse, agentChoiceSaved, configuredAcpBackend, DEFAULT_ACP_BACKEND, setupMarkerErrorBody, setupMarkerErrorMessage } from '../../api/acpBackend'
 import { api } from '../../api/client'
 import type { AcpBackendProbe } from '../../api/client'
 import ErrorBoundary from '../../components/ErrorBoundary'
@@ -27,14 +27,10 @@ import { KIRO_SIGN_IN_BACKEND } from './kiroSignInLink'
 /** The config field the switch owns. Also the schema path the options are gated on. */
 const CONFIG_KEY = 'agent.acp_backend'
 
-/**
- * Backend ids, verbatim from `acp/types.py`. `''` (Kiro CLI) is the shipped
- * default and is a REAL value, not "unset" — the empty string is how the core
- * spells the Kiro backend, so it must round-trip as itself.
- */
-const KIRO = ''
+/** Backend ids in the config vocabulary the schema, probe rows and PATCH share. */
+const KIRO = ACP_BACKEND_KIRO
 const CLAUDE = 'claude'
-const KAS = 'kas'
+const KAS = ACP_BACKEND_KAS
 
 /**
  * The agents this frontend has a translated name and an icon for.
@@ -45,7 +41,15 @@ const KAS = 'kas'
  * flight. An agent absent from this list still gets a row once a server answer
  * names it, labelled with its `policy_id`.
  */
-const NAMED = [KIRO, CLAUDE, KAS]
+const NAMED = [KAS, KIRO, CLAUDE]
+
+/**
+ * The harnesses that never carry the Experimental tag: the default a new install
+ * runs (`DEFAULT_ACP_BACKEND`) and Kiro CLI, the all-supported governance floor.
+ * Only the default gets the "Default." line; keying it on the constant keeps the
+ * page from naming a different harness than the one a new user is on.
+ */
+const stable = (value: string) => value === DEFAULT_ACP_BACKEND || value === KIRO
 
 /**
  * The tool-approval mechanism that means nothing establishes how a harness asks.
@@ -505,11 +509,8 @@ export function AgentBackendTab() {
   /**
    * A failed read is NOT the default value.
    *
-   * `?? KIRO` is right for a config that genuinely omits the key — the shipped
-   * default really is Kiro CLI. It is wrong for a read that FAILED: the value is
-   * then unknown, and defaulting paints Kiro CLI as the active harness, so an
-   * operator running KAS is shown the wrong agent by a control that looks live.
-   * Offer the retry instead of guessing.
+   * A config that omits the key uses KAS. A failed read stays unknown, because
+   * showing any harness as active would be a guess. Offer retry instead.
    */
   if (cfgQ.isError) {
     return (
@@ -534,7 +535,7 @@ export function AgentBackendTab() {
     )
   }
 
-  const current = cfgQ.data?.agent?.acp_backend ?? KIRO
+  const current = cfgQ.data ? configuredAcpBackend(cfgQ.data) : DEFAULT_ACP_BACKEND
 
   /**
    * `undefined` while the schema is in flight — the switch stays enabled rather
@@ -600,11 +601,9 @@ export function AgentBackendTab() {
    * the same mistake as disabling one. `current` joins for the same reason: the saved
    * value must always have a row.
    *
-   * Sorted rather than left in arrival order: the two kiro-family harnesses first —
-   * KIRO because it is the default and the floor, then KAS — and everything else by
-   * `policy_id`, which is the order the probe endpoint already sorts by. Set iteration
-   * order would otherwise follow whichever query resolved first and reshuffle the
-   * list between renders.
+   * Sorted rather than left in arrival order: KAS first because it is the default,
+   * Kiro CLI second, and everything else by `policy_id`. Set iteration order would
+   * otherwise follow whichever query resolved first and reshuffle the list.
    */
   const candidates = Array.from(
     new Set<string>([
@@ -614,17 +613,10 @@ export function AgentBackendTab() {
       ...(probeQ.data?.backends ?? []).map(b => b.id),
     ]),
   ).sort((a, b) => {
-    if (a === KIRO) return -1
-    if (b === KIRO) return 1
-    // KAS second, ahead of the byte order below. It is not an adapter: it is kiro-cli's
-    // own ACP relay, resolved from the same binary and sharing kiro's install verdict
-    // (`_probe_kas` delegates to `_probe_kiro`), so the two harnesses that are really
-    // one install belong adjacent at the head of the list. Under `policy_id` alone it
-    // sorts on 'k' and lands behind every adapter whose name happens to start earlier
-    // ('claude', 'codex'), which reads to the operator as a rank rather than an
-    // alphabet.
     if (a === KAS) return -1
     if (b === KAS) return 1
+    if (a === KIRO) return -1
+    if (b === KIRO) return 1
     // Byte order, not `localeCompare`/`compareText`: these are machine identifiers,
     // and the point of the sort (see above) is to reproduce the order the probe
     // endpoint already returned them in. A collator reads the READER's locale, so
@@ -947,8 +939,7 @@ export function AgentBackendTab() {
    * real translated entry in the shared helper; this keeps a plugin-registered one usable until
    * then.
    *
-   * KIRO is the empty string, so the `||` chain must not treat it as absent — it is
-   * always named by the shared helper, before the policy-id fallback.
+   * KIRO is always named by the shared helper, before the policy-id fallback.
    */
   const nameOf = (value: string): string => acpBackendName({ id: value, policy_id: probe(value)?.policy_id })
 
@@ -1088,8 +1079,9 @@ export function AgentBackendTab() {
    * into a sentence would put the one string an operator has to run somewhere they
    * cannot click. `unknown` follows and must never read as missing; it reports a
    * failed check, not an absent binary. Only then do the default/experimental lines
-   * apply. KIRO is the all-supported descriptor, so it gets that sentence; anything
-   * else is not, so it gets `Experimental` rather than a claim.
+   * apply. `DEFAULT_ACP_BACKEND` gets the default sentence; Kiro CLI is stable but
+   * not the default, so it says only what the probe measured; anything else gets
+   * `Experimental` rather than a claim.
    *
    * Rendered as the row's screen-reader text as well as in the strip, which is what
    * lets the row's single glyph stay a glyph: the state is a WORD somewhere for
@@ -1121,7 +1113,11 @@ export function AgentBackendTab() {
       return i18nT('components.kiroPrerequisiteGate.agent_restart_required_detail', {
         name: nameOf(value),
       })
-    if (value === KIRO) return i18nT('pages.developer.agentBackendTab.default_harness')
+    if (value === DEFAULT_ACP_BACKEND) return i18nT('pages.developer.agentBackendTab.default_harness')
+    if (stable(value))
+      return row?.installed === 'installed'
+        ? i18nT('components.kiroPrerequisiteGate.agent_ready_to_use', { name: nameOf(value) })
+        : ''
     return i18nT('pages.developer.agentBackendTab.experimental')
   }
 
@@ -1169,12 +1165,12 @@ export function AgentBackendTab() {
    * before the gateway restart — in first-run setup's own sentence, so the two
    * screens built from one picker give one remedy for one state. Only then do
    * the descriptor lines apply:
-   * KIRO is the all-supported default; anything else installed is ready to use
-   * and marked Experimental rather than given a claim.
+   * `DEFAULT_ACP_BACKEND` gets the default line; anything else installed is ready
+   * to use, and marked Experimental unless it is Kiro CLI, the stable floor.
    *
    * With no probe answer at all (a 404, a 403, a query in flight) the block says
-   * only what it can: the default line for Kiro CLI, Experimental for the rest —
-   * never "installed and ready", which nobody measured.
+   * only what it can: the default line for the default, nothing for Kiro CLI,
+   * Experimental for the rest — never "installed and ready", which nobody measured.
    */
   const lead = (value: string) => {
     const row = probe(value)
@@ -1199,7 +1195,7 @@ export function AgentBackendTab() {
           {i18nT('components.kiroPrerequisiteGate.agent_restart_required_detail', { name })}
         </p>
       )
-    if (value === KIRO)
+    if (value === DEFAULT_ACP_BACKEND)
       return (
         <p className="text-[13px] leading-relaxed text-text">
           {i18nT('pages.developer.agentBackendTab.default_harness')}
@@ -1211,9 +1207,13 @@ export function AgentBackendTab() {
         // paragraph of its own it read as an orphaned second status.
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-relaxed text-text">
           <span>{i18nT('components.kiroPrerequisiteGate.agent_ready_to_use', { name })}</span>
-          <Badge variant="muted">{i18nT('pages.developer.agentBackendTab.experimental')}</Badge>
+          {!stable(value) && (
+            <Badge variant="muted">{i18nT('pages.developer.agentBackendTab.experimental')}</Badge>
+          )}
         </p>
       )
+    // A stable harness with no install verdict has nothing measured to say.
+    if (stable(value)) return null
     return (
       <p className="text-[13px] leading-relaxed text-text">
         {i18nT('pages.developer.agentBackendTab.experimental')}
@@ -1579,7 +1579,7 @@ export function AgentBackendTab() {
           {rows.map(value => (
             <span key={value} id={rowStatusId(value)}>
               {value === current
-                ? `${i18nT('pages.developer.agentBackendTab.in_use')} ${status(value)}`
+                ? `${i18nT('pages.developer.agentBackendTab.in_use')} ${status(value)}`.trim()
                 : status(value)}
             </span>
           ))}

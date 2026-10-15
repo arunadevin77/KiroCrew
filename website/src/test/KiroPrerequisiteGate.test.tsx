@@ -61,7 +61,7 @@ describe('KiroPrerequisiteGate', () => {
     localStorage.clear()
     // Default: Kiro CLI is the configured agent and no other harness is listed,
     // so every pre-existing case exercises the Kiro checks exactly as before.
-    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: {} })
+    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: 'kiro' } })
     vi.mocked(api.acpBackends).mockResolvedValue({ backends: [] })
   })
 

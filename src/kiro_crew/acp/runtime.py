@@ -6127,7 +6127,12 @@ class AcpRuntime:
                 markdown_spec_for_agent, spawn_agent, self._work_dir
             )
             if markdown_spec is not None:
-                capable = ", ".join(repr(b) for b in sorted(ACP_BACKENDS_MARKDOWN_AGENT_SPECS))
+                from kiro_crew.acp_backends import backend_to_stored
+
+                capable = ", ".join(
+                    repr(b)
+                    for b in sorted(map(backend_to_stored, ACP_BACKENDS_MARKDOWN_AGENT_SPECS))
+                )
                 return (
                     f"{spawn_agent!r} is defined in markdown ({markdown_spec.name}); the "
                     f"{self._harness.backend or 'kiro'!r} backend loads JSON agent specs "

@@ -150,6 +150,38 @@ async def test_backend_switch_after_setup_does_not_probe(tmp_config) -> None:
 
 
 @pytest.mark.asyncio
+async def test_picking_kiro_cli_stores_kiro_and_the_response_says_kiro(tmp_config) -> None:
+    """A Kiro CLI pick is stored as "kiro": "" on disk means "no choice" (KAS)."""
+    from kiro_crew.acp_backends import ACP_BACKEND_KIRO
+    from kiro_crew.config.loader import KiroCrewConfig
+
+    app = _make_app()
+    async with TestClient(TestServer(app)) as client:
+        response = await _patch(client, "agent.acp_backend", "kiro")
+        assert response.status == 200
+        assert (await response.json())["agent"]["acp_backend"] == "kiro"
+        refused = await _patch(client, "agent.acp_backend", ACP_BACKEND_KIRO + "x")
+        assert refused.status == 400
+    assert json.loads(tmp_config.read_text(encoding="utf-8"))["agent"]["acp_backend"] == "kiro"
+    assert KiroCrewConfig.load().agent.acp_backend == ACP_BACKEND_KIRO
+
+
+@pytest.mark.asyncio
+async def test_patching_an_empty_harness_stores_no_choice(tmp_config) -> None:
+    """``""`` is "no choice": stored as is, it resolves to the KAS default."""
+    from kiro_crew.acp_backends import ACP_BACKEND_KAS
+    from kiro_crew.config.loader import KiroCrewConfig
+
+    app = _make_app()
+    async with TestClient(TestServer(app)) as client:
+        response = await _patch(client, "agent.acp_backend", "")
+        assert response.status == 200
+        assert (await response.json())["agent"]["acp_backend"] == ACP_BACKEND_KAS
+    assert json.loads(tmp_config.read_text(encoding="utf-8"))["agent"]["acp_backend"] == ""
+    assert KiroCrewConfig.load().agent.acp_backend == ACP_BACKEND_KAS
+
+
+@pytest.mark.asyncio
 async def test_selecting_installed_independent_agent_persists_first_run_completion(
     tmp_config, tmp_path, monkeypatch
 ) -> None:

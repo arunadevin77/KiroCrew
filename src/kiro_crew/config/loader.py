@@ -1652,15 +1652,54 @@ def unsandboxed_exec_declared() -> bool:
     An unreadable or non-object document contributes nothing: a corrupt config is
     not a declaration.
     """
-    for path in (config_path(), config_local_path()):
-        try:
-            doc = json.loads(read_config_text(path))
-        except (OSError, ValueError):
-            continue
-        agent = doc.get("agent") if isinstance(doc, dict) else None
-        if isinstance(agent, dict) and "sandbox_allow_unsandboxed_exec" in agent:
-            return True
-    return False
+    return _agent_key_declared("sandbox_allow_unsandboxed_exec")
+
+
+def acp_backend_declared() -> bool:
+    """Whether the config documents hold a harness CHOICE in ``agent.acp_backend``.
+
+    The value that counts is the one a load would read: the ``config.local.json``
+    overlay's when it names the key, else ``config.json``'s. Absent and ``""`` are
+    "no choice" and resolve to the product default; any other stored value, valid
+    or not, is a choice. Read from disk, like :func:`unsandboxed_exec_declared`,
+    so every caller answers the same question about one host instead of trusting
+    an in-memory value that already holds the RESOLVED harness.
+    """
+    value = _stored_agent_value("acp_backend")
+    return value is not _ABSENT_AGENT_KEY and value != ""
+
+
+#: What :func:`_stored_agent_value` returns for a key neither document names, so a
+#: stored JSON ``null`` (a malformed choice) stays distinct from "absent".
+_ABSENT_AGENT_KEY = object()
+
+
+def _raw_agent_section(path: Path) -> dict | None:
+    """The raw ``agent`` object of the config document at *path*, or ``None``.
+
+    An unreadable or non-object document contributes nothing: a corrupt config is
+    not a declaration.
+    """
+    try:
+        doc = json.loads(read_config_text(path))
+    except (OSError, ValueError):
+        return None
+    agent = doc.get("agent") if isinstance(doc, dict) else None
+    return agent if isinstance(agent, dict) else None
+
+
+def _stored_agent_value(key: str) -> object:
+    """The raw stored ``agent.<key>`` a load would read: overlay first, then base."""
+    for path in (config_local_path(), config_path()):
+        agent = _raw_agent_section(path)
+        if agent is not None and key in agent:
+            return agent[key]
+    return _ABSENT_AGENT_KEY
+
+
+def _agent_key_declared(key: str) -> bool:
+    """Whether ``config.json`` or the ``config.local.json`` overlay names ``agent.<key>``."""
+    return _stored_agent_value(key) is not _ABSENT_AGENT_KEY
 
 
 # ---------------------------------------------------------------------------
@@ -3342,6 +3381,72 @@ def _session_start_concurrency(raw: object, ceiling: int = 64) -> int | str:
     return max(1, min(ceiling, value))
 
 
+def _read_backend_choice(section: _sections.SectionReader, agent_data: dict, key: str) -> str:
+    """Resolve a stored harness field to a runtime backend id at the one gate.
+
+    The config-file vocabulary is translated first
+    (:func:`~kiro_crew.acp_backends.backend_from_stored`): ``"kiro"`` is the Kiro
+    CLI choice, while absent and ``""`` are "no choice" and read the field default.
+    A default is not a pick, so when the registry does not serve it (a policy
+    denies KAS) the gate gets ``None`` and takes the floor silently instead of
+    warning on every load about a value nobody wrote. Any other stored value goes
+    to the gate as is, so an unusable explicit pick still degrades with its
+    warning (harness-parity H3). ``validate_config_data`` replaces a present
+    non-string with the stored floor before this runs.
+    """
+    from kiro_crew.acp_backends import backend_from_stored, selectable_backends
+
+    value = backend_from_stored(agent_data.get(key))
+    if value is None:
+        default = section.default(key)
+        value = default if default in selectable_backends() else None
+    return _normalize_acp_backend(value)
+
+
+#: The ``agent`` fields that hold a harness id, spelled in the config-file
+#: vocabulary on disk and in ``to_dict()`` and as runtime ids on the dataclass.
+_HARNESS_CHOICE_KEYS: tuple[str, ...] = ("acp_backend", "member_acp_backend")
+
+
+def _stored_agent_dict(agent: AgentConfig) -> dict:
+    """``asdict(agent)`` with each harness field in the config-file vocabulary.
+
+    ``to_dict()`` is what ``config get``, the dashboard config response and every
+    full-document write read, so a resolved Kiro CLI harness reads back as
+    ``"kiro"`` rather than the runtime id ``""``, which on disk means "no choice".
+    """
+    from dataclasses import asdict
+
+    from kiro_crew.acp_backends import backend_to_stored
+
+    d = asdict(agent)
+    for key in _HARNESS_CHOICE_KEYS:
+        if isinstance(d.get(key), str):
+            d[key] = backend_to_stored(d[key])
+    return d
+
+
+def _restore_stored_harness_fields(doc: dict) -> None:
+    """In place: set *doc*'s harness fields to the raw ``config.json`` values.
+
+    A key the base file does not hold is removed, so a full-document write never
+    invents a choice; a key it holds is written back verbatim, so a resolved
+    floor never replaces a stored pick. Read from disk for the same reason as
+    :func:`unsandboxed_exec_declared`.
+    """
+    stored_agent = _raw_agent_section(config_path()) or {}
+    agent_section = doc.get("agent")
+    if not isinstance(agent_section, dict):
+        if not any(key in stored_agent for key in _HARNESS_CHOICE_KEYS):
+            return
+        agent_section = doc["agent"] = {}
+    for key in _HARNESS_CHOICE_KEYS:
+        if key in stored_agent:
+            agent_section[key] = stored_agent[key]
+        else:
+            agent_section.pop(key, None)
+
+
 # Build each section in its own frame: the large inline constructor amplifies
 # line-tracing cost on every load. These helpers create fresh values, never
 # cache configuration, and leave resolution and admission checks unchanged.
@@ -3362,8 +3467,8 @@ def _build_agent_config(agent_data: dict) -> AgentConfig:
         provider=section.get("provider"),
         mcp_registry_mode=section.read("mcp_registry_mode", _safe_bool),
         mcp_quarantine_after_failures=section.read("mcp_quarantine_after_failures", _safe_int),
-        acp_backend=_normalize_acp_backend(section.get("acp_backend")),
-        member_acp_backend=_normalize_acp_backend(section.get("member_acp_backend")),
+        acp_backend=_read_backend_choice(section, agent_data, "acp_backend"),
+        member_acp_backend=_read_backend_choice(section, agent_data, "member_acp_backend"),
         kas_bundle=section.read("kas_bundle", _safe_bool),
         kas_bundle_url=_sections.coerce_kas_bundle_url(section.get("kas_bundle_url")),
         default_agent=section.get("default_agent"),
@@ -4435,7 +4540,7 @@ class KiroCrewConfig:
         from dataclasses import asdict
 
         d: dict = {
-            "agent": asdict(self.agent),
+            "agent": _stored_agent_dict(self.agent),
             "session": asdict(self.session),
             "memory": asdict(self.memory),
             "slack": asdict(self.slack),
@@ -4609,6 +4714,16 @@ class KiroCrewConfig:
             agent_section = d.get("agent")
             if isinstance(agent_section, dict):
                 agent_section.pop("sandbox_allow_unsandboxed_exec", None)
+        # The harness fields go back to disk exactly as ``config.json`` stores
+        # them, never from the in-memory value, which is RESOLVED: "no choice"
+        # (absent or "") reads as today's default, and a pick this deployment
+        # cannot serve (a policy-denied ``kas``) reads as the Kiro CLI floor.
+        # Publishing it would turn no choice into a choice, or overwrite the
+        # user's pick with the floor. ``to_dict()`` keeps the resolved value for
+        # every reader (``config get``, the dashboard response, the live
+        # watcher); a pick reaches disk through the delta writers (``config
+        # set``, the dashboard PATCH).
+        _restore_stored_harness_fields(d)
         # Strip overlay-owned values so they don't leak into config.json
         local_path = config_local_path()
         if local_path.is_file():
@@ -4637,6 +4752,8 @@ class KiroCrewConfig:
                     d = _subtract_overlay(d, raw_local)
             except (json.JSONDecodeError, OSError):
                 pass
+        # An equal overlay value must not erase a choice the base file owns.
+        _restore_stored_harness_fields(d)
 
         # Atomic + mode-preserving: a concurrent reader must never observe a
         # half-written config, and the write must not widen who can read a file
@@ -5695,6 +5812,11 @@ def build_config(
         # could not read what they configured". Carry the observation
         # through so the caller can tell them apart.
         cfg = config_cls(_degraded_sections=frozenset(_OBSERVED_DEGRADED_SECTIONS))
+        agent_defaults = _sections.SectionReader(AgentConfig, {})
+        cfg.agent.acp_backend = _read_backend_choice(agent_defaults, {}, "acp_backend")
+        cfg.agent.member_acp_backend = _read_backend_choice(
+            agent_defaults, {}, "member_acp_backend"
+        )
         cfg._base_unreadable = doc.base_unreadable
         cfg._overlay_unreadable = doc.overlay_unreadable
         if (

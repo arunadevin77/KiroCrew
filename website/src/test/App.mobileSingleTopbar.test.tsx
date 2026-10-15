@@ -404,7 +404,7 @@ describe('phone chat page: one top bar', () => {
   it('puts a Kiro Account tile in the rail and a row in the nav drawer on the Kiro backend, opening the account modal', async () => {
     localStorage.setItem('mc-onboarded', '1')
     const { api } = await import('../api/client')
-    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: '' } })
+    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: 'kiro' } })
     try {
       const { unmount } = renderWithProviders(<App />, { route: '/chat' })
       const rail = await screen.findByTestId('mobile-nav-rail')

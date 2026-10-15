@@ -1659,6 +1659,9 @@ class TestAFreshFirstTurnThatFailsPreOutputStillRebuildsHistory:
         would clear a debt the slash turn never paid and the next prompt would
         lose history.
         """
+        from chat_test_helpers import pin_kiro_cli_harness
+
+        pin_kiro_cli_harness()
         state, client = _l1_state(tmp_path)
         client.last_infra_error = None
         debt = _DurableFirstTurnDebt()

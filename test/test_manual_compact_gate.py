@@ -23,7 +23,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from chat_test_helpers import _make_state
+from chat_test_helpers import _make_state, pin_harness_choice
 
 from kiro_crew.acp.session_provider import AcpSessionProvider
 from kiro_crew.acp_backends import (
@@ -258,6 +258,8 @@ class TestDashboardManualCompactGate:
         cfg.agents["oncall"] = KiroCrewAgentConfig()
         provision_member_memory(cfg, "oncall")
         cfg.save()
+        # save() keeps the harness fields as stored, so the choice goes on disk.
+        pin_harness_choice(acp_backend=default_backend, member_acp_backend=member_backend)
         stale = AcpProvider(acp_backend=default_backend)
         assert stale.is_process_alive() is False
         successor = MagicMock(spec=AcpProvider)

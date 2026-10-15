@@ -42,7 +42,7 @@ vi.mock('../providers', () => ({
 }))
 vi.mock('../api/client', () => ({
   api: {
-    kirocrewConfig: vi.fn().mockResolvedValue({ agent: { acp_backend: '' } }),
+    kirocrewConfig: vi.fn().mockResolvedValue({ agent: { acp_backend: 'kiro' } }),
     usageSeries: vi.fn().mockResolvedValue({ dates: [], series: [], total: 0, truncated: false, dropped_rows: 0, complete_from: null }),
   },
 }))

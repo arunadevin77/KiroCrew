@@ -25,7 +25,7 @@ vi.mock('../pages/overview', () => ({ UsageTab: () => null, WakaTimeTab: () => n
 vi.mock('../api/client', () => ({
   api: {
     memorySettings: vi.fn().mockResolvedValue({ migrated: true }),
-    kirocrewConfig: vi.fn().mockResolvedValue({ agent: { acp_backend: '' } }),
+    kirocrewConfig: vi.fn().mockResolvedValue({ agent: { acp_backend: 'kiro' } }),
     wakatimeStats: vi.fn().mockResolvedValue({ configured: false }),
     usageSeries: vi.fn().mockResolvedValue({ dates: [], series: [], total: 0, truncated: false, dropped_rows: 0, complete_from: null }),
   },

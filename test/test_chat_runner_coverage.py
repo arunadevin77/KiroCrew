@@ -33,7 +33,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
-from chat_test_helpers import _make_ready_kiro_prerequisite
+from chat_test_helpers import _make_ready_kiro_prerequisite, pin_harness_choice
 
 from kiro_crew import name_grant
 from kiro_crew.acp.types import (
@@ -4096,6 +4096,8 @@ class TestRunChatLocalCommands:
         cfg.agents["oncall"] = KiroCrewAgentConfig()
         store = provision_member_memory(cfg, "oncall")
         cfg.save()
+        # save() keeps the harness fields as stored, so the choice goes on disk.
+        pin_harness_choice(member_acp_backend="claude")
         member_memory_auth.bind_private_session_store(
             chat_runner.effective_session_key(slot), store
         )

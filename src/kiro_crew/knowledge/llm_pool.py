@@ -21,6 +21,7 @@ from kiro_crew.agent_sdk.backends import (
     ACP_BACKEND_KIRO,
     POLICY_ID_BY_BACKEND,
     Routing,
+    backend_from_stored,
     effort_config_option_id,
     effort_config_option_value,
     resolve_selected_backend,
@@ -198,32 +199,51 @@ def _get_acp_backend(config: Optional[dict] = None) -> str:
     kas/codex, which need ``AcpRuntime`` and have no arm in ``AcpClient._spawn``).
 
     The pool reads raw ``config.json``, which never passed the loader's
-    normalizer, so an unselectable or malformed value degrades to Kiro here --
+    normalizer, so the stored vocabulary is translated first (``"kiro"`` is Kiro
+    CLI, absent or ``""`` is the default) and an unselectable or malformed value
+    degrades to Kiro here --
     and so does a resolved value that fails either capability check above.
+
+    The capability fallback warns only when the user declared a backend. With
+    none declared the default (KAS) is not something they chose, so the pool
+    falls back to Kiro silently instead of warning every process about it.
     """
     data = _read_config() if config is None else config
-    resolved = resolve_selected_backend(_section(data, "agent").get("acp_backend"))
+    selection = backend_from_stored(_section(data, "agent").get("acp_backend"))
+    resolved = resolve_selected_backend(selection)
     if not capabilities_for(resolved).honors_zero_tool_ban:
-        if resolved not in _WARNED_UNSAFE_BACKENDS:
-            _WARNED_UNSAFE_BACKENDS.add(resolved)
-            logger.warning(
-                "Knowledge pool: configured acp_backend=%s does not honor a zero-tool "
-                "spec (honors_zero_tool_ban is False); falling back to %s",
-                resolved,
-                ACP_BACKEND_KIRO,
-            )
+        _log_capability_fallback(
+            resolved,
+            selection is not None,
+            "does not honor a zero-tool spec (honors_zero_tool_ban is False)",
+        )
         return ACP_BACKEND_KIRO
     if not capabilities_for(resolved).acp_client_spawnable:
-        if resolved not in _WARNED_UNSAFE_BACKENDS:
-            _WARNED_UNSAFE_BACKENDS.add(resolved)
-            logger.warning(
-                "Knowledge pool: configured acp_backend=%s is not acp_client_spawnable; "
-                "falling back to %s",
-                resolved,
-                ACP_BACKEND_KIRO,
-            )
+        _log_capability_fallback(resolved, selection is not None, "is not acp_client_spawnable")
         return ACP_BACKEND_KIRO
     return resolved
+
+
+def _log_capability_fallback(resolved: str, declared: bool, reason: str) -> None:
+    """Log the Kiro fallback: a once-per-backend WARNING for a declared backend,
+    a debug line for the undeclared default."""
+    if not declared:
+        logger.debug(
+            "Knowledge pool: default acp_backend=%s %s; using %s",
+            resolved,
+            reason,
+            ACP_BACKEND_KIRO,
+        )
+        return
+    if resolved in _WARNED_UNSAFE_BACKENDS:
+        return
+    _WARNED_UNSAFE_BACKENDS.add(resolved)
+    logger.warning(
+        "Knowledge pool: configured acp_backend=%s %s; falling back to %s",
+        resolved,
+        reason,
+        ACP_BACKEND_KIRO,
+    )
 
 
 def _get_idle_ttl(config: Optional[dict] = None) -> float:

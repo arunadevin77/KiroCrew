@@ -1604,8 +1604,9 @@ def _kas_relay_help(binary: str) -> str | None:
 def _doctor_kas(issues: list[str]) -> None:
     """Report KAS backend readiness, but only when KAS is the selected backend.
 
-    KAS is opt-in (``agent.acp_backend = "kas"``); when it is not selected this
-    is silent so a kiro-cli / Claude Code install sees no KAS noise. When it IS
+    KAS is the default harness (an absent or ``""`` ``agent.acp_backend``);
+    when another harness is selected this is silent so a kiro-cli / Claude Code
+    install sees no KAS noise. When it IS
     selected, KAS is served by kiro-cli's own ACP relay (see
     :mod:`kiro_crew.acp.kas_transport`), so the thing that makes a selected KAS
     backend fail at session-create time is a kiro-cli whose ``acp`` subcommand

@@ -328,9 +328,10 @@ export interface ChatInputProps {
   onMentionKey?: (text: string, selStart: number, selEnd: number, key: string, mods: MentionKeyMods) => { value: string; caret: number } | null
   /** The host's file-mention guard for "Optimize prompt", taken with the
    *  draft when the optimize starts. The check it returns says whether a
-   *  rewrite leaves the draft's attachments unchanged; a rewrite it refuses
-   *  is discarded like one the optimizer did not change. Absent: no mention
-   *  is protected. */
+   *  rewrite leaves the draft's file attachments unchanged; a rewrite it
+   *  refuses is discarded like one the optimizer did not change. Absent: no
+   *  file mention is protected. Folder mentions need no host guard: their
+   *  chips derive from the text, so the optimizer checks them itself. */
   optimizerMentionGuard?: (draft: string) => (rewrite: string) => boolean
   onFileOpen?: (path: string) => void
   project?: string

@@ -199,7 +199,11 @@ def test_preview_and_save_warn_when_kas_cannot_apply_single_tool_limits(editor):
 
 def test_kiro_backend_applies_single_tool_limits_without_warning(editor):
     service, home, specs, parent = editor
-    _set_member_backend(home, "")
+    # Both harnesses are explicitly kiro-cli ("kiro"): absent or "" is KAS.
+    config = json.loads((home / "config.json").read_text())
+    config["agent"] = {"member_acp_backend": "kiro", "acp_backend": "kiro"}
+    (home / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    loader._invalidate_config_cache()
     assert save(service, [_LIMITED_DOCS], enroll=True)["backend_warning"] is None
 
 

@@ -80,7 +80,7 @@ function mount() {
 
 describe('UsageTab spend chart harness gate', () => {
   it.each([
-    ['kiro-cli', { agent: { acp_backend: '' } }],
+    ['kiro-cli', { agent: { acp_backend: 'kiro' } }],
     ['an unset key, which the gateway reads as kiro-cli', {}],
     ['KAS', { agent: { acp_backend: 'kas' } }],
   ])('mounts the credits chart for %s', async (_name, cfg) => {
@@ -121,7 +121,7 @@ describe('UsageTab spend chart harness gate', () => {
     await waitFor(() => expect(client.getQueryState(['kirocrewConfig'])?.fetchStatus).toBe('fetching'))
     expect(screen.getByTestId('usage-series-harness-unread')).toBeInTheDocument()
 
-    act(() => release({ agent: { acp_backend: '' } }))
+    act(() => release({ agent: { acp_backend: 'kiro' } }))
 
     expect(await screen.findByText('Spend over time (credits)')).toBeInTheDocument()
     expect(screen.queryByTestId('usage-series-harness-unread')).toBeNull()
@@ -138,7 +138,7 @@ describe('UsageTab spend chart harness gate', () => {
     expect(screen.queryByTestId('usage-series-harness-unread')).toBeNull()
     expect(screen.queryByTestId('cfg-loaded')).toBeNull()
 
-    answer({ agent: { acp_backend: '' } })
+    answer({ agent: { acp_backend: 'kiro' } })
     await screen.findByTestId('cfg-loaded')
     expect(await screen.findByText('Spend over time (credits)')).toBeInTheDocument()
   })

@@ -360,6 +360,9 @@ class TestRuntimeWiringTurn:
         and a cancelled terminal re-arms it because the provider discards that
         turn. The next accepted ordinary prompt finally clears the lease.
         """
+        from chat_test_helpers import pin_kiro_cli_harness
+
+        pin_kiro_cli_harness()
         monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
 
         build_message_calls: list[dict] = []
