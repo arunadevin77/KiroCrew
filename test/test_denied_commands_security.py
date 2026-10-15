@@ -328,7 +328,7 @@ class TestSelfProtectionFlagInterposition:
         # verb and the self-target cannot separate anchor from token.
         "sandbox-escape-ssh-self": "ssh {flags} localhost",
     }
-    # FLOOR-ONLY id -> command template. These four have NO catalog row: their
+    # FLOOR-ONLY id -> command template. These have NO catalog row: their
     # product-name-anywhere regex rows were deleted and the argv floor
     # (``_matches_self_subcommand``) is the whole of their enforcement, ungated.
     _UNGATED_TEMPLATES = {
@@ -337,6 +337,7 @@ class TestSelfProtectionFlagInterposition:
         "self-protection-file-delivery": "kirocrew {flags} file-delivery approve",
         "self-protection-gateway-restart": "kirocrew {flags} gateway restart",
         "self-protection-cloud": "kirocrew {flags} cloud destroy",
+        "self-protection-skills-authority-retire": ("kirocrew {flags} skills authority-retire"),
     }
     _FLAGS = ("-v", "-vv", "--verbose", "--no-jail", "-v --no-jail")
 
@@ -473,7 +474,7 @@ class TestSelfProtectionFlagInterposition:
             assert legacy not in security._RULE_ID_BY_PATTERN
             assert legacy not in golden_patterns
 
-    # The four self-protection SUBCOMMAND floors
+    # The self-protection SUBCOMMAND floors
     # (``_is_self_*`` evaluated on the de-escaped, de-quoted argv), because a
     # regex over RAW text cannot see through the shell's own de-escaping. They are
     # now the WHOLE of enforcement for these four: the regex rows that once sat
@@ -486,6 +487,7 @@ class TestSelfProtectionFlagInterposition:
         "self-protection-file-delivery": ["file-delivery", "approve"],
         "self-protection-gateway-restart": ["gateway", "restart"],
         "self-protection-cloud": ["cloud", "destroy"],
+        "self-protection-skills-authority-retire": ["skills", "authority-retire"],
     }
 
     @staticmethod
@@ -678,6 +680,7 @@ class TestSelfProtectionFlagInterposition:
         assert security._is_self_update("kirocrew \\update")
         assert security._is_self_gateway_restart("kirocrew -\\v gateway restart")
         assert security._is_self_cloud_destructive("kirocrew -\\v cloud destroy")
+        assert security._is_self_skills_authority_retire("kirocrew -\\v skills authority-retire")
         assert security._is_dev_mode_out_of_root_confirm(
             "kirocrew app dev x --confirm-out-of-install-'root'"
         )
