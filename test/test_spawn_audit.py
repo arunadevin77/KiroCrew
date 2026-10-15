@@ -422,7 +422,7 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # child does two unshare() calls against its own fresh process and exits;
         # it executes nothing else (the shim dlopens the already-loaded libc
         # rather than letting ctypes.util.find_library exec ldconfig/gcc).
-        "sandbox.py::_probe_unshare_via_spawn",
+        "sandbox_probe.py::_probe_unshare_via_spawn",
         # The speech-runtime preflight child: `sys.executable -I -S -c <module-level
         # string constant> <extension path>`, no shell, a bounded timeout, cwd
         # pinned to the interpreter prefix, `-I` keeping the working directory
@@ -1651,8 +1651,8 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # the first instruction. It IS the product, not an agent subprocess; the
         # agent-facing spawns inside it go through the normal chokepoints.
         "pod/windows.py::supervise_gateway",
-        "sandbox.py::_probe_sandbox_exec",
-        "sandbox.py::_ssh_supports_accept_new",
+        "sandbox_probe.py::_probe_sandbox_exec",
+        "sandbox_argv.py::_ssh_supports_accept_new",
         # The aggregate slice-ceiling apply: `systemctl --user set-property
         # --runtime kirocrew-agents.slice MemoryMax=<N>M MemorySwapMax=0
         # TasksMax=<N>`. Argv is a fixed verb plus module-constant unit name;
@@ -1661,23 +1661,23 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # Runs once at gateway startup, not from an agent turn. Sandboxing it
         # would be circular: it constructs the cgroup boundary agent spawns
         # are confined by.
-        "sandbox.py::ensure_agents_slice_limits",
+        "sandbox_slice.py::ensure_agents_slice_limits",
         # The agent-slice MemoryHigh reconciler. Fixed argv: `systemctl --user
         # set-property --runtime kirocrew-agents.slice MemoryHigh=<value>`, where
         # the binary is resolved with shutil.which (never a caller-supplied PATH)
         # and <value> is derived from host RAM, never from agent input.
         # Sandboxing it would also be circular: it CONFIGURES the cgroup
         # containment that agent spawns are wrapped in.
-        "sandbox.py::_ensure_agent_slice_memory_high",
+        "sandbox_slice.py::_ensure_agent_slice_memory_high",
         # The chokepoint wrapper itself. It spawns whatever argv it is handed, so
         # it cannot route on its own behalf — its CALLERS are the ones this audit
         # holds to sandboxed_spawn_argv / wrap_argv, and they still appear here
         # individually because _SPAWN_NAMES collects bare-name calls to it.
-        "sandbox.py::create_subprocess_limited",
+        "sandbox_rlimit.py::create_subprocess_limited",
         # The synchronous siblings of the above, same reasoning: they wrap an argv
         # they are handed and cannot route on its behalf.
-        "sandbox.py::run_limited",
-        "sandbox.py::popen_limited",
+        "sandbox_rlimit.py::run_limited",
+        "sandbox_rlimit.py::popen_limited",
         # The AppArmor profile installer. All three spawn FIXED, operator-facing
         # tooling with no agent-influenced input: `apparmor_parser --version`,
         # `apparmor_parser -Q --skip-cache <temp profile this module generated>`.
@@ -1951,8 +1951,8 @@ def _collect_first_party_flag_sites() -> frozenset[str]:
     Like the sibling scans in this file, ``**kwargs`` indirection is out of
     scope (an aliased spawn already hid from the spawn detector once); the
     PR-review gates cover deliberately obfuscated passes.
-    ``sandbox.py`` is excluded by design: it OWNS the parameter (``wrap_argv``
-    defines it; ``sandboxed_spawn_argv`` threads it through), so its internal
+    ``sandbox_spawn.py`` is excluded by design: it threads the parameter that
+    ``wrap_argv`` (``sandbox_wrap.py``) defines through ``sandboxed_spawn_argv``, so its internal
     forwarding is the mechanism under audit, not a spawn site.
 
     Parses only files whose text already contains ``first_party_fixed_argv``
@@ -1965,7 +1965,11 @@ def _collect_first_party_flag_sites() -> frozenset[str]:
     out: set[str] = set()
     for path, source in candidate_sources(require_all=(_FIRST_PARTY_KWARG,)):
         rel = path.relative_to(_SRC_ROOT).as_posix()
-        if rel == "sandbox.py" or _is_bundled_skill_asset(path) or _is_container_image_asset(path):
+        if (
+            rel == "sandbox_spawn.py"
+            or _is_bundled_skill_asset(path)
+            or _is_container_image_asset(path)
+        ):
             continue
         tree = ast.parse(source, str(path))
         funcs = [
@@ -2346,7 +2350,7 @@ def test_prerequisite_async_adapter_keeps_sandbox_chokepoint():
     assert "shielded_prepare_off_loop" in adapter_source
     assert "sandboxed_spawn_argv" in adapter_source
 
-    sandbox_path = _SRC_ROOT / "sandbox.py"
+    sandbox_path = _SRC_ROOT / "sandbox_spawn.py"
     sandbox_source = sandbox_path.read_text(encoding="utf-8")
     sandbox_tree = ast.parse(sandbox_source, str(sandbox_path))
     owner = next(

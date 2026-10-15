@@ -543,7 +543,7 @@ def _sandbox_launcher_wrapped_argv(tokens: list[bytes]) -> list[bytes] | None:
     * ``argv[0]``'s basename is a CPython spelling
       (:data:`_LAUNCHER_INTERPRETER_NAME_PREFIX`);
     * the launcher's interpreter flags occupy the next positions EXACTLY, in order;
-    * that token's basename carries the prefix AND the suffix ``sandbox.py`` generates
+    * that token's basename carries the prefix AND the suffix ``sandbox_argv.py`` generates
       its launcher tempfile with -- the suffix because the ``.sb`` seatbelt profile is
       written beside it under the same prefix;
     * its DIRECTORY is the one ``namespace_argv`` writes launchers into;

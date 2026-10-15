@@ -204,7 +204,7 @@ class TestPopenLimitedToleratesAnAbsentInterpreter:
 class TestTheSpawnStaysInsidePopenLimited:
     """The spawn audits key on the ENCLOSING FUNCTION, so its location is load-bearing.
 
-    ``_SYNC_ALLOWED`` and ``BENIGN_SPAWNS`` both name ``sandbox.py::popen_limited``.
+    ``_SYNC_ALLOWED`` and ``BENIGN_SPAWNS`` both name ``sandbox_rlimit.py::popen_limited``.
     Extracting this ``Popen`` into a helper migrates its audit key: the entries go
     stale and the relocated call reads as a new unrouted, preexec_fn-forking spawn.
     """
@@ -223,7 +223,7 @@ class TestTheSpawnStaysInsidePopenLimited:
         assert spawns, (
             "popen_limited no longer contains its own subprocess.Popen call — the "
             "spawn audits key on the enclosing function, so extracting it strands "
-            "the sandbox.py::popen_limited entries in _SYNC_ALLOWED and "
+            "the sandbox_rlimit.py::popen_limited entries in _SYNC_ALLOWED and "
             "BENIGN_SPAWNS and reports the relocated call as a new spawn."
         )
         assert all(

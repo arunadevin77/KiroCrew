@@ -385,7 +385,7 @@ class TestHelperBuild:
         binary = cache / apple_speech._HELPER_NAME
         binary.write_text("#!/bin/sh\ntrue\n")
         # Owner-only is correct for an executable; semgrep's 0o644 suggestion would
-        # strip the execute bit. Same rationale as `sandbox.py::_ensure_run_dir`.
+        # strip the execute bit. Same rationale as `sandbox_argv.py::_ensure_run_dir`.
         os.chmod(binary, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions  # noqa: E501  # fmt: skip
         stamp = cache / f"{apple_speech._HELPER_NAME}.stamp"
         stamp.write_text(

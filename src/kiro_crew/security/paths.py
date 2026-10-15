@@ -789,7 +789,7 @@ _CREW_SECRET_LEAVES: list[str] = [
     # dashboard render/relay) open it directly in-process.
     "mcp-apps",
     # Runtime exec dir. ``run/`` holds paths the gateway executes OUTSIDE the
-    # agent sandbox: the sandbox launcher scripts (``sandbox.py`` execs
+    # agent sandbox: the sandbox launcher scripts (``sandbox_argv.py`` execs
     # ``python <home>/run/kirocrew_sandbox_*.py``) and the remote-instance
     # run-marker ``gateway-<port>.bin`` (``instances/run_marker.py``), whose
     # contents the SSH token-mint reads and ``exec``s on the remote host. A

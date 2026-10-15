@@ -873,6 +873,12 @@ class BoundWorkspaceMismatch(Exception):
     """A requested session workspace is not the bound directory identity."""
 
 
+# Named by the path callers import it from: an error chain renders each raised class
+# as ``module.qualname`` (``subagent._describe_exception``), and that text reaches the
+# Subagents panel and tracebacks, so this module's name must not leak into it.
+BoundWorkspaceMismatch.__module__ = "kiro_crew.sandbox"
+
+
 async def resolve_bound_session_workspace(
     descriptor: int, workspace: str | os.PathLike[str]
 ) -> str:

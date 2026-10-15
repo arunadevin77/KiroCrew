@@ -1209,7 +1209,7 @@ def mcp_runtime_path(base_path: str = "") -> str:
 #   ELF/Mach-O binary in the spawn chain, the sandbox wrapper included.
 # * The ``PYTHON`` namespace matters because Kiro Crew's Linux sandbox launcher
 #   IS a Python process: ``sandbox.namespace_argv`` returns
-#   ``[sys.executable, "-I", "-S", <generated script>, *argv]`` (sandbox.py), and
+#   ``[sys.executable, "-I", "-S", <generated script>, *argv]`` (sandbox_argv.py), and
 #   that interpreter starts with the env we hand ``Popen``. A declared
 #   ``PYTHONPATH`` carrying ``sitecustomize.py`` — or a shadowing ``os.py`` —
 #   would be imported at interpreter startup, i.e. before ``unshare`` and before

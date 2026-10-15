@@ -346,7 +346,7 @@ def test_the_traceback_marker_matches_the_launcher_filename() -> None:
     """The traceback-frame marker keys on the launcher's on-disk filename.
 
     A ROUND TRIP against a frame built from the two constants ``namespace_argv``'s
-    ``mkstemp`` is passed -- never a pin on how ``sandbox.py`` spells that call, which
+    ``mkstemp`` is passed -- never a pin on how ``sandbox_argv.py`` spells that call, which
     would fail on any refactor of the writer while real drift went unnoticed.
     """
     from kiro_crew.apps.builtins.auto_improvement.backend.clone_setup import (

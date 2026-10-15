@@ -1359,7 +1359,7 @@ asymmetry is a useful triage question ("how did you start the gateway?") and a
 usable workaround, not evidence that the app is fine.
 
 One caveat worth knowing before concluding the usage string alone fixed it: agent
-shell commands are wrapped by `sandbox_exec_argv` in `src/kiro_crew/sandbox.py`,
+shell commands are wrapped by `sandbox_exec_argv` in `src/kiro_crew/sandbox_argv.py`,
 which `exec`s the target through `/usr/bin/sandbox-exec` and replaces the process
 image. The Seatbelt profile itself is `(allow default)` plus filesystem denies and
 carries **no** network rules, so the sandbox does not block sockets — but whether

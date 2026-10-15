@@ -4687,7 +4687,7 @@ not disposal, is therefore what had to change.
 `_sandbox_launcher_wrapped_argv` names that ONE shape positively, and the conjunction is
 what keeps an ordinary Python process off a kill path: `argv[0]`'s basename is a CPython
 spelling, the launcher's interpreter flags occupy the next positions exactly and in order,
-that token's basename carries both the prefix and the suffix `sandbox.py` generates its
+that token's basename carries both the prefix and the suffix `sandbox_argv.py` generates its
 launcher tempfile with, its DIRECTORY is `sandbox.namespace_launcher_script_dir()`, and at
 least one token follows. A plain `python foo.py kiro-cli` fails three of the five. The
 suffix is carried because the `.sb` seatbelt profile is written beside the launcher under
@@ -4715,7 +4715,7 @@ Every one of those values is read from the `sandbox` module rather than spelled 
 through `session_pid._namespace_launcher_shape` (which reads them off the module object at
 call time, so a test can repoint any of them), and the directory through
 `sandbox.namespace_launcher_script_dir()`. `clone_setup._LAUNCHER_TRACEBACK_RE` reads the
-same two name constants, and both `mkstemp` calls in `sandbox.py` take their prefix and
+same two name constants, and both `mkstemp` calls in `sandbox_argv.py` take their prefix and
 suffix from them too — so adding a launcher flag, moving the run directory or renaming the
 artifact moves the recogniser's idea of the script slot with the builder's instead of
 silently handing it a flag token. Pinned end to end against a real `namespace_argv` result.

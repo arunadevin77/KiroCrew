@@ -437,8 +437,8 @@ _KNOWN_SECOND_BOOT_CHANGES: dict[tuple[str, str], str] = {
     # behind cgroup scopes and the machine's own host names. A boot that
     # outlasts the window probes again, or a lookup started in one boot lands
     # in the next; neither is derived from the home.
-    ("kiro_crew.sandbox", "_CGROUP_SCOPE_PROBE_AT"): "host probe clock",
-    ("kiro_crew.sandbox", "_CPU_DELEGATED"): "host probe, re-read after a re-probe",
+    ("kiro_crew.sandbox_cgroup", "_CGROUP_SCOPE_PROBE_AT"): "host probe clock",
+    ("kiro_crew.sandbox_cgroup", "_CPU_DELEGATED"): "host probe, re-read after a re-probe",
     ("kiro_crew.security.argv_floor", "_OWN_HOST_NAMES_CACHE"): "host names",
     ("kiro_crew.security.argv_floor", "_OWN_HOST_RESOLVE_DONE"): "host names",
     ("kiro_crew.security.argv_floor", "_OWN_HOST_RESOLVE_IN_FLIGHT"): "host names",
@@ -501,7 +501,7 @@ _KNOWN_SECOND_BOOT_CHANGES: dict[tuple[str, str], str] = {
     ("kiro_crew.apps.builtins.auto_research.handlers", "_watchdog_task"): "reaped task handle",
     ("kiro_crew.apps.builtins.code_review_sage.backend.routes", "_TASKS"): "reaped task handles",
     ("kiro_crew.dashboard.handlers.mcp", "_mcp_probe_task"): "reaped task handle",
-    ("kiro_crew.sandbox", "_warm_thread"): "finished probe thread handle",
+    ("kiro_crew.sandbox_wrap", "_warm_thread"): "finished probe thread handle",
 }
 
 _SCALAR_TYPES = (int, float, str, bool, bytes, type(None), tuple, frozenset)

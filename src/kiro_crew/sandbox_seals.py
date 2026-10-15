@@ -134,6 +134,12 @@ class SandboxCeilingUnsealable(RuntimeError):
     """
 
 
+# Named by the path callers import it from: an error chain renders each raised class
+# as ``module.qualname`` (``subagent._describe_exception``), and that text reaches the
+# Subagents panel and tracebacks, so this module's name must not leak into it.
+SandboxCeilingUnsealable.__module__ = "kiro_crew.sandbox"
+
+
 def _warn_unsealed_ceiling(target: str, exc: "OSError | None") -> None:
     """Say WHY the spawn is being refused: this ceiling could not be made sealable.
 
