@@ -16012,7 +16012,8 @@
         "failed_to_save_turn_time_limit": "无法保存单轮时间上限",
         "kiro_harness_fallback_body": "使用 Kiro 框架时，你在 app.kiro.dev 中管理的回退会在框架内部执行。下方的回退属于 {{productName}} 自身，在其之上额外生效。",
         "kiro_harness_fallback_link": "管理 Kiro 回退",
-        "kiro_harness_fallback_title": "Kiro 框架的回退优先生效"
+        "kiro_harness_fallback_title": "Kiro 框架的回退优先生效",
+        "fallbacks": "回退"
       },
       "computerUsePanel": {
         "accessibility": "辅助功能",

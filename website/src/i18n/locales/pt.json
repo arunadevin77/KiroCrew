@@ -16534,7 +16534,8 @@
         "failed_to_save_turn_time_limit": "Não foi possível salvar o tempo máximo por turno",
         "kiro_harness_fallback_body": "Ao usar um harness Kiro, os fallbacks que você gerencia em app.kiro.dev são executados dentro do harness. Os fallbacks abaixo são próprios do {{productName}} e se aplicam além deles.",
         "kiro_harness_fallback_link": "Gerenciar fallbacks do Kiro",
-        "kiro_harness_fallback_title": "Os fallbacks do harness Kiro são aplicados primeiro"
+        "kiro_harness_fallback_title": "Os fallbacks do harness Kiro são aplicados primeiro",
+        "fallbacks": "Fallbacks"
       },
       "computerUsePanel": {
         "accessibility": "Acessibilidade",

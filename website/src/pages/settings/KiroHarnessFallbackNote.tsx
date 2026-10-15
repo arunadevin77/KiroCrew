@@ -1,14 +1,8 @@
 import { ExternalLink } from 'lucide-react'
-import { ACP_BACKEND_KAS, ACP_BACKEND_KIRO } from '../../api/acpBackend'
+import { isKiroHarness, type AcpBackendConfig } from '../../api/acpBackend'
 import { i18nT } from '../../i18n/t'
 
 export const KIRO_MODEL_SETTINGS_URL = 'https://app.kiro.dev/settings/model'
-
-/** Whether the selected ACP backend runs its own model fallback before KiroCrew's. */
-export function harnessAppliesOwnFallback(acpBackend: string | undefined): boolean {
-  const backend = acpBackend ?? ACP_BACKEND_KIRO
-  return backend === ACP_BACKEND_KIRO || backend === ACP_BACKEND_KAS
-}
 
 /**
  * Note above the fallback settings: on the Kiro CLI and kiro-agent harnesses the
@@ -16,8 +10,8 @@ export function harnessAppliesOwnFallback(acpBackend: string | undefined): boole
  * settings on this page apply on top. Renders nothing on other harnesses, where
  * KiroCrew's own fallback is the only one.
  */
-export function KiroHarnessFallbackNote({ acpBackend }: { acpBackend: string | undefined }) {
-  if (!harnessAppliesOwnFallback(acpBackend)) return null
+export function KiroHarnessFallbackNote({ cfg }: { cfg: AcpBackendConfig | undefined }) {
+  if (!isKiroHarness(cfg)) return null
   return (
     <div className="mb-4 rounded-md border border-border bg-bg-elevated px-3 py-2 flex flex-col gap-1" data-testid="kiro-harness-fallback-note">
       <span className="text-[12px] font-medium text-text">{i18nT('pages.settings.chatPanel.kiro_harness_fallback_title')}</span>

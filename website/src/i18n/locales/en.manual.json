@@ -7703,7 +7703,8 @@
         "message_font_size_desc": "Font size for the conversation, in every session: message text, code, tables, suggested replies and the message input. The Compact content width grows to match. Sidebar, session list and the rest of the interface are unaffected.",
         "kiro_harness_fallback_body": "When using a Kiro harness, the fallbacks you manage on app.kiro.dev run inside the harness. The fallbacks below are {{productName}}'s own and apply on top of them.",
         "kiro_harness_fallback_link": "Manage Kiro fallbacks",
-        "kiro_harness_fallback_title": "Kiro harness fallbacks apply first"
+        "kiro_harness_fallback_title": "Kiro harness fallbacks apply first",
+        "fallbacks": "Fallbacks"
       },
       "displayPanel": {
         "color": "Color {{n}}",

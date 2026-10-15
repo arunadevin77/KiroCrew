@@ -16273,7 +16273,8 @@
         "failed_to_save_turn_time_limit": "टर्न समय सीमा सेव नहीं की जा सकी",
         "kiro_harness_fallback_body": "Kiro हार्नेस का उपयोग करते समय, app.kiro.dev में आपके द्वारा प्रबंधित फ़ॉलबैक हार्नेस के भीतर चलते हैं। नीचे दिए गए फ़ॉलबैक {{productName}} के अपने हैं और उनके ऊपर लागू होते हैं।",
         "kiro_harness_fallback_link": "Kiro फ़ॉलबैक प्रबंधित करें",
-        "kiro_harness_fallback_title": "Kiro हार्नेस फ़ॉलबैक पहले लागू होते हैं"
+        "kiro_harness_fallback_title": "Kiro हार्नेस फ़ॉलबैक पहले लागू होते हैं",
+        "fallbacks": "फ़ॉलबैक"
       },
       "computerUsePanel": {
         "accessibility": "सुगम्यता",

@@ -16012,7 +16012,8 @@
         "failed_to_save_turn_time_limit": "ターンの制限時間を保存できませんでした",
         "kiro_harness_fallback_body": "Kiro ハーネスを使用している場合、app.kiro.dev で管理しているフォールバックがハーネス内で実行されます。以下のフォールバックは {{productName}} 独自のもので、その上に追加で適用されます。",
         "kiro_harness_fallback_link": "Kiro のフォールバックを管理",
-        "kiro_harness_fallback_title": "Kiro ハーネスのフォールバックが先に適用されます"
+        "kiro_harness_fallback_title": "Kiro ハーネスのフォールバックが先に適用されます",
+        "fallbacks": "フォールバック"
       },
       "computerUsePanel": {
         "accessibility": "アクセシビリティ",

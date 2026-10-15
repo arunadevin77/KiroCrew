@@ -16532,9 +16532,10 @@
         "turn_time_limit_hint": "Un tour qui atteint cette limite s’arrête et garde le travail déjà écrit sur le disque ; reprends-le pour continuer. Augmente-la pour les longs tours sans surveillance, comme une suite de tests complète. S’applique dès le tour suivant.",
         "failed_to_save_compaction_wait_budget": "Impossible d'enregistrer le délai d'attente du compactage",
         "failed_to_save_turn_time_limit": "Impossible d’enregistrer la durée maximale d’un tour",
-        "kiro_harness_fallback_body": "Avec un harnais Kiro, les fallbacks que vous gérez sur app.kiro.dev s'exécutent dans le harnais. Les fallbacks ci-dessous sont propres à {{productName}} et s'appliquent en complément.",
-        "kiro_harness_fallback_link": "Gérer les fallbacks Kiro",
-        "kiro_harness_fallback_title": "Les fallbacks du harnais Kiro s'appliquent d'abord"
+        "kiro_harness_fallback_body": "Avec un harnais Kiro, les replis que vous gérez sur app.kiro.dev s'exécutent dans le harnais. Les replis ci-dessous sont propres à {{productName}} et s'appliquent en complément.",
+        "kiro_harness_fallback_link": "Gérer les replis Kiro",
+        "kiro_harness_fallback_title": "Les replis du harnais Kiro s'appliquent d'abord",
+        "fallbacks": "Repli"
       },
       "computerUsePanel": {
         "accessibility": "Accessibilité",

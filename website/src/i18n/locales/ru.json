@@ -16795,7 +16795,8 @@
         "failed_to_save_turn_time_limit": "Не удалось сохранить лимит времени хода",
         "kiro_harness_fallback_body": "При использовании харнеса Kiro резервные модели, которыми вы управляете на app.kiro.dev, срабатывают внутри харнеса. Резервные модели ниже принадлежат {{productName}} и применяются поверх них.",
         "kiro_harness_fallback_link": "Управлять резервными моделями Kiro",
-        "kiro_harness_fallback_title": "Резервные модели харнеса Kiro применяются первыми"
+        "kiro_harness_fallback_title": "Резервные модели харнеса Kiro применяются первыми",
+        "fallbacks": "Резервные модели"
       },
       "computerUsePanel": {
         "accessibility": "Универсальный доступ",
