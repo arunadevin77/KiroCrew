@@ -11,6 +11,7 @@ import pytest
 
 from kiro_crew import platform_compat as pc
 from kiro_crew.pod import _windows_job as jobs
+from kiro_crew.testing.clock import ManualClock
 
 
 class Kernel:
@@ -173,19 +174,17 @@ def test_invalid_process_handle_is_rejected(kernel, handle):
 
 
 def test_drain_waits_for_kernel_zero_not_termination_return(kernel, monkeypatch):
-    clock = SimpleNamespace(now=0.0)
-    monkeypatch.setattr(jobs.time, "monotonic", lambda: clock.now)
-    monkeypatch.setattr(
-        jobs.time, "sleep", lambda seconds: setattr(clock, "now", clock.now + seconds)
-    )
+    # On the module's own `time` binding, so no other thread's sleep moves it.
+    clock = ManualClock(monotonic_start=0.0)
+    clock.install(monkeypatch, jobs)
     with jobs.PodJob.create() as job:
         kernel.counts = [2, 1, 0]
         job.terminate_and_wait(timeout=1)
-        assert clock.now == pytest.approx(2 * jobs._POLL_SECONDS)
+        assert clock.monotonic() == pytest.approx(2 * jobs._POLL_SECONDS)
         kernel.counts = [1]
         with pytest.raises(TimeoutError):
             job.terminate_and_wait(timeout=0.1)
-        assert clock.now == pytest.approx(0.2)
+        assert clock.monotonic() == pytest.approx(0.2)
 
 
 @pytest.mark.parametrize("failure", ["terminate", "query", "short"])

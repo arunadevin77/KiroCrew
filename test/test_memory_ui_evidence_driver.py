@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 from e2e import test_memory_ui_evidence as evidence
 
+from kiro_crew.testing.clock import ManualClock
+
 
 @pytest.mark.parametrize(
     "spec_ok,skipped,rc,has_manifest",
@@ -134,21 +136,18 @@ def test_readiness_wait_retries_only_service_unavailable(monkeypatch, failure):
 def test_readiness_wait_has_a_deadline(monkeypatch):
     import urllib.error
 
-    clock, calls = [0.0], []
-
-    def sleep(seconds):
-        clock[0] += seconds
+    # On the driver's own `time` binding, so no other thread's sleep moves it.
+    clock, calls = ManualClock(monotonic_start=0.0), []
 
     def get(path):
         calls.append(path)
         cause = urllib.error.HTTPError("http://localhost/test", 503, "pending", {}, None)
         raise AssertionError("recovery pending") from cause
 
-    monkeypatch.setattr(evidence.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(evidence.time, "sleep", sleep)
+    clock.install(monkeypatch, evidence)
     with pytest.raises(AssertionError, match="recovery pending"):
         evidence._await_ready(SimpleNamespace(get=get), "/api/memory/stats?store=default", secs=1)
-    assert len(calls) == 3 and clock[0] == 1
+    assert len(calls) == 3 and clock.monotonic() == 1
 
 
 @pytest.mark.parametrize("has_run", [False, True])

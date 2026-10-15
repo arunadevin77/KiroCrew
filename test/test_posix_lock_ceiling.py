@@ -38,6 +38,7 @@ import pytest
 
 from kiro_crew import platform_compat
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
+from kiro_crew.testing.clock import ManualClock
 
 pytestmark = pytest.mark.skipif(
     not platform_compat.IS_POSIX, reason="POSIX flock ceiling; Windows has its own branch"
@@ -476,23 +477,20 @@ class TestPollBackoff:
     def test_backoff_caps_the_sleep_and_never_overshoots_the_deadline(self, monkeypatch):
         # No real lock here: the SLEEP SCHEDULE is the subject, so the acquire is
         # stubbed permanently-held and every sleep is recorded instead of taken.
-        slept: list[float] = []
+        # The clock goes on platform_compat's own binding: its `time` IS the stdlib
+        # module, so patching `platform_compat.time.sleep` would also record (and
+        # count against the deadline) any other thread's sleep in the worker.
         monkeypatch.setattr(platform_compat, "_LOCK_TIMEOUT_SECS", 5.0)
 
         def _always_held(fd, mode):
             raise OSError(errno.EAGAIN, "held")
 
-        clock = {"now": 0.0}
-
-        def _fake_sleep(secs: float) -> None:
-            slept.append(secs)
-            clock["now"] += secs
-
+        clock = ManualClock(monotonic_start=0.0)
         monkeypatch.setattr(platform_compat.fcntl, "flock", _always_held)
-        monkeypatch.setattr(platform_compat.time, "sleep", _fake_sleep)
-        monkeypatch.setattr(platform_compat.time, "monotonic", lambda: clock["now"])
+        clock.install(monkeypatch, platform_compat)
 
         assert platform_compat._posix_acquire_blocking(0, 0) is False
+        slept = clock.sleeps
 
         # Bounded wakeups: a flat 10ms poll over 5s would be ~500 sleeps.
         assert len(slept) < 60, f"too many wakeups: {len(slept)}"
