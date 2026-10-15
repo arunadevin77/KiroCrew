@@ -59,6 +59,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from kiro_crew.git_tmp_packs import reap_stale_tmp_packs
 from kiro_crew.platform.context import redact_via_context
 from kiro_crew.platform_compat import rmtree_force
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
@@ -298,10 +299,18 @@ def _fetch_base_ref(dest: str, base_ref: str) -> None:
         return
     short = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
     target = f"refs/remotes/origin/{short}"
-    for source in (f"refs/remotes/origin/{short}", f"refs/heads/{short}"):
-        proc = _git("-C", dest, "fetch", "origin", f"+{source}:{target}", timeout=120)
-        if proc.returncode == 0:
-            return
+    try:
+        for source in (f"refs/remotes/origin/{short}", f"refs/heads/{short}"):
+            proc = _git("-C", dest, "fetch", "origin", f"+{source}:{target}", timeout=120)
+            if proc.returncode == 0:
+                return
+    finally:
+        # A fetch the 120s timeout killed dies holding its in-progress
+        # ``tmp_pack_*`` (TerminateProcess gives git no cleanup chance), and
+        # the swallowed SubprocessError below makes the loss invisible while
+        # the next watcher retries into a fresh clone. Reap whatever the dead
+        # fetch left; the mtime threshold keeps an in-flight pack safe.
+        reap_stale_tmp_packs(dest)
 
 
 # ── state ────────────────────────────────────────────────────────────────────

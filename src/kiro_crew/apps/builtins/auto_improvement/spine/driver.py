@@ -38,6 +38,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from kiro_crew.git_tmp_packs import reap_stale_tmp_packs
 from kiro_crew.platform.context import redact_log_via_context, redact_via_context
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
@@ -1309,6 +1310,12 @@ class Driver:
             # same attack replays onto the real tip and the foreign file is gone from the
             # published range. Raised by the GPT review of this branch.
             fetched = _git(["fetch", "--porcelain", fetch_url, dest], self.clone)
+            # The fetch can be killed mid-pack (its timeout, or the gateway
+            # going away under it), and a killed fetch leaves its in-progress
+            # ``tmp_pack_*`` in this run's clone forever -- issue #19832's
+            # ~700 GB started exactly here. Reap what it left; the mtime
+            # threshold in the reaper is what protects a still-live pack.
+            reap_stale_tmp_packs(self.clone)
             if fetched.returncode != 0:
                 return push
             base = _fetched_tip_oid(fetched.stdout)

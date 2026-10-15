@@ -19,6 +19,7 @@ from kiro_crew import dep_sync, frontend, hooks, platform_compat
 from kiro_crew.apps.builtins.dev_fleet import fleet_state, live, npm_preflight, repository, runtime
 from kiro_crew.executors import subprocess_executor
 from kiro_crew.git_config_hooks import ConfigHookScanError
+from kiro_crew.git_tmp_packs import reap_stale_tmp_packs
 from kiro_crew.loop_lock import LoopBoundLock
 from kiro_crew.sandbox import sandboxed_spawn_argv, shielded_prepare_off_loop
 
@@ -2961,10 +2962,28 @@ async def _status_refresher() -> None:
     while True:
         try:
             remote = await repository._upstream_remote()
-            await runtime._run_cmd(
+            fetched = await runtime._run_cmd(
                 ["git", "-C", repo, "fetch", remote, repository.BASE_BRANCH, "--quiet"],
                 timeout=90,
             )
+            if fetched[0] != 0:
+                # The result used to be discarded, so a clone whose fetch timed
+                # out every cycle leaked a fresh multi-hundred-MB ``tmp_pack_*``
+                # (issue #19832) with nothing anywhere in the log. Say so, once
+                # per failed cycle, with the remote's own words for the cause.
+                runtime.logger.warning(
+                    "dev-fleet: background fetch of %s from %s failed: %s",
+                    repo,
+                    remote,
+                    runtime._redact(fetched[2].strip()[-200:]),
+                )
+            # This loop is the only thing that fetches into the operator's
+            # checkout every minute, and the checkout is where issue #19832's
+            # ~700 GB of orphaned ``tmp_pack_*`` accumulated: each cycle, right
+            # after a fetch that may itself just have been killed by the 90s
+            # timeout, send the reaper over the object store. The mtime
+            # threshold is what keeps this from touching an in-flight pack.
+            reap_stale_tmp_packs(repo)
             await fleet_state._fleet_refresh()
         except Exception:
             runtime.logger.exception("dev-fleet status refresher failed")

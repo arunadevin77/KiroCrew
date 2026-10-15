@@ -29,6 +29,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from kiro_crew.config.paths import data_home
+from kiro_crew.git_tmp_packs import reap_stale_tmp_packs
 from kiro_crew.platform.context import redact_via_context
 from kiro_crew.platform_compat import (
     IS_WINDOWS,
@@ -1227,6 +1228,11 @@ def checkout_branch(clone: Path, branch: str, *, timeout_s: int = 120) -> tuple[
         return True, f"already on {bare}"
 
     fetched = _run("fetch", "--quiet", "origin", bare)
+    # The fetch is subject to `_run`'s timeout, and a fetch killed by a timeout
+    # leaves its in-progress ``tmp_pack_*`` in this clone (TerminateProcess
+    # gives git no cleanup chance) -- the accumulating leak of issue #19832.
+    # Reap right after; the reaper's mtime threshold protects a live pack.
+    reap_stale_tmp_packs(str(clone))
     if fetched.returncode == 0:
         co = _run("checkout", "-B", bare, f"origin/{bare}")
         if co.returncode == 0:
