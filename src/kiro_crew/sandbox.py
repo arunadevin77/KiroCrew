@@ -297,6 +297,61 @@ _PROBE_HANDSHAKE_TIMEOUT_SECS = 5.0
 # /usr/bin/true under an allow-default profile) that backend detection runs.
 _SANDBOX_BACKEND_PROBE_TIMEOUT_SECS: float = 5.0
 
+#: Parent-to-child handoff for a permanent Linux userns probe failure.
+#: ``sandboxed_spawn_argv`` writes or removes it on every child env beside its
+#: KIROCREW_SPAWNED and KIROCREW_SANDBOX_TOOL stamps, and the cgroup and ``env``
+#: wrappers and every descendant inherit all three, so the degraded and
+#: no-backend paths carry it without the launcher's marker.
+_INHERITED_USERNS_FAILURE_ENV = "_KIROCREW_USERNS_FAILURE"
+
+
+def _read_inherited_userns_failure() -> tuple[bool, str, str] | None:
+    """Read a permanent parent verdict in a Linux tree the spawn chokepoint stamped.
+
+    The value only ever seeds a permanent userns failure, which is what an
+    identically failing probe records, so it cannot select a stronger backend.
+    Placing it requires choosing this process's exec environment, which already
+    lets the writer run anything its own confinement allows, and kernel
+    confinement survives exec whatever backend this process picks.
+    """
+    if (
+        sys.platform != "linux"
+        or os.environ.get(KIROCREW_SPAWNED_ENV) != KIROCREW_SPAWNED_VALUE
+        or os.environ.get(KIROCREW_SANDBOX_TOOL_ENV) != KIROCREW_SANDBOX_TOOL_VALUE
+    ):
+        return None
+    raw = os.environ.get(_INHERITED_USERNS_FAILURE_ENV)
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if (
+        not isinstance(value, list)
+        or len(value) != 2
+        or not isinstance(value[0], str)
+        or not value[0]
+        or not isinstance(value[1], str)
+    ):
+        return None
+    return (False, value[0], value[1])
+
+
+def _set_inherited_userns_failure(env: dict[str, str]) -> None:
+    """Put only a permanent Linux userns verdict in a sandbox child env.
+
+    Overwrites or removes any caller-supplied value, so a child sees only what
+    this process knows.
+    """
+    failure = _last_unshare_failure
+    if sys.platform != "linux" or failure is None or failure[0]:
+        env.pop(_INHERITED_USERNS_FAILURE_ENV, None)
+        return
+    _transient, reason, remedy = failure
+    env[_INHERITED_USERNS_FAILURE_ENV] = json.dumps([reason, remedy], separators=(",", ":"))
+
+
 # Detail of the most recent failed userns probe: (transient, reason, remedy).
 # ``None`` means the last probe succeeded (or none has run yet). Consumed by
 # detect_backend() for cache policy and by wrap_argv() for error reporting.
@@ -305,7 +360,8 @@ _SANDBOX_BACKEND_PROBE_TIMEOUT_SECS: float = 5.0
 # from the SAME probe. Holding the remedy in a second global would let a
 # concurrent re-probe land between the two reads and pair one probe's failure
 # with another's mechanism, which is the wrong fix presented as the right one.
-_last_unshare_failure: tuple[bool, str, str] | None = None
+_inherited_unshare_failure = _read_inherited_userns_failure()
+_last_unshare_failure: tuple[bool, str, str] | None = _inherited_unshare_failure
 
 # ── Remedy tokens for a Linux user-namespace denial ──
 # The probe already knows WHICH step failed and with which errno, and those two
@@ -1197,9 +1253,19 @@ def _record_probe_failure(transient: bool, reason: str, remedy: str = "") -> Non
     _last_unshare_failure = (transient, reason, remedy)
 
 
+def _holds_inherited_unshare_failure() -> bool:
+    """True while this process still holds the verdict its spawner handed it."""
+    return _inherited_unshare_failure is not None and (
+        _last_unshare_failure is _inherited_unshare_failure
+    )
+
+
 def _background_warm() -> None:
     """Run the probe off-loop and populate the cache. Thread target."""
     global _backend, _last_unshare_failure
+    if _holds_inherited_unshare_failure():
+        _backend = "none"
+        return
     for attempt in (1, 2):
         ok, transient, reason, remedy = _probe_unshare_once()
         if ok:
@@ -1298,6 +1364,12 @@ def _probe_unshare() -> bool:
     global _last_unshare_failure
     if sys.platform != "linux":
         _record_probe_failure(False, "not Linux")
+        return False
+
+    # A chokepoint-stamped child receives the parent's permanent host verdict.
+    # An ordinary permanent result in this process still follows the existing
+    # caller-controlled cache and reset behavior.
+    if _holds_inherited_unshare_failure():
         return False
 
     # Fast path: the cache already proved user namespaces work -- no probe
@@ -5254,6 +5326,7 @@ def sandboxed_spawn_argv(
     # -- see ``runtime_reconcile.RuntimeReconciler._unowned``. Stamping it here is
     # therefore safe for any argv: it never decides an exclusion on its own.
     scrubbed[KIROCREW_SANDBOX_TOOL_ENV] = KIROCREW_SANDBOX_TOOL_VALUE
+    _set_inherited_userns_failure(scrubbed)
     return wrapped, scrubbed, cleanup
 
 
