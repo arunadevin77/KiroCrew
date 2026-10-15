@@ -101,24 +101,24 @@ The gateway stores X's away start and episode generation in memory. The first la
 
 A normal tab close first fires `visibilitychange` to hidden and sends the hidden-leave while the socket is open. That send remains best-effort. If it is lost, or a crash, power loss, sleep, socket loss, or gateway restart erases the in-memory episode, that return can miss a warm brief. Maintainer `iamwhatever` explicitly accepted those false negatives rather than adding socket-gap inference. The ordinary chat and unchanged cold welcome remain available.
 
-Only the qualifying task fingerprint claim is durable. Claim-before-status prevents duplicate spend across repeated focus, simultaneous tabs, reload, or restart after a return was admitted. Away detection remains in the existing in-memory foreground registry.
+Only the qualifying task fingerprint claim is durable before the visible attempt. Claim-before-preparation prevents duplicate spend across repeated focus, simultaneous tabs, reload, or restart after a return was admitted. Away detection remains in the existing in-memory foreground registry.
 
-### 3.4 Status before the model
+### 3.4 Preparation before the model
 
 On an eligible return, the gateway re-reads the durable task snapshot and atomically claims the away episode plus task fingerprint. Only a current, unclaimed snapshot proceeds.
 
-The gateway then persists and posts this deterministic ordinary crewmate message before starting the model call: **“Preparing your current-task summary. You can wait here.”** Producing this message uses no model and no token. It is an `assistant` transcript row tagged `warm_task_brief_preparing`; no new route, listener, status channel, card, widget, or special renderer is added.
+The gateway then posts this deterministic ordinary crewmate message before starting the model call: **“Preparing your current-task summary. You can wait here.”** Producing this message uses no model and no token. It is an `assistant` transcript row tagged `warm_task_brief_preparing`; no new route, listener, status channel, card, widget, or special renderer is added.
 
 The preparing message has one lifecycle:
 
 | Event after preparation | Visible result |
 |---|---|
 | Model result stays current | A second ordinary crewmate message posts the warm task brief |
-| User sends, leaves, resets, closes, or replaces the chat | Generated messages are retracted; stale result is discarded |
-| Worker/task state changes, a new assistant answer arrives, or the task completes/cancels | Generated messages are retracted; stale result is discarded |
+| User sends, leaves, resets, closes, or replaces the chat | Stale result is discarded; posted messages stay |
+| Worker/task state changes, a new assistant answer arrives, or the task completes/cancels | Stale result is discarded; posted messages stay |
 | Model fails, times out, or returns invalid data | A second ordinary crewmate message says “I couldn't prepare the current-task summary.” |
 
-Preparation, result, and failure rows persist only after their disk write succeeds. A stale persisted row keeps its durable row id but becomes the hidden fingerprint claim, so reload and live clients cannot reveal stale text. The preparing message is not left behind when no current result or failure follows it.
+Preparation, result, and failure rows are ordinary crewmate messages. Once posted they stay as ordinary history and follow the normal transcript save path; nothing retracts or rewrites them. A stale result is never posted, so a stale attempt leaves only the preparing message. The fixed preparing and failure lines and the three section headings are English, like other gateway-authored lines; the model writes the current status and suggested actions in the language the user writes in.
 
 There is deliberately no `MateResumeCard` fallback; maintainer `iamwhatever` accepted silence when the explicit leave signal is lost, and cold welcome remains available under its unchanged rules.
 
@@ -136,7 +136,7 @@ The model returns a small structured result. The gateway validates it, supplies 
 
 Suggested actions are guidance for the user, not reply choices or hidden commands for the crewmate. If the user wants the crewmate to act, their next message states that action in their own words. The generated brief stays out of model replay even when the reply refers to it: admitting model-written suggestions as new model evidence would let generated claims become task truth and recursively ground later work.
 
-A successful brief is a durable `assistant` transcript row tagged `warm_task_brief_result`, rendered through the ordinary crewmate-message path and attributed to the selected crewmate. Preparation, result, and failure rows are excluded from task fingerprints, session summaries, model replay and recall, history consolidation, compaction evidence, and auto-nudge evidence, so generated speech cannot become new task truth or feed another model call. Every model-derived transcript reader applies the shared `is_warm_task_brief_message` predicate from `warm_task_brief_contract.py`; focused tests feed a generated row through each reader and fail if any one admits it. Existing redaction runs before persistence. The durable claim and row fingerprint prevent reload from regenerating or duplicating it.
+A successful brief is a durable `assistant` transcript row tagged `warm_task_brief_result`, rendered through the ordinary crewmate-message path and attributed to the selected crewmate. Role `assistant` is required by that ordinary path: a distinct role would need the card-like or special result renderer this amendment removes. Preparation, result, failure, and claim rows are excluded from task fingerprints, session summaries, model replay and recall, history consolidation, compaction evidence, auto-nudge evidence, metadata-stripping recent projections, and session transfer, so generated speech cannot become new task truth or feed another model call. Every transcript-to-model or metadata-dropping reader applies the shared `is_warm_task_brief_message` predicate from `warm_task_brief_contract.py` before it removes `meta`; focused tests feed generated rows through replay, recent projection, transfer, consolidation, compaction, and nudge readers and fail if any one admits them. Existing redaction runs before persistence. The durable claim and row fingerprint prevent reload from regenerating or duplicating it.
 
 ### 3.6 One bounded model call
 
@@ -154,7 +154,7 @@ Before posting the preparing message or calling the model, the gateway atomicall
 
 A later hidden-leave → 30 minutes away → return cycle is eligible only when its task fingerprint differs from the last claimed attempt. No previous claim makes the first eligible return valid. A new user message or worker event can change the fingerprint, but does not itself trigger a call; the next qualifying return does.
 
-The gateway rechecks the foreground episode, slot identity, task fingerprint, and terminal state before preparation, before the model call, and before publication. Any mismatch retracts generated messages and discards the result. Once model acquisition starts, cancellation lets the governed call finish and publication suppression discards any stale output afterward.
+The gateway rechecks the foreground episode, slot identity, task fingerprint, and terminal state before preparation, before the model call, and before publication. Any mismatch discards the result; messages already posted stay. Once model acquisition starts, cancellation lets the governed call finish and publication suppression discards any stale output afterward.
 
 ## 4. Timing
 
@@ -175,9 +175,9 @@ sequenceDiagram
     G->>M: one tool-free background call
     alt snapshot still current
         M-->>G: structured task brief
-        G-->>U: replace status with warm welcome summary
+        G-->>U: post second ordinary crewmate message
     else user leaves, sends, task changes, or task ends
-        G-->>U: clear or resolve status
+        G-->>U: post nothing more
         M-->>G: stale result discarded
     end
 ```
@@ -196,7 +196,7 @@ Before this change, opening an active-task chat shows the immediate fixed warm r
 | Return after 30 minutes, unchanged task | Nothing |
 | Tab/browser close, crash, or sleep sent no leave update | No warm brief; accepted false negative |
 | Gateway restarts during away period | No warm brief; accepted false negative |
-| Candidate changes after preparation | Generated messages retract; stale result never appears |
+| Candidate changes after preparation | Preparing message stays; stale result never appears |
 | Open cold chat | Unchanged cold welcome |
 
 ## 6. Spend and privacy
@@ -225,9 +225,9 @@ The implementation uses focused tests only.
 - A return-boundary test proves the deterministic preparing message is persisted and visible before `run_bg_oneliner` starts and costs no model call itself.
 - A result test proves **Problem** contains the exact original request, **Current status** stays truthful, and **Suggested actions** contains one to three user-owned actions.
 - A state test runs two qualifying away/return cycles with no external task change and proves one model call: generated task-brief messages never alter the fingerprint.
-- Race tests prove a user send, a second leave, worker/task change, newer assistant answer, completion, or cancellation retracts generated messages and suppresses the stale result.
-- Message tests pin ordinary crewmate rendering, the exact failure text, persistence-before-surface, and stale row-id retraction.
-- Lifecycle tests prove reload, reset, close, slot replacement, timeout, model failure, and invalid output leave no unmatched preparing message; a gateway restart during away loses the in-memory episode and makes no call.
+- Race tests prove a user send, a second leave, worker/task change, newer assistant answer, completion, or cancellation suppresses the stale result.
+- Message tests pin ordinary crewmate rendering and the exact failure text.
+- Lifecycle tests prove reload, reset, close, slot replacement, timeout, model failure, and invalid output post no stale result; a gateway restart during away loses the in-memory episode and makes no call.
 - Reconnect tests prove a hidden first connect/reconnect sends no focus frame and cannot return; the later visible transition sends the only return frame.
 - Presence tests prove chat routes report `chat.activeSlot`; the Crewmates page reports a separate visible mounted thread regardless of focus; focus-aware `viewedThread` remains unread-only; only `slot_focused(null, hidden=true)` from the last connection arms away; app sockets cannot arm it.
 - Negative presence tests prove chat/member switches, non-chat routes, an open New crewmate card, split-view placeholder focus, and socket cleanup create no episode or call; hiding on X then returning on Y consumes X's episode, so opening X later makes no call.
@@ -241,7 +241,7 @@ The implementation uses focused tests only.
 2. Land one implementation PR for the warm branch, trusted return detection, an in-memory away episode, a durable return claim, two ordinary crewmate messages, focused tests, system docs, locale cleanup, and spend statement.
 3. Do not use a First Principles override. Do not merge the implementation until PR Readiness is green.
 
-Undo is one implementation revert. The cold branch never changes. Reverting removes return detection, generated messages, and the model call, then restores the immediate warm resume. Persisted fingerprint claims become inert derived data and follow normal transcript purge; in-memory away state disappears with the process.
+Undo is a two-release rollback because ordinary `assistant` rows outlive feature code. First disable new generation while retaining `warm_task_brief_contract.py` and every reader filter, then rewrite every tagged preparation, result, and failure row to an empty display-only `notice` claim under its existing row id. Only after that migration is durable may a second release remove the filters, return detection, and model call and restore the immediate warm resume. The cold branch never changes; in-memory away state disappears with the process.
 
 ## 10. Non-goals
 
@@ -261,9 +261,11 @@ Undo is one implementation revert. The cold branch never changes. Reverting remo
 - **Treat socket disconnect as leave.** Rejected: a network outage is not proof the user left.
 - **Use `slot_read` as return.** Rejected: it is a throttled, best-effort unread relay and stores no presence.
 - **Delay the fixed warm card.** Rejected: it still lacks the original request and cannot explain the task in current terms.
-- **Start the model before showing status.** Rejected: the user would see an unexplained wait, and a status that appears later would lie about when work began.
+- **Start the model before the preparing message.** Rejected: the user would see an unexplained wait, and a message that appears later would lie about when work began.
 - **Retry a claimed return.** Rejected: automatic retry can repeatedly spend while nothing changes. A changed task and a new qualifying away/return episode are the retry boundary.
 
 ## 12. Decision record
 
 Accepted by maintainer `iamwhatever` on 2026-10-14 in [the maintainer decision comment](https://github.com/kirodotdev/KiroCrew/pull/20157#issuecomment-6167061835), with these terms: warm only; cold unchanged; leave, at least 30 minutes away, then return as the sole trigger; no visible-idle, hidden, short-return, periodic, socket-gap, or reconnect inference; silence is accepted when sleep, restart, or network loss loses the explicit leave signal; deterministic visible status before the model call; stale/cancelled results suppressed with status cleared; original request, current state, and one to three next steps in the warm welcome; durable dedup and no-repeat spend rules retained.
+
+Amended by the user's 2026-10-15 UX decision: preparation and result are two ordinary crewmate messages; the result sections are **Problem**, **Current status**, and **Suggested actions**; failure is an ordinary second message; posted messages stay as ordinary history and a stale result is dropped unposted; and the reader filters and two-release rollback above keep generated speech from becoming model evidence.
