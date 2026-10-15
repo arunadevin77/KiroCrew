@@ -140,7 +140,7 @@
 2030 src/kiro_crew/platform/interfaces.py
 2998 src/kiro_crew/platform/policy_distribution.py
 2275 src/kiro_crew/platform/wheel_engine.py
-11211 src/kiro_crew/platform_compat.py
+3721 src/kiro_crew/platform_compat.py
 2787 src/kiro_crew/portability.py
 2258 src/kiro_crew/safety_override.py
 8084 src/kiro_crew/sandbox.py
