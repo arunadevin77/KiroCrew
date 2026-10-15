@@ -7,7 +7,7 @@ import { slotChannelNamespace } from '../../../utils/channelOrigin'
 import { deriveToolCallTitle, parseToolArgs } from '../../../utils/toolCallTitle'
 import { isPrivateMemoryMode } from '../../../utils/sessionRefs'
 
-export type RunState = 'running' | 'idle' | 'done' | 'blocked' | 'waiting' | 'needs_input' | 'stopped'
+export type RunState = 'running' | 'idle' | 'done' | 'blocked' | 'waiting' | 'needs_input' | 'stopped' | 'failed'
 export const APPROVAL_MODE_KEYS: Record<ApprovalModeKey, string> = {
   normal: 'components.approvalModePicker.normal_label', trust_reads: 'components.approvalModePicker.reads_label',
   trust: 'components.approvalModePicker.trust_label', yolo: 'components.approvalModePicker.yolo_label',
@@ -164,13 +164,13 @@ export function scopedSlots(slots: ChatSlot[], root: string | null): ChatSlot[] 
 
 /** How long a failed workflow counts as blocked. Runs are kept on disk, so
  *  without a window a failure from weeks ago would hold the tile forever; past
- *  it the run reads as stopped, and the run history still lists it. */
+ *  it the run rests as failed, and the run history still lists it. */
 export const FAILED_WORKFLOW_BLOCKED_MS = 24 * 60 * 60 * 1000
 
 function failedWorkflowState(endedAt: string | null | undefined, now: number): RunState {
   const ended = endedAt ? Date.parse(endedAt) : NaN
   // An unknown end time (an older gateway) keeps today's behaviour: blocked.
-  return Number.isFinite(ended) && now - ended > FAILED_WORKFLOW_BLOCKED_MS ? 'stopped' : 'blocked'
+  return Number.isFinite(ended) && now - ended > FAILED_WORKFLOW_BLOCKED_MS ? 'failed' : 'blocked'
 }
 
 export function buildCommandCenter(source: CommandCenterSources, now = Date.now()) {
@@ -274,7 +274,7 @@ export function buildCommandCenter(source: CommandCenterSources, now = Date.now(
     : !workItems.length && todo?.tasks.length
       ? { done: todo.tasks.filter(t => t.completed).length, total: todo.tasks.length, source: 'todo' as const }
       : null
-  const RESTING: RunState[] = ['idle', 'done', 'stopped']
+  const RESTING: RunState[] = ['idle', 'done', 'stopped', 'failed']
   // A paused workflow waits on nobody and no tile counts or lists it, so it
   // rests; a pending subagent or a work item's open question also reads
   // `waiting`, but those are still the task's own unfinished work.

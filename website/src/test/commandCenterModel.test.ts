@@ -39,10 +39,40 @@ describe('command center projection', () => {
     ] }), now)
     const state = (id: string) => model.nodes.find(n => n.ref === id)?.state
     expect(state('fresh')).toBe('blocked')
-    expect(state('old')).toBe('stopped')
+    expect(state('old')).toBe('failed')
     // A gateway that does not report an end time keeps the old behaviour.
     expect(state('unknown')).toBe('blocked')
     expect(model.blocked).toBe(2)
+  })
+
+  it('preserves an expired failure separately from cancellation while both rest', () => {
+    const now = Date.parse('2026-10-09T12:00:00Z')
+    const ended_at = new Date(now - FAILED_WORKFLOW_BLOCKED_MS - 1).toISOString()
+    const model = buildCommandCenter(sources({ workflows: [
+      { run_id: 'failed', session_key: 'dashboard:root', status: 'failed', ended_at, error: 'Workflow failed', last_log: 'Preparing output' },
+      { run_id: 'cancelled', session_key: 'dashboard:root', status: 'cancelled', ended_at },
+    ] }), now)
+
+    expect(model.nodes.find(n => n.ref === 'failed')).toMatchObject({ state: 'failed', error: 'Workflow failed', detail: 'Preparing output' })
+    expect(model.nodes.find(n => n.ref === 'cancelled')?.state).toBe('stopped')
+    expect(model.blocked).toBe(0)
+    expect(model.running).toBe(0)
+    expect(model.settled).toBe(true)
+  })
+
+  it.each([
+    ['exact boundary', '2026-10-08T12:00:00Z'],
+    ['future', '2026-10-10T12:00:00Z'],
+    ['invalid', 'not-a-timestamp'],
+    ['missing', null],
+  ])('keeps a failed workflow blocked with an %s end time', (_label, ended_at) => {
+    const model = buildCommandCenter(sources({ workflows: [
+      { run_id: 'failed', session_key: 'dashboard:root', status: 'failed', ended_at },
+    ] }), Date.parse('2026-10-09T12:00:00Z'))
+
+    expect(model.nodes.find(n => n.ref === 'failed')?.state).toBe('blocked')
+    expect(model.blocked).toBe(1)
+    expect(model.settled).toBe(false)
   })
 
   it('keeps opaque IDs for routing and gives unnamed runs human-readable labels', () => {

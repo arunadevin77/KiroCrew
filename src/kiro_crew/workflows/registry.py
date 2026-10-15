@@ -242,10 +242,14 @@ class RunHandle:
         return self._latest("phase_started", "title")
 
     def _ended_at(self) -> str | None:
-        """``ts`` of the run's terminal event, or None while it has not ended."""
+        """Terminal-event timestamp, or last activity for an ended run without one."""
         for e in reversed(self.events):
             if e.type in _TERMINAL_EVENT_TYPES:
                 return e.ts
+        # Restored interruptions and driver exceptions can lack a terminal event;
+        # their last recorded activity stays stable across gateway restarts.
+        if self.status not in ACTIVE_STATUSES and self.events:
+            return self.events[-1].ts
         return None
 
     def _last_log(self) -> str:
