@@ -10,6 +10,7 @@ import { useTheme } from '../../hooks/useTheme'
 import { useSandboxDoc } from '../../hooks/useSandboxDoc'
 import { useFrameOpenLink } from '../../hooks/useFrameOpenLink'
 import { buildSrcdoc, readThemeVars } from '../../lib/widgetSrcdoc'
+import { startDashboardLoadTiming, type DashboardLoadTiming } from '../../lib/dashboardTiming'
 import { i18nT } from '../../i18n/t'
 import { useLanguage } from '../../i18n/LanguageProvider'
 import { MEMBER_DASHBOARD_QUERY_PREFIX, SESSION_DASHBOARD_QUERY_PREFIX, subscribeDashboardFields } from '../../hooks/useWebSocket'
@@ -286,11 +287,30 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   const { resolved: locale } = useLanguage()
 
   const staged = preview
+  // STEP TIMERS (#20952). One timer per fresh step-1 fetch, held in a ref so the
+  // step-2 (sandbox-doc POST) and step-3 (frame load) effects below can time against
+  // the same load start. A timing probe only -- see lib/dashboardTiming.
+  const timingRef = useRef<DashboardLoadTiming | null>(null)
+  const timingLabel =
+    target.kind === 'member' ? `member:${target.slug}` : `session:${target.slot}`
   const { data, isLoading, isError, isFetching, error, refetch } = useQuery({
     queryKey: [...dashboardQueryKey(target), locale, staged ? 'preview' : 'live'],
-    queryFn: () => target.kind === 'member'
-      ? (staged ? api.memberDashboard(target.slug, target.member, locale, true) : api.memberDashboard(target.slug, target.member, locale))
-      : api.sessionDashboard(target.slot, locale, staged),
+    queryFn: async () => {
+      // A live load only; a staged/preview read is a person action, not the
+      // every-open path #20952 is about, so it is not timed.
+      const timer = staged ? null : startDashboardLoadTiming(timingLabel)
+      if (timer) timingRef.current = timer
+      const res = await (target.kind === 'member'
+        ? (staged ? api.memberDashboard(target.slug, target.member, locale, true) : api.memberDashboard(target.slug, target.member, locale))
+        : api.sessionDashboard(target.slot, locale, staged))
+      if (timer) {
+        const bytes = res && typeof res === 'object' && typeof (res as { rendered_html?: string }).rendered_html === 'string'
+          ? (res as { rendered_html: string }).rendered_html.length
+          : 0
+        timer.step('step1-get', { bytes })
+      }
+      return res
+    },
     enabled: target.kind === 'member' ? Boolean(target.slug) && Boolean(target.member) : Boolean(target.slot),
     // Nothing staged is a 404 that a retry cannot change: the page was kept,
     // discarded or expired. Every other failure keeps the client's own ladder.
@@ -688,6 +708,12 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   srcdocRef.current = srcdoc
   const [urlSource, setUrlSource] = useState<{ url: string | null; srcdoc: string | null }>({ url: null, srcdoc: null })
   useEffect(() => { setUrlSource({ url, srcdoc: srcdocRef.current }) }, [url])
+  // STEP 2 (#20952): the sandbox-doc POST resolved and a URL is in hand. Timed once
+  // per URL -- the mint keeps only the latest request, so a URL landing is that POST
+  // completing. The step-1 timer carries this load; a probe only.
+  useEffect(() => {
+    if (url) timingRef.current?.step('step2-sandbox-post')
+  }, [url])
   // And it must be DRAWN: a new `src` keeps the earlier document on screen until the
   // frame loads the new one, so the stamp waits for this url's `load` and, for a page
   // that runs script, its ready beacon as well. Reset whenever the url moves.
@@ -696,6 +722,9 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   const [drawn, setDrawn] = useState<{ url: string | null; loaded: boolean; ready: boolean }>({ url: null, loaded: false, ready: false })
   useEffect(() => { setDrawn({ url, loaded: false, ready: false }) }, [url])
   const onFrameLoad = useCallback(() => {
+    // STEP 3 (#20952): the iframe loaded the minted document -- the third and last
+    // transfer. This completes the three-step load the "Drawing…" state covers.
+    timingRef.current?.step('step3-frame-get')
     setDrawn(prev => (prev.url === drawnUrlRef.current ? { ...prev, loaded: true } : prev))
   }, [])
   // Listened on the element rather than through `onLoad`, which the a11y lint reads
