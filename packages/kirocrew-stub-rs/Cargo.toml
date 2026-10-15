@@ -1,0 +1,32 @@
+[package]
+name = "kirocrew-stub-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Drop-in Rust port of kiro_crew.mcp_gateway.stub"
+publish = false
+
+[[bin]]
+name = "kirocrew-mcp-stub-rs"
+path = "src/main.rs"
+
+# Exact pins: this binary runs once per session per MCP server, so what it
+# links is what every session pays for.
+[dependencies]
+base64 = "=0.22.1"
+hmac = "=0.12.1"
+libc = "=0.2.190"
+serde_json = "=1.0.152"
+sha2 = "=0.10.9"
+tokio = { version = "=1.53.2", default-features = false, features = ["rt", "net", "io-util", "time", "sync", "signal", "macros"] }
+uuid = { version = "=1.28.0", features = ["v4"] }
+
+# build.rs digests the crate source with the same pinned sha2.
+[build-dependencies]
+sha2 = "=0.10.9"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

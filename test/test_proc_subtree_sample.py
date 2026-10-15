@@ -358,7 +358,7 @@ class TestOneHome:
         """The behavioural half of the ratchet: ONE fake installed on the shared
         module is observed by both callers, which is only possible if neither
         has a walk of its own left."""
-        with _FakeTree(needles=(sa.STUB_MODULE,)):
+        with _FakeTree(needles=(sa.STUB_MODULE, sa.RUST_STUB_BIN_NAME)):
             assert pool_mod._proc_rss_kb(10) == sum(RSS.values())
             assert sa._subtree_cpu_jiffies(10) == sum(JIFFIES.values())
             sample = sa._proc_subtree_sample(10)
@@ -366,8 +366,9 @@ class TestOneHome:
         assert (sample.procs, sample.matched) == (4, 2)
 
     def test_the_subagent_adapter_counts_by_the_stub_module_path(self) -> None:
-        """``matched`` is the stub count on the subagent side, so the needle it
-        passes must be the module path the rewriter puts on a stub launch line."""
+        """``matched`` is the stub count on the subagent side, so the needles it
+        passes must be what the rewriter puts on a stub launch line: the Python
+        module path, and the Rust stub's binary name."""
         seen: list[tuple[str, ...]] = []
         with (
             _FakeTree(),
@@ -378,7 +379,7 @@ class TestOneHome:
             ),
         ):
             sa._proc_subtree_sample(10)
-        assert seen and all(n == (sa.STUB_MODULE,) for n in seen)
+        assert seen and all(n == (sa.STUB_MODULE, sa.RUST_STUB_BIN_NAME) for n in seen)
 
 
 # ── the pool caller ───────────────────────────────────────────────────────

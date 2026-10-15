@@ -548,6 +548,11 @@ def test_ci_blocking_scans_are_covered_by_the_floor():
         # added to gates[] by hand -- the tool scan cannot see through this
         # exemption, so keep the reason accurate.
         "node": "diagnostic blob-reconcile step; the gating bundle-size step is in gates[]",
+        # The Rust jobs' `cargo` steps cover only the optional Rust crates
+        # (packages/kirocrew-stub-rs, native/kc_native), and a contributor host
+        # need not have a Rust toolchain; their pytest halves run through the
+        # python exemption, and those suites skip their Rust cases locally.
+        "cargo": "tests and lint of the optional Rust crates; no Rust toolchain is required locally",
     }
     # exec replaces the shell; classify its payload, not the shell builtin.
     tools = set(re.findall(r"(?m)^\s*run: (?:exec\s+)?([a-z][a-z0-9_-]+) ", run_text))

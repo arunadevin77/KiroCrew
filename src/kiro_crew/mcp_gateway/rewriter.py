@@ -70,6 +70,7 @@ from kiro_crew.mcp_gateway.launch_approval import (
 from kiro_crew.mcp_gateway.manager import is_credential_env_key
 from kiro_crew.mcp_gateway.read_limits import config_read_buffer_limit
 from kiro_crew.mcp_gateway.secret_uri import routed_for_secret_reference, secret_reference_keys
+from kiro_crew.mcp_gateway.stub_impl import install_context_b64, rust_stub_binary
 from kiro_crew.mcp_provenance import WITHHELD_KEY, is_withheld_mute
 from kiro_crew.mcp_utils import mcp_server_alias
 from kiro_crew.sandbox import scrub_agent_denied_env
@@ -1004,9 +1005,18 @@ def _build_stub_entry(
         if k not in ("command", "args", "env", "poolable", "autoApprove",
                      _WRAPPER_MARKER, _WRAPPER_MARKER_LEGACY)
     }
-    stub_argv = platform_compat.isolated_python_argv(
-        "-m", _STUB_MODULE, f"{STUB_FLAGS_FLAG}={encode_target_args(stub_args)}"
-    )
+    rust_stub = rust_stub_binary()
+    if rust_stub is not None:
+        # The Rust port (``stub_impl``, default when built) takes the same
+        # envelope plus the install facts a Python stub reads off its own
+        # interpreter. Only this branch adds the flag, because the Python
+        # stub's argparse would refuse it.
+        stub_args.extend(["--install-context-b64", install_context_b64()])
+        stub_argv = [rust_stub, f"{STUB_FLAGS_FLAG}={encode_target_args(stub_args)}"]
+    else:
+        stub_argv = platform_compat.isolated_python_argv(
+            "-m", _STUB_MODULE, f"{STUB_FLAGS_FLAG}={encode_target_args(stub_args)}"
+        )
     wrapped.update({
         _WRAPPER_MARKER: True,
         # _cmd_safe_command: the interpreter path is the ONE launch-line
@@ -1914,6 +1924,9 @@ def _rewrite_inputs_fingerprint(
         # ``package`` catches the version bump, this catches a same-version
         # relocation (a reinstall to another prefix, a payload moved) as well.
         "managed_control_plane": _managed_control_plane_signature(stub_set),
+        # Which stub implementation the overlays launch
+        # (``stub_impl``): flipping it must regenerate them.
+        "stub_impl": rust_stub_binary() or "python",
         "sources": sources,
         "settings": _stat_sig(settings_path),
     }

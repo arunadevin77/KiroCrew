@@ -650,6 +650,23 @@ def _small_default_host(_floor_monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _python_stub_unless_a_test_builds_one(_floor_monkeypatch, tmp_path_factory):
+    """Launch the Python stub by default, whether or not this checkout built the Rust one.
+
+    ``mcp_gateway.stub_impl`` defaults to ``auto``: the Rust stub when its release
+    binary exists in the checkout. A developer who ran ``cargo build`` would then
+    see every launch-line test take the Rust shape while CI, which never builds it,
+    takes the Python one. Pointing the default binary at a path that does not exist
+    keeps one shape everywhere; tests of the Rust stub name their binary explicitly.
+    """
+    from kiro_crew.mcp_gateway import stub_impl
+
+    _floor_monkeypatch.setattr(
+        stub_impl, "_default_binary", lambda: pathlib.Path("/nonexistent/kirocrew-mcp-stub-rs")
+    )
+
+
+@pytest.fixture(autouse=True)
 def _fresh_reexec_environment(_floor_monkeypatch):
     """Start every test with nothing kept for an exec successor.
 

@@ -867,6 +867,62 @@ jobs:
           # upload-artifact v4 excludes dotfiles unless this is set.
           include-hidden-files: true
           if-no-files-found: error
+  # The Rust MCP stub (packages/kirocrew-stub-rs) is launched by default
+  # wherever its release binary is built from this checkout, and it carries
+  # session identity, so a divergence from the Python stub is a security bug.
+  # Its conformance cases skip themselves when the binary is absent, which is
+  # every other job, so this one builds it and runs them unskipped: the crate's
+  # own unit tests (the token verifier's forgery cases among them), then the
+  # Python-vs-Rust conformance suite against the fresh build.
+  rust-stub-gate:
+    name: Rust MCP Stub Gate (kirocrew-stub-rs)
+    needs: [changes, await-fast-gate]
+    if: needs.changes.outputs.only_frontend != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            setup.cfg
+
+      - name: Install dependencies
+        run: uv pip install --system -e . --group dev
+
+      - name: Rust unit tests
+        working-directory: packages/kirocrew-stub-rs
+        run: cargo test --release --locked
+
+      - name: Rust lint
+        working-directory: packages/kirocrew-stub-rs
+        run: |
+          cargo fmt --check
+          cargo clippy --release --locked --all-targets -- -D warnings
+
+      - name: Build the Rust stub
+        working-directory: packages/kirocrew-stub-rs
+        run: cargo build --release --locked
+
+      - name: Conformance with the Python stub
+        # The binary check comes first: the Rust cases skip themselves when it
+        # is missing, and a skip must not read as a pass here.
+        run: |
+          # Same as backend-test (#7296): the `python` matcher annotates any
+          # traceback in the log and never matches a pytest failure.
+          echo "::remove-matcher owner=python::"
+          test -x packages/kirocrew-stub-rs/target/release/kirocrew-mcp-stub-rs
+          python -m pytest -q -rs test/test_stub_rs_conformance.py
+
 
   # Windows regression line: the backend supports Windows natively via
   # kiro_crew.platform_compat (see docs/guides/windows-install.md for the

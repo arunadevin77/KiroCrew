@@ -41,6 +41,7 @@ from kiro_crew.dashboard.handlers_system import _get_static_system_info
 from kiro_crew.dashboard.state import NEW_SESSION_TITLE
 from kiro_crew.executors import subprocess_executor
 from kiro_crew.mcp_gateway import STUB_MODULE
+from kiro_crew.mcp_gateway.stub_impl import RUST_STUB_BIN_NAME
 from kiro_crew.messaging.link import telemetry_channel_of
 from kiro_crew.platform_compat import proc_child_map, process_matches
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
@@ -530,7 +531,7 @@ class SessionMemorySampler:
             tree = _iter_descendant_pids(pid, children=children)
             rss_mb = _get_rss_tree_mb(pid, pids=tree)
             procs = len(tree)
-            stubs = sum(1 for p in tree if process_matches(p, (_STUB_MARKER,)))
+            stubs = sum(1 for p in tree if process_matches(p, (_STUB_MARKER, RUST_STUB_BIN_NAME)))
             cpu = self._cpu_cores(pid, now, pids=tree)
         else:
             # No descendant set to reuse: the other platforms reach the total

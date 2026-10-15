@@ -145,6 +145,7 @@ from kiro_crew.llm_helpers import (
     transient_retry_delay,
 )
 from kiro_crew.mcp_gateway import STUB_MODULE
+from kiro_crew.mcp_gateway.stub_impl import RUST_STUB_BIN_NAME
 from kiro_crew.platform.context import redact_via_context
 from kiro_crew.process_identity import (  # noqa: F401 - resolved by run.py/terminal.py via bind_component_globals
     MAX_ERROR_DETAIL_LEN,
@@ -1832,7 +1833,9 @@ def _proc_subtree_sample(pid: Optional[int], *, pss: bool = False) -> platform_c
     it belongs on an executor thread, never on the event loop (see
     ``_reaper_loop`` -> ``_sample_live_costs``).
     """
-    return platform_compat.proc_subtree_sample(pid, counts=True, needles=(STUB_MODULE,), pss=pss)
+    return platform_compat.proc_subtree_sample(
+        pid, counts=True, needles=(STUB_MODULE, RUST_STUB_BIN_NAME), pss=pss
+    )
 
 
 def _subtree_cpu_jiffies(pid: int, *, pids: Optional[list[int]] = None) -> int:

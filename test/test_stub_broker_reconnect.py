@@ -114,10 +114,12 @@ async def _spawn_stub(
     """Launch a REAL stub process, exactly as the rewriter's overlay would."""
     env = {**_clean_env(), "KIROCREW_HOME": str(home)}
     env["KIROCREW_SESSION_KEY"] = session_key
+    # KIROCREW_TEST_STUB_BIN runs this same closed-box test against another
+    # stub implementation (the Rust port, ``stub_impl``).
+    stub_bin = os.environ.get("KIROCREW_TEST_STUB_BIN")
+    launcher = [stub_bin] if stub_bin else [sys.executable, "-m", "kiro_crew.mcp_gateway.stub"]
     return await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "kiro_crew.mcp_gateway.stub",
+        *launcher,
         "--server",
         "fake",
         "--agent",

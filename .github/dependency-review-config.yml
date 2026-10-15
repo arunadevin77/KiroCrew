@@ -130,6 +130,15 @@ allow-dependencies-licenses:
   - pkg:npm/opencode-windows-x64                 # MIT -- platform binary of opencode-ai, same repository
   - pkg:npm/opencode-windows-x64-baseline        # MIT -- platform binary of opencode-ai, same repository
 
+  # packages/kirocrew-stub-rs/Cargo.lock. unicode-ident declares
+  # "(MIT OR Apache-2.0) AND Unicode-3.0": the code is MIT/Apache-2.0 and the
+  # Unicode-3.0 part covers the Unicode character tables it is generated from,
+  # a permissive OSI-approved license with a notice-only obligation. It reaches
+  # the stub only through proc-macro2 -> tokio-macros, a build-time proc-macro,
+  # so none of it is linked into the shipped binary.
+  # Evidence: https://github.com/dtolnay/unicode-ident/blob/HEAD/LICENSE-UNICODE
+  - pkg:cargo/unicode-ident        # (MIT OR Apache-2.0) AND Unicode-3.0 -- build-time proc-macro dep only
+
 # License gate only — vulnerability scanning is covered separately by the
 # nightly/release Dependency Audit and the Semgrep / CodeQL jobs, so we don't duplicate it here.
 license-check: true

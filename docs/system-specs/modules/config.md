@@ -1466,6 +1466,14 @@ dropped, which is cosmetic. The reverse is the data loss the mechanism exists to
 prevent. `test_default_emitted_section_keys_are_all_recognized` guards
 `_SECTION_KEYS_EMITTED_ELSEWHERE` against drift.
 
+`mcp_gateway.stub_impl` is one such unmodelled key, read on purpose:
+`mcp_gateway/stub_impl.py` reads it through `_raw_config()` to choose which MCP stub the rewriter launches --
+`auto` (default; the Rust stub when this checkout built it from its current
+source, on Linux), `rust` or `python`. It is an operator escape hatch, not a
+Settings control, so it has no schema field, no baseline entry and no validation;
+it round-trips through `_extra_keys` like any other unmodelled section key. The
+selection itself is specified in [`mcp.md`](../../architecture/mcp.md#rust-stub).
+
 ## APIs
 
 ### `KiroCrewConfig.load() -> KiroCrewConfig`

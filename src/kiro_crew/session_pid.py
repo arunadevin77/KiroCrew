@@ -3960,6 +3960,7 @@ _SANDBOX_LAUNCHER_MARKER = b"kirocrew_sandbox_"
 _MCP_ENTRYPOINT_MARKERS = (
     _SANDBOX_LAUNCHER_MARKER,  # sandbox wrapper script (session-spawned)
     b"kiro_crew.mcp_gateway.stub",  # gateway pool worker (not gatewayd itself)
+    b"kirocrew-mcp-stub-rs",  # Rust port of the same stub (stub_impl)
 )
 
 # Gateway/CLI entrypoints — these are peer gateways, never orphan MCP targets.

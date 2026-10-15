@@ -514,9 +514,10 @@ def test_the_stub_count_is_matched_through_the_shared_helper(
     per_pid = out["per_pid"]
     assert isinstance(per_pid, dict)
     assert per_pid[7]["mcp"] == 2
-    # Every process in the walked set is offered, and always with the stub needle.
+    # Every process in the walked set is offered, and always with the stub needles:
+    # the Python stub's module and the Rust stub's binary name.
     assert [pid for pid, _ in asked] == [7, 71, 72, 73]
-    assert {needles for _, needles in asked} == {(sm._STUB_MARKER,)}
+    assert {needles for _, needles in asked} == {(sm._STUB_MARKER, sm.RUST_STUB_BIN_NAME)}
 
 
 def test_a_session_tree_wider_than_the_walker_ceiling_is_counted_whole(
