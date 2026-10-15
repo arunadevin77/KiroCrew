@@ -25,11 +25,11 @@ export function hydrateQueuedBubbles(
   queue: SlotQueueItem[] | undefined,
 ): ChatMessage[] {
   const base = list.filter((m) => m.role !== 'queued')
-  for (const { content, queueId, ts, kind, appLabel, quote, ...attachments } of queue ?? []) {
+  for (const { content, queueId, ts, kind, appLabel, quote, restored, ...attachments } of queue ?? []) {
     // The lists ride the row's meta under the same keys a user row carries
     // them, so a cancel on THIS tab restores a spaced path exactly even
     // though the send happened on another tab or before a reload.
-    base.push({ role: 'queued', content, cls: 'msg msg-queued', ts, meta: { queueId, ...(kind ? { kind } : {}), ...(appLabel ? { appLabel } : {}), ...(quote ? { quote } : {}), ...attachments } })
+    base.push({ role: 'queued', content, cls: 'msg msg-queued', ts, meta: { queueId, ...(kind ? { kind } : {}), ...(appLabel ? { appLabel } : {}), ...(restored ? { restored } : {}), ...(quote ? { quote } : {}), ...attachments } })
   }
   return base
 }
