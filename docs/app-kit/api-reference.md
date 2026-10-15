@@ -180,12 +180,36 @@ and opens path links in replies, and `onArtifactOpen(slug)` opens an
 `/artifacts/<slug>` link instead of following it. Omitted, the file chip stays
 hidden and both kinds of link behave as before.
 
+Keep both handlers the same function between renders while their behaviour
+does not change. The transcript re-renders its messages whenever either one
+changes identity, so an inline arrow re-renders it on every render of the host.
+Wrap each in `useCallback`, listing what it reads as dependencies, or pass a
+function defined outside the component.
+
 ```tsx
-<ChatEmbed
-  slotKey="coder-abc123"
-  onFileOpen={path => openInMyViewer(path)}
-  onArtifactOpen={slug => openArtifactTab(slug)}
-/>
+import { useCallback } from 'react'
+import { ChatEmbed } from '@kirocrew/app-sdk'
+
+// Defined outside the component, so it is the same function on every render.
+function openArtifactTab(slug: string) {
+  myTabs.open({ kind: 'artifact', slug })
+}
+
+function CoderChat({ viewer }: { viewer: MyViewer }) {
+  // Changes only when `viewer` does.
+  const handleFileOpen = useCallback(
+    (path: string, opts?: { line?: number; endLine?: number }) =>
+      viewer.open(path, opts),
+    [viewer],
+  )
+  return (
+    <ChatEmbed
+      slotKey="coder-abc123"
+      onFileOpen={handleFileOpen}
+      onArtifactOpen={openArtifactTab}
+    />
+  )
+}
 ```
 
 ### Attachments
