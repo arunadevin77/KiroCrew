@@ -5333,6 +5333,7 @@
       "use_ctrl_not_option_for_chat_1_to_9": "Use Ctrl (not Option) for chat 1 to 9"
     },
     "sidePanelLayout": {
+      "more_below": "More below",
       "update_available": "update available"
     },
     "sideSheet": {

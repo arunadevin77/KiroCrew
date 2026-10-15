@@ -1,10 +1,11 @@
 import React from 'react'
 import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { NavBackBar } from './NavBackBar'
 import { useRegisterNavigationLeaveGuard, usePublishNavigationStake } from './NavigationLeaveGuard'
 import { hasSubSelection, deleteSubSelection, COARSE_TOUCH_TARGET, SUBNAV_PUSH_STATE, toPathSegment, parsePathSegments } from './subNavParams'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { useScrollEdgesY } from '../hooks/useScrollEdges'
 import { useVisualViewport } from '../hooks/useVisualViewport'
 import { useBottomTerminalOpen, useTerminalPosition } from '../hooks/useBottomTerminal'
 import { useTerminalEnabled } from '../utils/terminalRegistry'
@@ -211,6 +212,14 @@ export default function SidePanelLayout({ title, tabs, defaultTab, rememberKey, 
   const location = useLocation()
   const navigate = useNavigate()
   const isMobile = useIsMobile()
+  // "More below" cue under the desktop tab list. Settings has twenty rows, so
+  // on a laptop-height window the last few (Developer, Releases, About) sit
+  // below the fold, and the overlay scrollbar stays hidden until hovered: the
+  // list read as complete and a first-time user could not find Developer. The
+  // cue says so while rows are hidden below, in its own strip outside every
+  // row. `attachContent` watches the rows themselves, so a tab appearing or a
+  // late font changing a row's height re-measures too.
+  const [attachTabList, tabListEdges, , attachTabListContent] = useScrollEdgesY<HTMLDivElement>()
   // Keyboard avoidance for the bottom-float dock. iOS Safari shrinks only the
   // VISUAL viewport when the keyboard opens (the layout viewport `fixed`
   // resolves against keeps its height — see CommandPalette.tsx), so a
@@ -579,7 +588,8 @@ export default function SidePanelLayout({ title, tabs, defaultTab, rememberKey, 
           )}
           {/* Only the tab list scrolls — the title and navTop above and the
             * footer below stay fixed. */}
-          <div className="flex-1 min-h-0 overflow-y-auto scrollbar-overlay scrollbar-overlay-thin flex flex-col gap-0.5">
+          <div ref={attachTabList} data-testid="side-panel-tab-list" className="flex-1 min-h-0 overflow-y-auto scrollbar-overlay scrollbar-overlay-thin">
+          <div ref={attachTabListContent} className="flex flex-col gap-0.5">
           {tabs.map((t, i) => (
             <React.Fragment key={t.key}>
               {t.dividerBefore && <div className="h-px bg-border mx-2.5 my-2" role="separator" />}
@@ -612,6 +622,25 @@ export default function SidePanelLayout({ title, tabs, defaultTab, rememberKey, 
             </React.Fragment>
           ))}
           </div>
+          </div>
+          {/* A label, not a control: its own strip under the last row, so it
+            * reads as the list's edge rather than part of any row. The strip
+            * keeps its height for as long as the list overflows at all and
+            * only its text hides at the end, so reaching the last row does not
+            * resize the list and jump it. Decorative: every row it points at is
+            * already in the tab order and the accessibility tree. Accent text
+            * and a hairline because a muted caption over the footer was easy
+            * to miss. */}
+          {(tabListEdges.top || tabListEdges.bottom) && (
+            <div
+              aria-hidden="true"
+              data-testid="side-panel-tab-list-more"
+              className={`shrink-0 flex items-center justify-center gap-1 pt-1.5 pb-1 border-0 border-t border-solid border-border text-[12px] font-medium text-accent select-none ${tabListEdges.bottom ? '' : 'invisible'}`}
+            >
+              {i18nT('components.sidePanelLayout.more_below')}
+              <ChevronDown size={14} />
+            </div>
+          )}
           {footer && <div className="shrink-0 pt-3 px-2.5">{footer}</div>}
         </nav>}
 
