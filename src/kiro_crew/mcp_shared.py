@@ -1507,9 +1507,30 @@ def serves_managed_tools(call_tool_fn: Callable[..., Any]) -> bool:
         return True
     try:
         real = os.path.realpath(filename)
-        return os.path.commonpath([real, _PACKAGE_DIR]) == _PACKAGE_DIR
     except (OSError, ValueError):
         return True
+    return _path_is_under(real, _PACKAGE_DIR)
+
+
+def _path_is_under(path: str, root: str, pathmod: Any = os.path) -> bool:
+    """Whether absolute *path* is *root* or inside it; True when that cannot be told.
+
+    A path on another Windows drive is never inside *root*, but ``commonpath``
+    raises ``ValueError`` for it rather than answering. Read that case from the
+    drives first, so code on ``C:`` is not mistaken for the package on ``D:``
+    (a GitHub-hosted Windows runner checks out on ``D:`` and keeps its temp dir on
+    ``C:``). Any other refusal keeps the fail-closed answer.
+    """
+    path_drive = pathmod.normcase(pathmod.splitdrive(path)[0])
+    root_drive = pathmod.normcase(pathmod.splitdrive(root)[0])
+    if path_drive != root_drive:
+        return False
+    try:
+        common = pathmod.commonpath([path, root])
+    except ValueError:
+        return True
+    # ``commonpath`` keeps the casing of its input; Windows paths compare caseless.
+    return pathmod.normcase(common) == pathmod.normcase(root)
 
 
 def respond(req_id: Any, result: Any, error: dict | None = None) -> None:

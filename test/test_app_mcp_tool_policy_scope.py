@@ -14,6 +14,7 @@ from __future__ import annotations
 import functools
 import importlib.util
 import json
+import ntpath
 import sys
 
 from test_mcp_shared import _LoopHarness, _tools_call
@@ -61,6 +62,32 @@ class TestServesManagedTools:
         assert mcp_shared.serves_managed_tools(len) is True
         generated = eval("lambda name, args: 'ok'")  # noqa: S307 -- code with no file
         assert mcp_shared.serves_managed_tools(generated) is True
+
+
+class TestWindowsDrives:
+    """``ntpath`` stands in for Windows so these run on every OS.
+
+    A GitHub-hosted Windows runner checks out on ``D:`` and keeps its temp dir on
+    ``C:``; ``commonpath`` raises for that pair instead of answering.
+    """
+
+    ROOT = r"D:\a\KiroCrew\src\kiro_crew"
+
+    def test_a_handler_on_another_drive_is_not_managed(self):
+        app = r"C:\Users\runner\AppData\Local\Temp\app_backend\mcp_server.py"
+        assert mcp_shared._path_is_under(app, self.ROOT, ntpath) is False
+
+    def test_a_handler_under_the_package_is_managed_whatever_the_drive_case(self):
+        own = r"d:\a\KiroCrew\src\kiro_crew\mcp_shared.py"
+        assert mcp_shared._path_is_under(own, self.ROOT, ntpath) is True
+
+    def test_a_sibling_on_the_same_drive_is_not_managed(self):
+        app = r"D:\a\KiroCrew\apps\mcp_server.py"
+        assert mcp_shared._path_is_under(app, self.ROOT, ntpath) is False
+
+    def test_a_pair_commonpath_refuses_on_one_drive_keeps_the_policy(self):
+        # Mixing an absolute and a relative path is the other ValueError: fail closed.
+        assert mcp_shared._path_is_under(r"D:\app.py", r"D:relative", ntpath) is True
 
 
 class TestAppServerSkipsThePolicyRead:
