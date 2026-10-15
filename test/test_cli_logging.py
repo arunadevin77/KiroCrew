@@ -1000,7 +1000,7 @@ class TestDrainBeforeHardExit:
 
 class TestEveryGatewayHardExitDrainsTheQueue:
     """Ratchet: the queue only helps if EVERY hard exit in the gateway process
-    drains it. ``src/kiro_crew/slack/gateway.py`` and ``.../events.py`` are the
+    drains it. ``src/kiro_crew/slack/gateway_runtime/exit_path.py`` and ``slack/events.py`` are the
     two modules that call ``os._exit`` from inside the long-lived gateway
     process - the other ``os._exit`` sites in the tree (``sandbox.py``,
     ``_process_group_supervisor.py``) run in forked/pre-exec children that
@@ -1011,6 +1011,11 @@ class TestEveryGatewayHardExitDrainsTheQueue:
 
     _MODULES = (
         Path(__file__).resolve().parents[1] / "src/kiro_crew/slack/gateway.py",
+        *sorted(
+            (Path(__file__).resolve().parents[1] / "src/kiro_crew/slack/gateway_runtime").glob(
+                "*.py"
+            )
+        ),
         Path(__file__).resolve().parents[1] / "src/kiro_crew/slack/events.py",
     )
     _DRAINS = {"_stop_log_queue_listener", "drain_log_queue_before_hard_exit"}

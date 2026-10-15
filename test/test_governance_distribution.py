@@ -3243,9 +3243,9 @@ class TestAllowedToolsIsReDerivedWhenTheCeilingTightens:
         revocation, before the poller starts."""
         from pathlib import Path as _Path
 
-        import kiro_crew.slack.gateway as gw
+        from kiro_crew.slack.gateway_runtime import service_boot
 
-        src = _Path(gw.__file__).read_text(encoding="utf-8")
+        src = _Path(service_boot.__file__).read_text(encoding="utf-8")
         assert "register_post_install_hook(reproject_for_ceiling_change)" in src
         assert src.index("register_post_install_hook(reproject_for_ceiling_change)") < src.index(
             "await asyncio.to_thread(start_refresher)"

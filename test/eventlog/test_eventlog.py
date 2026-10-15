@@ -1516,11 +1516,18 @@ class TestEveryHardExitDrainsTheMemberEventLog:
 
         import kiro_crew.slack.gateway as gateway_module
 
-        source = Path(gateway_module.__file__).read_text(encoding="utf-8")
-        exits = [i for i, line in enumerate(source.splitlines()) if "os._exit(" in line]
+        slack_dir = Path(gateway_module.__file__).resolve().parent
+        exits = [
+            (path.read_text(encoding="utf-8").splitlines(), i)
+            for path in [
+                slack_dir / "gateway.py",
+                *sorted((slack_dir / "gateway_runtime").glob("*.py")),
+            ]
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines())
+            if "os._exit(" in line
+        ]
         assert exits, "no hard exit found, so this guard would pass vacuously"
-        lines = source.splitlines()
-        for index in exits:
+        for lines, index in exits:
             window = "\n".join(lines[max(0, index - 40) : index])
             assert (
                 "eventlog_hooks.drain_for_shutdown" in window

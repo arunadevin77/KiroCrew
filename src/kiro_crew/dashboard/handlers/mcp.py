@@ -1079,7 +1079,7 @@ async def _bg_mcp_probe(sessions: SessionManager | None) -> None:
     """Populate the MCP probe cache — SINGLE-FLIGHT.
 
     Two independent boot paths reach this: ``dashboard/server.py`` fires it as a
-    background task once the port is bound, and ``slack/gateway.py`` awaits it
+    background task once the port is bound, and ``slack/gateway_runtime/service_boot.py`` awaits it
     before warming sessions (kiro-cli reads mcp.json at spawn time). Without a
     join, boot spawns and handshakes EVERY enabled MCP server twice — doubling
     the subprocess churn, doubling occupancy of probe_all()'s concurrency

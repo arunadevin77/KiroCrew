@@ -175,7 +175,7 @@ Two card lines stay unavailable on pi, each on a driven observation:
 ### Heartbeat tools on a harness with no adapter-authored tool identity
 
 The heartbeat agent has no approver behind it, so `_heartbeat_approval`
-(`slack/gateway.py`) approves a call only on the identity the adapter wrote under
+(`slack/gateway_runtime/turn_approvals.py`) approves a call only on the identity the adapter wrote under
 `_meta` — `AcpEvent.mcp_identity_trusted`, `tool_name`, `mcp_server_name` — and
 never on the title the model wrote (`slack/gateway_runtime/tool_policy.py`,
 `_is_heartbeat_safe_tool`). kiro-cli stamps `_meta.kiro.toolName` on every tool

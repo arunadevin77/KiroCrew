@@ -1384,7 +1384,7 @@ There are now **four independent** telemetry paths. Keep them straight:
 | **Install receipt (`apps/install_receipt.py`)** | **Official app adoption** | One anonymous receipt after a successful official-catalog install/update | **Yes — to the same endpoint** | `telemetry.beacon_enabled` (**on**) |
 
 `src/kiro_crew/beacon.py`, tests `test/test_beacon.py`. Fired from
-`slack/gateway.py::run_gateway` on a **detached daemon thread** (never awaited —
+`slack/gateway_runtime/process_entry.py::run_gateway` on a **detached daemon thread** (never awaited —
 a 5s blocking `urllib` call must not delay boot or pin interpreter exit), and
 skipped entirely under `--test-mode` so the offline E2E gate cannot egress.
 

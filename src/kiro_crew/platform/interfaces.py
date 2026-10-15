@@ -190,7 +190,7 @@ class AgentRuntime(Protocol):
     def run_first_run_setup(self) -> None:
         """One-time install-time provisioning, run once per gateway start.
 
-        WIRED: the gateway boot path (``slack/gateway.py``) calls this through
+        WIRED: the gateway boot path (``slack/gateway_runtime/service_boot.py``) calls this through
         the seam instead of importing ``agent.run_first_run_setup`` directly, so
         an edition can add its own one-time provisioning. The public Default
         delegates to exactly that function (PATH shim + admission-policy seed +

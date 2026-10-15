@@ -8,7 +8,7 @@ gate's read-only tier, the sources that deny fast because no human answers them,
 and tool-title normalisation.
 
 The approval callbacks that consult these (``_interactive_approval`` and
-``_heartbeat_approval``) stay in the facade, beside the SEL audit sites
+``_heartbeat_approval``) live in ``turn_approvals.py``, beside the SEL audit sites
 ``test_security_posture`` counts there.
 
 Composed by :mod:`kiro_crew.slack.gateway`, whose globals its functions run on;

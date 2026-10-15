@@ -793,7 +793,7 @@ byte-identical to the pre-token scheme. The senders are `mcp_core`'s own
 
 ### 6. `gateway.py` Integration
 
-`_init_dashboard()` resolves config and passes to `start_dashboard()` (abbreviated):
+`_init_dashboard()` (in `slack/gateway_runtime/service_boot.py`) resolves config and passes to `start_dashboard()` (abbreviated):
 
 ```python
 configured_host, dashboard_port = parse_dashboard_url(self._cfg.dashboard.url)

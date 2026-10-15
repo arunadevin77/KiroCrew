@@ -321,7 +321,7 @@ a surface a human is watching keeps its session, a background job must not.
 
 `kiro_crew.shutdown_event` (an `asyncio.Event`) is the process-wide signal; every
 background loop waits on it so Ctrl-C wakes them immediately instead of at the
-next poll. `_shutdown()` in `slack/gateway.py` then tears down in a deliberate
+next poll. `_shutdown()` in `slack/gateway_runtime/exit_path.py` then tears down in a deliberate
 order, and the order is load-bearing:
 
 1. Stop the work that must not outlive the process or spend the shutdown

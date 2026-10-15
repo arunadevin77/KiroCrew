@@ -607,9 +607,9 @@ Core consumption sites read the context rather than a module global. Standalone
 behavior is unchanged because each Default adapter delegates to that same global.
 Wired sites:
 
-- `cli.py:main` / `slack/gateway.py:run_gateway` — `boot_platform(cfg)` once at
+- `cli.py:main` / `slack/gateway_runtime/process_entry.py:run_gateway` — `boot_platform(cfg)` once at
   startup (gateway raises fail-closed; cli is defensive — standalone never raises).
-- `slack/gateway.py` gateway boot — `AgentRuntime.run_first_run_setup()` through
+- `slack/gateway_runtime/service_boot.py` gateway boot — `AgentRuntime.run_first_run_setup()` through
   `safe_context_call`. Previously this imported `agent.run_first_run_setup`
   directly, bypassing the seam; routing it through the context makes first-run
   provisioning genuinely extensible (an edition adds its own one-time steps).

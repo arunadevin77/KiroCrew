@@ -1561,7 +1561,7 @@ _CONVERTED_TURN_SURFACES: tuple[tuple[str, str], ...] = (
     ("src/kiro_crew/slack/gateway_runtime/nudge_channel_fire.py", "key"),
     ("src/kiro_crew/slack/gateway.py", "parent_key"),
     # The heartbeat resolves the store of its own fixed key.
-    ("src/kiro_crew/slack/gateway.py", "session_key"),
+    ("src/kiro_crew/slack/gateway_runtime/heartbeat_turns.py", "session_key"),
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]

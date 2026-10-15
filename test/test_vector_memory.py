@@ -2606,7 +2606,7 @@ class TestMemoryTuningPlumbing:
     # deferred writes too, so the ops-mission-control ledger indexer and lesson
     # recall are listed, as are the CLI's lesson, carve and import/migrate stores.
     _PLUMBED_SITES = (
-        "slack/gateway.py",
+        "slack/gateway_runtime/service_boot.py",
         "cli_server.py",
         "cli_commands.py",
         "dashboard/handlers/memory.py",

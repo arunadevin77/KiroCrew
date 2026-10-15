@@ -705,8 +705,8 @@ class TestApiStatusRequiresDeclaration:
 # ---------------------------------------------------------------------------
 # A GLOBAL event must never be judged by a slot field that appears in its
 # payload. ``notify()`` merges meta keys FLAT into the note, so a real caller
-# (slack/gateway.py heartbeat: meta={"slot": slot.key}) puts a top-level
-# ``slot`` on a ``notification`` frame.
+# (the heartbeat in slack/gateway_runtime/result_egress.py: meta={"slot": slot.key})
+# puts a top-level ``slot`` on a ``notification`` frame.
 # ---------------------------------------------------------------------------
 
 
@@ -758,7 +758,12 @@ class TestGlobalEventWithSlotDoesNotBypassScope:
         """Source guard: this whole class is only meaningful because a shipped
         caller flat-merges a slot onto a global notification frame."""
         gw = (
-            Path(__file__).resolve().parents[1] / "src" / "kiro_crew" / "slack" / "gateway.py"
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "kiro_crew"
+            / "slack"
+            / "gateway_runtime"
+            / "result_egress.py"
         ).read_text(encoding="utf-8")
         assert 'meta={"slot": slot.key}' in gw
 

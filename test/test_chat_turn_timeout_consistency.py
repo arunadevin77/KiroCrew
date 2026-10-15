@@ -41,6 +41,7 @@ _DISPATCH_FILES = (
     "src/kiro_crew/dashboard/handlers/messaging.py",
     "src/kiro_crew/slack/gateway.py",
     "src/kiro_crew/slack/gateway_runtime/nudge_dashboard_fire.py",
+    "src/kiro_crew/slack/gateway_runtime/result_egress.py",
 )
 
 

@@ -610,9 +610,9 @@ def test_live_session_agents_are_the_registered_providers_agents():
 
 
 def test_the_gateway_reaps_in_the_boot_janitor_and_on_the_hourly_wake():
-    from kiro_crew.slack import gateway
+    from kiro_crew.slack.gateway_runtime import process_entry
 
-    source = Path(gateway.__file__).read_text(encoding="utf-8")
+    source = Path(process_entry.__file__).read_text(encoding="utf-8")
     janitor = source.index("async def _run_agents_janitor() -> None:")
     janitor_end = source.index('name="agents-dir-janitor"', janitor)
     assert "reap_orphaned_readonly_specs()" in source[janitor:janitor_end]

@@ -159,7 +159,7 @@ Slack Socket Mode → events.py (dispatch) → handler.py → SessionManager →
 | `slack/format.py` | Markdown → Slack mrkdwn conversion (headings, links, strike, tables, mermaid, ANSI strip, truncation). `render_for_slack` is the one way text reaches Slack: `strip_ansi` → redact → pre-split → convert → redact → display-settle → redact → split, with each converted block, split piece and truncation settled under the Slack mrkdwn reading |
 | `slack/handler.py` | The native turn path's composition facade: `handle_message()` — orchestrates one turn and streams the ACP response, `handle_interaction()` — button clicks (with None provider guard), and every name the module exported. See [Native handler composition](#native-handler-composition) |
 | `slack/handler_runtime/` | Private owners the handler facade composes, one responsibility each (see [Native handler composition](#native-handler-composition)); nothing else imports them |
-| `slack/gateway.py` | `GatewayOrchestrator` — the composition facade: service construction and boot, the cron/heartbeat/subagent/task callbacks, approvals and the redacting delivery legs, shutdown; the class binds the methods its owners define. Entry point: `run_gateway()`. See [Composition](#composition) |
+| `slack/gateway.py` | `GatewayOrchestrator` — the composition facade: construction (`__init__`), the cron and subagent callbacks and the per-channel hoists; the class binds the methods its owners define. Entry point: `run_gateway()`, defined in `gateway_runtime/process_entry.py` and importable from here. See [Composition](#composition) |
 | `slack/gateway_runtime/` | Private owners the facade composes, one responsibility each (see [Composition](#composition)); nothing else imports them |
 | `slack/events.py` | Socket Mode event routing — dedup (`SeenCache`), slash commands, `member_joined_channel` tracking, message dispatch |
 | `slack/interactions.py` | Block Kit button routing — tool approval, OPTIONS choices, cron/subagent ack, session resume, track channel approve/deny |
@@ -200,6 +200,12 @@ there; the responsibilities below live in private owners under
 | `slack/gateway_runtime/nudge_wiring.py` | Building and starting AutoNudge: the fire and monitor dispatchers, the observer that persists and publishes loop transitions, the wake judge's evidence readers, the held and expired notices |
 | `slack/gateway_runtime/nudge_dashboard_fire.py` | One nudge or monitor wake into a dashboard slot: the slot turn, the work-ledger wake steer, the fire-time mode and crew-boundary refusals |
 | `slack/gateway_runtime/nudge_channel_fire.py` | One unattended nudge turn into a channel session: a Slack thread, or a DM channel through the shared DM adapter, with the monitor completion accounting (`_delivery_result` and `_monitor_completion_hook`, which the dashboard fire path uses too) |
+| `slack/gateway_runtime/turn_approvals.py` | The tool-approval callbacks unattended and channel turns ask: the interactive approval that races the dashboard prompt against the Slack owner DM, the attached-client check, and the heartbeat's read-only gate |
+| `slack/gateway_runtime/service_boot.py` | Constructing the long-lived services and running the gateway: the memory, skills, hooks, context, history and session stack, the task runner, the dashboard or API-only server, `run` from boot to shutdown, and the post-bind session-start sizing log |
+| `slack/gateway_runtime/heartbeat_turns.py` | Building and starting the heartbeat service and each heartbeat turn, with `_persist_turn_row`, the per-turn usage row the background surfaces record |
+| `slack/gateway_runtime/result_egress.py` | The delivery legs that render and redact an unattended result before egress: a cron session's response to its own channel, a channel reply, a heartbeat or background result to the dashboard slot or Slack, and the slot title it leaves |
+| `slack/gateway_runtime/exit_path.py` | The process exit path: the run marker's writer and self-clear, the signal handlers, the bounded cleanup of every service, and the final exit |
+| `slack/gateway_runtime/process_entry.py` | The process entry point: `run_gateway` with its signing-key preflight, and the background sweeps it starts (the KAS kiro-cli floor, predecessor session work directories, orphaned read-only specs) |
 
 **One namespace.** `gateway_runtime.compose`, called once after the class body,
 rebinds every function an owner defines -- its module functions, the orchestrator
@@ -236,31 +242,29 @@ function at call time.
 `slack/gateway.py` by path, text, AST or `inspect.getsource`, so they live there until
 the change that moves one points its guards at the owner as well:
 
-- construction and boot: `__init__`, the per-channel `_hoist_*`,
-  `_register_config_appliers`, `_start_channel_transports`, `_init_services`,
-  `run`, the signal handlers, `_shutdown`, `_shutdown_and_exit`,
-  `_write_marker_worker` (boot-order, readiness, hot-reload and exit-path audits);
-- the cron callback (`_init_cron`) with `_apply_gate_verdict`, `_init_heartbeat`
-  and the subagent completion path (`_init_subagents`): usage-row, runtime-death,
-  dispatch-site, memory-store and reap-race audits;
-- the approval callbacks and every delivery leg that renders or redacts before
-  egress (`_interactive_approval`, `_heartbeat_approval`, `_deliver_channel_reply`,
-  `_deliver_cron_response`, `_deliver_result` with its heartbeat Slack rendering,
-  the failure alerts): the security-posture sink row and the baseline-log census;
+- construction: `__init__`, the per-channel `_hoist_*`, `_register_config_appliers`
+  and `_start_channel_transports` (the hot-reload audit reads the hoists);
+- the cron callback (`_init_cron`) with `_apply_gate_verdict`, and the subagent
+  completion path (`_init_subagents`): usage-row, runtime-death, dispatch-site,
+  memory-store and reap-race audits;
+- the cron failure alerts: the security-posture sink row and the baseline-log census;
 - `_restart_after_update`: `update_ownership.owning` wraps it at definition time,
   and compose cannot rebind a wrapper another module compiled;
 - `_REQUIRED_DEPS` and `_is_brazil_install`, which the install repair reads through
   the class: the internal content scan judges every line a change adds, and a line
   of `_is_brazil_install` matches one of its rules, so the method stays where it was
   written rather than being re-added in an owner;
-- the ACP/provider import lines the agent-SDK boundary baseline counts,
-  `_persist_turn_row`, and the predecessor run-directory sweep helpers.
+- the ACP/provider import lines the agent-SDK boundary baseline counts, and the
+  module task globals that `run_gateway` writes through `global`.
 
 The dependency repair, the update path and AutoNudge moved to their owners together
-with their guards: the spawn and isolator audits (`test_spawn_audit`,
-`test_internal_python_isolation`), the respawn and restart-fence pins, the composer,
-turn-ceiling, event-log, wake-judge, transcript and memory-store tables read the owners
-as well. The contract test maps each construct those guards enumerate to the exact
+with their guards, and so did the approval callbacks, service boot, the heartbeat, the
+result egress legs, the exit path and the process entry point: the spawn and isolator
+audits (`test_spawn_audit`, `test_internal_python_isolation`), the respawn and
+restart-fence pins, the composer, turn-ceiling, event-log, wake-judge, transcript and
+memory-store tables, the hard-exit drain ratchets (SEL, `gateway.log`, crew log, member
+event log), the boot-order, readiness and sweep pins, and the usage-row census read the
+owners as well. The contract test maps each construct those guards enumerate to the exact
 files that hold it (`_GUARDED_TOKEN_HOMES`) and fails when a holder gains or loses
 one. A guard whose rule spans code by path rather than naming constructs covers the
 owners with the facade: `test_no_config_dir_in_async.py`
@@ -1168,7 +1172,7 @@ LLM responses ending with `[OPTIONS: choice1 | choice2 | choice3]` are rendered 
 
 Action IDs: `options_checkboxes` (toggle), `options_submit` (send). Checkbox `value` contains the choice text.
 
-Beyond the reply-finalization path in `handler.py`, two other Slack delivery paths also render `[OPTIONS: ...]` as buttons: the dashboard `send_message` MCP tool (`api_send_message` in `dashboard/handlers/messaging.py`) and cron subagent delivery (`_deliver_cron_response` in `gateway.py`). Both call `extract_options()` / `build_options_blocks()`, skip the tag parse when the caller supplies explicit `blocks` (those own their own layout), and wrap the follow-up options post in `try/except` so a failed options post never fails the primary message.
+Beyond the reply-finalization path in `handler.py`, two other Slack delivery paths also render `[OPTIONS: ...]` as buttons: the dashboard `send_message` MCP tool (`api_send_message` in `dashboard/handlers/messaging.py`) and cron subagent delivery (`_deliver_cron_response` in `gateway_runtime/result_egress.py`). Both call `extract_options()` / `build_options_blocks()`, skip the tag parse when the caller supplies explicit `blocks` (those own their own layout), and wrap the follow-up options post in `try/except` so a failed options post never fails the primary message.
 
 ### Inline action values (`action::`)
 
@@ -1418,7 +1422,7 @@ Bidirectional sync: Slack ack → resolves dashboard approval future + broadcast
 
 When a subagent with a Slack parent session completes, the synthesized LLM response is posted to the owner's DM thread. Long replies are split into multiple messages using `_split_message()` from `handler.py` (3900 chars per chunk, split on newline boundaries), matching the behavior of final chat messages.
 
-A parent session born on any other channel (Telegram, Discord, `unified:` DM buckets, …) delivers the same synthesized reply through the governed cross-surface transport ladder instead (`_deliver_channel_reply` in `gateway.py`): the conversation is resolved via origin link (recorded by Discord's inbound dispatch) → non-Slack mirror link (e.g. a Telegram `/link` binding) → for direct (1:1) sessions only, the stored `"{namespace}:{user_id}"` channel value resolved through `transport.resolve_configured_target`; the target is vetted by `_resolve_channel_target` (SEL-audited, fail-closed, capability-gated on `supports_proactive_send`), then redacted and chunked to the transport's `max_message_chars`. Delivery is best-effort and fail-closed on ambiguity — group/forum sessions without an origin or mirror link, dispatchers that record neither, and denied egress all degrade to the dashboard notification (never a cross-conversation send), and the injected ACP turn still keeps the parent session aware of the result.
+A parent session born on any other channel (Telegram, Discord, `unified:` DM buckets, …) delivers the same synthesized reply through the governed cross-surface transport ladder instead (`_deliver_channel_reply` in `gateway_runtime/result_egress.py`): the conversation is resolved via origin link (recorded by Discord's inbound dispatch) → non-Slack mirror link (e.g. a Telegram `/link` binding) → for direct (1:1) sessions only, the stored `"{namespace}:{user_id}"` channel value resolved through `transport.resolve_configured_target`; the target is vetted by `_resolve_channel_target` (SEL-audited, fail-closed, capability-gated on `supports_proactive_send`), then redacted and chunked to the transport's `max_message_chars`. Delivery is best-effort and fail-closed on ambiguity — group/forum sessions without an origin or mirror link, dispatchers that record neither, and denied egress all degrade to the dashboard notification (never a cross-conversation send), and the injected ACP turn still keeps the parent session aware of the result.
 
 ## Tool Approval via Slack
 

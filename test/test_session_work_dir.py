@@ -992,8 +992,13 @@ class TestGatewayWiring:
         self,
     ) -> None:
         from kiro_crew.slack import gateway
+        from kiro_crew.slack.gateway_runtime import process_entry, service_boot
 
-        source = Path(gateway.__file__).read_text(encoding="utf-8")
+        # ``run`` holds the boot sequence; ``run_gateway``'s hourly wake comes after it.
+        source = "\n".join(
+            Path(module.__file__).read_text(encoding="utf-8")
+            for module in (service_boot, process_entry)
+        )
         reap = source.index(
             "await asyncio.to_thread(cleanup_orphaned_sessions, narrow_with_leaders=False)"
         )
@@ -1009,7 +1014,11 @@ class TestGatewayWiring:
         assert (
             "_run_agent_scratch_sweep" in source[writers:hourly]
         ), "the hourly wake keeps calling the same predecessor-only sweep"
-        assert "sweep_disposable_work_dirs" not in source
+        facade = Path(gateway.__file__)
+        assert "sweep_disposable_work_dirs" not in "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [facade, *sorted((facade.parent / "gateway_runtime").glob("*.py"))]
+        )
 
     def test_the_wrapper_hands_the_sweep_this_homes_ledger_and_live_dirs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

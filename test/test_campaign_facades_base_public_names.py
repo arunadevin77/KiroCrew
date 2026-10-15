@@ -515,6 +515,8 @@ _REBOUND: dict[str, dict[str, str]] = {
         "CronVetOverran": "kiro_crew.slack.gateway_runtime.cron_dispatch",
         "claim_vet_bound": "kiro_crew.slack.gateway_runtime.cron_dispatch",
         "cron_job_env_without_reserved": "kiro_crew.slack.gateway_runtime.cron_dispatch",
+        "run_gateway": "kiro_crew.slack.gateway_runtime.process_entry",
+        "signing_key_preflight": "kiro_crew.slack.gateway_runtime.process_entry",
     },
 }
 

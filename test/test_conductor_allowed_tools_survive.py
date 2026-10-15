@@ -1587,14 +1587,22 @@ class TestASpecLeftInPlaceHoldsTheCeilingMemo:
         loop that already hosts the scratch, work-root and session-dir sweeps rather
         than a scheduler of its own -- first in the wake, off the event loop, and
         from nowhere else: no second timer, no thread."""
-        from kiro_crew.slack import gateway
+        from kiro_crew.slack.gateway_runtime import process_entry
 
-        source = Path(gateway.__file__).read_text(encoding="utf-8")
+        source = Path(process_entry.__file__).read_text(encoding="utf-8")
         wake = source.index("async def _run_agent_scratch_sweep()")
         slept = source.index("await asyncio.sleep(3600)", wake)
         retried = source.index("await asyncio.to_thread(retry_held_conductor_specs)", slept)
         swept = source.index("await asyncio.to_thread(agent_scratch.sweep_dead_scratch)", slept)
         assert slept < retried < swept, "the retry runs first in the hourly wake"
+        slack_dir = Path(process_entry.__file__).resolve().parents[1]
+        source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [
+                slack_dir / "gateway.py",
+                *sorted((slack_dir / "gateway_runtime").glob("*.py")),
+            ]
+        )
         assert (
             source.count("await asyncio.to_thread(retry_held_conductor_specs)") == 1
             and source.count("import retry_held_conductor_specs") == 1

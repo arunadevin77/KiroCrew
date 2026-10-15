@@ -787,7 +787,8 @@ def test_reporter_claim_is_unconditional():
 
     from kiro_crew.slack import gateway as gateway_mod
 
-    tree = ast.parse(Path(gateway_mod.__file__).read_text(encoding="utf-8"))
+    gateway_path = Path(gateway_mod.__file__)
+    paths = [gateway_path, *sorted((gateway_path.parent / "gateway_runtime").glob("*.py"))]
     branching = (ast.If, ast.IfExp, ast.For, ast.AsyncFor, ast.While, ast.Match)
     sites: list[tuple[str, bool]] = []
 
@@ -806,7 +807,8 @@ def test_reporter_claim_is_unconditional():
                 sites.append((func, branched))
             _walk(child, func, branched or isinstance(child, branching))
 
-    _walk(tree, "<module>", False)
+    for path in paths:
+        _walk(ast.parse(path.read_text(encoding="utf-8")), "<module>", False)
 
     assert sites == [("run", False)], (
         "mark_install_reporter() must be called exactly once, unconditionally, from "

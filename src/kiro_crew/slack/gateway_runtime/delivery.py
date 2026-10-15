@@ -7,11 +7,11 @@ conversation, the dedup anchor a confirmed delivery advances, the OPTIONS
 bookkeeping for a posted control, the bounded DM open, and whether a job is
 silent.
 
-Every delivery leg that renders or redacts a result before it leaves the process
-stays in the facade (``_deliver_channel_reply``, ``_deliver_cron_response``,
-``_deliver_result`` with the heartbeat Slack rendering, the failure alerts):
-``security_posture`` names ``slack/gateway.py`` as the sink for cron and
-notification posts.
+The delivery legs that render or redact a result before it leaves the process live
+in ``result_egress.py`` (``_deliver_channel_reply``, ``_deliver_cron_response``,
+``_deliver_result`` with the heartbeat Slack rendering) and the failure alerts in
+the facade: ``security_posture`` names ``slack/gateway.py`` as the sink for cron and
+notification posts and lists the redacting owners composed into it.
 
 Composed by :mod:`kiro_crew.slack.gateway`, whose globals its functions run on;
 see :mod:`kiro_crew.slack.gateway_runtime`.

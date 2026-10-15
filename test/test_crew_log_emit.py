@@ -1946,7 +1946,7 @@ def test_every_gateway_mode_drains_the_log_before_a_hard_exit():
     import importlib
     import inspect
 
-    gateway_module = importlib.import_module("kiro_crew.slack.gateway")
+    gateway_module = importlib.import_module("kiro_crew.slack.gateway_runtime.exit_path")
     tree = ast.parse(inspect.getsource(gateway_module))
     fn = next(
         node

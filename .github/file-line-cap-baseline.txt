@@ -169,7 +169,7 @@
 5246 src/kiro_crew/session_storage.py
 6254 src/kiro_crew/skills.py
 3685 src/kiro_crew/slack/events.py
-10863 src/kiro_crew/slack/gateway.py
+7269 src/kiro_crew/slack/gateway.py
 3789 src/kiro_crew/slack/handler.py
 3892 src/kiro_crew/slack/interactions.py
 2115 src/kiro_crew/snapshot.py

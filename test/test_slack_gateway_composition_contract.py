@@ -434,6 +434,94 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
             "(self, loop: 'NudgeLoop', disposition: 'MonitorActionDisposition', usage: 'AgentTurnUsage | None', *, hook: 'MonitorCompletionHook | None' = None) -> 'None'",
         ),
     ),
+    "turn_approvals": (
+        ("_dashboard_client_attached", "method", "(self) -> 'bool'"),
+        (
+            "_interactive_approval",
+            "method",
+            "(self, source: 'str', slot_resolver: 'Callable[[str], str] | None' = None, nudge_key: 'str' = '', *, raise_when_unreachable: 'bool' = False) -> 'ToolApprovalCallback'",
+        ),
+        (
+            "_heartbeat_approval",
+            "async method",
+            "(self, event: 'LLMEvent', _parent_session_key: 'str' = '') -> 'bool'",
+        ),
+    ),
+    "service_boot": (
+        ("_auto_open_dashboard", "async method", "(self, dashboard_url: 'str') -> 'None'"),
+        ("_init_services", "async method", "(self) -> 'None'"),
+        (
+            "_notify_consolidation_abandoned",
+            "method",
+            "(self, key: 'str', message_count: 'int', reason: 'str', char_count: 'int' = 0, last_slice: 'bool' = False, retired: 'bool' = False) -> 'None'",
+        ),
+        ("_schedule_session_start_sizing", "method", "(self) -> 'None'"),
+        ("_log_session_start_sizing", "async method", "(self) -> 'None'"),
+        ("_init_task_runner", "method", "(self) -> 'None'"),
+        ("_init_dashboard", "async method", "(self) -> 'None'"),
+        ("_init_api_server", "async method", "(self) -> 'None'"),
+        ("run", "async method", "(self) -> 'None'"),
+    ),
+    "heartbeat_turns": (
+        ("_init_heartbeat", "async method", "(self) -> 'None'"),
+        (
+            "_persist_turn_row",
+            "async function",
+            "(client: 'Any', session_key: 'str', *, provider: 'str', surface: 'str', agent_fallback: 'Callable[[], str]', t0: 'float', usage: 'AgentTurnUsage | None' = None) -> 'None'",
+        ),
+    ),
+    "result_egress": (
+        (
+            "_deliver_cron_response",
+            "async method",
+            "(self, parent_key: 'str', text: 'str', *, silent: 'bool' = False) -> 'bool'",
+        ),
+        (
+            "_deliver_channel_reply",
+            "async method",
+            "(self, parent_key: 'str', text: 'str', *, resolved_link: 'tuple[ChannelLink, bool] | None' = None, caller: 'str' = 'subagent') -> 'bool'",
+        ),
+        ("_cron_outbound_thread", "method", "(self, parent_key: 'str') -> 'str | None'"),
+        ("_persist_slot_title", "async method", "(self, slot: \"'_ChatSlot'\") -> 'None'"),
+        ("_resolve_loaded_slot", "async method", "(self, slot_name: 'str') -> 'Any'"),
+        (
+            "_deliver_result",
+            "async method",
+            "(self, title: 'str', task_summary: 'str', result_text: 'str', deliver: 'str') -> 'None'",
+        ),
+        ("_heartbeat_slack_parts", "function", "(title: 'str', result_text: 'str') -> 'list[str]'"),
+    ),
+    "exit_path": (
+        ("_shutdown", "async method", "(self) -> 'None'"),
+        ("_write_marker_worker", "method", "(self, run_marker: 'Any', port: 'int') -> 'None'"),
+        ("_install_shutdown_signal_handlers", "method", "(self) -> 'None'"),
+        (
+            "_shutdown_and_exit",
+            "async method",
+            "(self, watchdog: 'asyncio.Future | None' = None) -> 'None'",
+        ),
+    ),
+    "process_entry": (
+        ("_live_session_work_dirs", "function", "(sessions: 'Any') -> 'list[str]'"),
+        ("_live_session_agents", "function", "(sessions: 'Any') -> 'set[str]'"),
+        (
+            "_sweep_predecessor_session_work_dirs",
+            "function",
+            "(live_work_dirs: 'list[str]') -> 'int'",
+        ),
+        (
+            "_run_signing_key_preflight_bounded",
+            "async function",
+            "(timeout: 'float | None' = None) -> 'None'",
+        ),
+        ("signing_key_preflight", "function", "() -> 'None'"),
+        ("_start_kas_cli_floor", "function", "(cfg: 'KiroCrewConfig') -> \"'asyncio.Task[None]'\""),
+        (
+            "run_gateway",
+            "async function",
+            "(cfg: 'KiroCrewConfig', *, no_dashboard: 'bool' = False, no_crons: 'bool' = False, no_tunnel: 'bool' = False, no_open: 'bool' = False, port_override: 'str | None' = None, json_ready: 'bool' = False, approval_mode: 'str | None' = None, test_mode: 'bool' = False) -> 'None'",
+        ),
+    ),
 }
 
 
@@ -856,12 +944,12 @@ def test_a_fresh_facade_import_loads_every_owner(tmp_path: Path) -> None:
 #: it, so each set is exact; a set changes in the commit that points the token's
 #: guards at its new home (``slack-gateway.md``, Composition).
 _GUARDED_TOKEN_HOMES: dict[str, frozenset[str]] = {
-    "persist_token_record": frozenset({"gateway"}),
+    "persist_token_record": frozenset({"gateway", "heartbeat_turns"}),
     ".read_messages": frozenset({"gateway", "nudge_wiring"}),
     "begin_turn": frozenset({"nudge_channel_fire"}),
-    "os._exit": frozenset({"gateway"}),
+    "os._exit": frozenset({"exit_path"}),
     "save_conversation_turn_off_loop": frozenset({"gateway", "nudge_channel_fire"}),
-    "session_store_for_turn": frozenset({"gateway", "nudge_channel_fire"}),
+    "session_store_for_turn": frozenset({"gateway", "heartbeat_turns", "nudge_channel_fire"}),
     "create_subprocess_": frozenset({"gateway", "install_repair", "update_apply"}),
     "isolated_python_argv": frozenset({"install_repair", "update_apply"}),
     "respawn_executable": frozenset({"update_apply", "update_schedule"}),
@@ -869,14 +957,14 @@ _GUARDED_TOKEN_HOMES: dict[str, frozenset[str]] = {
     "_running_script_ids.add": frozenset({"gateway"}),
     "caused_by_this_session": frozenset({"gateway"}),
     "note_shared_death": frozenset({"gateway"}),
-    "clear_marker": frozenset({"gateway"}),
-    "init_socket_mode": frozenset({"gateway"}),
-    "build_message": frozenset({"gateway", "nudge_channel_fire"}),
-    "VectorMemoryStore": frozenset({"gateway"}),
+    "clear_marker": frozenset({"exit_path"}),
+    "init_socket_mode": frozenset({"service_boot"}),
+    "build_message": frozenset({"gateway", "heartbeat_turns", "nudge_channel_fire"}),
+    "VectorMemoryStore": frozenset({"gateway", "service_boot"}),
     "configure_default_ladder": frozenset({"gateway"}),
-    "eventlog_hooks": frozenset({"gateway", "nudge_wiring"}),
+    "eventlog_hooks": frozenset({"exit_path", "nudge_wiring", "service_boot"}),
     "autonudge_state": frozenset({"nudge_wiring"}),
-    "_run_chat": frozenset({"gateway", "nudge_dashboard_fire"}),
+    "_run_chat": frozenset({"gateway", "nudge_dashboard_fire", "result_egress"}),
     "spawn_guarded_turn": frozenset({"gateway", "nudge_dashboard_fire"}),
     "compose_nudge_body": frozenset({"gateway", "nudge_channel_fire", "nudge_dashboard_fire"}),
     "clear_shared_deaths": frozenset({"gateway"}),
@@ -885,7 +973,7 @@ _GUARDED_TOKEN_HOMES: dict[str, frozenset[str]] = {
     "_delivery_queued": frozenset({"gateway"}),
     "_digest_held": frozenset({"gateway"}),
     "_deliver_failure_alert": frozenset({"gateway"}),
-    "render_for_slack(": frozenset({"gateway", "nudge_channel_fire"}),
+    "render_for_slack(": frozenset({"gateway", "nudge_channel_fire", "result_egress"}),
 }
 
 

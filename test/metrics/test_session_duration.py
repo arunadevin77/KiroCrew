@@ -1141,9 +1141,12 @@ class TestReviewFixes:
     def test_the_boot_hook_no_longer_blocks_readiness(self):
         from pathlib import Path
 
-        src = (Path(sess.__file__).resolve().parent.parent / "slack" / "gateway.py").read_text(
-            encoding="utf-8"
-        )
+        src = (
+            Path(sess.__file__).resolve().parent.parent
+            / "slack"
+            / "gateway_runtime"
+            / "service_boot.py"
+        ).read_text(encoding="utf-8")
         i = src.index("_backfill_unclean_session_telemetry")
         window = src[i : i + 900]
         assert "asyncio.to_thread" in window, "the scan must not run on the loop"
@@ -1454,7 +1457,12 @@ class TestTeardownPathsAreWired:
     def test_the_boot_backfill_is_wired_into_gateway_startup(self):
         from pathlib import Path
 
-        gateway = Path(sess.__file__).resolve().parent.parent / "slack" / "gateway.py"
+        gateway = (
+            Path(sess.__file__).resolve().parent.parent
+            / "slack"
+            / "gateway_runtime"
+            / "service_boot.py"
+        )
         src = gateway.read_text(encoding="utf-8")
         assert "backfill_crashed_sessions" in src
         # Ordering against the orphan sweep is deliberately NOT asserted any

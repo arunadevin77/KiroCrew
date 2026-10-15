@@ -1418,7 +1418,7 @@ that answers:
    return is the user's in-channel decision and is used verbatim; `None` (no hook
    for that channel, or it could not surface the prompt) falls through.
 2. **Slack owner DM / dashboard fallback** — the pre-existing gate in
-   `slack/gateway.py` (`_interactive_approval`), which races a Slack owner DM
+   `slack/gateway_runtime/turn_approvals.py` (`_interactive_approval`), which races a Slack owner DM
    against an attached dashboard client. A configured-but-unpostable Slack DM and
    an unattached dashboard both count as "no surface".
 3. **`#8914` fast-fail backstop** — reached only when neither a channel hook nor a

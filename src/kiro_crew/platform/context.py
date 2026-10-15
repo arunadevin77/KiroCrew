@@ -285,7 +285,7 @@ class PlatformContext:
     # ── boot-layer extension points ──
     providers: "ProviderRegistry"
     publish: "PublishRegistry"
-    # ``run_first_run_setup`` is wired (slack/gateway.py); ``managed_mcp_servers``
+    # ``run_first_run_setup`` is wired (slack/gateway_runtime/service_boot.py); ``managed_mcp_servers``
     # is [RESERVED] — see RESERVED_METHODS.
     agent_runtime: "AgentRuntime"
     agent_executable: "AgentExecutableResolver"

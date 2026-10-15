@@ -4,8 +4,8 @@ The one gateway-lifetime preparation worker behind ``MemoryStartup`` and its fen
 the paced member-store repair loop, in-process embeddings with the model download,
 and the one-shot legacy markdown-to-vector migration with its re-embed sweep.
 
-The service construction itself (``_init_services``) stays in the facade: the
-memory-store seam and hot-reload audits read it there.
+The service construction itself (``_init_services``) lives in ``service_boot.py``,
+where the memory-store seam and hot-reload audits read it.
 
 Composed by :mod:`kiro_crew.slack.gateway`, whose globals its functions run on;
 see :mod:`kiro_crew.slack.gateway_runtime`.

@@ -223,8 +223,9 @@ class TestTheGatewayProfileWatch:
         import inspect
 
         import kiro_crew.slack.gateway as gw
+        from kiro_crew.slack.gateway_runtime import service_boot
 
-        src = Path(gw.__file__).read_text(encoding="utf-8")
+        src = Path(service_boot.__file__).read_text(encoding="utf-8")
         assert "await asyncio.to_thread(reproject_for_profile_change)" in src
         # Started ahead of the block that seeds the baseline and starts the refresher,
         # so a failure there does not take the watch with it.
@@ -457,7 +458,7 @@ class TestTheBaselineSeed:
         assert rebuilds == []
 
     def test_the_gateway_seeds_off_the_loop(self):
-        import kiro_crew.slack.gateway as gw
+        from kiro_crew.slack.gateway_runtime import service_boot
 
-        src = Path(gw.__file__).read_text(encoding="utf-8")
+        src = Path(service_boot.__file__).read_text(encoding="utf-8")
         assert "await asyncio.to_thread(prime_ceiling_projection)" in src

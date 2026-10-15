@@ -720,8 +720,13 @@ class TestInitSocketMode:
         that shipped the boot crash; refuse any reappearance of it.
         """
         assert asyncio.iscoroutinefunction(ev.init_socket_mode)
-        gateway_src = (Path(ev.__file__).resolve().parent / "gateway.py").read_text(
-            encoding="utf-8"
+        slack_dir = Path(ev.__file__).resolve().parent
+        gateway_src = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [
+                slack_dir / "gateway.py",
+                *sorted((slack_dir / "gateway_runtime").glob("*.py")),
+            ]
         )
         assert "await init_socket_mode(self, seen)" in gateway_src
         assert not re.search(r"to_thread\(\s*init_socket_mode", gateway_src)

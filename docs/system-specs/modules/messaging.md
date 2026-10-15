@@ -170,7 +170,7 @@ them would silently retune one of the two.
 
 **A send that did not raise is not automatically a delivery.** `delivery_confirmed`
 (`messaging/transport.py`) is the one predicate the proactive-send call sites
-ask — `slack/gateway.py`'s channel reply leg and the three legs in
+ask — `slack/gateway_runtime/result_egress.py`'s channel reply leg and the three legs in
 `dashboard/messaging_api/channel_delivery.py`. Most transports report a refused or exhausted
 send by returning an empty id rather than raising, and that return value is
 load-bearing: cron stands its Slack fallback down and advances its dedup hash on a
@@ -3204,9 +3204,9 @@ lacking them should close the finding, not file it:
 
 An unattended cron run has no inbound message to answer, so its output is
 delivered proactively, and the Slack gateway chooses ONE surface instead of
-broadcasting to every one it can reach. The cron callback, `_deliver_cron_response`,
-`_deliver_channel_reply` and the failure alerts in `slack/gateway.py` choose and
-redact each leg; the origin and channel-conversation helpers they call are
+broadcasting to every one it can reach. The cron callback and the failure alerts
+in `slack/gateway.py`, and `_deliver_cron_response` and `_deliver_channel_reply` in
+`slack/gateway_runtime/result_egress.py`, choose and redact each leg; the origin and channel-conversation helpers they call are
 `slack/gateway_runtime/delivery.py`. The choice is that a job belongs to the
 conversation that scheduled it: `job.session_key` records the creating session's
 key, and `_cron_origin_key(parent_key)` recovers it from the run's

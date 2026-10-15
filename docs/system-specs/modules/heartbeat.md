@@ -60,7 +60,7 @@ Progress: 3/5 files processed. HEARTBEAT_KEEP
 ## Per-Task Timeout (Unattended Turn Bound)
 
 A heartbeat turn runs without a human present. The `_heartbeat_task` callback in
-`slack/gateway.py` wraps `stream_and_collect` in
+`slack/gateway_runtime/heartbeat_turns.py` wraps `stream_and_collect` in
 `asyncio.wait_for(..., timeout=HEARTBEAT_TASK_TIMEOUT_SECS)` (1800s / 30 min,
 mirroring cron's `_JOB_TIMEOUT_SECS`). This is the analogue of cron's
 `_execute_with_timeout`.
@@ -103,7 +103,7 @@ percentage is only logged. The next cycle's first task starts a fresh session.
 
 ## Gateway Wiring
 
-`HeartbeatService` is started in `slack/gateway.py` after cron service:
+`HeartbeatService` is started in `slack/gateway_runtime/heartbeat_turns.py` after cron service:
 - `on_task` callback: prepends a `HEARTBEAT_KEEP` reminder to the task text, opens a session under `HEARTBEAT_KEY` with `agent="kirocrew-heartbeat"`, streams the response (gated by the heartbeat allowlist in `_heartbeat_approval`), posts the result, and releases the per-key semaphore
 - `on_cycle_end` callback: invokes `SessionManager.recycle_heartbeat` once after `asyncio.gather` completes — tears the session down unconditionally
 - Callback re-raises exceptions so heartbeat can track failures

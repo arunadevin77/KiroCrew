@@ -211,8 +211,8 @@ class TestFlushAuditQueueBeforeHardExit:
 
 class TestEveryGatewayHardExitFlushesTheAuditQueue:
     """Ratchet: the audit log only survives if EVERY hard exit in the gateway
-    process drains it. ``slack/gateway.py``, ``slack/events.py`` and
-    ``platform_compat.py`` are the modules that call ``os._exit`` or
+    process drains it. ``slack/gateway_runtime/exit_path.py``, ``slack/events.py``
+    and ``platform_compat.py`` are the modules that call ``os._exit`` or
     ``platform_compat.hard_exit`` from inside the long-lived gateway process --
     the other ``os._exit`` sites in the tree (``sandbox.py``,
     ``_process_group_supervisor.py``) run in forked/pre-exec children that never
@@ -227,7 +227,7 @@ class TestEveryGatewayHardExitFlushesTheAuditQueue:
     that module (such as ``exit_after_failed_restart_exec``) is still held to the
     contract.
 
-    The second-signal force exit (``_on_signal`` in ``slack/gateway.py``) is the
+    The second-signal force exit (``_on_signal`` in ``slack/gateway_runtime/exit_path.py``) is the
     one KNOWN gap, exempted by name: draining SEL there without blocking the
     event loop or waiting on a wedged executor needs its own design. Remove the
     exemption once that path drains.
@@ -243,6 +243,11 @@ class TestEveryGatewayHardExitFlushesTheAuditQueue:
 
     _MODULES = (
         Path(__file__).resolve().parents[1] / "src/kiro_crew/slack/gateway.py",
+        *sorted(
+            (Path(__file__).resolve().parents[1] / "src/kiro_crew/slack/gateway_runtime").glob(
+                "*.py"
+            )
+        ),
         Path(__file__).resolve().parents[1] / "src/kiro_crew/slack/events.py",
         Path(__file__).resolve().parents[1] / "src/kiro_crew/platform_compat.py",
     )
@@ -252,7 +257,7 @@ class TestEveryGatewayHardExitFlushesTheAuditQueue:
     #: by name (see the class docstring). A ``module name ->
     #: {function names}`` map so the exemption cannot leak to a same-named
     #: function in another scanned module.
-    _EXEMPT = {"platform_compat.py": {"hard_exit"}, "gateway.py": {"_on_signal"}}
+    _EXEMPT = {"platform_compat.py": {"hard_exit"}, "exit_path.py": {"_on_signal"}}
 
     @staticmethod
     def _has_inline_drain(fn):
@@ -419,7 +424,7 @@ class TestSelFlushPrecedesGatewayLogDrain:
     # which the ``sel`` marker in ``_SEL_DRAINS`` catches. The second-signal
     # force exit does not drain SEL, so it is not listed.
     _PATHS = {
-        "src/kiro_crew/slack/gateway.py": {"_shutdown_and_exit"},
+        "src/kiro_crew/slack/gateway_runtime/exit_path.py": {"_shutdown_and_exit"},
         "src/kiro_crew/platform_compat.py": {"exit_after_failed_restart_exec"},
         "src/kiro_crew/slack/events.py": {"_handle_restart"},
     }

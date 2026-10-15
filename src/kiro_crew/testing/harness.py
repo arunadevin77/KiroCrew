@@ -97,7 +97,7 @@ EXIT_DRAIN_SECONDS = 2.0
 SHIM_ENCODING = "oem"
 
 # Sentinel prefix the gateway prints to stdout once the dashboard is bound.
-# Owned by ``slack/gateway.py``; if you change it there, update here too.
+# Owned by ``slack/gateway_runtime/service_boot.py``; if you change it there, update here too.
 READY_PREFIX = "KIROCREW_READY:"
 
 
