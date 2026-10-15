@@ -354,14 +354,7 @@ def _member_session_element(
     # profile) an entry without it would authenticate as this member to the
     # DEFAULT home's gateway — where the member slot does not exist and every
     # verb is refused as ``caller_unidentified``. Empty on a default install.
-    # The helper's ``KIROCREW_PORT`` pin is deliberately left out: it exists
-    # for children that INHERIT the gateway's whole environment (an inherited
-    # stale ``KIROCREW_PORT`` would beat the bound one in the resolution
-    # order), while this env is built from scratch and carries the transient
-    # binding under its honest name (``KIROCREW_BOUND_PORT``) below.
-    env: list[dict[str, str]] = [
-        {"name": k, "value": v} for k, v in _managed_mcp_env().items() if k != "KIROCREW_PORT"
-    ]
+    env: list[dict[str, str]] = [{"name": k, "value": v} for k, v in _managed_mcp_env().items()]
     # Then the identity: the signed per-session token first (the resolver reads it
     # first, because it cannot go stale across a rekey), then the key as fallback
     # for the one case the token cannot cover — no SEL trust root to sign with.
