@@ -310,6 +310,18 @@ export default [
       // module parser-facing only, and keep it DOM-free, which is the property
       // that makes that easy to check.
       'src/hooks/themeCss.ts',
+      // The Paste CSS tab's parser and serialiser: every literal is stylesheet
+      // text (the `.dark` / `.light` block template, the placeholder's sample
+      // values) or a CSS pattern, handed to a CSS reader, never shown as words.
+      // The parse result carries property NAMES and counts, not sentences; the
+      // tab's messages are resolved from the catalog in `themeEditor.tsx`, which
+      // stays fully gated.
+      //
+      // Verified copy-free by the same mechanical boundary as `themeCss.ts`
+      // above: no `i18nT` / `useTranslation` import, no JSX, no DOM access.
+      // Stated as a false-negative class: copy added to THIS path will not be
+      // reported, so keep it data in, data out.
+      'src/lib/themeCssImport.ts',
       // The Kiro-ghost avatar generator's art tables. Every literal in the module
       // is SVG handed to the SVG parser: the shipped mark's `d` path data, the
       // per-part fragments built from it, and the hex tile colors. Translating any
