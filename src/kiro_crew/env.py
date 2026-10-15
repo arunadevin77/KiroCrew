@@ -46,11 +46,12 @@ _EXTRA_PATH_DIRS = (
     "{home}/.npm-packages/bin",
     "{mise_data}/shims",
     "{home}/.volta/bin",
-    # n's node dir is also its ``npm i -g`` bin, so a global adapter lands here.
-    "{home}/n/bin",
-    "{home}/.n/bin",
     "/opt/homebrew/bin",  # Apple Silicon Homebrew node / global npm bins
     "/usr/local/bin",  # Intel Homebrew + pkg-installer symlink dir
+    # n's node dir is also its ``npm i -g`` bin, so a global adapter lands here.
+    # Last, so a ``node`` the Homebrew dirs above already resolve keeps winning.
+    "{home}/n/bin",
+    "{home}/.n/bin",
 )
 
 

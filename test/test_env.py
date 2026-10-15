@@ -168,6 +168,28 @@ class TestAugmentedPath:
             expected = os.path.normpath(template.format(home=home, mise_data=mise_data))
             assert expected in dirs, f"{template} is a node manager dir but not searched"
 
+    def test_homebrew_dirs_outrank_n_dirs(self, tmp_path) -> None:
+        """A ``node`` in a Homebrew dir keeps winning over one in n's dirs.
+
+        n's dirs are there to make an adapter installed only there findable, not
+        to rebind a binary the Homebrew dirs already resolve.
+        """
+        extra = env_mod._EXTRA_PATH_DIRS
+        for n_dir in ("{home}/n/bin", "{home}/.n/bin"):
+            assert extra.index("/opt/homebrew/bin") < extra.index(n_dir)
+            assert extra.index("/usr/local/bin") < extra.index(n_dir)
+
+        if os.path.isabs("/usr/local/bin"):
+            home = str(tmp_path)
+            env_mod._node_all_bin_dirs.cache_clear()
+            try:
+                dirs = augmented_path("", home=home).split(os.pathsep)
+            finally:
+                env_mod._node_all_bin_dirs.cache_clear()
+            for n_dir in (f"{home}/n/bin", f"{home}/.n/bin"):
+                assert dirs.index("/opt/homebrew/bin") < dirs.index(n_dir)
+                assert dirs.index("/usr/local/bin") < dirs.index(n_dir)
+
     def test_finds_an_adapter_installed_under_the_dotted_n_prefix(self, tmp_path) -> None:
         """``N_PREFIX=~/.n`` puts a global ``codex-acp`` in ``~/.n/bin``; the resolver must see it."""
         bin_dir = tmp_path / ".n" / "bin"
