@@ -1043,9 +1043,7 @@ _GUARDED_TOKEN_HOMES: dict[str, frozenset[str]] = {
     "configure_default_ladder": frozenset({"gateway"}),
     "eventlog_hooks": frozenset({"exit_path", "nudge_wiring", "service_boot"}),
     "autonudge_state": frozenset({"nudge_wiring"}),
-    "_run_chat": frozenset(
-        {"cron_exec", "cron_fire", "gateway", "nudge_dashboard_fire", "result_egress"}
-    ),
+    "_run_chat": frozenset({"cron_exec", "gateway", "nudge_dashboard_fire", "result_egress"}),
     "spawn_guarded_turn": frozenset({"cron_exec", "gateway", "nudge_dashboard_fire"}),
     "compose_nudge_body": frozenset({"gateway", "nudge_channel_fire", "nudge_dashboard_fire"}),
     "clear_shared_deaths": frozenset({"cron_exec", "gateway"}),
