@@ -4,7 +4,7 @@ import { Bot, X, AlertTriangle, Loader2, CheckCircle, AlertCircle, Square, Rotat
 import { useAppSelector, useAppDispatch } from '../../store'
 import { openActivityToTab, selectSubagent, sseSubagentDone, isAwaitingSpawnApproval } from '../../store/chatSlice'
 import { api } from '../../api/client'
-import { ApiError } from '../../api/apiError'
+import { ApiError, apiErrorCode } from '../../api/apiError'
 import { sanitizeLlmOutput } from '../../utils/sanitize'
 import ErrorNotice from '../../components/ErrorNotice'
 import { Glass } from '../../components/Glass'
@@ -27,12 +27,7 @@ const EMPTY_SUBAGENTS: Record<string, SubagentActivity> = {}
  * a genuine failure worth a count.
  */
 function isBenignSupersededRetry(reason: unknown): boolean {
-  if (!(reason instanceof ApiError) || reason.status !== 409) return false
-  try {
-    return (JSON.parse(reason.body) as { code?: unknown }).code === 'retry_superseded'
-  } catch {
-    return false
-  }
+  return reason instanceof ApiError && reason.status === 409 && apiErrorCode(reason) === 'retry_superseded'
 }
 
 /** Max agent rows rendered in the chip — exceptions (stalled/retrying) sort
