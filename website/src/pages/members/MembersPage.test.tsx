@@ -6219,6 +6219,58 @@ describe('MembersPage default member, memory and URL', () => {
       }
     })
 
+    it('wears the Sessions bar\'s bare drawer toggle and a bare panel toggle in the shell bar, not Glass chips', async () => {
+      const slot = document.createElement('div')
+      slot.id = 'mobile-topbar-slot'
+      document.body.appendChild(slot)
+      try {
+        await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=alpha' })
+        await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+        const back = within(slot).getByTestId('member-back')
+        const panel = within(slot).getByTestId('member-panel-toggle')
+        for (const control of [back, panel]) {
+          expect(control.tagName).toBe('BUTTON')
+          expect(control.className).not.toMatch(/glass/)
+          expect(control.className).toMatch(/(^|\s)p-2(\s|$)/)
+        }
+        // The Sessions toggle's glyph at its bar size, and its pressed state.
+        expect(back.querySelector('svg')).toHaveAttribute('width', '18')
+        expect(back).toHaveAttribute('aria-expanded', 'false')
+      } finally {
+        slot.remove()
+      }
+    })
+
+    it('takes its header out of the shell bar while the create flow covers the open crewmate', async () => {
+      // The create flow keeps the open crewmate's name, so a header left in the
+      // bar would show that crewmate's controls over the create pane, acting on
+      // a thread that is hidden. The page reports `pending` there instead.
+      const slot = document.createElement('div')
+      slot.id = 'mobile-topbar-slot'
+      document.body.appendChild(slot)
+      const report = vi.fn()
+      try {
+        await renderPage([row({ name: 'alpha', slug: 'alpha' }), defaultRow()], 'kirocrew', { route: '/members?member=alpha', reportRosterBar: report })
+        await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+        await waitFor(() => expect(slot).toContainElement(screen.getByTestId('member-thread-header')))
+        expect(report).toHaveBeenLastCalledWith('open')
+        await openRosterDrawer()
+        await clickAddCrewmate()
+        const pane = screen.getByTestId('member-create-pane')
+        await waitFor(() => expect(pane.className).not.toMatch(/(^|\s)hidden(\s|$)/))
+        await waitFor(() => expect(report).toHaveBeenLastCalledWith('pending'))
+        expect(within(slot).queryByTestId('member-back')).toBeNull()
+        expect(within(slot).queryByTestId('member-identity-pill')).toBeNull()
+        expect(within(slot).queryByTestId('member-panel-toggle')).toBeNull()
+        // Leaving the flow brings the thread, and its header in the bar, back.
+        fireEvent.click(await within(pane).findByTestId('meet-crewmates-not-now'))
+        await waitFor(() => expect(report).toHaveBeenLastCalledWith('open'))
+        await waitFor(() => expect(within(slot).getByTestId('member-identity-pill')).toBeInTheDocument())
+      } finally {
+        slot.remove()
+      }
+    })
+
     it('tells the shell which bar it needs: open for a landing, roster only when it can open no one and on unmount', async () => {
       const opening = vi.fn()
       const first = await renderPage(alphaBeta(), 'kirocrew', { reportRosterBar: opening })

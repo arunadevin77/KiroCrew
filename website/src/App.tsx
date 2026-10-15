@@ -39,6 +39,7 @@ import { safeSetItem } from './utils/safeStorage'
 import { gcOrphanedStorage } from './utils/storageGc'
 import { useMetricsReadout, metricsSegment, MetricsCard, MetricsErrorNotice } from './shell/topbar/metricsReadout'
 import { Rocket, Bell, Code, RefreshCw, Package, Download, Hammer, XCircle, Check, AlertTriangle, X, Coins, Compass, LayoutGrid, Fullscreen, Menu, SquareTerminal, Bot, Smartphone, Search as SearchIcon, Plug, Unplug } from 'lucide-react'
+import { PanelLeftLight, PanelLeftSolid } from './components/icons/panels'
 import { useFirstRunChapters, FirstRunChapters } from './shell/boot/firstRun'
 import ErrorNotice from './components/ErrorNotice'
 import { PREVIEW_EXPAND_EVENT } from './components/WebPreviewPanel'
@@ -2106,8 +2107,28 @@ export default function App() {
             the header still needs its third in-flow child so the actions group
             is not auto-placed into the `auto` centre track (where, as a size
             container, it would collapse to its padding). */}
+        {/* The Crewmates page puts its header here only while a crewmate's
+            thread is on screen (`open`). Until then (`pending`: still reading,
+            or the create flow over a crewmate) the page has no drawer bound, so
+            the bar's first control opens the nav drawer instead, in the Sessions
+            toggle's own glyph and spot, and the bar never sits empty. */}
         {isMobile && (mobileSingle
-          ? <div id="mobile-topbar-slot" data-testid="mobile-topbar-slot" className="flex items-center gap-1 min-w-0 h-full" />
+          ? (
+            <div id="mobile-topbar-slot" data-testid="mobile-topbar-slot" className="flex items-center gap-1 min-w-0 h-full">
+              {onMembersRoute && membersBar === 'pending' && (
+                <button
+                  type="button"
+                  className="mc-touch-hit p-2 rounded-md text-text hover:text-text-strong hover:bg-bg-hover cursor-pointer bg-transparent border-none shrink-0"
+                  onClick={toggleNav}
+                  aria-label={i18nT('app.open_menu')}
+                  aria-expanded={mobileNavPhase === 'open'}
+                  data-testid="mobile-topbar-nav-toggle"
+                >
+                  {mobileNavPhase === 'open' ? <PanelLeftLight size={18} /> : <PanelLeftSolid size={18} />}
+                </button>
+              )}
+            </div>
+          )
           : <span aria-hidden="true" data-testid="topbar-centre-spacer" className="w-0" />
         )}
         {/* Theme decoration: the active theme's center top-bar element (e.g. a
@@ -2356,6 +2377,15 @@ export default function App() {
             leading cell. */}
         {mobileSingle && (
           <div className="tb-trail relative h-full flex items-center gap-1.5 shrink-0">
+            {/* The Crewmates page has no overflow menu to carry the update, and
+                its trailing cell holds only the bell, so the pill itself goes
+                here: still two controls, and the download keeps a visible
+                progress home on this page too. */}
+            {onMembersRoute && updateAvailable && (
+              <Suspense fallback={null}>
+                <UpdatePill />
+              </Suspense>
+            )}
             <NotificationsBellButton />
             <div id="mobile-topbar-trail-slot" data-testid="mobile-topbar-trail-slot" className="flex items-center empty:hidden" />
           </div>

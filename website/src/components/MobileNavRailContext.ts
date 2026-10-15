@@ -43,7 +43,10 @@ export function useMobileNavRail(): MobileNavRailRenderer | null {
  * for the frames before `?member=` landed, then dropped it -- a flicker on
  * every switch to the tab. Until the page reports `open` the shell keeps its
  * nav-drawer swipe on, so the navigation stays one swipe away while a slow
- * read is still out. `roster` gives the regular bar back: the page reports it
+ * read is still out, and puts a nav-drawer toggle in the bar so it is one tap
+ * away too. `pending` also covers the create flow over an open crewmate: the
+ * page's header leaves the bar there, since its controls would act on a
+ * thread that is hidden. `roster` gives the regular bar back: the page reports it
  * for the bare roster with nothing to open (an empty roster, a failed read, a
  * link that names no one) and on unmount, including through its error
  * boundary. `null` outside the shell (popout and embed frames).
