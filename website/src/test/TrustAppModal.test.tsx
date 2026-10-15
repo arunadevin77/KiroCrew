@@ -7,7 +7,7 @@
  * every other enable failure stays a plain error, and Cancel grants nothing.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
@@ -92,7 +92,12 @@ import {
   credentialFreeRepository,
   safeHref,
 } from '../components/appstore/TrustAppModal'
-import { __resetErrorJournalForTests, findReport } from '../utils/errorReport'
+import {
+  __resetErrorJournalForTests,
+  __resetGatewayConnectedForTests,
+  findReport,
+  setGatewayConnected,
+} from '../utils/errorReport'
 
 /** An ApiError-shaped rejection: message plus the raw structured body. */
 function apiError(status: number, body: object, message = 'boom') {
@@ -562,6 +567,36 @@ describe('registry install trust gate', () => {
     expect(text).not.toContain(`${K}.on_cancel LaunchDarkly`)
   })
 
+  it('says the UPDATE consent state is an update, in its outcome line and its confirm label', async () => {
+    // The title and the scope line read the same on every path, so the outcome
+    // line and the confirm button are what tell the reader this is an update.
+    await openUpdateConsent()
+
+    const dialog = within(screen.getByRole('dialog'))
+    expect(screen.getByRole('dialog').textContent).toContain(`${K}.update_outcome LaunchDarkly`)
+    expect(dialog.getByRole('button', { name: `${K}.confirm_update` })).toBeTruthy()
+    expect(dialog.queryByRole('button', { name: `${K}.confirm_install` })).toBeNull()
+    expect(dialog.queryByRole('button', { name: `${K}.confirm` })).toBeNull()
+  })
+
+  it('names the update while the UPDATE path is working, and keeps its outcome line after a failure', async () => {
+    await openUpdateConsent()
+    let finishGrant: () => void = () => {}
+    trustApp.mockImplementation(() => new Promise<void>((resolve) => { finishGrant = resolve }))
+    installFromRegistryStream.mockResolvedValue({ ok: false, error: 'clone failed' })
+
+    fireEvent.click(confirmBtn())
+
+    await waitFor(() => expect(within(screen.getByRole('dialog'))
+      .getByRole('button', { name: `${K}.working_update` })).toBeTruthy())
+    finishGrant()
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
+      .toContain(`${K}.update_failed LaunchDarkly`))
+    // The retry label is shared by every path; the outcome line is what says
+    // the retry still runs the update.
+    expect(screen.getByRole('dialog').textContent).toContain(`${K}.update_outcome LaunchDarkly`)
+  })
+
   it('keeps the enable copy out of a failed update whose grant did not stay (#19991)', async () => {
     // The enable path's headline says trusting "is what turns it on"; on an
     // update the UPDATE is what failed, so the headline and the exit line are the
@@ -579,6 +614,60 @@ describe('registry install trust gate', () => {
     expect(text).not.toContain(`${K}.failed_generic LaunchDarkly`)
     expect(text).not.toContain(`${K}.install_failed_generic`)
     expect(text).not.toContain(`${K}.on_cancel LaunchDarkly`)
+  })
+
+  it('drops the update outcome line on a permanent refusal, where only Close is left', async () => {
+    await openUpdateConsent()
+    installFromRegistryStream.mockResolvedValue({
+      ok: false,
+      name: THIRD_PARTY.name,
+      error: 'Python apps that require a build step are not supported in the desktop app',
+      code: 'desktop_build_step_unsupported',
+    })
+    // The app is gone by the time the probe runs, so the grant rolls back and
+    // the refusal renders as the permanent state.
+    getApp.mockRejectedValue(apiError(404, { error: 'app not installed' }))
+
+    fireEvent.click(confirmBtn())
+
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
+      .toContain(`${K}.failed_desktop_unsupported`))
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'app.close' })).toBeTruthy()
+    expect(screen.getByRole('dialog').textContent).not.toContain(`${K}.update_outcome`)
+  })
+
+  it('names the agent hand-off as the not-saved next step only while that button shows', async () => {
+    // The hand-off button hides while the gateway is unreachable, so the next
+    // step points at it only while connected and says to wait otherwise.
+    try {
+      await openUpdateConsent()
+      trustApp.mockRejectedValue(apiError(500, { error: 'trust store unavailable' }, 'trust store unavailable'))
+      fireEvent.click(confirmBtn())
+
+      const alert = () => within(screen.getByRole('dialog')).getByRole('alert')
+      await waitFor(() => expect(alert().textContent).toContain(`${K}.failed_generic_next_ask`))
+      expect(alert().textContent).not.toContain(`${K}.failed_generic_next_offline`)
+      expect(within(alert()).getByRole('button', { name: 'components.askAgent.ask_the_agent' })).toBeTruthy()
+
+      act(() => setGatewayConnected(false))
+      await waitFor(() => expect(alert().textContent).toContain(`${K}.failed_generic_next_offline`))
+      expect(alert().textContent).not.toContain(`${K}.failed_generic_next_ask`)
+      expect(within(alert()).queryByRole('button', { name: 'components.askAgent.ask_the_agent' })).toBeNull()
+    } finally {
+      __resetGatewayConnectedForTests()
+    }
+  })
+
+  it('keeps the not-saved next step out of the landed-grant failure', async () => {
+    await openUpdateConsent()
+    installFromRegistryStream.mockResolvedValue({ ok: false, error: 'clone failed' })
+    fireEvent.click(confirmBtn())
+
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
+      .toContain(`${K}.update_failed LaunchDarkly`))
+    const text = screen.getByRole('dialog').textContent ?? ''
+    expect(text).not.toContain(`${K}.failed_generic_next_ask`)
+    expect(text).not.toContain(`${K}.failed_generic_next_offline`)
   })
 
   it('keeps the enable copy out of a landed-grant update failure (#19991)', async () => {

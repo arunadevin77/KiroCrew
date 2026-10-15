@@ -18,7 +18,7 @@
  * install result — the SSE stream reports a refused install as a `done` payload
  * carrying the code, not as a rejection.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Code2, GitBranch, Loader2, Server, ShieldAlert, Terminal } from 'lucide-react'
 
@@ -29,7 +29,7 @@ import ErrorNotice from '../ErrorNotice'
 import { Badge, Btn } from '../ui'
 import SessionApprovalModes from './SessionApprovalModes'
 import { i18nT } from '../../i18n/t'
-import { findReport } from '../../utils/errorReport'
+import { findReport, isGatewayConnected, subscribeGatewayConnected } from '../../utils/errorReport'
 import { sourceLabel, type RegistryApp } from './types'
 
 /** Machine-readable code the enable and registry-install paths return when trust is missing. */
@@ -565,6 +565,16 @@ export default function TrustAppModal({
   const freshInstall = path === 'install'
   const copy = terminalCopy(state, name, path)
   const permanentRefusal = state === 'permanent'
+  // The not-saved state's next step, shared by every path. It names the
+  // notice's Ask the agent hand-off only while that button can render: the
+  // button reads the same gateway-connection store and hides while the gateway
+  // is unreachable, and a sentence pointing at a hidden control is a dead end.
+  const gatewayConnected = useSyncExternalStore(subscribeGatewayConnected, isGatewayConnected)
+  const nextStep = state !== 'failed_generic'
+    ? null
+    : gatewayConnected
+      ? i18nT('components.appstore.trustAppModal.failed_generic_next_ask')
+      : i18nT('components.appstore.trustAppModal.failed_generic_next_offline')
   // When the refusal turns permanent the footer swaps Cancel + confirm for Close.
   // The user's focus was on the confirm button they just pressed; unmounting it
   // drops focus to the document, so a keyboard user's next Tab starts from
@@ -596,17 +606,22 @@ export default function TrustAppModal({
               {i18nT('components.appstore.trustAppModal.cancel')}
             </Btn>
             <Btn primary onClick={onConfirm} disabled={pending}>
-              {/* The install path only installs: the app lands switched off, so
-                  its labels name the trust alone, never "and enable". */}
+              {/* Each path names what confirming runs. A first install only
+                  installs (the app lands switched off), so its labels name the
+                  trust alone, never "and enable"; an Update names the update. */}
               {pending
-                ? <><Loader2 size={14} className="animate-spin" /> {app?.retryInstalls
-                    ? i18nT('components.appstore.trustAppModal.working_install')
-                    : i18nT('components.appstore.trustAppModal.working')}</>
+                ? <><Loader2 size={14} className="animate-spin" /> {path === 'update'
+                    ? i18nT('components.appstore.trustAppModal.working_update')
+                    : path === 'install'
+                      ? i18nT('components.appstore.trustAppModal.working_install')
+                      : i18nT('components.appstore.trustAppModal.working')}</>
                 : failed
                   ? <><ShieldAlert size={14} /> {i18nT('components.appstore.trustAppModal.confirm_after_failure')}</>
-                  : <><ShieldAlert size={14} /> {app?.retryInstalls
-                      ? i18nT('components.appstore.trustAppModal.confirm_install')
-                      : i18nT('components.appstore.trustAppModal.confirm')}</>}
+                  : <><ShieldAlert size={14} /> {path === 'update'
+                      ? i18nT('components.appstore.trustAppModal.confirm_update')
+                      : path === 'install'
+                        ? i18nT('components.appstore.trustAppModal.confirm_install')
+                        : i18nT('components.appstore.trustAppModal.confirm')}</>}
             </Btn>
           </>
         )
@@ -707,6 +722,17 @@ export default function TrustAppModal({
               {i18nT('components.appstore.trustAppModal.install_outcome', { app: name })}
             </p>
           )}
+          {/* The Update path's own outcome line, so the dialog says this is an
+              update and not a first install: the title and the scope line read
+              the same on every path. It stays after a retryable failure, because
+              the footer's retry label is shared by every path and this line is
+              what says the retry still runs the update. A permanent refusal
+              offers Close alone and nothing was changed, so the line goes. */}
+          {path === 'update' && !permanentRefusal && (
+            <p className="text-text leading-relaxed">
+              {i18nT('components.appstore.trustAppModal.update_outcome', { app: name })}
+            </p>
+          )}
           <p className="text-muted leading-relaxed">{copy.exit}</p>
           <p className="text-muted leading-relaxed">
             {i18nT('components.appstore.trustAppModal.revocable')}
@@ -759,7 +785,12 @@ export default function TrustAppModal({
             <ErrorNotice
               message={copy.headline}
               report={detail ? findReport(detail) : undefined}
-              footer={detail ? <span className="font-mono text-[12px]">{detail}</span> : undefined}
+              footer={nextStep || detail ? (
+                <>
+                  {nextStep && <div>{nextStep}</div>}
+                  {detail && <div className="font-mono text-[12px]">{detail}</div>}
+                </>
+              ) : undefined}
               askAgent
             />
           )}
