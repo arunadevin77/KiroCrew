@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sys
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -433,7 +434,10 @@ class TestWarmPool:
     def test_a_backend_override_skips_the_warm_pool(self):
         from kiro_crew import session_allocation
 
-        src = inspect.getsource(session_allocation)
+        src = "".join(
+            inspect.getsource(sys.modules[name])
+            for name in (session_allocation.__name__, *session_allocation._ALLOCATION_OWNERS)
+        )
         assert 'pool_decision = "bypass_backend_override"' in src
         assert 'extra_factory_kwargs.get("backend_override") is not None' in src
 
@@ -472,7 +476,10 @@ class TestSuccessorsKeepTheBackend:
     def test_registration_stamps_the_backend_the_session_started_on(self):
         from kiro_crew import session_allocation
 
-        src = inspect.getsource(session_allocation)
+        src = "".join(
+            inspect.getsource(sys.modules[name])
+            for name in (session_allocation.__name__, *session_allocation._ALLOCATION_OWNERS)
+        )
         assert 'session.backend_override = extra_factory_kwargs.get("backend_override")' in src
 
 

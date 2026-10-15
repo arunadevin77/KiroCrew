@@ -102,7 +102,7 @@ from kiro_crew.security import (
 )
 from kiro_crew.sel import sel
 
-# Imported from the leaf that DEFINES it rather than through kiro_crew.session:
+# Imported from the kiro_crew.session_allocation facade rather than through kiro_crew.session:
 # this module deliberately types ``sessions`` as ``Any`` to stay off the session
 # package's import graph, and session_allocation imports nothing from messaging,
 # so this direction cannot cycle.

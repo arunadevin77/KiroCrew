@@ -1215,7 +1215,7 @@ class TestRetirementCoverage:
         source_root = Path(__file__).parents[1] / "src" / "kiro_crew"
         registration_paths = {
             ("session_allocation.py", "seed_conversation"),
-            ("session_allocation.py", "_get_or_create_impl"),
+            ("session_allocation_parts/get_or_create.py", "_get_or_create_impl"),
         }
         writers: list[str] = []
         offenders: list[str] = []

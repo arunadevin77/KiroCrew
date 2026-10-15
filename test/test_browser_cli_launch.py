@@ -383,7 +383,11 @@ def test_the_session_name_does_not_travel_as_extra_env() -> None:
 
     from kiro_crew import session_allocation
 
-    assert 'pool_decision = "bypass_env"' in inspect.getsource(session_allocation)
+    allocation = "".join(
+        inspect.getsource(sys.modules[name])
+        for name in (session_allocation.__name__, *session_allocation._ALLOCATION_OWNERS)
+    )
+    assert 'pool_decision = "bypass_env"' in allocation
 
     from kiro_crew.acp import client, runtime
 

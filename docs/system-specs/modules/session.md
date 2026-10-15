@@ -151,7 +151,24 @@ using its existing public, import, and monkeypatch seams. Mutable policy and
 state are composed behind that facade:
 
 - `session_allocation.py` — live registry, key folding, semaphore leases,
-  cold-start allocation, claims, and companion runtimes
+  cold-start allocation, claims, and companion runtimes. The class binds its
+  two largest member groups from the `session_allocation_parts/` owners:
+  `get_or_create.py` (claiming the live session for a key, or cold-starting
+  one) and `companions.py` (companion and run runtimes, the parent-sharing
+  decision and the runtimes' process rows); `errors.py` holds the refusals
+  the class and `get_or_create.py` raise. New claim or cold-start behaviour
+  goes in `get_or_create.py`, new companion-runtime behaviour in
+  `companions.py`. Each moved member's body is a function there whose first
+  parameter is `self`, bound on the class by name, so every member stays an
+  attribute of the one class. A bound member's `__qualname__` and `__module__`
+  name its owner (nothing reads them; a coroutine or `Task` repr reads e.g.
+  `get_or_create`), and its `self: SessionAllocationService` annotation is
+  there so mypy checks the moved body: `SessionAllocationService` is imported
+  for type checkers only, so `typing.get_type_hints` on a bound member needs
+  it passed in (`localns`). A class an owner defines keeps
+  `kiro_crew.session_allocation` as its `__module__`.
+  `test/test_session_allocation_bindings.py` pins the member inventory, the
+  binding and the reach
 - `session_pool.py` — warm-provider spawn, inventory, claim, health, and discard
 - `session_background.py` — persistent and multiplexed background runtimes
 - `session_compaction.py` — context gates, compaction execution, verdicts,

@@ -1704,7 +1704,9 @@ _SHARED_RUNTIME_SESSION_SITES = [
 def test_sessions_on_a_shared_runtime_name_their_own_owner(path: str, expected: str) -> None:
     body = (Path(__file__).resolve().parents[1] / path).read_text(encoding="utf-8")
     start = body.index("await runtime.create_session(")
-    call = body[start : body.index("\n        )", start)]
+    line = body[body.rindex("\n", 0, start) + 1 : start]
+    indent = line[: len(line) - len(line.lstrip())]
+    call = body[start : body.index("\n" + indent + ")", start)]
     assert expected in call, f"{path} opens a shared-runtime session without naming its owner"
 
 

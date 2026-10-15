@@ -154,7 +154,6 @@
 3920 src/kiro_crew/sel.py
 2232 src/kiro_crew/service/linux.py
 4073 src/kiro_crew/session.py
-3072 src/kiro_crew/session_allocation.py
 2421 src/kiro_crew/session_ledger.py
 3686 src/kiro_crew/session_lifecycle.py
 2648 src/kiro_crew/session_map.py

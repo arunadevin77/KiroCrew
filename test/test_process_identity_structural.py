@@ -52,6 +52,9 @@ REAPER_MODULES = (
     "process_identity.py",
     "session.py",
     "session_allocation.py",
+    "session_allocation_parts/companions.py",
+    "session_allocation_parts/errors.py",
+    "session_allocation_parts/get_or_create.py",
 )
 
 #: Attribute names that address a process by its bare pid when called.

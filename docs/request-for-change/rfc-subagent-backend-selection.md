@@ -136,7 +136,7 @@ is unaffected.
 ### 4. Isolation
 
 A run with an override never takes the shared runtime or a warm-pool process
-(`pool_decision = "bypass_backend_override"` in `session_allocation.py`). A pool
+(`pool_decision = "bypass_backend_override"` in `session_allocation_parts/get_or_create.py`). A pool
 process is already bound to the default harness, so a child sharing it would
 silently run on the parent's backend.
 

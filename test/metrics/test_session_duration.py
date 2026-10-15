@@ -1477,6 +1477,10 @@ class TestTeardownPathsAreWired:
         from pathlib import Path
 
         root = Path(sess.__file__).resolve().parent.parent
-        for rel in ("session_allocation.py", "session_background.py"):
+        for rel in (
+            "session_allocation.py",
+            "session_allocation_parts/get_or_create.py",
+            "session_background.py",
+        ):
             src = (root / rel).read_text(encoding="utf-8")
             assert "record_session_started" in src, rel

@@ -86,8 +86,8 @@ On the **chat** registration path a lease means the same thing as registry
 membership, which is why it is taken there rather than at provider start:
 `session_allocation.SessionAllocationService._get_or_create_impl` calls
 `acquire_session_lease` immediately after the session enters `self._sessions`.
-Before that line no tenant exists, which is why every earlier cleanup path in that
-file may kill unconditionally.
+Before that line no tenant exists, which is why every earlier cleanup path in
+`session_allocation.py` and its `session_allocation_parts/` owners may kill unconditionally.
 
 That equivalence holds for chat and nowhere else, and the difference matters to
 anyone reading a lease count as a tenancy count. `acquire_session_lease` is reached

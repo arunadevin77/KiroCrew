@@ -334,14 +334,17 @@ class TestSpawnIdentityStamp:
 
         src = Path(__file__).parents[1] / "src" / "kiro_crew"
         expected = {
-            # shared run runtime + cold start + direct companion runtime
-            "session_allocation.py": 3,
+            # shared run runtime + direct companion runtime
+            "session_allocation_parts/companions.py": 2,
+            # cold start
+            "session_allocation_parts/get_or_create.py": 1,
             # bg create + recycle replacement + bg replacement runtime
             "session_background.py": 3,
             "session_pool.py": 1,  # warm pool fill
         }
         pre_reads = {
-            "session_allocation.py": 3,
+            "session_allocation_parts/companions.py": 2,
+            "session_allocation_parts/get_or_create.py": 1,
             # the bg replacement runtime re-brackets its fallback spawn, so it
             # carries one more pre-read than stamp calls
             "session_background.py": 4,
@@ -768,7 +771,13 @@ class TestSpawnIdentityStamp:
 
         src_root = Path(kiro_crew.__file__).parent
         guarded = 0
-        for rel in ("session_allocation.py", "session_background.py", "session_pool.py"):
+        for rel in (
+            "session_allocation.py",
+            "session_allocation_parts/companions.py",
+            "session_allocation_parts/get_or_create.py",
+            "session_background.py",
+            "session_pool.py",
+        ):
             text = (src_root / rel).read_text(encoding="utf-8")
             lines = text.splitlines()
             for i, line in enumerate(lines):
@@ -867,7 +876,13 @@ class TestSpawnIdentityStamp:
 
         src_root = Path(kiro_crew.__file__).parent
         scanned = 0
-        for rel in ("session_allocation.py", "session_background.py", "session_pool.py"):
+        for rel in (
+            "session_allocation.py",
+            "session_allocation_parts/companions.py",
+            "session_allocation_parts/get_or_create.py",
+            "session_background.py",
+            "session_pool.py",
+        ):
             lines = (src_root / rel).read_text(encoding="utf-8").splitlines()
             for i, line in enumerate(lines):
                 if "await stamp_spawn_identity(" not in line:
