@@ -1517,7 +1517,7 @@ class TestMirrorAdmission:
         assert others == {
             ("messaging/link.py", "bind_origin_mirror"),
             ("messaging/link.py", "rebind_conversation_location"),
-            ("session.py", "set_mirror_link"),
+            ("session_parts/links.py", "set_mirror_link"),
             ("webex/transport_dispatch.py", "_rebind"),
             ("wecom/transport_dispatch.py", "_handle_link"),
         }, others
