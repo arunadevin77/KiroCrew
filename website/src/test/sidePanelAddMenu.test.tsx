@@ -48,7 +48,8 @@ vi.mock('../utils/fileReadQuery', async (importOriginal) => ({
 
 globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as never
 
-import SidePanel, { newMenuSections, NEW_MENU_LABEL_KEY } from '../pages/chat/SidePanel'
+import SidePanel from '../pages/chat/SidePanel'
+import { newMenuSections, NEW_MENU_LABEL_KEY } from '../pages/chat/sidePanelMenu'
 import { usePanelTabs, __resetPanelTabs } from '../hooks/usePanelTabs'
 import { LONG_PRESS_MS } from '../hooks/useLongPressReorder'
 

@@ -23,7 +23,7 @@ import { CATALOGS } from '../i18n/catalogs'
 import { EFFORT_LABEL_KEY, effortLabel } from '../lib/effort'
 import { FILTER_LABEL_KEY, FILTER_DESCRIPTION_KEY, SORT_LABEL_KEY } from '../pages/ChatSidebar'
 import { STAT_LABEL_KEY } from '../pages/OverviewPage'
-import { NEW_MENU_LABEL_KEY, NEW_MENU_DESC_KEY } from '../pages/chat/SidePanel'
+import { NEW_MENU_LABEL_KEY, NEW_MENU_DESC_KEY } from '../pages/chat/sidePanelMenu'
 import { STATE_LABEL_KEY } from '../apps/auto-research/ResearchLabPage'
 
 function flatten(obj: unknown, prefix = ''): Record<string, string> {

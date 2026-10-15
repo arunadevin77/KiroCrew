@@ -32,21 +32,6 @@ import {
 
 afterEach(cleanup)
 
-/**
- * Budget for the two placement tests that dynamically import
- * `pages/chat/SidePanel`.
- *
- * Whichever of them runs first pays that module graph's resolve+transform, which
- * exceeded the 15s global default on a Windows checkout — so both failed for
- * every Windows contributor while passing on CI's Linux runner. The import stays
- * DYNAMIC deliberately: hoisting it to a static top-level import moved the same
- * work into the file's import phase and took the whole file from 32s to 259s
- * (measured), because then every test in it waits on that graph. This is a real,
- * bounded cost rather than a hang, so a per-test budget is the honest fix; the
- * global default stays tight for everything else.
- */
-const SIDE_PANEL_IMPORT_TIMEOUT_MS = 45_000
-
 const turn = (over: Partial<ContextTurn> = {}): ContextTurn => ({
   ts: '2026-08-04T00:00:00Z',
   phase: 'per_turn',
@@ -597,17 +582,14 @@ describe('thirty turns in a narrow side panel', () => {
 })
 
 describe('placement: a per-session tab, not a global page', () => {
-  // These two dynamically import `pages/chat/SidePanel`, whose transform is
-  // charged to whichever test triggers it first. That exceeded the 15s default on
-  // a Windows checkout, so both failed there while passing on CI's Linux runner.
-  // The import stays DYNAMIC on purpose: hoisting it to a static top-level import
-  // moved the same work into the file's import phase and took the file from 32s to
-  // 259s (measured), because every test then waits on that graph. A per-test budget
-  // is the cheaper half of that trade -- it is not masking a hang, the work is real
-  // and bounded.
+  // These two dynamically import `pages/chat/sidePanelMenu`, the lightweight
+  // menu-data module extracted from SidePanel. That module's graph contains only
+  // lucide icons and usePanelTabs — no framer-motion, react-markdown, or
+  // highlight.js — so both tests complete well within the global timeout on
+  // any platform.
   it('is registered as a side-panel view next to Logs', async () => {
     const { PINNED_VIEWS } = await import('../hooks/usePanelTabs')
-    const { NEW_MENU_LABEL_KEY, NEW_MENU_DESC_KEY } = await import('../pages/chat/SidePanel')
+    const { NEW_MENU_LABEL_KEY, NEW_MENU_DESC_KEY } = await import('../pages/chat/sidePanelMenu')
     // Opened from the + menu like Logs — not auto-pinned, since a session the
     // user never inspects should not carry a permanent extra tab.
     expect(PINNED_VIEWS).not.toContain('context')
@@ -615,10 +597,10 @@ describe('placement: a per-session tab, not a global page', () => {
     // asserts the pair exists so the menu row can never render label-less.
     expect(NEW_MENU_LABEL_KEY.context).toBeTruthy()
     expect(NEW_MENU_DESC_KEY.context).toBeTruthy()
-  }, SIDE_PANEL_IMPORT_TIMEOUT_MS)
+  })
 
   it('is hidden from the + menu unless Developer Mode is on', async () => {
-    const { newMenuSections } = await import('../pages/chat/SidePanel')
+    const { newMenuSections } = await import('../pages/chat/sidePanelMenu')
     const kinds = (o: { devMode: boolean; terminalEnabled: boolean }) =>
       newMenuSections({ ...o, summaryEnabled: true }).flatMap(g => g.items).map(i => i.kind)
     // Dev mode off: Context breakdown is not offered — it is a developer surface.
@@ -633,7 +615,7 @@ describe('placement: a per-session tab, not a global page', () => {
     expect(kinds({ devMode: false, terminalEnabled: false })).not.toContain('logs')
     expect(kinds({ devMode: true, terminalEnabled: false })).toContain('logs')
     expect(kinds({ devMode: false, terminalEnabled: false })).not.toContain('terminal')
-  }, SIDE_PANEL_IMPORT_TIMEOUT_MS)
+  })
 
   it('carries no session picker — the tab IS the session', () => {
     render(
