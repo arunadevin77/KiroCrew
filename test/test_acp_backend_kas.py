@@ -324,10 +324,14 @@ class TestBackendThreading:
     """
 
     def test_every_runtime_construction_passes_the_backend(self):
-        source = Path(providers_acp.__file__).read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        # The facade and the owner modules its members live in.
+        trees = [
+            ast.parse(Path(sys.modules[name].__file__).read_text(encoding="utf-8"))
+            for name in (providers_acp.__name__, *providers_acp._ACP_PROVIDER_OWNERS)
+        ]
         sites = [
             node
+            for tree in trees
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)

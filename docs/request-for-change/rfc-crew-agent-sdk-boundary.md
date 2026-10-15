@@ -593,14 +593,14 @@ below. All `:NNN` references in the middle column are `acp_backends.py`.
 | `bills_host_credits` | `bills_kiro_credits` membership |
 | `reports_subagent_progress` | descriptor level |
 | `activates_agent_by_mode` | `AcpClient._initialize_session` `if self._is_kiro:` |
-| `native_slash_commands` | `providers/acp.py:1263` `if self.is_claude_backend:` |
-| `reports_compaction_status` | a comment at `providers/acp.py:1297-1306` |
+| `native_slash_commands` | `AcpProvider.stream_command` (`providers/acp_turns.py`) `if self.is_claude_backend:` |
+| `reports_compaction_status` | a comment in `AcpProvider.compact` (`providers/acp_turns.py`) |
 | `resume_needs_local_transcript` | `AcpClient._initialize_session` `if self._is_claude:` |
 | `injects_mcp_per_session` | `acp/client.py` |
 | `advertised_ids_comparable` | `AcpClient.set_model` `if self._is_kiro and self._model_is_unusable(...)` |
 | `substitutes_models_at_session_new` | `AcpClient._apply_startup_model` |
-| `can_reset_config_default` | `providers/acp.py:1139` |
-| `effort_applied_at_spawn` | `providers/acp.py:957` |
+| `can_reset_config_default` | `AcpProvider.clear_effort` (`providers/acp_model_effort.py`) |
+| `effort_applied_at_spawn` | `AcpProvider._apply_initial_effort` (`providers/acp_model_effort.py`) |
 | `permission_mode_is_spawn_scoped` | the companion’s provider, itself `getattr(client, "_is_claude", False)` |
 | `writes_own_transcripts` | `AcpClient._initialize_session` `if self._session_id and self._is_kiro:` |
 
@@ -651,7 +651,7 @@ def spawnable_multiplexed_selections() -> frozenset[str]:
 ```
 
 `multiplexes_sessions` stays on `SessionCapabilities` for the post-session
-question (the existing spelling, `providers/acp.py:466-476`, needs a started
+question (the existing spelling, `AcpProvider.is_session_sharing_eligible`, needs a started
 process, which is what makes it post-session). A registry function was chosen over
 an `AgentSupervisor.can_multiplex(selection) -> bool` method for two reasons: the
 answer is genuinely set-valued, so a boolean accessor throws away the shape at
@@ -678,7 +678,7 @@ absences that change control-flow *shape*. No `set_mode` removes the home of a
 fail-closed privilege check (`AcpClient._initialize_session`). No compaction
 notification inverts a two-call API into one. No `commands/execute` deletes a
 method the draft never drew at all, though `AcpClient.stream_command` is real
-surface with a real degradation branch at `providers/acp.py:1263-1268`. Under a
+surface with a real degradation branch in `AcpProvider.stream_command` (`providers/acp_turns.py`). Under a
 flat mandatory interface every absence becomes an implement-and-raise stub, and
 the `not is_claude` inference the frozensets were built to kill reappears at the
 SDK boundary where consumers can no longer see it.
@@ -709,7 +709,7 @@ Optional, presence-tested:
 `compact()` returns a `CompactionResult` rather than being a two-call
 `compact` + `wait_for_compaction` pair, because the two-call form encodes Kiro's
 asynchronous model. On a host that compacts synchronously inside `session/prompt`
-no status notification ever arrives, `providers/acp.py:1378-1386` leaves the
+no status notification ever arrives, `AcpProvider.compact` (`providers/acp_turns.py`) leaves the
 result unset, and the wait can only time out. A driver that *does* report status
 additionally implements `AgentCompactionReporting`.
 
@@ -747,7 +747,7 @@ override.
 
 The 11 private shims stay out. Exactly one of them
 (`_drain_post_compaction_metadata`, reached by `getattr` at
-`providers/acp.py:1474`) has a cross-package caller today, and it is inside the
+`AcpProvider.wait_for_compaction` in `providers/acp_turns.py`) has a cross-package caller today, and it is inside the
 would-be driver — so nothing outside loses access.
 
 ### 5.4 The supervisor owns process and session lifecycle

@@ -953,7 +953,7 @@ it is life-long; this one is not that. The harness's own sandbox can refuse when
 spawns a tool subprocess long after the agent started fine, and a life-long latch would
 let that make the next unrelated death permanently "your sandbox is broken". Clearing it
 at the handshake — rather than only stopping the arming — is what makes every consumer
-correct by construction: the three startup translations in `providers/acp.py` read it
+correct by construction: the three startup translations in `providers/acp_runtime_start.py` read it
 before the handshake, and a per-turn path reached after it can only ever see `False`.
 
 The error names the layer that wrapped the spawn, from `sandbox.wrapped_by_crew_sandbox()`

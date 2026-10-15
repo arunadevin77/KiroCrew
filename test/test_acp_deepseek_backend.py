@@ -21,6 +21,7 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import threading
 from pathlib import PurePath
 from unittest.mock import AsyncMock, MagicMock
@@ -2277,13 +2278,16 @@ def test_no_site_that_asks_about_effort_spells_the_id_itself() -> None:
     """Membership in the effort set is worth nothing if a consumer hard-codes the id.
 
     The levels parser is one site; ``_PROVIDER_EFFORT_ID_SITES`` names the ones in
-    ``providers/acp.py``. A literal at any of them makes the whole channel a silent
+    ``providers/acp_model_effort.py``. A literal at any of them makes the whole channel a silent
     no-op for this harness: the check reports the option unsupported, the push never
     happens, and the dropdown still offers levels that can never be applied.
     """
     from kiro_crew.providers import acp as provider_module
 
-    body = inspect.getsource(provider_module.AcpProvider)
+    # The class and the owner modules its members live in.
+    body = inspect.getsource(provider_module.AcpProvider) + "".join(
+        inspect.getsource(sys.modules[name]) for name in provider_module._ACP_PROVIDER_OWNERS
+    )
     assert 'supports_config_option("effort")' not in body
     assert 'set_config_option("effort"' not in body
     assert body.count("effort_config_option_id(self._client.backend)") == len(

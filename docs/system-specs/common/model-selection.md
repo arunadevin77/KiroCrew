@@ -362,7 +362,7 @@ serving that other model.
 
 Three more sites apply the same rule on the wire, and one on the picker:
 `AcpClient._apply_startup_model`, the shared-runtime cold start in
-`providers/acp.py`, the warm-pool post-claim switch in `session_allocation.py`
+`providers/acp_runtime_start.py`, the warm-pool post-claim switch in `session_allocation.py`
 (through the injected `model_pin_applies` dep), and `_scoped_default` behind
 `GET /api/models`. A harness-scope refusal logs at INFO on wire paths and at
 DEBUG on display paths, and MUST NOT take the entitlement warning path: harness
@@ -559,7 +559,7 @@ its own once the cache refreshes with a list that carries it.
   is read as accepted and the model is recorded, as it was before the wait existed.
   A startup pin that a kiro session withholds because the account does not serve
   it (`AcpClient._apply_startup_model` on the dedicated runtime, the kiro start in
-  `providers/acp.py` on the shared one) is recorded in `model_pin_refused` the same
+  `providers/acp_runtime_start.py` on the shared one) is recorded in `model_pin_refused` the same
   way, so the cron acquire step in `slack/gateway.py` annotates the result and
   blanks the pinned model on the usage row instead of billing a model that never ran.
   Both refusals carry `advertised_but_refused` from the same verdict, which selects

@@ -386,7 +386,7 @@ def _write_effort_overlay(work_dir: str, model: str, effort: str = REVIEW_EFFORT
     on session/new; workspace settings override the global ``~/.kiro/settings/cli.json``,
     so this is scoped to the review worker's cwd (the app root) and NEVER changes the
     user's own interactive sessions. Schema (canonical impl:
-    ``kiro_crew/providers/acp.py:_write_cli_overlay``)::
+    ``kiro_crew/providers/acp_cli_overlay.py:_write_cli_overlay``)::
 
         {"chat.modelDefaults": {"<model>": {"output_config": {"effort": "<level>"}}}}
 

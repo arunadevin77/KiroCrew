@@ -2213,7 +2213,7 @@ class AcpRuntime:
                         # disabled ``skill_search`` -- and says so in a sentence
                         # that names the spec and the remedy. That sentence is
                         # the user's, so it travels as the error the startup
-                        # paths translate (``providers/acp.py`` handles
+                        # paths translate (``providers/acp_runtime_start.py`` handles
                         # ``AcpRuntimeError`` around ``spawn()``); a bare
                         # ``ValueError`` would leave ``spawn()`` as an internal
                         # failure with the actionable text unread. ``spawn_agent``
@@ -2421,7 +2421,7 @@ class AcpRuntime:
         # The subprocess is LIVE from here on but nothing has recorded it yet, so
         # this window needs the same guard AcpClient._spawn has. finish_suspended_spawn
         # documents its own resume failure as FATAL, and the identity read can fail;
-        # all four runtime.spawn() callers (providers/acp.py:726, :825 catch
+        # all four runtime.spawn() callers (providers/acp_runtime_start.py twice, catching
         # AcpRuntimeError; session.py:1416, :1490 catch AcpRuntimeDead) let anything
         # else through, so a raise here left a live process absent from both PID
         # files -- unreachable by every agent-runtime reaper and leaking until the

@@ -32,8 +32,8 @@ worker pools that build a client directly, e.g. ``knowledge/llm_pool``) stays on
 ``AcpClient`` (its tool-frame shaping lives in ``acp/client_tool_events.py``), which
 re-implements the same shaping inline and never calls
 ``parse_session_update``. ``providers/acp.py`` constructs an ``AcpClient`` and
-then swaps in an ``AcpSessionProvider`` at startup for the kiro path, so both
-parsers are live in a normal install and both are instrumented here.
+``providers/acp_runtime_start.py`` swaps in an ``AcpSessionProvider`` at startup for
+the kiro path, so both parsers are live in a normal install and both are instrumented here.
 
 Every surface -- dashboard, Slack, Discord, cron, subagents, task runner,
 workflow -- sits DOWNSTREAM of those two: they consume the emitted ``AcpEvent``

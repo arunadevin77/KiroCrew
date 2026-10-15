@@ -750,11 +750,16 @@ def test_every_shared_runtime_startup_site_consults_the_latch():
     path without the sandbox check fails here.
     """
     import re
+    import sys
     from pathlib import Path
 
     import kiro_crew.providers.acp as provider_mod
 
-    source = Path(provider_mod.__file__).read_text()
+    # The facade and the owner modules its members live in.
+    source = "\n".join(
+        Path(sys.modules[name].__file__).read_text()
+        for name in (provider_mod.__name__, *provider_mod._ACP_PROVIDER_OWNERS)
+    )
     auth_sites = len(re.findall(r"runtime\.saw_not_logged_in\(\)", source))
     sandbox_sites = len(re.findall(r"sandbox_init_failure_for_runtime\(runtime\)", source))
     assert auth_sites == 3, f"the auth latch is read at {auth_sites} sites, not 3"

@@ -454,6 +454,42 @@ tool-less session. The session-scoped barrier and its budget are specified in
 The one concrete provider. It spawns a long-lived harness subprocess — by default
 `kiro-cli acp --agent <name>` — and speaks JSON-RPC 2.0 over stdio.
 
+`AcpProvider`'s own behaviour lives in `providers/acp_*.py` owner modules, one
+responsibility each. A moved member's body is a module-level function there whose
+first parameter is `self` (annotated `AcpProvider` for type checkers only), and the
+class binds it by name under one comment header per owner (`change_effort =
+_acp_model_effort.change_effort`, `staticmethod(...)` for `_to_llm_event`). Every
+member therefore stays an attribute of the one class, so a patch of a method on the
+class or on an instance reaches every caller, an `AcpProvider.__new__` build and a
+`MagicMock(spec=AcpProvider)` see the same members, and the session's state stays on
+the instance; each owner's docstring names the instance fields its members write and
+read. A bound member's `__qualname__` and `__module__` name its owner (nothing reads
+them), and `typing.get_type_hints` on one needs `AcpProvider` passed in (`localns`).
+`_ACP_PROVIDER_OWNERS` lists the owners lowest layer first: an owner imports only
+owners listed before it. Owners log under the `kiro_crew.providers.acp` logger, never
+import `providers/acp.py` at run time, and read their globals in their own
+namespaces: `providers/acp.py` keeps binding every name it imported, serves each moved
+module-level helper its own code does not read (`_write_cli_overlay`,
+`_RESUME_MAX_ATTEMPTS`, and the rest of `_SERVED`) from the owner that defines it, and
+a write through it reaches every owner binding the same object
+(`kiro_crew._facade_mirror`). `test/test_acp_bindings.py` pins the member inventory,
+the binding and the reach.
+
+| Provider owner | Owns |
+|---|---|
+| `providers/acp_cli_overlay.py` | the workspace `cli.json` overlay a kiro-family spawn reads: the effort and Tool Search writers, the effort clear and the recovery read, and `_apply_effort_overlay` / `_apply_tool_search_overlay` |
+| `providers/acp_model_effort.py` | the model and reasoning effort a session runs at: the picker's advertised-model revalidation, `set_model`, and the effort vocabulary, resolution, live push, rollback and clear |
+| `providers/acp_runtime_start.py` | the cold start of a runtime-backed session: spawn, resume past a stale native session lock and the fresh-session fallback, the configured model pin, the startup telemetry, the session identity handed to the runtime, and the start-time check for an MCP server that gave the session no tools |
+| `providers/acp_lifecycle.py` | the start and shutdown sequence, the registry claim on a derived run work directory and its reclaim, and the native session-file cleanup |
+| `providers/acp_turns.py` | turns on the inner client: prompt and slash-command streams and their event translation, manual compaction and the wait for its result, cancel and steer |
+
+`AcpProvider` keeps its constructor, its properties and class defaults, `approve_tool`
+(the transport approval floor keys it on this path), `is_process_alive` and
+`process_instance` (the pid-reader ratchet counts them), and the thin delegations to
+the inner client; `is_claude_backend` and `provider_label` stay module functions of
+`providers/acp.py`. New `AcpProvider` behaviour goes to the provider owner whose row
+names its responsibility, bound in the class under that owner's header.
+
 **The backend seam:** `AcpProvider`/`AcpClient` take an `acp_backend` id from
 `ACP_BACKENDS_KNOWN`; the empty id denotes kiro-cli. Construction rejects an id
 outside that registry, so a value that falls through every identity check cannot

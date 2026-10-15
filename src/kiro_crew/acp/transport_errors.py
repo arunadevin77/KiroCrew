@@ -906,7 +906,7 @@ async def sandbox_init_failure_for_runtime(runtime: Any) -> "AcpSandboxInitFaile
 
     ONE function for the three sites that translate a shared-runtime STARTUP
     failure, so they cannot answer this differently. All three are in
-    ``providers/acp.py`` -- the first ``spawn()``, the resume respawn, and
+    ``providers/acp_runtime_start.py`` -- the first ``spawn()``, the resume respawn, and
     ``create_session()`` -- and each already restates the auth translation inline.
     A third restatement of THIS one is how one startup path ends up classifying
     what another does not, which is the shape that let the shared-runtime startup

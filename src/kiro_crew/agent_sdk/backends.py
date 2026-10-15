@@ -1093,7 +1093,7 @@ ACP_BACKENDS_MEMBER_TOOL_LIMITS = frozenset({ACP_BACKEND_KIRO})
 # ``AcpRuntime``: their arrays come from ``AcpRuntime._mirrored_session_mcp`` and
 # ``create_session`` / ``load_session`` append the entry themselves, on a non-empty
 # ``member_session_key``. That key is where membership is read
-# (``providers/acp.py`` ``_member_session_key``), which is why adding a backend here
+# (``providers/acp_runtime_start.py`` ``_member_session_key``), which is why adding a backend here
 # is the whole of the change for a runtime-served harness. Both establishment paths
 # carry it, because ``session/load`` re-initializes a session's MCP servers and a
 # resume that skipped the append would strip a member thread of its tools
@@ -1157,7 +1157,7 @@ ACP_BACKENDS_MEMBER_DISPATCH = frozenset(
 # and H6 asks for the panel on its own evidence: no panel mount has been driven on it.
 #
 # kiro is excluded and cannot be added by this set alone: a member session's key is
-# what every mount reads, and ``providers/acp.py`` ``_member_session_key`` gates
+# what every mount reads, and ``providers/acp_runtime_start.py`` ``_member_session_key`` gates
 # that key on ``ACP_BACKENDS_MEMBER_DISPATCH``. So this set decides whether a
 # member session that EXISTS gets a panel; whether one exists at all is that
 # gate's decision, and a backend must clear both.

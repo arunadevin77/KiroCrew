@@ -136,7 +136,7 @@ credential mask and the two things it spares — the adapter's own token leaf, a
 the Crew runtime leaves a child must reach, `sandbox.crew_host_runtime_leaves()`
 (`agent_sdk/tool_gate.py`), the
 the logout-recycle answer `backends_retired_by_host_logout()`, the `AcpAuthRequired` text
-raised at every sign-in failure (`acp/session_provider.py`, `providers/acp.py`,
+raised at every sign-in failure (`acp/session_provider.py`, `providers/acp_runtime_start.py`,
 `acp/client.py`), and the `auth` object on `GET /api/acp-backends`
 (`dashboard/handlers/acp_backend_status.py`).
 

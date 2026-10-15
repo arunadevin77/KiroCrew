@@ -762,7 +762,7 @@ def _doctor_runtime_tmpfs(issues: list[str]) -> None:
 # kiro-cli runs its auto-update check on STARTUP — the ``app.disableAutoupdates``
 # setting is documented as "Disable automatic updates on startup" — and Crew
 # spawns a FRESH kiro-cli per session (``AcpRuntime`` is constructed per session
-# in ``providers/acp.py`` and ``session.py``, and again per Code Review Sage
+# in ``providers/acp_runtime_start.py`` and ``session.py``, and again per Code Review Sage
 # worker). So that check runs once per process START, not once per host per
 # release.
 #

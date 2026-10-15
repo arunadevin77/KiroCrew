@@ -35,6 +35,16 @@ DELEGATING = (
     "session.py",
 )
 
+#: The owner modules ``providers/acp.py``'s ``AcpProvider`` members live in: the
+#: no-compare ratchet reads them with the facade, which holds the helper calls.
+_DELEGATING_OWNERS = (
+    "providers/acp_cli_overlay.py",
+    "providers/acp_lifecycle.py",
+    "providers/acp_model_effort.py",
+    "providers/acp_runtime_start.py",
+    "providers/acp_turns.py",
+)
+
 
 @pytest.mark.parametrize(
     "value,expected",
@@ -150,7 +160,7 @@ def _constant_comparisons(path: Path) -> list[int]:
     return hits
 
 
-@pytest.mark.parametrize("rel", DELEGATING)
+@pytest.mark.parametrize("rel", DELEGATING + _DELEGATING_OWNERS)
 def test_delegating_files_do_not_compare_the_constant(rel: str) -> None:
     """Ratchet: these files must not re-grow their own comparison."""
     hits = _constant_comparisons(SRC / rel)

@@ -2068,7 +2068,7 @@ the `_meta` dict), and the origin check is "the routed `progressToken` belongs t
 a tool call this session issued"; the gateway backend already routes that
 notification to the requesting session. A tool result body containing the shape is content, never status.
 
-**Consumers.** `providers/acp.py` forwards `AcpEvent.status` unchanged. The main chat's tool-stall continuation (`chat_runner`) takes `stuck_input` from `status.wait_reason == waiting_input` on the terminal completion before the evidence-text marker; the sub-agent run loop yields its lane slot on an `EVENT_STRUCTURED_STATUS` frame with `waiting_input` (`WaitRecord.input(tool_call_id)`, residency kept — [subagent.md](subagent.md) § Typed input wait) and steers its recovery prompt from the same field.
+**Consumers.** `providers/acp_turns.py` forwards `AcpEvent.status` unchanged. The main chat's tool-stall continuation (`chat_runner`) takes `stuck_input` from `status.wait_reason == waiting_input` on the terminal completion before the evidence-text marker; the sub-agent run loop yields its lane slot on an `EVENT_STRUCTURED_STATUS` frame with `waiting_input` (`WaitRecord.input(tool_call_id)`, residency kept — [subagent.md](subagent.md) § Typed input wait) and steers its recovery prompt from the same field.
 
 ### Harness-native subtasks: inventory and recovery boundary
 
@@ -3216,7 +3216,7 @@ by returning `None` (joining its blank-line and non-JSON paths) but keeps
 ending on its deadline rather than unbounded state.
 
 Every session on an `ACP_BACKENDS_ACP_RUNTIME` backend (kiro, KAS, Codex) runs on
-`AcpRuntime` + `AcpSessionHandle`: `AcpProvider.start()` (`providers/acp.py`)
+`AcpRuntime` + `AcpSessionHandle`: `AcpProvider.start()` (`providers/acp_lifecycle.py`)
 branches on `is_acp_runtime_backend` and wraps an `AcpSessionHandle` in
 `AcpSessionProvider` — so main chat, dashboard, cron, and subagents all run on
 the runtime rather than a per-session `AcpClient`. The Claude backend keeps the

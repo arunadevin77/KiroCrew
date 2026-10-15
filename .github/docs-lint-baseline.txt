@@ -200,14 +200,6 @@ line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	messaging/driver
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	platform/bootstrap.py:220-229
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	platform/defaults.py:41-48
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	platform/interfaces.py:66-90
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	providers/acp.py:1139
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	providers/acp.py:1263
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	providers/acp.py:1263-1268
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	providers/acp.py:1297-1306
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	providers/acp.py:1378-1386
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	providers/acp.py:1474
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	providers/acp.py:466-476
-line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	providers/acp.py:957
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	security.py:50-58
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	session.py:1108
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	session.py:170
@@ -341,9 +333,6 @@ line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	history.py:8
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	llm_helpers.py:299
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	mcp_core.py:228,357,288,318
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	platform/governance_profiles.py:212-220
-line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	providers/acp.py:1124-1141
-line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	providers/acp.py:376
-line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	providers/acp.py:609
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	runtime.py:522
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	sel.py:856-888
 line-ref	docs/request-for-change/rfc-resumable-subagent-sessions.md	sel.py:891

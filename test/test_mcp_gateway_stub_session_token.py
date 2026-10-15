@@ -1826,7 +1826,7 @@ async def test_a_cold_started_session_can_re_bind_after_a_respawn(
 #: shared-runtime session sites: one deleted keyword argument and the provider's
 #: re-claim carries no key, which gatewayd discards.
 _PROVIDER_OWNER_SITES = [
-    ("src/kiro_crew/providers/acp.py", "session_key=self._owning_session_key()"),
+    ("src/kiro_crew/providers/acp_runtime_start.py", "session_key=self._owning_session_key()"),
     ("src/kiro_crew/subagent_manager/run.py", "session_key=session_key"),
 ]
 

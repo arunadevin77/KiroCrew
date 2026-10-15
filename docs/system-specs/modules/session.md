@@ -2775,7 +2775,7 @@ lock file ...: No such file or directory"**. Both are transient
 file"` — deliberately not a bare `"lock file"`, so a permanent failure such as
 `Permission denied` on the lock path still fails fast to Phase 2)
 and recovery happens at the resume
-chokepoint (`AcpProvider._load_session_with_retry`, `providers/acp.py`) and
+chokepoint (`AcpProvider._load_session_with_retry`, `providers/acp_runtime_start.py`) and
 self-heals regardless of *why* the resume failed — it never depends on the dead
 holder cooperating (unlike cooperative drain), so it covers every kill mode:
 

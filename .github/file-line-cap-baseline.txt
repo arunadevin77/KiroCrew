@@ -145,7 +145,6 @@
 2275 src/kiro_crew/platform/wheel_engine.py
 11211 src/kiro_crew/platform_compat.py
 2787 src/kiro_crew/portability.py
-3193 src/kiro_crew/providers/acp.py
 2258 src/kiro_crew/safety_override.py
 8084 src/kiro_crew/sandbox.py
 2284 src/kiro_crew/sandbox_launcher_program.py
