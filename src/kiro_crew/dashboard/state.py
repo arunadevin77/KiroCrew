@@ -5762,10 +5762,11 @@ class _ChatSlot:
     def enqueue_or_run_prompt(
         self,
         prompt: str,
-        run_chat_coro: Callable[[DashboardState, _ChatSlot, str], Coroutine[Any, Any, None]],
+        run_chat_coro: Callable[..., Coroutine[Any, Any, None]],
         state: DashboardState,
         *,
         extra_meta: dict[str, Any] | None = None,
+        turn_actor: str = "",
     ) -> bool:
         """Queue *prompt* if busy, otherwise start an agent turn.
 
@@ -5781,10 +5782,11 @@ class _ChatSlot:
         containment stamp, for a producer that must record something about the
         ADMISSION for the drain to read later -- ``session_control.send_to_target``
         stamps the sending session there (``send_origin_meta``) so a drop can be
-        reported back to it. Ignored on the run arm: a prompt that starts its turn
-        immediately has no queue entry and no later drain to tell anything to. The
-        containment keys win a collision, since the drain's own authorization
-        decision must not be overwritable by a caller's extra fields.
+        reported back to it. ``turn_actor`` names a non-user producer on both arms:
+        it is passed to the immediate runner and stamped on a queued entry for the
+        later drain. Blank keeps the ordinary user-turn shape. The containment keys
+        win a collision, since the drain's own authorization decision must not be
+        overwritable by a caller's extra fields.
 
         Concurrency: the check (``self.running``) and mutation (``self.task = ...``)
         run synchronously on the asyncio event loop with no ``await`` between them,
@@ -5793,7 +5795,10 @@ class _ChatSlot:
         """
         if self.running:
             # circular import: session_control imports this module at module level.
-            from kiro_crew.dashboard.chat_delivery import start_queue_persist
+            from kiro_crew.dashboard.chat_delivery import (
+                TURN_ACTOR_META_KEY,
+                start_queue_persist,
+            )
             from kiro_crew.dashboard.session_control import containment_meta
 
             # Stamp the containment constraints holding at ADMISSION, so the
@@ -5805,6 +5810,8 @@ class _ChatSlot:
             # win a collision: a caller's extra fields are descriptive, and the
             # drain's authorization input must not be replaceable from here.
             _meta: dict[str, Any] = dict(extra_meta or {})
+            if turn_actor:
+                _meta[TURN_ACTOR_META_KEY] = turn_actor
             _meta.update(containment_meta(state, self))
             self.queue_append(prompt, meta=_meta)
             # Returning False IS the receipt that the prompt was accepted onto the
@@ -5822,7 +5829,12 @@ class _ChatSlot:
             start_queue_persist(state, self)
             return False
         self.append("user", prompt, "msg msg-u")
-        task = asyncio.create_task(run_chat_coro(state, self, prompt))
+        turn = (
+            run_chat_coro(state, self, prompt, _turn_actor=turn_actor)
+            if turn_actor
+            else run_chat_coro(state, self, prompt)
+        )
+        task = asyncio.create_task(turn)
         self.task = task
         state._background_tasks.add(task)
         task.add_done_callback(state._background_tasks.discard)

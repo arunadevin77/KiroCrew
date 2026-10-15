@@ -121,7 +121,9 @@ class _FakeSlot:
     def append(self, role: str, content: str, cls: str = "", **kw: Any) -> None:
         self.messages.append({"role": role, "content": content, "cls": cls})
 
-    def enqueue_or_run_prompt(self, prompt: str, run_chat_coro: Any, state: Any) -> bool:
+    def enqueue_or_run_prompt(
+        self, prompt: str, run_chat_coro: Any, state: Any, **_kwargs: Any
+    ) -> bool:
         self.prompts.append(prompt)
         self.runners.append(run_chat_coro)
         self.append("user", prompt)
@@ -2168,9 +2170,9 @@ class TestTriageModel(unittest.IsolatedAsyncioTestCase):
         seen: list[str] = []
         real = slot.enqueue_or_run_prompt
 
-        def _record(prompt: str, runner: Any, st: Any) -> bool:
+        def _record(prompt: str, runner: Any, st: Any, **kwargs: Any) -> bool:
             seen.append(slot.model)
-            return real(prompt, runner, st)
+            return real(prompt, runner, st, **kwargs)
 
         slot.enqueue_or_run_prompt = _record  # type: ignore[method-assign]
         self.assertTrue(await cr.wake_crew(state, OWNER, REPO, crew, "ci-changed", self.root))

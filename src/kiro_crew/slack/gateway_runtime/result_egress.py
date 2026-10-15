@@ -414,7 +414,9 @@ async def _deliver_result(
                     source="gateway",
                     resources=f"requested={slot_name},resolved={slot.key}",
                 )
-                ran = slot.enqueue_or_run_prompt(prompt, _run_chat, self.dashboard_state)
+                ran = slot.enqueue_or_run_prompt(
+                    prompt, _run_chat, self.dashboard_state, turn_actor="gateway"
+                )
                 if ran:
                     # Only push UI updates when the prompt actually started —
                     # queued prompts produce no visible change until dequeued.

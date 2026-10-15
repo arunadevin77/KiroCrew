@@ -543,6 +543,26 @@ class TestEnqueueOrRunPrompt:
         await slot.task
 
     @pytest.mark.asyncio()
+    async def test_non_user_actor_reaches_the_immediate_turn(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from kiro_crew.dashboard.state import _ChatSlot
+
+        slot = _ChatSlot(key="member-conductor")
+        state = MagicMock()
+        state._background_tasks = set()
+        run_chat = AsyncMock(return_value=None)
+
+        assert slot.enqueue_or_run_prompt(
+            "peer work", run_chat, state, turn_actor="crew"
+        )
+        await slot.task
+
+        run_chat.assert_awaited_once_with(
+            state, slot, "peer work", _turn_actor="crew"
+        )
+
+    @pytest.mark.asyncio()
     async def test_queues_when_running(self):
         import asyncio
         from unittest.mock import AsyncMock
@@ -564,6 +584,30 @@ class TestEnqueueOrRunPrompt:
         assert len(slot._queue) == 1
         assert slot._queue[0]["content"] == "queued msg"
         assert "id" in slot._queue[0]
+
+        slot.task.cancel()
+        try:
+            await slot.task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio()
+    async def test_non_user_actor_is_stamped_on_a_queued_turn(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        from kiro_crew.dashboard.chat_delivery import TURN_ACTOR_META_KEY
+        from kiro_crew.dashboard.state import _ChatSlot
+
+        slot = _ChatSlot(key="member-conductor")
+        slot.task = asyncio.create_task(asyncio.sleep(10))
+        state = MagicMock()
+        state._background_tasks = set()
+
+        assert not slot.enqueue_or_run_prompt(
+            "peer work", AsyncMock(), state, turn_actor="crew"
+        )
+        assert slot._queue[0]["meta"][TURN_ACTOR_META_KEY] == "crew"
 
         slot.task.cancel()
         try:

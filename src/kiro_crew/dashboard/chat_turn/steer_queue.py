@@ -201,6 +201,11 @@ def _settle_consumed_steers(
     slot._pending_steers[:] = remaining
     for settled_msg in set(previous) - set(remaining):
         slot._steer_attachment_meta.pop(settled_msg, None)
+        # Consumed by this turn, so no requeue will read them. The successful steer
+        # RPC leaves the admission and both origin marks in place for that requeue.
+        slot._steer_admissions.pop(settled_msg, None)
+        slot._steer_user_origin.pop(settled_msg, None)
+        slot._steer_channel_origin.pop(settled_msg, None)
         slot._steer_decision_strips.pop(settled_msg, None)
         slot._steer_possibly_delivered.discard(settled_msg)
 

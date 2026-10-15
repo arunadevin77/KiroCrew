@@ -464,8 +464,9 @@ class TestModes:
         _child(state, "chat-2", caller)
         ran: dict[str, str] = {}
 
-        async def _fake_run_chat(_state, slot, prompt):
+        async def _fake_run_chat(_state, slot, prompt, *, _turn_actor=""):
             ran["prompt"] = prompt
+            ran["actor"] = _turn_actor
 
         monkeypatch.setattr("kiro_crew.dashboard.chat_runner._run_chat", _fake_run_chat)
 
@@ -482,6 +483,7 @@ class TestModes:
             return out
 
         asyncio.run(_drive())
+        assert ran["actor"] == "crew"
         assert "via session_broadcast" in ran["prompt"]
         assert ran["prompt"].endswith("the base moved")
 
@@ -1095,8 +1097,12 @@ class TestTheShieldedSteerDelivery:
             "text is refused on this slot forever"
         )
         assert target._steer_send_ids == {}
-        assert target._steer_user_origin == {}
-        assert target._steer_admissions == {}
+        # The provenance maps are held with the pending steer, not stranded: the
+        # echo's settle or the teardown's requeue pops them, and nothing else is
+        # retained.
+        assert set(target._steer_admissions) == set(target._pending_steers)
+        assert set(target._steer_user_origin) == set(target._pending_steers)
+        assert set(target._steer_channel_origin) == set(target._pending_steers)
         # `_pending_steers` is NOT asserted empty: the steered tail deliberately
         # leaves it for the turn, whose `steering_consumed` echo settles it and
         # whose teardown otherwise degrades it to a visible queue card. Popping it
@@ -1205,6 +1211,8 @@ class TestTheShieldedSteerDelivery:
         prompt = sc._SEND_PROVENANCE.format(caller=caller.key, via=sc.BROADCAST_VIA) + text
         _settle_consumed_steers(target, f"<user_message>\n{prompt}\n</user_message>", state)
         assert target._pending_steers == []
+        assert target._steer_admissions == {}, "the settle must release the held admission"
+        assert target._steer_user_origin == {} and target._steer_channel_origin == {}
 
         # A fresh steer of the SAME provenance-wrapped text is accepted, not
         # refused by a guard reading a leftover entry.
