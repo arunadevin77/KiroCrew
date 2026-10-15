@@ -67,6 +67,7 @@ KIND_TEMPLATE_UPDATE = "template.update"
 KIND_MCP_INSTALL = "mcp.install"
 KIND_MCP_ADD_CUSTOM = "mcp.add_custom"
 KIND_MCP_TOGGLE = "mcp.toggle"
+KIND_MCP_SHARE = "mcp.share"
 KIND_CONNECTION_CONNECT = "connection.connect"
 KIND_SECRET_SAVE = "secret.save"
 KIND_TRUST_APP = "trust.app"
@@ -502,6 +503,16 @@ KINDS: dict[str, KindDef] = {
             "Enable/disable an MCP server ({name, enabled}) or one tool ({server, tool, enabled}).",
             _obj({"name": _STR, "server": _STR, "tool": _STR, "enabled": _BOOL}, ["enabled"]),
             ("enabled",),
+        ),
+        KindDef(
+            KIND_MCP_SHARE,
+            "Share an MCP server across chats so one copy runs instead of one per chat "
+            "({server, shared}). Saves memory. The shared copy runs outside the chat "
+            "sandbox, so the card shows the exact command it approves and is rated as "
+            "running code. Refused for servers that give each chat its own credentials "
+            "or desktop.",
+            _obj({"server": _STR, "shared": _BOOL}, ["server", "shared"]),
+            (),
         ),
         KindDef(
             KIND_CONNECTION_CONNECT,
@@ -986,6 +997,12 @@ def validate_params(kind: str, params: Any) -> dict[str, Any]:
                 "enabled": enabled,
             }
         return {"name": _clean_str(p, "name", pattern=_MCP_NAME_RE), "enabled": enabled}
+    if kind == KIND_MCP_SHARE:
+        _only(p, {"server", "shared"})
+        return {
+            "server": _clean_str(p, "server", pattern=_MCP_NAME_RE),
+            "shared": _clean_bool(p, "shared"),
+        }
     if kind == KIND_CONNECTION_CONNECT:
         _only(p, {"slug"})
         return {"slug": _clean_str(p, "slug", max_len=64, pattern=_SLUG_RE)}
@@ -1800,6 +1817,80 @@ def build_preview(
         ]
         out["risk"] = RISK_NORMAL if p["enabled"] else RISK_TIGHTEN
         out["apply"] = [_toggle_step(p, p["enabled"])]
+    elif kind == KIND_MCP_SHARE:
+        if not snapshot.get("exists"):
+            raise _fail("not_found", "that MCP server is not configured")
+        if not snapshot.get("can_share"):
+            raise _fail("not_shareable", "this server has no stdio pipe, so it cannot be shared")
+        blocked = snapshot.get("share_blocked")
+        if p["shared"] and blocked:
+            raise _fail(
+                "share_refused", SHARE_REFUSAL_LINES.get(blocked, "Can't share this server")
+            )
+        if bool(snapshot.get("shared")) == p["shared"]:
+            raise _fail("no_change", "it is already in that state")
+        name = p["server"]
+        out["title"] = f"Share {name}" if p["shared"] else f"Stop sharing {name}"
+        out["changes"] = [
+            {
+                # ``field: server`` marks one row per server the press changes;
+                # the dashboard's button counts these rows.
+                "field": "server",
+                "label": name,
+                "before": "Shared" if snapshot.get("shared") else "One per chat",
+                "after": "Shared" if p["shared"] else "One per chat",
+            }
+        ]
+        saves = snapshot.get("saves_bytes")
+        if p["shared"] and isinstance(saves, int) and not isinstance(saves, bool) and saves > 0:
+            out["changes"].append({"label": "Saves", "after": format_mb(saves)})
+        if p["shared"]:
+            # A shared copy runs outside the chat sandbox, so this card approves
+            # running exactly this launch there. Show it, pin it, and rate it as
+            # running code; a launch that cannot be shown cannot be approved.
+            expected = snapshot.get("expected_launch")
+            commands = [c for c in snapshot.get("launch_commands") or [] if isinstance(c, str)]
+            if not isinstance(expected, str) or not expected or not commands:
+                raise _fail(
+                    "launch_unreadable",
+                    "Can't read what this server runs. Open MCP Management to share it.",
+                )
+            # Sent whole, never shortened: the card approves every byte of it,
+            # and a launch too long to display has no expected_launch at all.
+            # The card shows every value whole, never folded.
+            for command in commands:
+                out["changes"].append({"label": "Command", "after": command})
+            env_lines = [n for n in snapshot.get("launch_env_lines") or [] if isinstance(n, str)]
+            for line in env_lines:
+                out["changes"].append({"label": "Setting", "after": line})
+            out["risk"] = RISK_CODE_EXEC
+            out["apply"] = [_share_step(name, True, expected_launch=expected)]
+            if snapshot.get("sharing_on") is False:
+                # Sharing does nothing while the page-wide switch is off, and
+                # turning it on also shares every other marked server whose
+                # launch the gateway would run: show each one's launch whole.
+                out["changes"].append({"label": "Sharing", "before": "Off", "after": "On"})
+                others = _share_others(snapshot)
+                for other in others:
+                    out["changes"].append(
+                        {
+                            "field": "server",
+                            "label": other["name"],
+                            "before": "One per chat",
+                            "after": "Shared",
+                        }
+                    )
+                    for launch in other["launches"]:
+                        out["changes"].append({"label": "Command", "after": launch["command"]})
+                        for line in launch["env"]:
+                            out["changes"].append({"label": "Setting", "after": line})
+                if others:
+                    # The title names every server the press shares, not just one.
+                    out["title"] = f"Share {', '.join([name, *(o['name'] for o in others)])}"
+                out["apply"].append(step("POST", "/api/mcp-gateway/enable", {"enabled": True}))
+        else:
+            out["risk"] = RISK_TIGHTEN
+            out["apply"] = [_share_step(name, False)]
     elif kind == KIND_CONNECTION_CONNECT:
         if not snapshot.get("known"):
             raise _fail("not_found", f"no connection provider '{p['slug']}'")
@@ -2076,6 +2167,62 @@ def _kr_line(
     if served:
         line += " · " + " ".join(f"#{n}" for n in sorted(served))
     return line
+
+
+#: One line per class of server that can never be shared, keyed by
+#: :func:`kiro_crew.mcp_gateway.launch_approval.share_refusal`'s code.
+SHARE_REFUSAL_LINES: dict[str, str] = {
+    "credential_vending": "Can't share: gives each chat its own credentials",
+    "needs_tenant_nonce": "Can't share: each chat needs its own copy",
+    "computer_use": "Can't share: it controls this computer",
+}
+
+
+def format_mb(value: int) -> str:
+    """A measured byte count as whole decimal megabytes, the unit the dashboard uses."""
+    return f"{max(1, round(value / 1_000_000))} MB"
+
+
+def _share_step(name: str, shared: bool, *, expected_launch: str | None = None) -> dict[str, Any]:
+    body: dict[str, Any] = {"name": name, "stub": shared}
+    if expected_launch is not None:
+        body["expected_launch"] = expected_launch
+    return step("POST", "/api/mcp-gateway/servers/stub", body)
+
+
+def _share_others(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """The other servers a share starts sharing, each with every launch it runs.
+
+    Refuses the card (``launch_unreadable``) when another server is marked but
+    what it would run is missing or malformed: the press would start it unseen.
+    """
+    marked = {n for n in snapshot.get("other_marked") or [] if isinstance(n, str)}
+    if not marked:
+        return []
+    unreadable = _fail(
+        "launch_unreadable",
+        "Can't read what the other shared servers run. Open MCP Management to share it.",
+    )
+    others = snapshot.get("other_launches")
+    if not isinstance(others, list):
+        raise unreadable
+    out: list[dict[str, Any]] = []
+    for other in others:
+        if not isinstance(other, dict) or other.get("name") not in marked:
+            raise unreadable
+        launches = other.get("launches")
+        if not isinstance(launches, list) or not launches:
+            raise unreadable
+        for launch in launches:
+            if not isinstance(launch, dict):
+                raise unreadable
+            command, env = launch.get("command"), launch.get("env")
+            if not isinstance(command, str) or not command or not isinstance(env, list):
+                raise unreadable
+            if not all(isinstance(line, str) for line in env):
+                raise unreadable
+        out.append(other)
+    return out
 
 
 def _capability_plan(member: str, revision: str, draft: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2401,6 +2548,19 @@ def _build_undo(
         # (after_shows_the_write); the card hook arms that list for the route.
         prior_dirs = string_items(before.get("steering_dirs"))
         return [_folder_steering_step(p["folder"], prior_dirs)], None
+    if kind == KIND_MCP_SHARE:
+        if not before.get("shared"):
+            plan = [_share_step(p["server"], False)]
+            if before.get("sharing_on") is False and applied_steps > 1:
+                # This card also turned the page-wide switch on, which started
+                # every other marked server: undo puts that back off too.
+                plan.append(step("POST", "/api/mcp-gateway/enable", {"enabled": False}))
+            return plan, None
+        # Undoing "stop sharing" would share again, approving whatever launch
+        # was read then to run outside the sandbox -- possibly one an agent
+        # edited and nobody approved. Sharing again goes through a new card or
+        # the Settings button, which show the launch first.
+        return None, "reshare_needs_review"
     if kind == KIND_SECRET_SAVE:
         if before.get("exists"):
             return None, "overwrites_existing"
@@ -2557,6 +2717,13 @@ def describe_manual_change(
     if route == ("POST", "/api/mcp/toggle-tool"):
         verb = "enabled" if b.get("enabled", True) else "disabled"
         return f"{verb} MCP tool {s(b.get('server'))}/{s(b.get('tool'))}"
+    if route == ("POST", "/api/mcp-gateway/servers/stub"):
+        if "name" not in b:
+            return None
+        verb = "shared" if b.get("stub") is True else "stopped sharing"
+        return f"{verb} MCP server {s(b.get('name'))} across chats"
+    if route == ("POST", "/api/mcp-gateway/enable"):
+        return f"turned MCP server sharing {'on' if b.get('enabled') is True else 'off'}"
     if route == ("POST", "/api/connections/mint"):
         return f"started connecting {s(b.get('slug'))}"
     if route == ("POST", "/api/connections/disconnect"):
@@ -2606,6 +2773,8 @@ HOOKED_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/mcp/apply"),
         ("POST", "/api/mcp/toggle"),
         ("POST", "/api/mcp/toggle-tool"),
+        ("POST", "/api/mcp-gateway/servers/stub"),
+        ("POST", "/api/mcp-gateway/enable"),
         ("POST", "/api/connections/mint"),
         ("GET", "/api/connections/mint"),
         ("POST", "/api/connections/disconnect"),

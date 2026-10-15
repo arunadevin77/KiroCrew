@@ -108,6 +108,15 @@ export const SEARCH_TERMS: Record<string, UiSearchTerms> = {
     en: ['api key', 'api keys', 'credentials', 'tokens', 'passwords'],
     'zh-CN': ['密钥', 'api 密钥', '凭据', '凭证', '令牌'],
   },
+  // Where the per-server "Shared" switches live. The old jargon (stub, gateway,
+  // approve) stays findable: people still type it.
+  'tab.developer.mcp-pool': {
+    en: [
+      'share mcp server', 'share mcp servers', 'mcp sharing', 'save memory', 'mcp memory',
+      'mcp gateway stub share approve', 'mcp stub', 'mcp gateway', 'one copy per chat',
+    ],
+    'zh-CN': ['共享 mcp 服务器', 'mcp 共享', '节省内存', 'mcp 内存', 'mcp 网关'],
+  },
   // The lasting way to silence a kind of notification (the keep-or-mute prompt
   // under a new channel's first notification is one-time).
   'setting:notifications.sources': {

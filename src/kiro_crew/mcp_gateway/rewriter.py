@@ -11,8 +11,8 @@ filesystem remains untouched — the broker stubs in these specs are injected
 into each kiro-cli session over ACP ``session/new``, which outranks the
 same-named entry in the agent spec (see ``session_servers.py``).
 
-Servers in :data:`UNPOOLABLE_SERVERS` are left unwrapped. The set is empty, so
-nothing is excluded through it; the first-party servers that bind
+Servers in :data:`UNPOOLABLE_SERVERS` are left unwrapped. The set holds only the
+credential vendors; the first-party servers that bind
 ``KIROCREW_SESSION_KEY`` stay unwrapped only because nothing lists them in the
 stub allowlist.
 
@@ -43,10 +43,10 @@ from pathlib import Path
 from typing import Any, Collection, Mapping
 
 from kiro_crew import __version__, platform_compat
-from kiro_crew.agent_spec_format import iter_agent_spec_files
+from kiro_crew.agent_spec_format import iter_agent_spec_files, iter_agent_spec_files_strict
 from kiro_crew.atomic_write import atomic_write
 from kiro_crew.config.paths import config_dir
-from kiro_crew.env import mcp_search_path, resolved_command_casing, spec_path_key
+from kiro_crew.env import emit_env, mcp_search_path, resolved_command_casing, spec_path_key
 from kiro_crew.mcp_cleanup import (
     KIROCREW_BIN_MCP_SERVERS,
     mcp_entry_is_muted,
@@ -195,14 +195,17 @@ _WHICH_KEY_SEP = "\0"
 # when they could support it (e.g. dev/diagnostic servers that want the
 # operator to see one process per session).
 #
-# Empty, and nothing is excluded through it today. The intended signalling path
+# It lists only the credential vendors (below). The intended signalling path
 # — a backend that does not advertise ``kirocrew.caller-identity`` in its
 # initialize response being refused for pooling — is NOT implemented: gatewayd
 # parses that capability only to decide whether to inject caller identity, and
 # no code path declines to pool a backend for lacking it. So this set is the
 # only mechanism of its kind that exists, and it is the one to reach for while
 # that is true, not a fallback for servers that cannot adopt the extension.
-UNPOOLABLE_SERVERS: frozenset[str] = frozenset()
+#
+# The credential vendors are listed: each hands its caller its own AWS
+# credentials, so one shared copy would hand every chat the same identity.
+UNPOOLABLE_SERVERS: frozenset[str] = frozenset({"creds-agent", "local-creds-agent-mcp"})
 
 # Marker field set on rewritten MCP entries so repeat runs are idempotent.
 _WRAPPER_MARKER = "_kirocrew_mcp_gateway_wrapped"
@@ -1504,6 +1507,31 @@ def _rewrite_single_spec(
     return new_spec, wrapped
 
 
+def _with_emitted_env(settings_spec: dict[str, Any]) -> dict[str, Any]:
+    """*settings_spec* with each server's ``env`` normalized the way agent specs are.
+
+    An agent that declares a settings server gets it through
+    ``agent_materialization.mcp_sources``, which runs its ``env`` through
+    :func:`kiro_crew.env.emit_env` -- so a declared ``PATH`` arrives expanded
+    with the gateway's own search path. The copy injected into every OTHER agent
+    is read straight from ``settings/mcp.json``, with the short ``PATH`` its
+    author wrote. The two copies then hash as two different launches: the same
+    server splits into two shared backends, and the dashboard lists the same
+    command twice with two environments. Expanding here, through the same
+    function, makes them one launch. Returns a new dict; *settings_spec* is not
+    mutated.
+    """
+    servers = settings_spec.get("mcpServers")
+    if not isinstance(servers, dict):
+        return settings_spec
+    out_servers: dict[str, Any] = {}
+    for name, entry in servers.items():
+        if isinstance(entry, dict) and isinstance(entry.get("env"), dict):
+            entry = {**entry, "env": emit_env(entry["env"])}
+        out_servers[name] = entry
+    return {**settings_spec, "mcpServers": out_servers}
+
+
 def _injectable_settings_servers(
     settings_spec: dict[str, Any],
     stub_servers: frozenset[str],
@@ -1846,6 +1874,7 @@ def _rewrite_inputs_fingerprint(
     forward_env: bool,
     identity_keys: Collection[str],
     read_buffer_limit: int,
+    source_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Return a JSON-serializable snapshot of every input that can change
     :func:`rewrite_agents`'s output.
@@ -1895,7 +1924,8 @@ def _rewrite_inputs_fingerprint(
     * ``schema`` / ``package`` — invalidate on rewriter logic changes.
     """
     sources: dict[str, list[Any] | None] = {
-        p.name: _source_sig(p) for p in iter_agent_spec_files(source_dir)
+        p.name: _source_sig(p)
+        for p in (source_paths if source_paths is not None else iter_agent_spec_files(source_dir))
     }
     return {
         "schema": _FINGERPRINT_SCHEMA,
@@ -2323,6 +2353,21 @@ def rewrite_agents(
 
     if not source_dir.is_dir():
         logger.warning("agent source dir missing: %s", source_dir)
+        if approvals is not None:
+            # Nothing was read and no overlay is pruned on this path, so the
+            # overlays already published keep running launches this pass
+            # never admitted.
+            approvals.live_incomplete = True
+        return {}, {}
+
+    try:
+        source_paths = iter_agent_spec_files_strict(source_dir)
+    except OSError:
+        logger.warning("agent source directory could not be listed: %s", source_dir)
+        if approvals is not None:
+            approvals.live_incomplete = True
+        # An unread listing proves no source was removed. Leave every published
+        # overlay and sidecar untouched, just as for an absent source directory.
         return {}, {}
 
     platform_compat.make_owner_only_dir(overlay_dir)
@@ -2363,6 +2408,7 @@ def rewrite_agents(
     # with the previous one after the operator raised the key.
     read_buffer_limit = config_read_buffer_limit()
     current_inputs = _rewrite_inputs_fingerprint(
+        source_paths=source_paths,
         source_dir=source_dir,
         settings_path=kiro_settings_json,
         overlay_dir=overlay_dir,
@@ -2441,7 +2487,7 @@ def rewrite_agents(
             loaded = loads_user_json(kiro_settings_json.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 settings_poolable = _injectable_settings_servers(
-                    loaded, stub_set,
+                    _with_emitted_env(loaded), stub_set,
                     pooling_enabled=pooling_enabled,
                     forward_env=forward_env,
                     identity_keys=identity_keys,
@@ -2539,6 +2585,10 @@ def rewrite_agents(
     # ``bool(stub_set)`` term would be unobservable -- no test can distinguish
     # it -- so the fingerprint comparison below carries the whole decision.
     injection_unknown = settings_read_transient
+    if approvals is not None and settings_read_transient:
+        # The servers the global file declares were never admitted this pass,
+        # whether an agent keeps its overlay below or is written without them.
+        approvals.live_incomplete = True
     # A keep SERVES artifacts this pass did not write, so it must carry the same
     # guarantees the other serve-without-writing path does. Vouch for the shared
     # set once: if the recorded sidecars cannot be validated and re-protected, no
@@ -2572,7 +2622,7 @@ def rewrite_agents(
     # skipped for bad content claims nothing, so it cannot cost its valid twin
     # the overlay (and the pruning of the twin's stale one) below.
     overlay_keys_claimed: dict[str, str] = {}
-    for path in iter_agent_spec_files(source_dir):
+    for path in source_paths:
         # The overlay is JSON whatever the source: ``session_servers`` resolves
         # ``<agent>.json``. The fingerprint's ``sources`` stays keyed by the
         # SOURCE name, so a markdown edit invalidates its overlay.

@@ -36,12 +36,22 @@ class ResolvedLaunches(dict[str, list[ResolvedLaunch]]):
     """``{name: launches}`` plus the names whose launch set exceeded a cap.
 
     A name in :attr:`over_cap` has no entry: approving the launches that fit
-    would approve a partial set the operator never saw whole.
+    would approve a partial set the operator never saw whole. :attr:`complete`
+    is ``False`` when the pass could not read every source it resolves from (an
+    agent spec, the global ``mcp.json`` or the agents directory), so a name may
+    run a launch that is missing here.
     """
 
-    def __init__(self, *args: Any, over_cap: Iterable[str] = (), **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        over_cap: Iterable[str] = (),
+        complete: bool = True,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.over_cap: frozenset[str] = frozenset(over_cap)
+        self.complete: bool = complete
 
 
 def rewrite_kwargs(cfg: KiroCrewConfig, stub_servers: frozenset[str]) -> dict[str, Any]:
@@ -127,8 +137,10 @@ def resolve_launches(
         rewrite_agents(**{**kwargs, "overlay_dir": scratch / "agents"}, approvals=probe)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+    # The rewriter sets ``live_incomplete`` for every source it could not read
+    # (an agent spec, the global ``mcp.json``, the agents directory itself).
     over_cap = {name for stem, name in wanted.items() if probe.over_cap(stem)}
-    resolved = ResolvedLaunches(over_cap=over_cap)
+    resolved = ResolvedLaunches(over_cap=over_cap, complete=not probe.live_incomplete)
     for stem, name in wanted.items():
         launches = probe.captured_launches.get(stem)
         if launches and name not in over_cap:

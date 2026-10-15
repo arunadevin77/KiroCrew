@@ -250,21 +250,25 @@ class ReclaimResult:
 RECLAIM_PLATFORM = sys.platform == "linux"
 
 
-def same_uid_process_table() -> dict[int, tuple[int, int]]:
+def same_uid_process_table(
+    *, proc_root: Path | None = None, page_size: int | None = None
+) -> dict[int, tuple[int, int]]:
     """``{pid: (ppid, rss bytes)}`` for every process this uid owns, from ``/proc/<pid>/stat``.
 
     Each ``stat`` goes through ``platform_compat.read_proc_stat``, so a process
     whose name is not UTF-8 is in the table with every runtime below it.
+    *proc_root* and *page_size* exist for tests that build a fake ``/proc``.
     """
-    page = os.sysconf("SC_PAGE_SIZE")
-    uid = os.getuid()
-    root = Path("/proc")
+    page = os.sysconf("SC_PAGE_SIZE") if page_size is None else page_size
+    # No uid off POSIX (a fixture /proc in a test): every entry is this user's.
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    root = Path("/proc") if proc_root is None else proc_root
     table: dict[int, tuple[int, int]] = {}
     for entry in root.iterdir():
         if not entry.name.isdigit():
             continue
         try:
-            if entry.stat().st_uid != uid:
+            if uid is not None and entry.stat().st_uid != uid:
                 continue
         except OSError:
             continue
@@ -287,7 +291,8 @@ def _descends_from(pid: int, root: int, table: dict[int, tuple[int, int]]) -> bo
     return False
 
 
-def _tree_rss(root: int, table: dict[int, tuple[int, int]]) -> int:
+def tree_rss(root: int, table: dict[int, tuple[int, int]]) -> int:
+    """RSS of *root* and every process below it in *table*."""
     return sum(rss for pid, (_pp, rss) in table.items() if _descends_from(pid, root, table))
 
 
@@ -796,7 +801,7 @@ class RuntimeReconciler:
         except Exception:
             logger.debug("runtime_reconcile: leak reading failed", exc_info=True)
             return ()
-        return tuple((pid, _tree_rss(pid, table)) for pid in sorted(pids))
+        return tuple((pid, tree_rss(pid, table)) for pid in sorted(pids))
 
     def _run_once(self) -> ReconcileReading:
         try:

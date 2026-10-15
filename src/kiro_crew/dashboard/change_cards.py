@@ -62,7 +62,9 @@ import logging
 import os
 import re
 import secrets
+import shlex
 import time
+import unicodedata
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable
@@ -164,6 +166,19 @@ class CardError(Exception):
 def canonical(value: Any) -> str:
     """The one serialization two bodies or snapshots are compared through."""
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+#: Snapshot fields that are live readings, not state the card changes: an RSS
+#: total moves between preview and press, so it never counts as a change.
+_VOLATILE_SNAPSHOT_KEYS: dict[str, tuple[str, ...]] = {catalog.KIND_MCP_SHARE: ("saves_bytes",)}
+
+
+def comparable_snapshot(kind: str, snapshot: Any) -> Any:
+    """*snapshot* without the live readings :func:`canonical` must not compare."""
+    drop = _VOLATILE_SNAPSHOT_KEYS.get(kind)
+    if not drop or not isinstance(snapshot, dict):
+        return snapshot
+    return {k: v for k, v in snapshot.items() if k not in drop}
 
 
 def clean_reason(reason: Any) -> str:
@@ -1913,6 +1928,166 @@ def _mcp_exists(name: str) -> bool:
     return _find_server_spec_anywhere(name) is not None
 
 
+def _visible(text: str) -> str:
+    """*text* with every Unicode category-C code point escaped.
+
+    The card shows the command it approves; a bidi override or a zero-width
+    character could make what the operator reads differ from what runs. The MCP
+    page escapes the same set (``visibleLaunchText``).
+    """
+    out: list[str] = []
+    for ch in text:
+        if not unicodedata.category(ch).startswith("C"):
+            out.append(ch)
+            continue
+        code = ord(ch)
+        out.append(f"\\x{code:02x}" if code <= 0xFF else f"\\u{{{code:04x}}}")
+    return "".join(out)
+
+
+def _mcp_share_snapshot(name: str, *, whole: bool = False, state: Any = None) -> dict[str, Any]:
+    """What an ``mcp.share`` card replaces, read from the same sources as the MCP page.
+
+    The row scan, refusal classes and memory reading come from the MCP page.
+    The affected roster comes from the runtime owner, not next-start intent.
+    ``saves_bytes`` is measured from the copies running now and absent when
+    there is no reading. ``whole`` reads
+    the launches of a server already shared too, and skips the memory
+    reading: what :func:`resumed_apply_is_stale` compares with the preview.
+    """
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.dashboard.handlers import mcp as mcp_handlers
+    from kiro_crew.mcp_gateway import direct_copies
+    from kiro_crew.mcp_gateway.launch_approval import share_refusal
+
+    row = mcp_handlers._collect_server_rows().get(name)
+    if row is None:
+        return {"exists": False}
+    gateway = KiroCrewConfig.load().mcp_gateway
+    roster = list(gateway.stub_servers)
+    shared = name in set(roster)
+    snap: dict[str, Any] = {
+        "exists": True,
+        "can_share": row.get("transport") == "stdio",
+        "shared": shared,
+        "share_blocked": share_refusal(name),
+        # Sharing only runs when the page-wide switch is on. Turning it on also
+        # starts sharing the other marked servers whose launch is approved, so
+        # the card shows what each of those runs (``other_launches``).
+        "sharing_on": bool(gateway.enabled),
+        "other_marked": sorted(n for n in roster if n != name),
+    }
+    if shared and not whole:
+        return snap
+    read_serving = getattr(state, "_mcp_gateway_serving", None)
+    serving = read_serving() if callable(read_serving) else None
+    if not isinstance(serving, frozenset) or not all(isinstance(n, str) for n in serving):
+        return snap  # No expected_launch: unknown runtime state cannot authorize sharing.
+    snap["serving"] = sorted(serving)
+    if not gateway.enabled:
+        snap["other_configured"] = snap["other_marked"]
+        snap["other_marked"] = [n for n in snap["serving"] if n != name]
+    if name not in serving:
+        return snap  # A pending addition is not activated by the sharing switch.
+    if not whole:
+        copies = direct_copies.measure({name: row.get("commands", ())}).get(name)
+        if copies is not None and copies.saves_bytes is not None:
+            snap["saves_bytes"] = copies.saves_bytes
+    # A shared backend runs outside the session sandbox, so a sharing card
+    # shows the exact launch it approves and pins it: a launch that moves
+    # between this read and the press is refused.
+    launches = mcp_handlers.launch_resolve.resolve_launches([name], refresh_specs=False)
+    display = mcp_handlers.display_launches(name, launches.get(name, ()))
+    snap["launch_commands"] = [_visible(shlex.join(c)) for c in display.get("commands", [])]
+    # The display's own env lines (``KEY=value`` or ``KEY=<hidden sha256:...>``),
+    # not just the names: a value such as ``LD_PRELOAD=...`` is part of what runs.
+    snap["launch_env_lines"] = [
+        _visible(line) for env in display.get("envs", []) for line in env if isinstance(line, str)
+    ]
+    # Pinned only when the pass saw every launch this name runs: past a cap,
+    # or with a source unread, the display may be a subset.
+    if (
+        isinstance(launches, mcp_handlers.launch_resolve.ResolvedLaunches)
+        and launches.complete
+        and name not in launches.over_cap
+        and display.get("complete")
+        and display.get("expected_launch")
+    ):
+        snap["expected_launch"] = display["expected_launch"]
+    if not gateway.enabled:
+        snap["other_launches"] = _mcp_share_others(snap["other_marked"], serving=snap["serving"])
+    return snap
+
+
+def _mcp_share_others(names: list[str], *, serving: list[str]) -> list[dict[str, Any]] | None:
+    """What each other marked server runs once the card turns sharing on.
+
+    Resolved the way the gateway's own rewrite will resolve it after the press
+    (sharing on), then kept to the launches it would actually run: an approved
+    launch, or the managed invocation of a reserved ``kirocrew-*`` name. A
+    server with neither stays one per chat, so it is left out rather than
+    claimed. ``None`` when any of those launches cannot be shown whole: the
+    card then cannot be pressed, because sharing would start it unseen.
+    """
+    import dataclasses
+
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.dashboard.handlers import mcp as mcp_handlers
+    from kiro_crew.mcp_cleanup import KIROCREW_BIN_MCP_SERVERS
+    from kiro_crew.mcp_gateway import launch_approval
+
+    try:
+        cfg = KiroCrewConfig.load()
+        after = dataclasses.replace(
+            cfg,
+            mcp_gateway=dataclasses.replace(cfg.mcp_gateway, enabled=True, stub_servers=serving),
+        )
+        resolved = mcp_handlers.launch_resolve.resolve_launches(
+            names, cfg=after, refresh_specs=False
+        )
+        approvals = launch_approval.load_approvals()
+    except Exception:
+        logger.warning("mcp.share card: could not read the other marked servers", exc_info=True)
+        return None
+    # A server past a cap has no entry, and a source the pass could not read
+    # may declare a launch it never saw: either way the list below would be a
+    # subset of what sharing starts, so nothing is shown and nothing can be
+    # pressed.
+    if (
+        not isinstance(resolved, mcp_handlers.launch_resolve.ResolvedLaunches)
+        or not resolved.complete
+        or resolved.over_cap.intersection(names)
+    ):
+        return None
+    out: list[dict[str, Any]] = []
+    for other in names:
+        approved = approvals.approved.get(launch_approval.target_stem(other), set())
+        runs = [
+            launch
+            for launch in resolved.get(other) or ()
+            if other in KIROCREW_BIN_MCP_SERVERS or launch.fingerprint in approved
+        ]
+        if not runs:
+            continue
+        display = mcp_handlers.display_launches(other, runs)
+        commands, envs = display.get("commands", []), display.get("envs", [])
+        if not display.get("complete") or len(commands) != len(envs):
+            return None
+        out.append(
+            {
+                "name": other,
+                "launches": [
+                    {
+                        "command": _visible(shlex.join(command)),
+                        "env": [_visible(line) for line in env],
+                    }
+                    for command, env in zip(commands, envs)
+                ],
+            }
+        )
+    return out
+
+
 #: Recorded for a scope whose file exists but cannot be read: an unknown is
 #: never taken as "not there".
 _MCP_SCOPE_UNREADABLE = "unreadable"
@@ -2094,6 +2269,11 @@ def after_shows_the_write(
         return bool(written) and after.get("revision") == written
     if kind == catalog.KIND_MCP_TOGGLE:
         return after.get("enabled") is bool(p.get("enabled"))
+    if kind == catalog.KIND_MCP_SHARE:
+        if after.get("shared") is not bool(p.get("shared")):
+            return False
+        # A share that the page-wide switch leaves off saves nothing.
+        return not p.get("shared") or after.get("sharing_on") is not False
     if kind == catalog.KIND_TRUST_APP:
         return after.get("trusted") is True
     if kind == catalog.KIND_DENIED_COMMAND and p.get("action") == "toggle":
@@ -2348,6 +2528,8 @@ def _sync_read_state(
             disabled = raw_disabled if isinstance(raw_disabled, list) else []
             return {"exists": exists, "enabled": p["tool"] not in disabled}
         return {"exists": exists, "enabled": not bool(entry.get("disabled"))}
+    if kind == catalog.KIND_MCP_SHARE:
+        return _mcp_share_snapshot(p["server"])
     if kind == catalog.KIND_SECRET_SAVE:
         from kiro_crew.config.loader import config_dir
         from kiro_crew.secrets import SecretVault
@@ -2515,8 +2697,37 @@ async def resumed_undo_is_stale(rec: dict[str, Any], index: int, *, state: Any, 
         # Step 1 applies the preview step 0 just took; its token and revision
         # are what the capability route checks, so nothing else to compare.
         return False
+    if kind == catalog.KIND_MCP_SHARE:
+        # Step 1 turns off the switch the card turned on. It is admitted only
+        # once step 0 un-shared the server and the switch is still on.
+        current = await read_state(kind, params, rec["evidence"][:1], state=state, app=app)
+        return not (current.get("shared") is False and current.get("sharing_on") is True)
     # Every other kind undoes in one step, so a resumed step is never admitted.
     return True
+
+
+async def resumed_apply_is_stale(rec: dict[str, Any], index: int, *, state: Any, app: Any) -> bool:
+    """Whether what an apply's step *index* acts on changed since the preview.
+
+    The first-write check runs before step 0 only. An ``mcp.share`` card's
+    step 1 turns sharing on, which starts every other marked server, so it is
+    held to the preview again: the roster, each launch and its approval must
+    read as they did, with only the change step 0 made (the server shared).
+    Other kinds' later steps act on what their own earlier step returned.
+    """
+    kind = rec["kind"]
+    if kind != catalog.KIND_MCP_SHARE or index < 1:
+        return False
+    before = rec.get("before")
+    if not isinstance(before, dict) or not before.get("exists"):
+        return True
+    current = await asyncio.to_thread(
+        _mcp_share_snapshot, rec["params"]["server"], whole=True, state=state
+    )
+    expected = {**before, "shared": True}
+    return canonical(comparable_snapshot(kind, current)) != canonical(
+        comparable_snapshot(kind, expected)
+    )
 
 
 async def undo_survivors(
@@ -2598,6 +2809,8 @@ async def read_state(
         job = await state.crons.get_job_async(str(evidence[schedule_step].get("id")))
         schedule = _cron_job_revision(job) if job is not None else None
         return {**base, "schedule_exists": job is not None, "schedule": schedule}
+    if kind == catalog.KIND_MCP_SHARE:
+        return await asyncio.to_thread(_mcp_share_snapshot, params["server"], state=state)
     return await asyncio.to_thread(_sync_read_state, kind, params, evidence)
 
 

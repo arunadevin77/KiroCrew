@@ -216,7 +216,7 @@ class TestFixtureTables:
             runtime_reconcile, "Path", lambda p: tmp_path if p == "/proc" else Path(p)
         )
         table = runtime_reconcile.same_uid_process_table()
-        assert runtime_reconcile._tree_rss(10, table) == 7 * page
+        assert runtime_reconcile.tree_rss(10, table) == 7 * page
 
     def test_the_supervisor_parse_reads_bytes(self) -> None:
         line = b"123 (" + BAD_COMM + b") S 1 42 0"

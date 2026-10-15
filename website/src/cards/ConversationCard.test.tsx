@@ -224,6 +224,49 @@ describe('card layout', () => {
   })
 })
 
+describe('mcp.share card', () => {
+  const serverRow = (name: string) => ({ field: 'server', label: name, before: 'One per chat', after: 'Shared' })
+  const shareCard = (changes: Card['changes'], shared = true) => card({
+    kind: 'mcp.share',
+    risk: shared ? 'code_exec' : 'tighten',
+    title: 'Share slack-mcp',
+    params: { server: 'slack-mcp', shared },
+    changes,
+    plan: { apply: [{ method: 'POST', path: '/api/mcp-gateway/servers/stub', body: { name: 'slack-mcp', stub: shared } }], undo: null },
+  })
+
+  it('shows every other server it starts with its whole commands, and counts them on the button', async () => {
+    const chorus = '/opt/chorus --name \'a  b\\u{202e}\' ' + 'x'.repeat(300) + ' --last'
+    pending = [shareCard([
+      serverRow('slack-mcp'),
+      { label: 'Command', after: '/opt/slack --stdio' },
+      { label: 'Sharing', before: 'Off', after: 'On' },
+      serverRow('chorus-mcp'),
+      { label: 'Command', after: chorus },
+      { label: 'Setting', after: 'NODE_OPTIONS=--require  /tmp/x.js' },
+      serverRow('grasp-mcp'),
+      { label: 'Command', after: '/opt/grasp --profile work' },
+    ])]
+    renderCards()
+    const button = await screen.findByRole('button', { name: L('primary_mcp_share_servers', { count: 3 }) })
+    expect(button.textContent).toContain('3')
+    expect(screen.queryByRole('button', { name: L('primary_mcp_share') })).toBeNull()
+    const exact = { normalizer: (s: string) => s }
+    for (const value of ['slack-mcp', 'chorus-mcp', 'grasp-mcp']) expect(screen.getByText(value)).toBeInTheDocument()
+    expect(screen.getByText(chorus, exact)).toBeInTheDocument()
+    expect(screen.getByText('NODE_OPTIONS=--require  /tmp/x.js', exact)).toBeInTheDocument()
+    expect(screen.getByText('/opt/grasp --profile work')).toBeInTheDocument()
+  })
+
+  it('keeps the one-server words when the press shares one server, and when it stops sharing', async () => {
+    expect(CARD_REGISTRY['mcp.share'].primary(shareCard([serverRow('slack-mcp'), { label: 'Command', after: '/opt/slack' }])))
+      .toBe(L('primary_mcp_share'))
+    expect(CARD_REGISTRY['mcp.share'].primary(shareCard([{ ...serverRow('slack-mcp'), before: 'Shared', after: 'One per chat' }], false)))
+      .toBe(L('primary_mcp_unshare'))
+    expect(L('primary_mcp_share_servers', { count: 2 })).not.toBe(L('primary_mcp_share'))
+  })
+})
+
 describe('change card', () => {
   it('re-reads the crewmate roster once a crewmate card has run, so the sidebar count moves', async () => {
     pending = [card({

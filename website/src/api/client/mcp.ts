@@ -81,6 +81,13 @@ export type McpManagedServer = {
   // Live to an earlier worktree), and a row with no verdict must read as "not
   // measured" rather than crash the table.
   recommendation?: McpShareRecommendation
+  // Why this server can never be shared ("credential_vending",
+  // "needs_tenant_nonce", "computer_use"), or null. Optional: an older gateway
+  // does not send it.
+  share_blocked?: string | null
+  // MEASURED bytes sharing would save, from the copies running now. Null or
+  // absent when there is no reading -- the page then shows no number.
+  saves_bytes?: number | null
 }
 
 export function createMcpEndpoints({ get, post, put, j, jfetch: fetch }: ClientTransport) {

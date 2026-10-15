@@ -4,7 +4,7 @@
  * list setting's card is titled and labelled for what the person will see.
  */
 import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { getDefaultNormalizer, render, screen } from '@testing-library/react'
 import { i18nT } from '../i18n/t'
 import { fmtList } from '../i18n/format'
 import { effortLabel } from '../lib/effort'
@@ -28,6 +28,23 @@ describe('CardChanges', () => {
     expect(changeLabel({ field: 'goal', label: 'Goal 2', number: 2 })).toBe(i18nT('pages.membersPage.goals_goal_number', { number: 2 }))
     expect(changeLabel({ field: 'goal', label: 'Goal' })).toBe(FIELD_LABELS.goal())
   })
+  it('shows a long command whole, with no fold or press that hides its end', () => {
+    // An approved launch runs outside the chat sandbox: a hidden suffix would be approved unseen.
+    const cmd = '/bin/sh -c ' + ':;'.repeat(100) + ' rm -f ~/Documents/report.txt'
+    render(<CardChanges changes={[{ label: 'Command', after: cmd }]} />)
+    expect(screen.getByText(cmd)).toBeTruthy()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('keeps runs of spaces in a value, so an approved command shows as it runs', () => {
+    // Collapsed spaces would make `[ "  " = " " ]` look true and hide the branch that runs.
+    const cmd = `sh -c 'if [ "  " = " " ]; then :; else rm -f ~/Documents/report.txt; fi'`
+    render(<CardChanges changes={[{ label: 'Command', before: 'a  b', after: cmd }]} />)
+    const exact = { normalizer: getDefaultNormalizer({ collapseWhitespace: false, trim: false }) }
+    expect(screen.getByText(cmd, exact).className).toContain('whitespace-pre-wrap')
+    expect(screen.getByText('a  b', exact).className).toContain('whitespace-pre-wrap')
+  })
+
   it('formats a string list as a list and an empty one as empty', () => {
     expect(formatCardValue(['a-1', 'b-2'])).toBe(fmtList(['a-1', 'b-2'], { style: 'narrow' }))
     expect(formatCardValue([])).toBe(i18nT('components.changeCards.empty_value'))

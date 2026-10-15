@@ -5,7 +5,7 @@
  */
 import type { ComponentType } from 'react'
 import { AlarmClock,
-  CalendarClock, Cog, FolderCog, Goal, Gauge, KeyRound, Link2, Plug, Power, ShieldCheck, ShieldOff, UserPlus, UserCog, Wrench, LayoutTemplate, PackagePlus, PackageOpen,
+  CalendarClock, Cog, FolderCog, Goal, Gauge, KeyRound, Link2, Plug, Power, Share2, ShieldCheck, ShieldOff, UserPlus, UserCog, Wrench, LayoutTemplate, PackagePlus, PackageOpen,
   type LucideIcon,
 } from 'lucide-react'
 import { i18nT } from '../i18n/t'
@@ -78,6 +78,20 @@ export const CARD_REGISTRY: Record<CardKind, CardKindSpec> = {
   'mcp.toggle': {
     icon: Power, label: () => i18nT('components.changeCards.kind_mcp_toggle'),
     primary: () => i18nT('components.changeCards.primary_mcp_toggle'), Body: NoBody,
+  },
+  'mcp.share': {
+    icon: Share2, label: () => i18nT('components.changeCards.kind_mcp_share'),
+    primary: card => {
+      if (card?.params?.shared === false) return i18nT('components.changeCards.primary_mcp_unshare')
+      // One `field: 'server'` row per server the press shares (the gateway
+      // adds the others that turning sharing on starts), so the button's count
+      // is the card's own.
+      const count = card?.changes?.filter(c => c.field === 'server').length ?? 0
+      return count > 1
+        ? i18nT('components.changeCards.primary_mcp_share_servers', { count })
+        : i18nT('components.changeCards.primary_mcp_share')
+    },
+    Body: NoBody,
   },
   'connection.connect': {
     icon: Link2, label: () => i18nT('components.changeCards.kind_connection_connect'),

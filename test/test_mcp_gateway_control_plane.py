@@ -64,8 +64,12 @@ def test_wire_publishes_manager_and_callbacks_onto_dashboard_state() -> None:
         _apply_mcp_stub="POOLABLE_CB",
         _refresh_mcp_resolutions="RESOLVE_CB",
         _stop_mcp_broker="STOP_CB",
+        _mcp_stub_servers_started=frozenset({"served-mcp"}),
     )
     GatewayOrchestrator._wire_mcp_gateway_dashboard(orch)  # type: ignore[arg-type]
+    assert ds._mcp_gateway_serving() == frozenset({"served-mcp"})
+    orch._mcp_stub_servers_started = frozenset()
+    assert ds._mcp_gateway_serving() == frozenset()
     assert ds._mcp_gateway_manager == "MGR"
     assert ds._mcp_gateway_apply == "ENABLE_CB"
     assert ds._mcp_gateway_apply_stub == "POOLABLE_CB"
@@ -171,20 +175,41 @@ async def test_enable_503_when_apply_unwired(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
-async def test_enable_invokes_wired_apply(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When wired, the handler persists the flag and returns the apply
-    result (200, no 503)."""
+@pytest.mark.parametrize("card_lock", [False, True])
+async def test_enable_invokes_wired_apply(monkeypatch: pytest.MonkeyPatch, card_lock) -> None:
+    """Direct and card calls persist/apply once under the same transaction lock."""
+    class Lock:
+        held = False
+
+        async def __aenter__(self):
+            assert not self.held, "the card's apply lock was acquired twice"
+            self.held = True
+
+        async def __aexit__(self, *args):
+            self.held = False
+
+    lock = Lock()
+    monkeypatch.setattr(mcp_mod, "_MCP_GATEWAY_APPLY_LOCK", lock)
     monkeypatch.setattr(mcp_mod, "sel", lambda: MagicMock())
-    # Enabling is gated on platform support; pin it True so this wiring test is
-    # deterministic on the Windows CI shard (where the broker is unsupported).
     monkeypatch.setattr(mcp_mod, "is_gateway_supported", lambda: True)
-    apply_cb = AsyncMock(
-        return_value={"enabled": True, "running": True, "ping_ok": True}
-    )
+
+    async def applied(enabled):
+        assert lock.held
+        return {"enabled": enabled, "running": True, "ping_ok": True}
+
+    apply_cb = AsyncMock(side_effect=applied)
     state = SimpleNamespace(_mcp_gateway_apply=apply_cb)
-    resp = await mcp_mod.api_mcp_gateway_enable(
-        _make_request(state, {"enabled": True})
-    )
+    request = _make_request(state, {"enabled": True})
+    if card_lock:
+        original_get = request.get
+        request.get = lambda key, default=None: (
+            lock if key == "mcp_gateway_apply_lock" else original_get(key, default)
+        )
+        async with lock:
+            resp = await mcp_mod.api_mcp_gateway_enable(request)
+            assert lock.held
+    else:
+        resp = await mcp_mod.api_mcp_gateway_enable(request)
     assert resp.status == 200
     payload = json.loads(resp.body)
     assert payload["ok"] is True

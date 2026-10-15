@@ -9386,6 +9386,22 @@ def _linux_proc_root(proc_root: "Path | None") -> "Path | None":
     return Path("/proc") if IS_LINUX else None
 
 
+def read_proc_cmdline(pid: int, *, proc_root: "Path | None" = None) -> bytes:
+    """*pid*'s raw ``/proc/<pid>/cmdline`` (NUL-separated argv), or ``b""``.
+
+    Linux only; ``b""`` when the file cannot be read or off Linux with no
+    fixture. Empty is inconclusive, never "no arguments". *proc_root*
+    substitutes a fixture process table on every host.
+    """
+    proc_root = _linux_proc_root(proc_root)
+    if proc_root is None:
+        return b""
+    try:
+        return (proc_root / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return b""
+
+
 def read_proc_stat(pid: int, *, proc_root: "Path | None" = None) -> "ProcStat | None":
     """*pid*'s ``/proc/<pid>/stat`` from ONE bytes read, or None. Linux only.
 

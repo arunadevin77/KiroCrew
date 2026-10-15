@@ -490,6 +490,8 @@ def _wire_mcp_gateway_dashboard(self: GatewayOrchestrator) -> None:
         return
     self.dashboard_state._mcp_gateway_manager = self._mcp_gateway_manager
     self.dashboard_state._mcp_gateway_apply = self._apply_mcp_gateway_enabled
+    # Read the same set enable re-emits, not pending next-start configuration.
+    self.dashboard_state._mcp_gateway_serving = lambda: self._mcp_stub_servers_started
     self.dashboard_state._mcp_gateway_apply_stub = self._apply_mcp_stub
     self.dashboard_state._mcp_resolve_refresh = self._refresh_mcp_resolutions
     # Read by the dashboard restart handler, which execs without running
