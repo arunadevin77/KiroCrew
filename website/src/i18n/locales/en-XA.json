@@ -15852,7 +15852,7 @@
         "failed_to_load_tips_preference": "[Ƒàìĺèð ţø ĺøàð ţìþş þŕèƒèŕèñçè. ················]",
         "feature_videos": "[Ƒèàţùŕè Ṽìðèøş ·············]",
         "feature_videos_cached": "[Şàṽèð øñ ţĥìş ðèṽìçè: {{cached}} øƒ {{total}} · ŕèĺèàşè {{release}} ···················]",
-        "feature_videos_downloading": "[Ðøẁñĺøàðìñğ {{id}}… ············]",
+        "feature_videos_downloading": "[Ðøẁñĺøàðìñğ {{title}}… ············]",
         "feature_videos_downloads_disabled": "[Ṽìðèø ðøẁñĺøàðş àŕè ţùŕñèð øƒƒ. Øñĺý çĺìþş àĺŕèàðý şàṽèð ẁìĺĺ þĺàý. ·······················]",
         "feature_videos_download_all": "[Ðøẁñĺøàð àĺĺ ñøẁ ··············]",
         "failed_to_load_feature_video_status": "[Ƒàìĺèð ţø ĺøàð ƒèàţùŕè-ṽìðèø çàçĥè şţàţùş ·····················]",

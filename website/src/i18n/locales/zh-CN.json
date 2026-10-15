@@ -15988,7 +15988,7 @@
         "failed_to_load_tips_preference": "无法加载提示偏好设置。",
         "feature_videos": "功能视频",
         "feature_videos_cached": "已保存在本机：{{total}} 个中的 {{cached}} 个 · 版本 {{release}}",
-        "feature_videos_downloading": "正在下载 {{id}}…",
+        "feature_videos_downloading": "正在下载 {{title}}…",
         "feature_videos_downloads_disabled": "视频下载已关闭。只有已保存的片段才能播放。",
         "feature_videos_download_all": "立即下载全部",
         "failed_to_load_feature_video_status": "无法加载功能视频缓存状态",

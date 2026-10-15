@@ -119,7 +119,12 @@ export function useChatPanelDashboard({
     // would put a download policy on screen that does not exist.
     if (fv.download_enabled === undefined) return null
     if (fv.downloading) {
-      return i18nT('pages.settings.chatPanel.feature_videos_downloading', { id: fv.downloading })
+      // The title is what a reader recognises. The id is only the fallback for
+      // a gateway that predates `downloading_title`, or a manifest entry with no
+      // title: dropping it there would hide which clip is moving.
+      return i18nT('pages.settings.chatPanel.feature_videos_downloading', {
+        title: fv.downloading_title || fv.downloading,
+      })
     }
     if (!fv.download_enabled) {
       return i18nT('pages.settings.chatPanel.feature_videos_downloads_disabled')

@@ -16249,7 +16249,7 @@
         "failed_to_load_tips_preference": "Die Einstellung für Tipps konnte nicht geladen werden.",
         "feature_videos": "Feature-Videos",
         "feature_videos_cached": "Auf diesem Gerät gespeichert: {{cached}} von {{total}} · Release {{release}}",
-        "feature_videos_downloading": "{{id}} wird heruntergeladen…",
+        "feature_videos_downloading": "{{title}} wird heruntergeladen…",
         "feature_videos_downloads_disabled": "Video-Downloads sind ausgeschaltet. Es laufen nur bereits gespeicherte Clips.",
         "feature_videos_download_all": "Jetzt alle herunterladen",
         "failed_to_load_feature_video_status": "Cache-Status der Feature-Videos konnte nicht geladen werden",

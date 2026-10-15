@@ -16510,7 +16510,7 @@
         "failed_to_load_tips_preference": "No se pudo cargar la preferencia de consejos.",
         "feature_videos": "Vídeos de funciones",
         "feature_videos_cached": "Guardados en este dispositivo: {{cached}} de {{total}} · versión {{release}}",
-        "feature_videos_downloading": "Descargando {{id}}…",
+        "feature_videos_downloading": "Descargando {{title}}…",
         "feature_videos_downloads_disabled": "Las descargas de vídeo están desactivadas. Solo se reproducirán los clips ya guardados.",
         "feature_videos_download_all": "Descargar todo ahora",
         "failed_to_load_feature_video_status": "No se pudo cargar el estado de la caché de vídeos de funciones",

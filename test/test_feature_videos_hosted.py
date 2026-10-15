@@ -1748,6 +1748,36 @@ class TestGovernanceDuringAPass:
             assert (folder / "a.mp4").is_file()
             assert not (folder / "c.mp4").exists()
 
+    def test_each_entry_in_flight_is_reported_with_its_own_title(self, tmp_path: Path) -> None:
+        """The pass records the title from the entry it is fetching, so the
+        status route never pairs one clip's id with another's title."""
+        with patch.dict(
+            os.environ, {"KIROCREW_HOME": str(tmp_path), cache_mod.SKIP_DOWNLOAD_ENV: ""}
+        ):
+            manifest = _parsed(entries=[_entry("a", title="Clip A"), _entry("b", title="Clip B")])
+            cfg = MagicMock()
+            cfg.dashboard.feature_videos_enabled = True
+            cfg.dashboard.feature_videos_cache_max_mb = 500
+            cache = cache_mod.feature_video_cache()
+            seen: list[tuple[object, object]] = []
+
+            def _fake_download(entry: object, _current: object, _rate: int) -> tuple[bool, str]:
+                seen.append((cache.status["downloading"], cache.status["downloading_title"]))
+                return False, "fake"
+
+            with (
+                patch("kiro_crew.feature_videos_cache.KiroCrewConfig") as cfg_cls,
+                patch.object(manifest_mod, "download_denied", return_value=False),
+                patch.object(cache, "refresh_manifest", return_value=manifest),
+                patch.object(cache, "_download_entry", side_effect=_fake_download),
+            ):
+                cfg_cls.load.return_value = cfg
+                asyncio.run(cache.ensure_all())
+            assert seen == [("a", "Clip A"), ("b", "Clip B")]
+            # Once the pass ends, nothing is in flight and no title lingers.
+            assert cache.status["downloading"] is None
+            assert cache.status["downloading_title"] is None
+
     def test_eviction_runs_again_after_the_clips_have_landed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2544,7 +2574,49 @@ class TestStatusRoute:
         assert (body["cached"], body["total"]) == (1, 2)
         assert body["download_enabled"] is True
         assert body["downloading"] is None
+        assert body["downloading_title"] is None
         assert body["download_state"] == cache_mod.STATE_IDLE
+
+    def _status_while(self, tmp_path: Path, entry: manifest_mod.ManifestEntry) -> dict:
+        """The status body with *entry* recorded as the clip in flight."""
+        with patch.dict(os.environ, {"KIROCREW_HOME": str(tmp_path)}):
+            cfg = MagicMock()
+            cfg.dashboard.feature_videos_enabled = True
+            cache = cache_mod.feature_video_cache()
+            cache._set_state(
+                cache_mod.STATE_DOWNLOADING, downloading=entry.id, downloading_title=entry.title
+            )
+            try:
+                with (
+                    patch("kiro_crew.feature_videos.KiroCrewConfig") as cfg_cls,
+                    patch.object(manifest_mod, "download_permitted_cached", return_value=True),
+                ):
+                    cfg_cls.load.return_value = cfg
+                    resp = asyncio.run(fv.api_feature_videos_status(_dashboard_request()))
+            finally:
+                cache._set_state(cache_mod.STATE_IDLE)
+            return json.loads(resp.body)  # type: ignore[arg-type]
+
+    def test_reports_the_title_of_the_clip_in_flight(self, tmp_path: Path) -> None:
+        """The panel names the clip by its title; the id alone reads like developer output."""
+        entry = _parsed(entries=[_entry("monitor-loops", title="Monitor loops")]).entries[0]
+        body = self._status_while(tmp_path, entry)
+        assert body["downloading"] == "monitor-loops"
+        assert body["downloading_title"] == "Monitor loops"
+
+    def test_an_untitled_clip_reports_no_title_rather_than_an_empty_one(
+        self, tmp_path: Path
+    ) -> None:
+        entry = _parsed(entries=[_entry("untitled", title="")]).entries[0]
+        body = self._status_while(tmp_path, entry)
+        assert body["downloading"] == "untitled"
+        assert body["downloading_title"] is None
+
+    def test_a_state_with_nothing_in_flight_carries_no_title(self) -> None:
+        cache = cache_mod.FeatureVideoCache()
+        cache._set_state(cache_mod.STATE_READY, downloading_title="stale")
+        assert cache.status["downloading"] is None
+        assert cache.status["downloading_title"] is None
 
     def test_reports_a_denied_ceiling(self, tmp_path: Path) -> None:
         with patch.dict(os.environ, {"KIROCREW_HOME": str(tmp_path)}):

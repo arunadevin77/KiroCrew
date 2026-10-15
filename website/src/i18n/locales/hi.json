@@ -16249,7 +16249,7 @@
         "failed_to_load_tips_preference": "टिप्स की प्राथमिकता लोड नहीं हो सकी।",
         "feature_videos": "फ़ीचर वीडियो",
         "feature_videos_cached": "इस डिवाइस पर सहेजे गए: {{total}} में से {{cached}} · रिलीज़ {{release}}",
-        "feature_videos_downloading": "{{id}} डाउनलोड हो रहा है…",
+        "feature_videos_downloading": "{{title}} डाउनलोड हो रहा है…",
         "feature_videos_downloads_disabled": "वीडियो डाउनलोड बंद हैं। केवल पहले से सहेजे गए क्लिप चलेंगे।",
         "feature_videos_download_all": "सभी अभी डाउनलोड करें",
         "failed_to_load_feature_video_status": "फ़ीचर वीडियो कैश स्थिति लोड नहीं हो सकी",

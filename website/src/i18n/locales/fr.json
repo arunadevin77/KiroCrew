@@ -16510,7 +16510,7 @@
         "failed_to_load_tips_preference": "Impossible de charger la préférence des astuces.",
         "feature_videos": "Vidéos de fonctionnalités",
         "feature_videos_cached": "Enregistrés sur cet appareil : {{cached}} sur {{total}} · version {{release}}",
-        "feature_videos_downloading": "Téléchargement de {{id}}…",
+        "feature_videos_downloading": "Téléchargement de {{title}}…",
         "feature_videos_downloads_disabled": "Le téléchargement des vidéos est désactivé. Seuls les clips déjà enregistrés seront lus.",
         "feature_videos_download_all": "Tout télécharger maintenant",
         "failed_to_load_feature_video_status": "Impossible de charger l’état du cache des vidéos de fonctionnalités",

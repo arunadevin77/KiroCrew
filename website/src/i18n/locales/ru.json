@@ -16771,7 +16771,7 @@
         "failed_to_load_tips_preference": "Не удалось загрузить настройку подсказок.",
         "feature_videos": "Видео о возможностях",
         "feature_videos_cached": "Сохранено на этом устройстве: {{cached}} из {{total}} · выпуск {{release}}",
-        "feature_videos_downloading": "Загрузка {{id}}…",
+        "feature_videos_downloading": "Загрузка {{title}}…",
         "feature_videos_downloads_disabled": "Загрузка видео отключена. Будут воспроизводиться только уже сохранённые клипы.",
         "feature_videos_download_all": "Загрузить все сейчас",
         "failed_to_load_feature_video_status": "Не удалось загрузить состояние кэша видео о возможностях",

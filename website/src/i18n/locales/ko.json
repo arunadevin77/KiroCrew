@@ -15988,7 +15988,7 @@
         "failed_to_load_tips_preference": "팁 설정을 불러올 수 없습니다.",
         "feature_videos": "기능 소개 영상",
         "feature_videos_cached": "이 기기에 저장됨: {{total}}개 중 {{cached}}개 · 릴리스 {{release}}",
-        "feature_videos_downloading": "{{id}} 다운로드 중…",
+        "feature_videos_downloading": "{{title}} 다운로드 중…",
         "feature_videos_downloads_disabled": "동영상 다운로드가 꺼져 있습니다. 이미 저장된 클립만 재생됩니다.",
         "feature_videos_download_all": "지금 모두 다운로드",
         "failed_to_load_feature_video_status": "기능 소개 영상 캐시 상태를 불러오지 못했습니다",

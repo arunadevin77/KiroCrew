@@ -7694,7 +7694,7 @@
         "failed_to_load_tips_preference": "Failed to load tips preference.",
         "feature_videos": "Feature Videos",
         "feature_videos_cached": "Saved on this device: {{cached}} of {{total}} · release {{release}}",
-        "feature_videos_downloading": "Downloading {{id}}…",
+        "feature_videos_downloading": "Downloading {{title}}…",
         "feature_videos_downloads_disabled": "Video downloads are turned off. Only clips already saved will play.",
         "feature_videos_download_all": "Download all now",
         "failed_to_load_feature_video_status": "Failed to load feature-video cache status",

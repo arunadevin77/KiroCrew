@@ -16510,7 +16510,7 @@
         "failed_to_load_tips_preference": "Não foi possível carregar a preferência de dicas.",
         "feature_videos": "Vídeos de recursos",
         "feature_videos_cached": "Salvos neste dispositivo: {{cached}} de {{total}} · versão {{release}}",
-        "feature_videos_downloading": "Baixando {{id}}…",
+        "feature_videos_downloading": "Baixando {{title}}…",
         "feature_videos_downloads_disabled": "Os downloads de vídeo estão desativados. Só os clipes já salvos serão reproduzidos.",
         "feature_videos_download_all": "Baixar tudo agora",
         "failed_to_load_feature_video_status": "Não foi possível carregar o estado da cache de vídeos de recursos",

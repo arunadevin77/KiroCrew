@@ -15988,7 +15988,7 @@
         "failed_to_load_tips_preference": "ヒントの設定を読み込めませんでした。",
         "feature_videos": "機能紹介動画",
         "feature_videos_cached": "この端末に保存済み: {{total}} 件中 {{cached}} 件 · リリース {{release}}",
-        "feature_videos_downloading": "{{id}} をダウンロード中…",
+        "feature_videos_downloading": "{{title}} をダウンロード中…",
         "feature_videos_downloads_disabled": "動画のダウンロードは無効です。保存済みのクリップのみ再生されます。",
         "feature_videos_download_all": "すべて今すぐダウンロード",
         "failed_to_load_feature_video_status": "機能紹介動画のキャッシュ状態を読み込めませんでした",

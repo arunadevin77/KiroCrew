@@ -102,6 +102,9 @@ export interface FeatureVideoStatus {
   total: number
   /** The clip being fetched right now, or null when nothing is in flight. */
   downloading: string | null
+  /** That clip's title, which is what the panel shows. Null when nothing is in
+   *  flight or the manifest gave no title; absent on a gateway that predates it. */
+  downloading_title?: string | null
 }
 
 export function createFeatureDiscoveryEndpoints({ get, post, j, jfetch: fetch, jNullable }: ClientTransport) {
