@@ -10,7 +10,7 @@ steering is the effective opt-out.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -59,7 +59,10 @@ class TestDequeueNextSystemMessage:
         """A queued sub-agent completion drains; a leading user message stays queued."""
         sa = f"{SUBAGENT_COMPLETION_PREFIX}\nAgent `a1` completed \u2705\nResult"
         slot = _ChatSlot("s1")
-        slot._queue = [{"id": "a", "content": "tangential question"}, {"id": "b", "content": sa, "kind": SUBAGENT_COMPLETION_KIND}]
+        slot._queue = [
+            {"id": "a", "content": "tangential question"},
+            {"id": "b", "content": sa, "kind": SUBAGENT_COMPLETION_KIND},
+        ]
 
         next_msg, consumed = _dequeue_next_system_message(slot)
 
@@ -72,7 +75,10 @@ class TestDequeueNextSystemMessage:
         """A queued cron notification drains; user messages stay queued."""
         cron = f"{CRON_NOTIFY_PREFIX}daily]: run report"
         slot = _ChatSlot("s1")
-        slot._queue = [{"id": "a", "content": "hi there"}, {"id": "b", "content": cron, "kind": CRON_NOTIFICATION_KIND}]
+        slot._queue = [
+            {"id": "a", "content": "hi there"},
+            {"id": "b", "content": cron, "kind": CRON_NOTIFICATION_KIND},
+        ]
 
         next_msg, consumed = _dequeue_next_system_message(slot)
 
@@ -84,7 +90,10 @@ class TestDequeueNextSystemMessage:
         """A leading sub-agent completion drains directly."""
         sa = f"{SUBAGENT_COMPLETION_PREFIX}\nAgent `x` completed \u2705\nDone"
         slot = _ChatSlot("s1")
-        slot._queue = [{"id": "a", "content": sa, "kind": SUBAGENT_COMPLETION_KIND}, {"id": "b", "content": "user follow-up"}]
+        slot._queue = [
+            {"id": "a", "content": sa, "kind": SUBAGENT_COMPLETION_KIND},
+            {"id": "b", "content": "user follow-up"},
+        ]
 
         next_msg, consumed = _dequeue_next_system_message(slot)
 
@@ -130,7 +139,9 @@ class TestApiChatSubagentQueueGate:
         slot = state.get_or_create_slot("s1")
 
         async with TestClient(TestServer(_make_app(state))) as client:
-            resp = await client.post("/api/chat?ws=1", json={"message": "tangential q", "slot": "s1"})
+            resp = await client.post(
+                "/api/chat?ws=1", json={"message": "tangential q", "slot": "s1"}
+            )
             assert resp.status == 200
             data = await resp.json()
 
@@ -194,9 +205,13 @@ class TestApiChatSubagentQueueGate:
             direct.append(msg)
 
         monkeypatch.setattr("kiro_crew.dashboard.chat_handlers._run_chat", fake_run_chat)
-        drained = MagicMock(return_value=MagicMock())
+        drained = AsyncMock()
         monkeypatch.setattr(chat_runner, "_run_chat", drained)
-        monkeypatch.setattr(chat_runner, "spawn_guarded_turn", lambda *a, **k: None)
+        monkeypatch.setattr(
+            chat_runner,
+            "spawn_guarded_turn",
+            lambda _state, _slot, coro: asyncio.create_task(coro),
+        )
         load = MagicMock()
         load.return_value.dashboard.merge_queued_messages = False
         monkeypatch.setattr(chat_runner.KiroCrewConfig, "load", load)
@@ -212,6 +227,7 @@ class TestApiChatSubagentQueueGate:
             data = await resp.json()
 
         assert data.get("queued") is True
+        await slot.task
         assert direct == []  # did not jump the parked message
         assert drained.call_args.args[2] == "first, parked while the child was live"
         assert [item["content"] for item in slot._queue] == ["second"]
