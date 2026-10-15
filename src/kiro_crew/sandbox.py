@@ -152,6 +152,11 @@ from kiro_crew.sandbox_leaves import _CREW_READONLY_TARGETS  # noqa: E402
 from kiro_crew.sandbox_leaves import _CREW_UNREADABLE_MASK_LEAVES  # noqa: E402
 from kiro_crew.sandbox_leaves import _RELOCATED_CREW_HIDDEN_LEAVES  # noqa: E402
 from kiro_crew.sandbox_precreate import _DELEGATED_OVERLAP_LEAF_REASONS  # noqa: E402
+from kiro_crew.sandbox_python_env import provisioning_spawn_requested  # noqa: E402
+from kiro_crew.sandbox_python_env import run_as_provisioning  # noqa: E402
+from kiro_crew.sandbox_python_env import (  # noqa: E402
+    resolved_python_env_targets as _resolved_python_env_targets,
+)
 from kiro_crew.sandbox_seals import SandboxCeilingUnsealable  # noqa: E402
 from kiro_crew.sandbox_seals import _materialize_sealable_ceilings  # noqa: E402
 from kiro_crew.sandbox_seals import _refuse_linked_models_leaf  # noqa: E402
@@ -1709,12 +1714,18 @@ def _live_plan_host(request: sandbox_plan.SandboxRequest) -> sandbox_plan.PlanHo
     relocated_crew_readonly = tuple(_relocated_crew_targets(_CREW_READONLY_LEAVES))
     kiro_agents_targets = tuple(_resolved_kiro_agents_targets())
     install_root_targets = tuple(_resolved_install_root_targets())
+    python_env_targets = tuple(_resolved_python_env_targets())
     # The namespace launcher binds the package directory itself, so a renamed parent
     # carries the read-only mount with it; Seatbelt matches paths and needs the guards.
     install_root_ancestor_guards = (
         ()
         if namespace
         else _literal_ancestor_guards(tuple(os.path.dirname(t) for t in install_root_targets))
+    )
+    python_env_ancestor_guards = (
+        ()
+        if namespace
+        else _literal_ancestor_guards(tuple(map(os.path.dirname, python_env_targets)))
     )
     carveout_probes = tuple(_carveout_probes(sandbox_plan.carveout_candidates(request)).values())
     host_paths = [
@@ -1730,6 +1741,8 @@ def _live_plan_host(request: sandbox_plan.SandboxRequest) -> sandbox_plan.PlanHo
         *kiro_agents_targets,
         *install_root_targets,
         *install_root_ancestor_guards,
+        *python_env_targets,
+        *python_env_ancestor_guards,
     ]
     return sandbox_plan.PlanHost(
         home=home,
@@ -1756,6 +1769,8 @@ def _live_plan_host(request: sandbox_plan.SandboxRequest) -> sandbox_plan.PlanHo
         kiro_agents_targets=kiro_agents_targets,
         install_root_targets=install_root_targets,
         install_root_ancestor_guards=install_root_ancestor_guards,
+        python_env_targets=python_env_targets,
+        python_env_ancestor_guards=python_env_ancestor_guards,
         carveout_probes=carveout_probes,
         uid=uid,
         gid=gid,
@@ -1804,6 +1819,7 @@ def _spawn_plan(
         required_mask_targets=tuple(required_mask_targets),
         mask_occupants=tuple((mask_occupants or {}).items()),
         crew_home_aliases=tuple(crew_home_aliases),
+        provisioning=provisioning_spawn_requested(),
     )
     plan = sandbox_plan.plan_confinement(request, _live_plan_host(request))
     _log_refusals(plan.refusals)
@@ -2282,7 +2298,8 @@ def delegated_workspace_exposes_sealed_target(
     example the strict no-alias config leaf ``cloud.json``, which names the container
     image a Fargate launch runs and therefore the image the task's execution role hands
     the model credential to. The gateway's packaged install tree
-    (:func:`_resolved_install_root_targets`) is a target too: it is the code the
+    (:func:`_resolved_install_root_targets`) and the Python environment around it
+    (:func:`_resolved_python_env_targets`) are targets too: they are the code the
     gateway runs on its next start.
 
     A spawn delegated to kiro-cli's internal sandbox (macOS with that sandbox
@@ -2316,7 +2333,8 @@ def delegated_workspace_exposes_sealed_target(
     )
     if not delegated:
         return None
-    install_targets = _resolved_install_root_targets()
+    env_targets = _resolved_python_env_targets()
+    install_targets = _resolved_install_root_targets() + env_targets
     targets = _resolved_kiro_agents_targets() + [
         os.path.join(str(config_dir()), leaf) for leaf in _DELEGATED_OVERLAP_LEAF_REASONS
     ]
@@ -2340,8 +2358,9 @@ def delegated_workspace_exposes_sealed_target(
         # refuses a workspace that contains it.
         remedy = f"Choose a workspace that does not contain '{target}'."
         if named is None and target in install_targets:
+            kind = "Python environment" if target in env_targets else "install directory"
             named = (
-                "Kiro Crew install directory",
+                f"Kiro Crew {kind}",
                 "the agent could change the code the gateway runs on its next start",
             )
             remedy = f"Choose a workspace outside '{target}'."
@@ -4953,6 +4972,7 @@ async def wrap_argv_async(
     extra_expose_files: tuple[str, ...] = (),
     is_kiro_cli: bool | None = None,
     first_party_fixed_argv: bool = False,
+    provisioning: bool = False,
     _prepare: Callable[..., tuple[list[str], str | None]] | None = None,
 ) -> tuple[list[str], str | None]:
     """Cancellation-safe, off-loop sandbox preparation for async spawn paths.
@@ -4964,6 +4984,10 @@ async def wrap_argv_async(
     launcher/profile before propagating cancellation. ``_prepare`` preserves
     each caller's module-local test seam; production callers pass their imported
     :func:`wrap_argv`, and the default is this module's implementation.
+
+    ``provisioning`` marks a gateway-run step that installs Python packages into the
+    gateway's own environment; only such a spawn keeps write access to it (see
+    :func:`~kiro_crew.sandbox_python_env.run_as_provisioning`).
     """
     options: dict[str, Any] = {"mode": mode}
     if strip_python_env:
@@ -4985,6 +5009,8 @@ async def wrap_argv_async(
     if first_party_fixed_argv:
         options["first_party_fixed_argv"] = True
     prepare = functools.partial(wrap_argv if _prepare is None else _prepare, argv, **options)
+    if provisioning:
+        prepare = functools.partial(run_as_provisioning, prepare)
 
     def _prepare_wrapped() -> tuple[list[str], dict[str, str], str | None]:
         wrapped, cleanup = prepare()

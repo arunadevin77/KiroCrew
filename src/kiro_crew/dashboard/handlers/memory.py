@@ -1693,6 +1693,7 @@ async def _ensure_pip_available() -> tuple[bool, str]:
         sandboxed_argv, cleanup = await wrap_argv_async(
             isolated_python_argv("-m", "ensurepip", "--upgrade"),
             mode="standard",
+            provisioning=True,
             _prepare=wrap_argv,
         )
     except SandboxUnavailableError as exc:
@@ -1841,6 +1842,7 @@ async def api_memory_enable_embeddings(request: web.Request) -> web.Response:
                         "--only-binary=:all:",
                     ),
                     mode="standard",
+                    provisioning=True,
                     _prepare=wrap_argv,
                 )
             except SandboxUnavailableError:
