@@ -362,9 +362,11 @@ invisible unless it keeps its own list.
   script loses that script's answers instead of gaining a default yes.
 - **The patrol expires silently.** `monitor_start` defaults to 24 cycles, so a
   90-second patrol runs out in well under an hour, long before a fleet drains,
-  and the loop simply stops with no symptom. `max_cycles` is passed explicitly
-  and raised mid-run with `monitor_update`. Coasting into the cap is a failure,
-  not a finish, so `autonudge_stop` is called deliberately.
+  and the loop simply stops with no symptom. `max_cycles` and
+  `max_runtime_secs` are passed explicitly, with the interval times the cycle
+  cap covering the runtime so the runtime is what ends the loop, and both are
+  raised together mid-run with `monitor_update`. Coasting into the cap is a
+  failure, not a finish, so `autonudge_stop` is called deliberately.
 - **The conductor cannot detect its own loop's death from the inside.** The
   procedure bounds what recovery it can and says so.
 - **Credit metering covers dashboard-session turns only.** Inspector `spawn_run`

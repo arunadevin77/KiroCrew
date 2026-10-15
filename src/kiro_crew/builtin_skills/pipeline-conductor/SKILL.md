@@ -271,17 +271,20 @@ never relabel it success in the friction report.
    artifact you have to remember to create is one that gets created at the end of
    the run, which is the one moment its contents no longer exist (see "What you
    write down, and when").
-4. Arm the patrol with `monitor_start` using an interval near 90 seconds, an
-   explicit `max_cycles=960`, and an explicit `max_runtime_secs=259200`. **Patrol
-   with `monitor_start`, never `wait`.** If live work needs a larger or renewed
-   bound, raise it with `monitor_update` before it expires; `monitor_start` is
-   create-only. Call `autonudge_stop` yourself when the exit condition fires —
-   coasting into the cycle cap is a failure, not a finish. That ~90s interval is
-   also what sizes your panel's stale window: `BOARD_STALE_AFTER_SECONDS` in
-   `kiro_crew.dashboard.handlers.agent_panel` is about ten of these intervals, so a
-   board reads stale only after the log has been quiet across many cycles rather
-   than after one quiet cycle. Change the cadence here and that constant needs the
-   same look.
+4. Arm the patrol with `monitor_start` using an explicit `interval_secs=90`, an
+   explicit `max_cycles=960`, and an explicit `max_runtime_secs=86400`. **Patrol
+   with `monitor_start`, never `wait`.** The interval times `max_cycles` must
+   cover `max_runtime_secs`, so the runtime, not the cycle cap, ends the loop. If
+   live work needs a larger or renewed bound, raise `max_cycles` and
+   `max_runtime_secs` together with `monitor_update` before either expires, under
+   the same rule; `max_cycles` counts the loop's whole life and the server caps it
+   at 1000. `monitor_start` is create-only. Call `autonudge_stop` yourself when
+   the exit condition fires — coasting into a bound is a failure, not a finish.
+   That ~90s interval is also what sizes your panel's stale window:
+   `BOARD_STALE_AFTER_SECONDS` in `kiro_crew.dashboard.handlers.agent_panel` is
+   about ten of these intervals, so a board reads stale only after the log has
+   been quiet across many cycles rather than after one quiet cycle. Change the
+   cadence here and that constant needs the same look.
 
 Standing patrol instruction template (keep it CURRENT — steering edits go here
 via `monitor_update`, see "Live steering"):
