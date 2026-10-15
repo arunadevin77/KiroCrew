@@ -121,9 +121,10 @@ Decided:
 - With no crewmates, the Crewmates tab is a hero: the ghost avatar, "No
   crewmates yet", the one-line positioning sentence in its singular form, and
   one button, **New crewmate**.
-- **New crewmate** opens one card in place of the chat: the avatar, whose
+- **New crewmate** opens one card as a modal over the chat, which stays
+  mounted and visible behind a glass-blur scrim: the avatar, whose
   pencil opens the avatar editor (icon and colour only); Name, under its own
-  label; Cancel and Create. Everything else (Built from, the default agent unless
+  label; Create. The modal's header Close (X) is the way out. Everything else (Built from, the default agent unless
   another is picked; What it looks after; the workspace, model, triggers and
   session colour) sits behind **Advanced settings**, folded, in the same card.
   The empty state's Advanced link and the crew manager's door open it unfolded.

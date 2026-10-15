@@ -49,35 +49,23 @@ describe('NewCrewmateDialog', () => {
   })
   afterEach(() => { vi.restoreAllMocks() })
 
-  it('standalone: still a modal dialog', async () => {
+  it('the complete form lives inside the modal dialog, dismissed by its own X', async () => {
     renderWithProviders(<NewCrewmateDialog open {...props} />)
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
-    expect(screen.getByRole('dialog')).toContainElement(screen.getByTestId('crewmate-create-form'))
-    expect(screen.queryByTestId('crewmate-create-embedded')).toBeNull()
-  })
-
-  it('embedded: the same complete form in a labelled page region, no dialog, no Escape dismissal', async () => {
-    const { container } = renderWithProviders(<NewCrewmateDialog open embedded {...props} />)
-    const region = await screen.findByRole('region', { name: 'New crewmate' })
-    expect(container.contains(region)).toBe(true)
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(region).toContainElement(screen.getByTestId('crewmate-create-form'))
-    expect(region).toContainElement(screen.getByTestId('crewmate-create-submit'))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toContainElement(screen.getByTestId('crewmate-create-form'))
+    expect(dialog).toContainElement(screen.getByTestId('crewmate-create-submit'))
     // The expert fields are still there behind Advanced settings.
     fireEvent.click(screen.getByTestId('crewmate-create-advanced-toggle'))
     expect(screen.getByTestId('crewmate-create-advanced')).toBeInTheDocument()
-    const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-    document.dispatchEvent(esc)
-    expect(props.onClose).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
     expect(props.onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('embedded: renders nothing while closed and submits the same create', async () => {
-    const { rerender } = renderWithProviders(<NewCrewmateDialog open={false} embedded {...props} />)
-    expect(screen.queryByTestId('crewmate-create-embedded')).toBeNull()
-    rerender(<NewCrewmateDialog open embedded {...props} />)
-    await screen.findByTestId('crewmate-create-embedded')
+  it('renders nothing while closed and submits the same create', async () => {
+    const { rerender } = renderWithProviders(<NewCrewmateDialog open={false} {...props} />)
+    expect(screen.queryByTestId('crewmate-create-form')).toBeNull()
+    rerender(<NewCrewmateDialog open {...props} />)
+    await screen.findByTestId('crewmate-create-form')
     typeName('Scout')
     fireEvent.click(screen.getByTestId('crewmate-create-submit'))
     await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
@@ -89,7 +77,7 @@ describe('NewCrewmateDialog', () => {
   })
 
   it('Advanced settings offers the built-in agent first, labelled as the default', async () => {
-    renderWithProviders(<NewCrewmateDialog open embedded startExpanded {...props} />)
+    renderWithProviders(<NewCrewmateDialog open startExpanded {...props} />)
     const select = await screen.findByRole('combobox', { name: 'Built from' })
     // The label stays short enough to show "(default)" on a phone; what the
     // default is goes in the field's helper text instead.
@@ -98,7 +86,7 @@ describe('NewCrewmateDialog', () => {
   })
 
   it('the Model helper text is a sentence of its own, not a lowercase fragment', async () => {
-    renderWithProviders(<NewCrewmateDialog open embedded startExpanded {...props} />)
+    renderWithProviders(<NewCrewmateDialog open startExpanded {...props} />)
     const select = await screen.findByRole('combobox', { name: 'Edit default model' })
     const hint = fieldHint(select).textContent ?? ''
     expect(hint).toMatch(/^\p{Lu}/u)
@@ -107,12 +95,12 @@ describe('NewCrewmateDialog', () => {
 
   describe('one card with Advanced settings inline', () => {
     const card = (extra: Record<string, unknown> = {}) =>
-      renderWithProviders(<NewCrewmateDialog open embedded firstGreeting {...props} {...extra} />)
+      renderWithProviders(<NewCrewmateDialog open firstGreeting {...props} {...extra} />)
     const toggle = () => screen.getByTestId('crewmate-create-advanced-toggle')
 
     it('folded by default: only the name, the avatar, the hint and the footer, and the template is never named', async () => {
       card()
-      const region = await screen.findByRole('region', { name: 'New crewmate' })
+      const region = await screen.findByRole('dialog')
       expect(screen.getByRole('textbox', { name: 'Name' })).toBeInTheDocument()
       expect(screen.getByTestId('crewmate-create-look')).toBeInTheDocument()
       // The look is the hero: the tile centred alone, and the name sits
@@ -139,7 +127,7 @@ describe('NewCrewmateDialog', () => {
 
     it('unfolding shows Built from = kirocrew and every setting in the same card, under the same heading', async () => {
       card()
-      const region = await screen.findByRole('region', { name: 'New crewmate' })
+      const region = await screen.findByRole('dialog')
       fireEvent.click(toggle())
       expect(toggle()).toHaveAttribute('aria-expanded', 'true')
       const advanced = screen.getByTestId('crewmate-create-advanced')
@@ -153,12 +141,12 @@ describe('NewCrewmateDialog', () => {
       // One disclosure, not a second one nested inside it, and no way "back".
       expect(screen.getAllByTestId('crewmate-create-advanced-toggle')).toHaveLength(1)
       expect(screen.queryByRole('button', { name: 'Back' })).toBeNull()
-      expect(screen.getByRole('region', { name: 'New crewmate' })).toBe(region)
+      expect(screen.getByRole('dialog')).toBe(region)
     })
 
     it('values set under Advanced settings survive folding and unfolding, and are sent', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
       fireEvent.click(toggle())
       fireEvent.change(screen.getByRole('textbox', { name: 'What it looks after' }), { target: { value: 'Watch PRs' } })
@@ -182,7 +170,7 @@ describe('NewCrewmateDialog', () => {
 
     it('Create from the folded card builds from kirocrew, follows the name\'s own look and asks for the first greeting', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
@@ -201,7 +189,7 @@ describe('NewCrewmateDialog', () => {
 
     it('the pencil opens the icon-only avatar editor, and the picked icon is sent even after a rename', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
       const badge = screen.getByTestId('crewmate-create-look-edit')
       expect(screen.getByTestId('crewmate-create-look')).toContainElement(badge)
@@ -226,7 +214,7 @@ describe('NewCrewmateDialog', () => {
 
     it('the name\'s own seeded pose is a pick like any other: clicking it marks it and Apply sends it', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
       fireEvent.click(screen.getByTestId('crewmate-create-look'))
       await screen.findByTestId('avatar-icon-pane')
@@ -243,7 +231,7 @@ describe('NewCrewmateDialog', () => {
 
     it('the original look comes back after a pick: the editor offers it and the create then sends no avatar', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
       fireEvent.click(screen.getByTestId('crewmate-create-look'))
       await screen.findByTestId('avatar-icon-pane')
@@ -261,17 +249,17 @@ describe('NewCrewmateDialog', () => {
       expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).not.toHaveProperty('avatar')
     })
 
-    it('the avatar tile, the Advanced toggle and the close X are the shared Btn, with its press feedback', async () => {
+    it('the avatar tile and the Advanced toggle are the shared Btn, with its press feedback', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
-      for (const id of ['crewmate-create-look', 'crewmate-create-advanced-toggle', 'crewmate-create-close']) {
+      await screen.findByTestId('crewmate-create-form')
+      for (const id of ['crewmate-create-look', 'crewmate-create-advanced-toggle']) {
         expect(screen.getByTestId(id)).toHaveClass('active:scale-[0.97]')
       }
     })
 
     it('Apply waits for a pick, so an untouched editor never swaps the card\'s own face', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
       fireEvent.click(screen.getByTestId('crewmate-create-look'))
       await screen.findByTestId('avatar-icon-pane')
@@ -287,7 +275,7 @@ describe('NewCrewmateDialog', () => {
     it('an open avatar editor counts as a draft, so leaving asks even before Apply', async () => {
       const onDraftStateChange = vi.fn()
       card({ onDraftStateChange })
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       expect(onDraftStateChange).toHaveBeenLastCalledWith({ edited: false, busy: false })
       fireEvent.click(screen.getByTestId('crewmate-create-look'))
       await screen.findByTestId('avatar-icon-pane')
@@ -296,7 +284,7 @@ describe('NewCrewmateDialog', () => {
 
     it('cancelling the avatar editor keeps the name\'s own face and sends no avatar', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
       fireEvent.click(screen.getByTestId('crewmate-create-look'))
       await screen.findByTestId('avatar-icon-pane')
@@ -309,7 +297,7 @@ describe('NewCrewmateDialog', () => {
 
     it('the edit badge shows the shared tooltip on hover, and the tile keeps its name', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       const tile = screen.getByTestId('crewmate-create-look')
       expect(tile).toHaveAccessibleName('Edit avatar')
       fireEvent.mouseEnter(screen.getByTestId('crewmate-create-look-edit'))
@@ -323,19 +311,18 @@ describe('NewCrewmateDialog', () => {
       await screen.findByRole('combobox', { name: 'Built from' })
       expect(toggle()).toHaveAttribute('aria-expanded', 'true')
       fireEvent.click(toggle())
-      rerender(<NewCrewmateDialog open={false} embedded firstGreeting startExpanded {...props} />)
-      rerender(<NewCrewmateDialog open embedded firstGreeting startExpanded {...props} />)
+      rerender(<NewCrewmateDialog open={false} firstGreeting startExpanded {...props} />)
+      rerender(<NewCrewmateDialog open firstGreeting startExpanded {...props} />)
       expect(await screen.findByRole('combobox', { name: 'Built from' })).toBeInTheDocument()
     })
 
     it('reads top to bottom: look, Name label, name, hint, Create, then the Advanced settings toggle last', async () => {
       card()
-      const region = await screen.findByRole('region', { name: 'New crewmate' })
+      const region = await screen.findByRole('dialog')
       // Document order, read off one walk of the card.
       const all = Array.from(region.querySelectorAll('*'))
       const at = (el: Element) => all.indexOf(el)
       const order = [
-        screen.getByRole('heading', { name: 'New crewmate' }),
         screen.getByTestId('crewmate-create-look'),
         screen.getByTestId('crewmate-create-name-label'),
         screen.getByRole('textbox', { name: 'Name' }),
@@ -362,19 +349,6 @@ describe('NewCrewmateDialog', () => {
       expect(toggle().lastElementChild).toHaveTextContent('Advanced settings')
     })
 
-    it('the way out is an X beside the heading, outside the form', async () => {
-      card()
-      const header = await screen.findByTestId('crewmate-create-header')
-      const close = screen.getByRole('button', { name: 'Cancel' })
-      expect(close).toBe(screen.getByTestId('crewmate-create-close'))
-      expect(Array.from(header.children)).toEqual([screen.getByRole('heading', { name: 'New crewmate' }), close])
-      expect(header).toHaveClass('justify-between')
-      expect(close).toHaveAttribute('type', 'button')
-      expect(screen.getByTestId('crewmate-create-form')).not.toContainElement(close)
-      fireEvent.click(close)
-      expect(props.onClose).toHaveBeenCalledTimes(1)
-    })
-
     it('the modal door keeps only the modal\'s own X: no Cancel in the form', async () => {
       renderWithProviders(<NewCrewmateDialog open firstGreeting {...props} />)
       const dialog = await screen.findByRole('dialog')
@@ -385,16 +359,15 @@ describe('NewCrewmateDialog', () => {
 
     it('every control is a 44px touch target on a phone', async () => {
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       for (const el of [toggle(), screen.getByTestId('crewmate-create-submit')]) {
         expect(el).toHaveClass('min-h-11')
       }
-      expect(screen.getByTestId('crewmate-create-close')).toHaveClass('size-11', 'sm:size-8')
     })
 
     it('Advanced settings unfolds directly under its toggle and ends with a second Create', async () => {
       card()
-      const region = await screen.findByRole('region', { name: 'New crewmate' })
+      const region = await screen.findByRole('dialog')
       fireEvent.click(toggle())
       const advanced = screen.getByTestId('crewmate-create-advanced')
       const all = Array.from(region.querySelectorAll('*'))
@@ -412,7 +385,7 @@ describe('NewCrewmateDialog', () => {
     it('the closing Create submits the same create, once per press', async () => {
       vi.mocked(api.createKirocrewAgent).mockImplementationOnce(() => new Promise(() => {}))
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
       fireEvent.click(toggle())
       fireEvent.click(screen.getByTestId('crewmate-create-submit-end'))
@@ -426,25 +399,27 @@ describe('NewCrewmateDialog', () => {
       expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1)
     })
 
-    it('Cancel, the toggle and the look are locked with the form while a create is in flight', async () => {
+    it('the toggle, the look and both Creates are locked with the form while a create is in flight', async () => {
       vi.mocked(api.createKirocrewAgent).mockImplementationOnce(() => new Promise(() => {}))
       card()
-      await screen.findByTestId('crewmate-create-embedded')
+      const dialog = await screen.findByRole('dialog')
       typeName('Scout')
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(toggle()).toBeDisabled())
       expect(screen.getByTestId('crewmate-create-look')).toBeDisabled()
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
       expect(screen.getByTestId('crewmate-create-submit')).toBeDisabled()
+      // The one way out — the modal's own X — is locked too, so an in-flight
+      // create cannot be abandoned mid-POST.
+      expect(within(dialog).getByRole('button', { name: 'Close' })).toBeDisabled()
     })
   })
 
-  it.each([false, true])('a typed draft asks before leaving and before unload (embedded=%s); a clean form does not', async (embedded) => {
+  it('a typed draft asks before leaving and before unload; a clean form does not', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     renderWithProviders(
       <NavigationLeaveGuardProvider>
         <Probe />
-        <NewCrewmateDialog open embedded={embedded} {...props} />
+        <NewCrewmateDialog open {...props} />
       </NavigationLeaveGuardProvider>,
     )
     await screen.findByTestId('crewmate-create-form')
@@ -467,7 +442,7 @@ describe('NewCrewmateDialog opened from a proposal', () => {
   const goalField = () => screen.queryByRole('textbox', { name: 'What it looks after' }) as HTMLTextAreaElement | null
 
   it('fills the name, and the goal with Advanced settings open so the goal is in view', async () => {
-    renderWithProviders(<NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: 'Watch CI' }} {...props} />)
+    renderWithProviders(<NewCrewmateDialog open initialDraft={{ name: 'Scout', goal: 'Watch CI' }} {...props} />)
     await screen.findByTestId('crewmate-create-form')
     expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Scout')
     expect(screen.getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'true')
@@ -478,7 +453,7 @@ describe('NewCrewmateDialog opened from a proposal', () => {
   })
 
   it('a proposal with no goal keeps Advanced settings folded', async () => {
-    renderWithProviders(<NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: '  ' }} {...props} />)
+    renderWithProviders(<NewCrewmateDialog open initialDraft={{ name: 'Scout', goal: '  ' }} {...props} />)
     await screen.findByTestId('crewmate-create-form')
     expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Scout')
     expect(screen.getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'false')
@@ -490,7 +465,7 @@ describe('NewCrewmateDialog opened from a proposal', () => {
     renderWithProviders(
       <NavigationLeaveGuardProvider>
         <Probe />
-        <NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: 'Watch CI' }} onDraftStateChange={(st) => states.push(st)} {...props} />
+        <NewCrewmateDialog open initialDraft={{ name: 'Scout', goal: 'Watch CI' }} onDraftStateChange={(st) => states.push(st)} {...props} />
       </NavigationLeaveGuardProvider>,
     )
     await screen.findByTestId('crewmate-create-form')
@@ -507,7 +482,7 @@ describe('NewCrewmateDialog opened from a proposal', () => {
   it('an untouched proposal whose New workspace form holds input reports itself edited, and unedited once that form is closed', async () => {
     const states: { edited: boolean; busy: boolean }[] = []
     renderWithProviders(
-      <NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: 'Watch CI' }} onDraftStateChange={(st) => states.push(st)} {...props} />,
+      <NewCrewmateDialog open initialDraft={{ name: 'Scout', goal: 'Watch CI' }} onDraftStateChange={(st) => states.push(st)} {...props} />,
     )
     await screen.findByTestId('crewmate-create-form')
     const workspace = await screen.findByRole('combobox', { name: 'Workspace' })
@@ -525,20 +500,20 @@ describe('NewCrewmateDialog opened from a proposal', () => {
   })
 
   it('a new proposal object re-fills an open card', async () => {
-    const { rerender } = renderWithProviders(<NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: '' }} {...props} />)
+    const { rerender } = renderWithProviders(<NewCrewmateDialog open initialDraft={{ name: 'Scout', goal: '' }} {...props} />)
     await screen.findByTestId('crewmate-create-form')
     typeName('Edited')
-    rerender(<NewCrewmateDialog open embedded initialDraft={{ name: 'Radar', goal: 'Triage issues' }} {...props} />)
+    rerender(<NewCrewmateDialog open initialDraft={{ name: 'Radar', goal: 'Triage issues' }} {...props} />)
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Radar'))
     expect(goalField()).toHaveValue('Triage issues')
   })
 
   it('only the guided door carries the guide anchor on its Create', async () => {
-    const { unmount } = renderWithProviders(<NewCrewmateDialog open embedded {...props} />)
+    const { unmount } = renderWithProviders(<NewCrewmateDialog open {...props} />)
     await screen.findByTestId('crewmate-create-form')
     expect(screen.getByTestId('crewmate-create-submit')).not.toHaveAttribute('data-guide-anchor')
     unmount()
-    renderWithProviders(<NewCrewmateDialog open embedded guided {...props} />)
+    renderWithProviders(<NewCrewmateDialog open guided {...props} />)
     await screen.findByTestId('crewmate-create-form')
     expect(screen.getByTestId('crewmate-create-submit')).toHaveAttribute('data-guide-anchor', 'crewmate.create')
     expect(document.querySelectorAll('[data-guide-anchor]')).toHaveLength(1)

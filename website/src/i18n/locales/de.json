@@ -7886,8 +7886,7 @@
     "meetCrewmatesFlow": {
       "done": "Fertig",
       "step4_title": "{{name}} ist bereit",
-      "back_to_chat": "Zurück zum Chat",
-      "leave_draft": "Diese Seite verlassen? Dein ungespeicherter Crewmate-Entwurf geht verloren."
+      "back_to_chat": "Zurück zum Chat"
     },
     "onboardingFlow": {
       "answers_set_how_kiro_explains_things_plain_langu": "Antworten legen fest, wie Kiro Dinge erklärt — in einfacher Sprache oder mit vollständigen technischen Details. Auf diesem Gerät gespeichert; jederzeit unter Einstellungen → Chat änderbar.",

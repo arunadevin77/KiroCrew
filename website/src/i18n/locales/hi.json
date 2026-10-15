@@ -7886,8 +7886,7 @@
     "meetCrewmatesFlow": {
       "done": "हो गया",
       "step4_title": "{{name}} तैयार है",
-      "back_to_chat": "चैट पर वापस जाओ",
-      "leave_draft": "यह पेज छोड़ना है? साथी का सेव न किया गया ड्राफ़्ट खो जाएगा।"
+      "back_to_chat": "चैट पर वापस जाओ"
     },
     "onboardingFlow": {
       "answers_set_how_kiro_explains_things_plain_langu": "उत्तर तय करते हैं कि Kiro चीज़ें कैसे समझाएगा — सरल भाषा में या पूरे तकनीकी विवरण के साथ। इस डिवाइस पर सहेजा जाता है; इसे कभी भी सेटिंग्स → चैट में बदलें।",

@@ -193,9 +193,9 @@ import { SidePanelDockHost } from '../../components/SidePanelGlyph'
 import { uiLocation } from '../../uiLocations/uiLocation'
 import { guidePick } from '../../uiLocations/targetRegistry'
 
-/** Creating a crewmate happens IN this page, in place of the chat: the header
+/** Creating a crewmate happens in a modal over this page: the header
  *  "+" New crewmate, the empty-state hero and the switcher's New crewmate open
- *  `NewCrewmateDialog` (embedded) with its Advanced settings folded; the
+ *  `NewCrewmateDialog` as a modal with its Advanced settings folded; the
  *  hero's Advanced link opens the same card with Advanced settings already
  *  unfolded. A drafted proposal (a crewmate's proposal link carrying a name and
  *  goal, a guide) opens the same card with that name and goal filled in. All
@@ -4459,7 +4459,6 @@ export default function MembersPage() {
         // panel's own copy — the two surfaces share several sentences, "Opening
         // the conversation…" among them, and each says it about itself.
         data-testid="member-main-column"
-        style={createOpen ? { display: 'none' } : undefined}
         onClickCapture={(event) => {
           if (!isAssistantMember(active) || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
           const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null
@@ -5119,24 +5118,21 @@ export default function MembersPage() {
           </>
         )}
       </section>
-      <div className={createOpen ? 'flex flex-1 min-w-0 min-h-0 flex-col overflow-y-auto' : 'hidden'} data-testid="member-create-pane">
-        {/* The New crewmate card, in place of the chat. */}
-        <div className={createOpen ? 'flex flex-1 min-w-0 min-h-0 justify-center p-4' : 'hidden'} data-testid="member-create-advanced">
-          <NewCrewmateDialog
-            embedded
-            open={createOpen}
-            startExpanded={createExpanded}
-            initialDraft={createDraft}
-            guided
-            onDraftStateChange={onCreateDraftState}
-            onFailed={handleCreateFailed}
-            firstGreeting
-            onClose={() => setCreateOpen(false)}
-            onCreated={handleCreated}
-            existingNames={existingNames}
-          />
-        </div>
-      </div>
+      {/* New crewmate: a bounded modal (its own 90vh-capped scrim + glass
+          blur) over the chat it was opened from, which stays mounted and
+          marked not-viewed behind it (see threadShown). */}
+      <NewCrewmateDialog
+        open={createOpen}
+        startExpanded={createExpanded}
+        initialDraft={createDraft}
+        guided
+        onDraftStateChange={onCreateDraftState}
+        onFailed={handleCreateFailed}
+        firstGreeting
+        onClose={() => setCreateOpen(false)}
+        onCreated={handleCreated}
+        existingNames={existingNames}
+      />
       </div>
 
       {/* Side panel — the chat page's tabbed SidePanel, docked to this page.
@@ -5148,8 +5144,9 @@ export default function MembersPage() {
           column the strip's own close control hides, with the header opener
           taking the gesture back while it is hidden; narrow ones make it an
           overlay the header button opens, with the same close control, on the
-          chat page's dock motion. */}
-      <div className={createOpen ? 'hidden' : 'contents'}>
+          chat page's dock motion. The create modal is an overlay, so the page
+          behind it (chat AND this panel) stays in place rather than reflowing. */}
+      <div className="contents">
       {active && (() => {
           // Notes — the crewmate's own standing notes, read-only (no editor:
           // see CrewNotesTab). Its briefing read is gated on the tab being on

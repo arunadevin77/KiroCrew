@@ -7763,8 +7763,7 @@
     "meetCrewmatesFlow": {
       "done": "完成",
       "step4_title": "{{name}} 准备好了",
-      "back_to_chat": "返回聊天",
-      "leave_draft": "离开此页面？未保存的队友草稿将丢失。"
+      "back_to_chat": "返回聊天"
     },
     "onboardingFlow": {
       "answers_set_how_kiro_explains_things_plain_langu": "回答决定 Kiro 如何讲解 — 通俗语言还是完整\n            技术细节。保存在本设备；可随时在\n            “设置 → 聊天”中更改。",

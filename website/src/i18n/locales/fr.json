@@ -8009,8 +8009,7 @@
     "meetCrewmatesFlow": {
       "done": "Terminé",
       "step4_title": "{{name}} est prêt",
-      "back_to_chat": "Retour au chat",
-      "leave_draft": "Quitter cette page ? Ton brouillon de coéquipier non enregistré sera perdu."
+      "back_to_chat": "Retour au chat"
     },
     "onboardingFlow": {
       "answers_set_how_kiro_explains_things_plain_langu": "Vos réponses déterminent la façon dont Kiro explique les choses — en langage simple ou avec tous les détails techniques. Enregistré sur cet appareil ; modifiable à tout moment dans Paramètres → Chat.",

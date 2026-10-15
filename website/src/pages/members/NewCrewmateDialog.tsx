@@ -9,8 +9,7 @@
  * One card, top to bottom: the look as its hero (a centred tile whose pencil
  * opens the avatar editor), the name under its label, Create, and a centred
  * "Advanced settings" toggle under it, so the primary action follows the name
- * directly. The way out is the header's X: the modal's own, or, in place, an
- * X beside the card's heading. Create builds the crewmate from the built-in `kirocrew` agent
+ * directly. The way out is the modal's header X. Create builds the crewmate from the built-in `kirocrew` agent
  * unless told otherwise, and the template is not named until the user asks
  * for more. The "Advanced settings" toggle unfolds the rest of the form
  * inline, in the same card, directly under that line, and the unfolded
@@ -59,9 +58,9 @@
  * nothing while closed, and the form state below is reset on every open so a
  * dismissed draft does not reappear.
  */
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Pencil, X } from 'lucide-react'
+import { ChevronDown, Pencil } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 
@@ -287,7 +286,7 @@ export interface CrewmateDraft {
 }
 
 export default function NewCrewmateDialog({
-  open, onClose, onCreated, existingNames, embedded = false, startExpanded = false, firstGreeting = false,
+  open, onClose, onCreated, existingNames, startExpanded = false, firstGreeting = false,
   initialDraft, guided = false, onDraftStateChange, onFailed,
 }: {
   open: boolean
@@ -309,13 +308,6 @@ export default function NewCrewmateDialog({
   /** Ask the server to open the new crewmate's first chat with its goal
    *  question (see the header comment). */
   firstGreeting?: boolean
-  /**
-   * Render the same complete form in place, inside the page region the host
-   * gives it, instead of as a modal: no portal, no scrim, no focus trap and no
-   * Escape/backdrop dismissal (the X beside the heading is the way out). State, validation, the
-   * create write, reset-on-open and the leave guard are identical.
-   */
-  embedded?: boolean
   onClose: () => void
   /** Fired once the server has the record; the page takes it from there. */
   onCreated: (created: CreatedCrewmate) => void
@@ -760,7 +752,7 @@ export default function NewCrewmateDialog({
   const atStake = open && (dirty || busy || (wsModalOpen && wsDirty))
   const mayLeave = () => {
     if (!atStake) return true
-    return window.confirm(busy ? t('pages.membersPage.create_leave_busy') : embedded ? t('components.meetCrewmatesFlow.leave_draft') : t('pages.membersPage.create_leave_draft'))
+    return window.confirm(busy ? t('pages.membersPage.create_leave_busy') : t('pages.membersPage.create_leave_draft'))
   }
   useSidePanelLeaveGuard(mayLeave, atStake, true)
   // A reload or tab close loses the draft too.
@@ -774,7 +766,6 @@ export default function NewCrewmateDialog({
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
   }, [atStake])
-  const titleId = useId()
   const title = t('pages.membersPage.add_member')
 
   const submit = () => {
@@ -928,8 +919,7 @@ export default function NewCrewmateDialog({
           {busy ? t('pages.membersPage.create_submitting') : t('pages.membersPage.create_submit')}
         </Btn>
         {/* The secondary line, centred under Create: the Advanced settings
-            toggle alone. The way out is the header's close button (the
-            modal's own X, or the in-place card's X beside its heading). */}
+            toggle alone. The way out is the modal's header X. */}
         <div className="mt-2 flex items-center justify-center" data-testid="crewmate-create-secondary">
           <AdvancedSettingsToggle
             open={advanced}
@@ -1010,37 +1000,6 @@ export default function NewCrewmateDialog({
 
   return (
     <>
-      {embedded ? (
-        /* In place: the SAME form under the same heading in a labelled page
-           region -- no portal, no scrim, no focus trap, no Escape. The X
-           beside the heading is the explicit way out, drawn like the
-           modal's own header X, and locked under the same conditions the
-           modal's X is (`dismissDisabled`). 44px on a phone, compact from
-           sm up. */
-        open && (
-          <div
-            role="region"
-            aria-labelledby={titleId}
-            className="flex w-full max-w-[560px] flex-col gap-5 self-start rounded-2xl border border-border bg-card p-5 sm:p-6"
-            data-testid="crewmate-create-embedded"
-          >
-            <div className="flex items-center justify-between gap-3" data-testid="crewmate-create-header">
-              <h2 id={titleId} className="m-0 min-w-0 truncate text-[15px] font-semibold text-text-strong">{title}</h2>
-              <Btn
-                type="button"
-                onClick={onClose}
-                disabled={busy || wsModalOpen}
-                aria-label={t('pages.membersPage.create_cancel')}
-                className="-mr-2 flex size-11 shrink-0 items-center justify-center rounded-md border-none bg-transparent text-muted cursor-pointer transition-colors hover:bg-bg-hover hover:text-text focus-ring disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted sm:size-8"
-                data-testid="crewmate-create-close"
-              >
-                <X size={16} aria-hidden="true" />
-              </Btn>
-            </div>
-            {formEl}
-          </div>
-        )
-      ) : (
       <Modal
         open={open}
         onClose={onClose}
@@ -1056,7 +1015,6 @@ export default function NewCrewmateDialog({
       >
         {formEl}
       </Modal>
-      )}
       {/* The avatar editor, icon tier only: a crewmate that does not exist
           yet has no record for a picture or a pack. Saving pins the pick;
           resetting goes back to the name's own face. */}

@@ -120,7 +120,7 @@ try {
     await page.goto(`${base}/members`)
     await page.getByTestId('guide-start').waitFor()
     // Nothing opens before the human presses Start.
-    assert.equal(await page.getByTestId('crewmate-create-embedded').count(), 0)
+    assert.equal(await page.getByTestId('crewmate-create-form').count(), 0)
     // The guide is offered in the Assistant member's chat; `default` is never opened.
     assert.equal(new URL(page.url()).searchParams.get('member'), 'assistant', 'lands on the Assistant member')
     assert.equal(threadReads.includes('default'), false, 'the default member is not opened')
@@ -138,13 +138,13 @@ try {
       await other.goto(`${base}/members`)
       await other.getByTestId('guide-take-over').waitFor()
       // The tab that does not own the guide opens no card of its own.
-      assert.equal(await other.getByTestId('crewmate-create-embedded').count(), 0)
+      assert.equal(await other.getByTestId('crewmate-create-form').count(), 0)
       await page.bringToFront()
     }
-    // The guide's one step: the New crewmate card, opened in place with the
-    // proposed name and goal, Advanced unfolded so the goal is in view, and the
-    // arrow on its Create button.
-    const card = page.getByTestId('crewmate-create-embedded')
+    // The guide's one step: the New crewmate card, opened as a modal over the
+    // chat with the proposed name and goal, Advanced unfolded so the goal is in
+    // view, and the arrow on its Create button.
+    const card = page.getByTestId('crewmate-create-form')
     await card.waitFor()
     assert.equal(await card.getByLabel('Name', { exact: true }).inputValue(), 'Scout')
     assert.equal(await card.getByTestId('crewmate-create-advanced-toggle').getAttribute('aria-expanded'), 'true')

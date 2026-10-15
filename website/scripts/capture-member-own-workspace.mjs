@@ -101,10 +101,11 @@ async function assertTheme(page, theme, tag) {
 }
 
 /** With zero crewmates the hero's "Advanced" link opens the full create form
- *  in place (the primary button starts the guided Meet Crewmates flow). */
+ *  as a modal over the chat (the primary button starts the guided Meet
+ *  Crewmates flow). */
 async function openDialog(page) {
   await page.locator('section [data-testid=crewmate-empty-advanced]').click()
-  const dlg = page.getByTestId('crewmate-create-embedded')
+  const dlg = page.getByTestId('crewmate-create-form')
   await dlg.waitFor()
   return dlg
 }

@@ -7763,8 +7763,7 @@
     "meetCrewmatesFlow": {
       "done": "완료",
       "step4_title": "{{name}} 준비 완료",
-      "back_to_chat": "채팅으로 돌아가기",
-      "leave_draft": "이 페이지를 나가시겠습니까? 저장하지 않은 크루메이트 초안이 사라집니다."
+      "back_to_chat": "채팅으로 돌아가기"
     },
     "onboardingFlow": {
       "answers_set_how_kiro_explains_things_plain_langu": "답변에 따라 Kiro의 설명 방식이 쉬운 말 또는 완전한 기술적 설명으로 정해집니다 — 이 기기에 저장되며, 설정 → 채팅에서 언제든지 변경할 수 있습니다.",

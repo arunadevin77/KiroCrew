@@ -1842,30 +1842,33 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     expect(within(menu).getAllByRole('menuitem').map(el => el.textContent?.trim())).toEqual(['New crewmate'])
   })
 
-  it('the roster header "+" menu\'s New crewmate opens the card in place with Advanced settings folded, and they unfold inline — no trip to the crew manager', async () => {
+  it('the roster header "+" menu\'s New crewmate opens the card as a modal with Advanced settings folded, and they unfold inline — no trip to the crew manager', async () => {
     await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
     await rosterRow('oncall')
     // Creating a crewmate IS creating a crew record, and the write path is
     // still `POST /api/agents`; what changed is the front door. The primary
-    // row opens the New crewmate card inside the page with Advanced settings
+    // row opens the New crewmate card as a modal with Advanced settings
     // folded; they unfold inline. Nothing navigates.
     expect(screen.getByTestId('member-add')).toHaveAttribute('aria-label', 'Add…')
     await clickAddCrewmate()
     expect(await screen.findByTestId('crewmate-create-look')).toBeInTheDocument()
-    expect(screen.getByTestId('member-create-pane')).toContainElement(screen.getByTestId('crewmate-create-look'))
+    // The card is now a Radix-less Modal (role="dialog"), holding the look.
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toContainElement(screen.getByTestId('crewmate-create-look'))
     expect(screen.queryByRole('combobox', { name: 'Built from' })).toBeNull()
     expect(screen.getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'false')
     // Advanced settings unfolds inline, in the same card.
     fireEvent.click(screen.getByTestId('crewmate-create-advanced-toggle'))
     expect(await screen.findByRole('combobox', { name: 'Built from' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    // The modal's own header X ("Close") is the way out, in place of the old
+    // in-place card's Cancel.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
     await clickAddAdvanced()
     expect(await screen.findByRole('combobox', { name: 'Built from' })).toBeInTheDocument()
     expect(screen.getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'true')
-    // In place, not a modal: a labelled page region where the chat was.
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(screen.getByRole('region', { name: 'New crewmate' })).toBe(screen.getByTestId('crewmate-create-embedded'))
-    expect(screen.getByTestId('member-create-pane')).toContainElement(screen.getByTestId('crewmate-create-embedded'))
+    // A modal named "New crewmate", holding the form — no in-place page region.
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('New crewmate')
+    expect(screen.getByRole('dialog')).toContainElement(screen.getByTestId('crewmate-create-form'))
     expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining('/capabilities'))
   })
 
@@ -2432,7 +2435,7 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     expect(await screen.findByTestId('crewmate-create-look')).toBeInTheDocument()
     expect(screen.getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('combobox', { name: 'Built from' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
     fireEvent.click((await screen.findAllByTestId('crewmate-empty-advanced'))[0])
     expect(await screen.findByRole('combobox', { name: 'Built from' })).toBeInTheDocument()
     expect(screen.getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'true')
@@ -3133,8 +3136,8 @@ describe('New crewmate dialog', () => {
       // A typed name is a draft: the shell must ask, and a refusal keeps the page.
       fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'radar' } })
       expect(askToLeave()).toBe('false')
-      // The in-place form's own wording (no dialog closes; the page is left).
-      expect(confirmSpy).toHaveBeenCalledWith('Leave this page? Your unsaved crewmate draft will be lost.')
+      // The modal's own leave-draft wording (the dialog closes; the page is left).
+      expect(confirmSpy).toHaveBeenCalledWith('Leave this page? The New crewmate dialog closes and what you typed is lost.')
       expect(screen.getByTestId('crewmate-create-form')).toBeInTheDocument()
       // Accepting the prompt lets the navigation through.
       confirmSpy.mockReturnValue(true)
@@ -3153,7 +3156,7 @@ describe('New crewmate dialog', () => {
       fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'radar' } })
       // Stay: the row asked, the user kept the draft, nothing moved.
       clickRailMembers()
-      expect(confirmSpy).toHaveBeenCalledWith('Leave this page? Your unsaved crewmate draft will be lost.')
+      expect(confirmSpy).toHaveBeenCalledWith('Leave this page? The New crewmate dialog closes and what you typed is lost.')
       expect(screen.getByTestId('crewmate-create-form')).toBeInTheDocument()
       expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('radar')
       expect(currentUrl()).toBe('/members?member=oncall')
@@ -3187,7 +3190,7 @@ describe('New crewmate dialog', () => {
       // so the page asks the card's own guard before it would drop the text.
       clickRawMembers()
       await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1))
-      expect(confirmSpy).toHaveBeenCalledWith('Leave this page? Your unsaved crewmate draft will be lost.')
+      expect(confirmSpy).toHaveBeenCalledWith('Leave this page? The New crewmate dialog closes and what you typed is lost.')
       expect(screen.getByTestId('crewmate-create-form')).toBeInTheDocument()
       expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('radar')
       confirmSpy.mockReturnValue(true)
@@ -3431,21 +3434,24 @@ describe('New crewmate dialog', () => {
     await renderPage([row()])
     expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-oncall')
     await openDialog()
+    // Capture the create modal while it is still the active dialog: once the
+    // nested New workspace form opens, the create modal goes inert
+    // (aria-hidden), which removes its `dialog` role from the a11y tree.
+    const outerDialog = screen.getByRole('dialog', { name: 'New crewmate' })
     unfoldAdvanced()
     const workspace = await screen.findByRole('combobox', { name: 'Workspace' })
     fireEvent.keyDown(workspace, { key: 'ArrowDown' })
     fireEvent.click(await screen.findByRole('option', { name: '+ New workspace…' }))
-    // The form is in place (no modal of its own); the nested form is the only
-    // dialog, and the outer form's own exits wait for it.
-    const outerDialog = screen.getByTestId('crewmate-create-embedded')
-    expect(within(outerDialog).getByRole('button', { name: 'Cancel', hidden: true })).toBeDisabled()
+    // While the nested form is up the outer modal's own exit (its header X,
+    // "Close") is disabled.
+    expect(within(outerDialog).getByRole('button', { name: 'Close', hidden: true })).toBeDisabled()
     expect(document.querySelector('.z-\\[109\\]')).toBeInTheDocument()
     expect(screen.getByTestId('crewmate-create-submit')).toBeDisabled()
     const wsName = await screen.findByPlaceholderText('e.g. oncall')
     // Empty form: Escape is an ordinary dismissal.
     fireEvent.keyDown(wsName, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByPlaceholderText('e.g. oncall')).toBeNull())
-    expect(within(outerDialog).getByRole('button', { name: 'Cancel' })).toBeEnabled()
+    expect(within(outerDialog).getByRole('button', { name: 'Close' })).toBeEnabled()
     // The crewmate dialog underneath is untouched by that Escape.
     expect(screen.getByTestId('crewmate-create-form')).toBeInTheDocument()
     // Reopen, type a name: Escape is now refused, the draft stays.
@@ -3487,7 +3493,7 @@ describe('New crewmate dialog', () => {
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Workspace' })).toHaveTextContent('staging'))
     // Dismiss and reopen while the refresh is still pending: the fresh form
     // says default, and the refresh landing later must not change that.
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'New crewmate' })).getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.queryByTestId('crewmate-create-form')).toBeNull())
     await openDialog()
     unfoldAdvanced()
@@ -3553,8 +3559,9 @@ describe('New crewmate dialog', () => {
     await settle()
     expectStaleDropped(queryClient, readsSince, readsAtClose)
     expect(cachedWorkspaceNames(queryClient)).toEqual(before)
-    // And the parent's Cancel is live again: the nested dialog is closed for good.
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled()
+    // And the parent modal's own exit (its header X, "Close") is live again:
+    // the nested dialog is closed for good.
+    expect(within(screen.getByRole('dialog', { name: 'New crewmate' })).getByRole('button', { name: 'Close' })).toBeEnabled()
   })
 
   it('a workspace create that answers after the nested form\'s X does not change the parent\'s pick or the cache', async () => {
@@ -3570,7 +3577,7 @@ describe('New crewmate dialog', () => {
     finish()
     await settle()
     expectStaleDropped(queryClient, readsSince, readsAtClose)
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled()
+    expect(within(screen.getByRole('dialog', { name: 'New crewmate' })).getByRole('button', { name: 'Close' })).toBeEnabled()
   })
 
   it('a workspace create that answers after the nested form was dismissed with Escape does not change the parent\'s pick', async () => {
@@ -3789,9 +3796,9 @@ describe('New crewmate dialog', () => {
     expect(membersMock.mock.results.some((r) => r.value === stalled)).toBe(true)
     expect(notice).toHaveTextContent("Couldn't confirm whether radar was created. Check the list before trying again.")
     expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1)
-    // Unlocked again: the mutation settled, so Cancel is live.
+    // Unlocked again: the mutation settled, so the modal's Close is live.
     expect(screen.getByTestId('crewmate-create-fieldset')).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled()
+    expect(within(screen.getByRole('dialog', { name: 'New crewmate' })).getByRole('button', { name: 'Close' })).toBeEnabled()
     expect(api.sendChat).not.toHaveBeenCalled()
   })
 
@@ -3897,7 +3904,7 @@ describe('New crewmate dialog', () => {
     await rosterRow('oncall')
     await openDialog()
     await waitFor(() => expect(catalogMock).toHaveBeenCalledTimes(1))
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'New crewmate' })).getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.queryByTestId('crewmate-create-form')).toBeNull())
     // A template was installed while the dialog was closed. No server event
     // invalidates this key, so only a per-open re-read can show it.
@@ -3910,7 +3917,7 @@ describe('New crewmate dialog', () => {
     })
     await openDialog()
     await waitFor(() => expect(catalogMock).toHaveBeenCalledTimes(2))
-    const dlg = within(screen.getByTestId('crewmate-create-embedded'))
+    const dlg = within(screen.getByRole('dialog', { name: 'New crewmate' }))
     fireEvent.keyDown(dlg.getByRole('combobox', { name: 'Built from' }), { key: 'ArrowDown' })
     expect(await screen.findByRole('option', { name: 'kirocrew-research' })).toBeInTheDocument()
   })
@@ -4533,7 +4540,7 @@ describe('New crewmate dialog', () => {
     await renderPage([row()])
     await rosterRow('oncall')
     await openDialog()
-    const dlg = within(screen.getByTestId('crewmate-create-embedded'))
+    const dlg = within(screen.getByRole('dialog', { name: 'New crewmate' }))
     await waitFor(() => expect(dlg.getByRole('combobox', { name: 'Built from' })).toHaveTextContent('kirocrew (default)'))
     // A crew alias (`default`) is not a template and must not be offered: a
     // record storing it as `kiro_agent` would boot a fallback, not that crew.
@@ -4601,14 +4608,17 @@ describe('MembersPage create links open the New crewmate card', () => {
     }
     return false
   }
-  const pane = () => screen.getByTestId('member-create-pane')
-  const isHiddenClass = (el: Element) => /(^|\s)hidden(\s|$)/.test(el.className)
-  const cardOpen = () => !isHiddenClass(pane()) && !!within(pane()).queryByTestId('crewmate-create-embedded')
-  const card = () => within(pane()).getByTestId('crewmate-create-embedded')
+  // The create form is now a Modal (`role="dialog"`), portaled over the chat
+  // that stays mounted behind it — no `member-create-pane` wrapper, no
+  // `crewmate-create-embedded` region.
+  const cardOpen = () => screen.queryByRole('dialog') !== null
+  const card = () => screen.getByRole('dialog')
   const nameField = () => within(card()).getByLabelText('Name') as HTMLInputElement
   /** "What it looks after": in the Advanced settings, so present only unfolded. */
   const goalField = () => within(card()).queryByLabelText('What it looks after') as HTMLTextAreaElement | null
-  const closeCard = () => fireEvent.click(within(card()).getByRole('button', { name: 'Cancel' }))
+  // The modal's own header X carries the "Close" name (components.modal.close),
+  // the Modal path's dismiss affordance in place of the embedded card's Cancel.
+  const closeCard = () => fireEvent.click(within(card()).getByRole('button', { name: 'Close' }))
   /** No step of the removed guided flow, and no creation receipt, anywhere. */
   const noGuidedFlow = () => {
     expect(document.querySelector('[data-testid^="meet-crewmates-"]')).toBeNull()
@@ -4633,7 +4643,7 @@ describe('MembersPage create links open the New crewmate card', () => {
     expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-mate')
   }
 
-  it('a create link in Mate\'s chat opens the New crewmate card in place, prefilled: name in Name, goal in What it looks after; the chat stays MOUNTED; nothing is sent', async () => {
+  it('a create link in Mate\'s chat opens the New crewmate card as a modal, prefilled: name in Name, goal in What it looks after; the chat stays MOUNTED and VISIBLE behind it; nothing is sent', async () => {
     await openAssistant()
     const through = passedThrough()
     try {
@@ -4650,9 +4660,10 @@ describe('MembersPage create links open the New crewmate card', () => {
       expect(within(card()).getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'true')
       expect(goalField()?.value).toBe('Watch the release train')
       noGuidedFlow()
-      // Hidden, not unmounted: same element, no new mount, composer state kept.
+      // Mounted AND visible: the modal is a portaled scrim over the chat, which
+      // keeps its element, its mount, and its composer state behind it.
       expect(screen.getByTestId('chat-pane-stub')).toBe(stub)
-      expect(hiddenByStyle(stub)).toBe(true)
+      expect(hiddenByStyle(stub)).toBe(false)
       expect(chatPaneMounts.count).toBe(mountsBefore)
       closeCard()
       await waitFor(() => expect(cardOpen()).toBe(false))
@@ -4715,7 +4726,8 @@ describe('MembersPage create links open the New crewmate card', () => {
     )
     await waitFor(() => expect(currentUrl()).toBe('/members?member=scout'), PANE_READY)
     await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-scout'), PANE_READY)
-    expect(cardOpen()).toBe(false)
+    // The modal closes through its exit motion once the create hands over.
+    await waitFor(() => expect(cardOpen()).toBe(false))
     // No schedule is written by the card: when it runs is settled in the chat.
     expect(api.createCron).not.toHaveBeenCalled()
     // The greeting is the crewmate's own turn, never a message sent for the user.
@@ -4783,7 +4795,7 @@ describe('MembersPage create links open the New crewmate card', () => {
   it('a create link the guide already asked about replaces an edited card without asking again', async () => {
     await openAssistant()
     await clickAddAdvanced()
-    await screen.findByTestId('crewmate-create-embedded')
+    await screen.findByRole('dialog')
     fireEvent.change(nameField(), { target: { value: 'half-typed' } })
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     try {
@@ -4801,32 +4813,32 @@ describe('MembersPage create links open the New crewmate card', () => {
     }
   })
 
-  it('a hidden chat behind a creation surface is not the viewed thread, and is again once the chat returns', async () => {
+  it('a chat behind a creation surface is not the viewed thread, and is again once the chat returns', async () => {
     vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     await openAssistant()
     await waitFor(() => expect(getViewedThreadSlot()).toBe('member-mate'))
     await clickAddAdvanced()
-    await screen.findByTestId('crewmate-create-embedded')
-    // Messages arriving now must badge: nobody is looking at this chat.
+    await screen.findByRole('dialog')
+    // Messages arriving now must badge: the create surface is open over this
+    // chat (keyed off createOpen, not off a hidden column), so it is not the
+    // viewed thread even though the chat stays mounted behind the modal.
     await waitFor(() => expect(getViewedThreadSlot()).toBeNull())
-    fireEvent.click(within(screen.getByTestId('crewmate-create-embedded')).getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(getViewedThreadSlot()).toBe('member-mate'))
   })
 
-  it('Advanced opens the full form IN PLACE of the chat: chat and side panel hidden, chat still mounted', async () => {
+  it('Advanced opens the full form as a modal over the chat: chat still mounted and visible behind the scrim', async () => {
     await openAssistant()
     const stub = screen.getByTestId('chat-pane-stub')
     const mountsBefore = chatPaneMounts.count
     await clickAddAdvanced()
-    await screen.findByTestId('crewmate-create-embedded')
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(hiddenByStyle(stub)).toBe(true)
-    const panel = screen.queryByTestId('member-side-panel')
-    if (panel) expect(panel.closest('.hidden')).not.toBeNull()
-    expect(isHiddenClass(screen.getByTestId('member-create-advanced'))).toBe(false)
-    fireEvent.click(within(screen.getByTestId('crewmate-create-embedded')).getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(screen.queryByTestId('crewmate-create-embedded')).toBeNull())
-    expect(isHiddenClass(pane())).toBe(true)
+    const dialog = await screen.findByRole('dialog')
+    // A modal now, not an in-place region: the chat is mounted AND visible
+    // behind the portaled scrim, and the Advanced region is unfolded in it.
+    expect(hiddenByStyle(stub)).toBe(false)
+    expect(within(dialog).getByTestId('crewmate-create-advanced')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getByTestId('chat-pane-stub')).toBe(stub)
     expect(hiddenByStyle(stub)).toBe(false)
     expect(chatPaneMounts.count).toBe(mountsBefore)
@@ -4854,7 +4866,8 @@ describe('MembersPage create links open the New crewmate card', () => {
       await waitFor(() => expect(cardOpen()).toBe(true))
       fireEvent.click(await rosterRow('alpha'))
       await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'), PANE_READY)
-      expect(cardOpen()).toBe(false)
+      // The modal closes through its exit motion as the chat opens.
+      await waitFor(() => expect(cardOpen()).toBe(false))
       expect(confirm).not.toHaveBeenCalled()
       expect(hiddenByStyle(screen.getByTestId('chat-pane-stub'))).toBe(false)
     } finally {
@@ -4869,7 +4882,7 @@ describe('MembersPage create links open the New crewmate card', () => {
       ;(api.createKirocrewAgent as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
       await openAssistant()
       await clickAddCrewmate()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByRole('dialog')
       fireEvent.change(nameField(), { target: { value: 'radar' } })
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
@@ -4903,15 +4916,15 @@ describe('MembersPage create links open the New crewmate card', () => {
       ;(api.createKirocrewAgent as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
       await openAssistant()
       await clickAddCrewmate()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByRole('dialog')
       fireEvent.change(nameField(), { target: { value: 'radar' } })
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
       fireEvent.click(await rosterRow('alpha'))
       await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'), PANE_READY)
-      await waitFor(() => expect(screen.getByTestId('member-create-pane')).toHaveClass('hidden'))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       await clickAddCrewmate()
-      expect(screen.getByTestId('member-create-pane')).toHaveClass('hidden')
+      expect(screen.queryByRole('dialog')).toBeNull()
       expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
       await act(async () => { finish({ ok: true }) })
       expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
@@ -4927,7 +4940,7 @@ describe('MembersPage create links open the New crewmate card', () => {
       ;(api.createKirocrewAgent as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((_, reject) => { fail = reject }))
       await openAssistant()
       await clickAddCrewmate()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByRole('dialog')
       fireEvent.change(nameField(), { target: { value: 'radar' } })
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
@@ -4951,7 +4964,7 @@ describe('MembersPage create links open the New crewmate card', () => {
       ;(api.createKirocrewAgent as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
       await openAssistant()
       await clickAddCrewmate()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByRole('dialog')
       fireEvent.change(nameField(), { target: { value: 'radar' } })
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
@@ -4982,7 +4995,7 @@ describe('MembersPage create links open the New crewmate card', () => {
     try {
       await openAssistant()
       await clickAddCrewmate()
-      await screen.findByTestId('crewmate-create-embedded')
+      await screen.findByRole('dialog')
       fireEvent.change(nameField(), { target: { value: 'half-typed' } })
       await clickAddCrewmate()
       await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
@@ -6075,13 +6088,14 @@ describe('MembersPage default member, memory and URL', () => {
       await clickAddCrewmate()
       // Opened on the drawer's own duplicate entry, so the close spends it.
       await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith(-1))
-      const pane = screen.getByTestId('member-create-pane')
-      await waitFor(() => expect(pane.className).not.toMatch(/(^|\s)hidden(\s|$)/))
+      // The modal is responsive: below md its DialogContent fills the frame
+      // (w-[calc(100%-4rem)]). It renders as a role="dialog".
+      const dialog = await screen.findByRole('dialog')
       // The creation surface retires the drawer and the roster yields with it.
       await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
       expect(screen.getByTestId('member-roster').className).toMatch(/(^|\s)hidden(\s|$)/)
-      fireEvent.click(within(await within(pane).findByTestId('crewmate-create-embedded')).getByRole('button', { name: 'Cancel' }))
-      await waitFor(() => expect(pane.className).toMatch(/(^|\s)hidden(\s|$)/))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       expect(currentUrl()).toBe('/members?member=alpha')
       expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
     })
@@ -6092,8 +6106,7 @@ describe('MembersPage default member, memory and URL', () => {
       await openRosterDrawer()
       navigateSpy.mockClear()
       fireEvent.click(screen.getByTestId('guide-nav-granted'))
-      const pane = screen.getByTestId('member-create-pane')
-      await waitFor(() => expect(pane.className).not.toMatch(/(^|\s)hidden(\s|$)/))
+      await screen.findByRole('dialog')
       await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
       // The pop would have taken the guide's entry, not the drawer's duplicate.
       expect(navigateSpy).not.toHaveBeenCalledWith(-1)

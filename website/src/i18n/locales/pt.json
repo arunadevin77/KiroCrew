@@ -8009,8 +8009,7 @@
     "meetCrewmatesFlow": {
       "done": "Concluído",
       "step4_title": "{{name}} está pronto",
-      "back_to_chat": "Voltar ao chat",
-      "leave_draft": "Sair desta página? Seu rascunho de colega não salvo será perdido."
+      "back_to_chat": "Voltar ao chat"
     },
     "onboardingFlow": {
       "answers_set_how_kiro_explains_things_plain_langu": "As respostas definem como o Kiro explica as coisas — linguagem simples ou detalhes técnicos completos. Salvo neste dispositivo; altere quando quiser em Configurações → Chat.",

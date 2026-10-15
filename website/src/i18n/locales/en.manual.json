@@ -4026,8 +4026,7 @@
     "meetCrewmatesFlow": {
       "done": "Done",
       "step4_title": "{{name}} is ready",
-      "back_to_chat": "Back to chat",
-      "leave_draft": "Leave this page? Your unsaved crewmate draft will be lost."
+      "back_to_chat": "Back to chat"
     },
     "runInTerminalBtn": {
       "copied_paste_into_terminal": "Copied — paste it into the terminal"

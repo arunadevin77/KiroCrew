@@ -1327,10 +1327,10 @@ work should run on its own may offer a schedule in plain words, and sets one up
 with its schedule tool only after the user says yes.
 
 The primary New crewmate action (the header **+** menu's one row, the empty
-roster's hero and the switcher's New crewmate) opens the embedded
-`NewCrewmateDialog`: one card headed **New crewmate** with the avatar tile, a
+roster's hero and the switcher's New crewmate) opens the
+`NewCrewmateDialog` as a modal: one card headed **New crewmate** with the avatar tile, a
 **Name** field under its own visible label, an **Advanced settings** row, and
-**Cancel** / **Create**; no line under the name explains what happens after
+**Create**; no line under the name explains what happens after
 Create, since the new crewmate's first message says it. Create builds the
 crewmate from `kirocrew`, and the folded card does not name that template. The
 tile shows the name's own face until the user presses it (or its pencil badge),
@@ -1355,10 +1355,12 @@ view (`initialDraft`). The page strips the link's parameters once read and keeps
 the chat the link was followed from as the one behind the card. A proposal left as
 proposed is not the user's draft: it leaves without asking, and a later proposal
 replaces it at once; a card the user changed is replaced only once its own leave
-guard agrees, or when the guide that brought the proposal already asked. No
-modal, viewport scrim or focus trap is added. The current chat stays mounted while
-hidden, preserving its draft and reading position, and closing the card returns to
-it. The guided door (`guided`) carries the guide's anchor on its Create button,
+guard agrees, or when the guide that brought the proposal already asked. The card
+is a modal: a centered card over a viewport scrim with a focus trap, portaled
+above the page. The current chat (and the docked side panel) stay mounted and
+visible behind the scrim rather than being replaced, and the chat is marked
+not-viewed while the modal is open so messages arriving in it still badge;
+closing the card returns to it. The guided door (`guided`) carries the guide's anchor on its Create button,
 and its create request carries the guide headers so the gateway credits the
 guide's one commit step from the crewmate it actually created. When the crewmate
 runs is not asked on the card: its goal welcome settles that in conversation.

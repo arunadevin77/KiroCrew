@@ -7763,8 +7763,7 @@
     "meetCrewmatesFlow": {
       "done": "完了",
       "step4_title": "{{name}} の準備ができました",
-      "back_to_chat": "チャットに戻る",
-      "leave_draft": "このページを離れますか？保存していないクルーメイトの下書きは失われます。"
+      "back_to_chat": "チャットに戻る"
     },
     "onboardingFlow": {
       "answers_set_how_kiro_explains_things_plain_langu": "回答は Kiro の説明方法を設定します。平易な言葉か完全な技術詳細か。このデバイスに保存されます。設定 → チャットからいつでも変更できます。",
