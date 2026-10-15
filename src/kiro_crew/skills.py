@@ -1146,6 +1146,50 @@ def _walk_confined_skill_tree(base: Path) -> Iterator[tuple[str, list[str], list
         os.close(fd)
 
 
+#: (resolved link, resolved target) pairs already warned about, so a skill link
+#: whose target sits outside every allowed root is reported ONCE per process
+#: rather than on every catalog scan. Each remembered pair is a fixed-size
+#: digest, not the user-controlled path strings, and the set is capped: a user
+#: retargeting a link between scans cannot grow it without bound. At the cap the
+#: warning still fires for an unremembered pair (it just is not deduped), which
+#: is the fail-safe direction — a repeated warning is harmless, a swallowed one
+#: hides the drop this exists to surface.
+_WARNED_OUTSIDE_ROOT_LINKS_MAX = 1024
+_WARNED_OUTSIDE_ROOT_LINKS: set[str] = set()
+_WARNED_OUTSIDE_ROOT_LINKS_LOCK = threading.Lock()
+
+
+def _warn_skill_link_outside_roots(link: Path, target: str) -> None:
+    """Warn that a link placed in the skills tree was skipped as out of bounds.
+
+    The containment gate is a security boundary — a link to an arbitrary target
+    would admit unvetted ``SKILL.md`` prose into the agent's context — so the
+    link is refused. A silent refusal gives a user who linked a skill folder in
+    from a git repository no hint that the catalog dropped it, so name the link,
+    its resolved target, and ``skills.extra_paths`` (the supported way to admit
+    an outside location). Emit it only once per (link, target) pair so repeated
+    scans do not spam, remembering a bounded number of fixed-size digests rather
+    than the paths themselves.
+    """
+    digest = hashlib.sha256(
+        b"\0".join(
+            os.path.normcase(part).encode("utf-8", "surrogatepass") for part in (str(link), target)
+        )
+    ).hexdigest()
+    with _WARNED_OUTSIDE_ROOT_LINKS_LOCK:
+        if digest in _WARNED_OUTSIDE_ROOT_LINKS:
+            return
+        if len(_WARNED_OUTSIDE_ROOT_LINKS) < _WARNED_OUTSIDE_ROOT_LINKS_MAX:
+            _WARNED_OUTSIDE_ROOT_LINKS.add(digest)
+    logger.warning(
+        "Skill link %s is not followed: its target %s is outside the skills "
+        "directory and every allowed root. To load the skill, add the target's "
+        "parent directory to skills.extra_paths.",
+        link,
+        target,
+    )
+
+
 def _iter_skill_files(
     base: Path,
     *,
@@ -1180,7 +1224,8 @@ def _iter_skill_files(
 
     if not base.exists():
         return []
-    allowed_roots = (os.path.realpath(base),) + _trusted_skill_roots()
+    base_real = os.path.realpath(base)
+    allowed_roots = (base_real,) + _trusted_skill_roots()
 
     def probe(directory: Path) -> tuple[str | None, list[Path], Path | None]:
         lexical = os.path.abspath(directory)
@@ -1190,12 +1235,29 @@ def _iter_skill_files(
         if exclude_roots and _within_any(real, exclude_roots):
             return real, [], None
         if not _within_any(real, allowed_roots):
-            # On Windows, record the resolved child and the roots it is judged
-            # against whenever the containment gate turns a child of the skills
-            # base away, so a CI run surfaces the exact (candidate, roots) pair
-            # the gate rejects. Windows-only and logging-only: the return is
-            # unchanged, so no platform's behaviour is affected.
-            if os.name == "nt":
+            # The containment gate is a security boundary, so the link is
+            # refused. A link the user placed directly in the skills base,
+            # pointing at a folder outside every allowed root (the "link my
+            # skills in from a repo" case), is reported once so the drop is not
+            # silent: name the target and the supported fix. is_link_or_junction
+            # covers both a POSIX symlink and a Windows junction, and the
+            # parent-realpath check limits the warning to a direct child of the
+            # base the user themselves created.
+            try:
+                is_direct_child_link = os.path.realpath(
+                    directory.parent
+                ) == base_real and is_link_or_junction(directory)
+            except OSError:
+                is_direct_child_link = False
+            if is_direct_child_link:
+                _warn_skill_link_outside_roots(directory, real)
+            elif os.name == "nt":
+                # On Windows, record the resolved child and the roots it is
+                # judged against whenever the containment gate turns a deeper
+                # child of the skills base away, so a CI run surfaces the exact
+                # (candidate, roots) pair the gate rejects. Windows-only and
+                # logging-only: the return is unchanged, so no platform's
+                # behaviour is affected.
                 logger.warning(
                     "skill discovery: _within_any rejected a child of base "
                     "(candidate=%r, roots=%r)",
