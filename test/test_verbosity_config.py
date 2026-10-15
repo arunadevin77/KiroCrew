@@ -142,6 +142,40 @@ class TestResponsePreferencesSection:
         assert _build_response_preferences_section(fake_cfg) == ""
 
 
+class TestConciseBlock:
+    """``concise`` was measured against the three-check register and kept as is.
+
+    The model copies the register of its instructions, which is why the
+    ``answer_only`` essay became three checks. The same seven asks, run on
+    ``concise`` as shipped, halved the prose of a reply with no block at all
+    and read at the same grade, so its list form holds. What is pinned is
+    what that measurement depends on: a short list, and its own contract --
+    shorter replies that keep their substance, not the answer-only register.
+    The measurements live in the PR that pinned them.
+    """
+
+    def _rules(self) -> str:
+        return _reply_style_rules("concise")
+
+    def test_the_block_stays_a_short_list_not_an_essay(self):
+        """A block that grows into prose is how ``answer_only`` reached 1,300
+        words; the length of this one is pinned for the same reason."""
+        words = len(self._rules().split())
+        assert words < 300, f"concise rules grew to {words} words"
+
+    def test_the_rules_are_bullets(self):
+        bullets = [ln for ln in self._rules().splitlines() if ln.startswith("- ")]
+        assert 5 <= len(bullets) <= 8, f"concise carries {len(bullets)} bullets"
+
+    def test_concise_cuts_length_not_substance(self):
+        """The level's own contract: a short explanation survives. It must not
+        borrow the answer-only register, or the two levels become one."""
+        rules = self._rules()
+        assert "Reduce length without losing substance" in rules
+        assert "Say only the answer" not in rules
+        assert "five-year-old" not in rules
+
+
 class TestRetiredUltraLevel:
     """``ultra`` was retired; a config that still names it reads as ``answer_only``."""
 
