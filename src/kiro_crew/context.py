@@ -1273,11 +1273,33 @@ _CRITICAL_RULES_TAIL = (
     "pronouns, refer to them by name or with singular they/them.\n"
     "[END CRITICAL RULES]\n\n"
 )
+# The autonomous-goal marker is taught ONLY to slots the full dashboard chat can
+# open, where it renders as a review card (see _goal_card_surface). The text
+# states the degradation too: the same slot can also be shown in a split pane or
+# the companion chat, which offer the objective as an ordinary reply instead.
+_GOAL_RULE_DASHBOARD = (
+    "When the user's request clearly needs several more turns of autonomous "
+    "work they have not yet started (for example: keep fixing until the tests "
+    "pass), you MAY offer it as a goal: one standalone line [GOAL: objective] "
+    "placed before any final [OPTIONS:] line, at most once per reply. The full "
+    "chat view shows it as an Autonomous goal card, and nothing runs until the "
+    "user reviews the objective in the goal editor and starts it. Split panes and "
+    "the companion chat offer the same objective as an ordinary one-turn reply "
+    "instead. Write the objective "
+    "as the complete instruction the goal will follow, including when it is "
+    "done. Never offer a goal for one-turn work or while a goal or monitor is "
+    "already running in this session.\n"
+)
 # The dashboard variant is the module's canonical block: tests and the
 # marker-neutralization prefix check treat "a critical-rules block" as one of
-# these two fixed strings, so both stay module constants (never templated).
+# the fixed strings in _CRITICAL_RULES_VARIANTS, so each stays a module
+# constant (never templated).
 _CRITICAL_RULES = _CRITICAL_RULES_HEAD + _DIFF_RULE_DASHBOARD + _CRITICAL_RULES_TAIL
 _CRITICAL_RULES_CHANNEL = _CRITICAL_RULES_HEAD + _DIFF_RULE_CHANNEL + _CRITICAL_RULES_TAIL
+_CRITICAL_RULES_GOAL = (
+    _CRITICAL_RULES_HEAD + _DIFF_RULE_DASHBOARD + _GOAL_RULE_DASHBOARD + _CRITICAL_RULES_TAIL
+)
+_CRITICAL_RULES_VARIANTS = (_CRITICAL_RULES_GOAL, _CRITICAL_RULES, _CRITICAL_RULES_CHANNEL)
 
 
 def _template_selected_on_member_store(execution_context: Any) -> bool:
@@ -1348,7 +1370,30 @@ def _desk_withheld(execution_context: Any, desk_member: str) -> bool:
 # display is the message text itself.
 
 
-def _critical_rules_for(session_key: str | None, runtime_source: str | None) -> str:
+def _goal_card_surface(mode: str, execution_context: Any) -> bool:
+    """Whether the full dashboard chat can open this slot's goal review.
+
+    Crew and member slots route work through their crew and never offer goal
+    review, and an App Kit slot renders only through ChatEmbed. Any other slot
+    can be opened in full chat, which renders the review card. The server cannot
+    tell which host shows a slot, because one slot can be open in full chat, a
+    split pane and the companion chat at once, so the rule text itself says the
+    pane hosts degrade the marker to an ordinary reply (``ChatInput`` without
+    ``onAutomationClick`` takes ``goalSuggestionReplyFallback``).
+    """
+    if mode in ("crew", "member"):
+        return False
+    app = getattr(execution_context, "app", "") if execution_context is not None else ""
+    return not app
+
+
+def _critical_rules_for(
+    session_key: str | None,
+    runtime_source: str | None,
+    *,
+    mode: str = "",
+    execution_context: Any = None,
+) -> str:
     """Select the critical-rules block for this session's runtime.
 
     Compares the RAW source key from the same trusted resolution that
@@ -1360,7 +1405,11 @@ def _critical_rules_for(session_key: str | None, runtime_source: str | None) -> 
     inverse failure leaves a channel user with no record at all).
     """
     source = _resolve_runtime_source(session_key or "", runtime_source)
-    return _CRITICAL_RULES if source == "dashboard" else _CRITICAL_RULES_CHANNEL
+    if source != "dashboard":
+        return _CRITICAL_RULES_CHANNEL
+    if _goal_card_surface(mode, execution_context):
+        return _CRITICAL_RULES_GOAL
+    return _CRITICAL_RULES
 
 
 # Per-agent opt-out cache for the dashboard-contract context (``_CRITICAL_RULES``
@@ -2707,7 +2756,14 @@ class ContextBuilder:
         # them regardless); this only stops the host from MANDATING them where an
         # agent has declared it does not want them.
         if _agent_includes_crew_context(agent):
-            append_required(_critical_rules_for(session_key, runtime_source))
+            append_required(
+                _critical_rules_for(
+                    session_key,
+                    runtime_source,
+                    mode=mode,
+                    execution_context=execution_context,
+                )
+            )
 
         # Current date/time — inject for ALL agents so the LLM knows "today".
         # Honour KiroCrewConfig.timezone (e.g. "Asia/Tokyo") so the LLM sees
@@ -3058,7 +3114,7 @@ class ContextBuilder:
 
         if essentials:
             prefix = next(
-                (r for r in (_CRITICAL_RULES, _CRITICAL_RULES_CHANNEL) if context.startswith(r)),
+                (r for r in _CRITICAL_RULES_VARIANTS if context.startswith(r)),
                 "",
             )
             context = prefix + essentials + context[len(prefix) :]
@@ -3442,11 +3498,7 @@ class ContextBuilder:
                 # none of the other trusted framing uses these markers, so
                 # scrubbing everything after the block is safe.
                 _rules_prefix = next(
-                    (
-                        rb
-                        for rb in (_CRITICAL_RULES, _CRITICAL_RULES_CHANNEL)
-                        if session_ctx.startswith(rb)
-                    ),
+                    (rb for rb in _CRITICAL_RULES_VARIANTS if session_ctx.startswith(rb)),
                     None,
                 )
                 if _rules_prefix is not None:
@@ -3464,7 +3516,12 @@ class ContextBuilder:
                     # insurance against output-format drift. Same variant
                     # selection and per-agent opt-out gate as session start.
                     _resume_rules = (
-                        _critical_rules_for(session_key, runtime_source)
+                        _critical_rules_for(
+                            session_key,
+                            runtime_source,
+                            mode=mode,
+                            execution_context=execution_context,
+                        )
                         if _agent_includes_crew_context(agent)
                         else ""
                     )
