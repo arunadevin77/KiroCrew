@@ -157,18 +157,25 @@ def test_the_page_matches_the_session_control_group_and_the_channel_block(
     )
 
 
+def _session_control_source() -> str:
+    """The facade and every owner module it composes, where the refusal codes live."""
+    dashboard = Path(__file__).parent.parent / "src" / "kiro_crew" / "dashboard"
+    paths = [dashboard / "session_control.py"]
+    paths += sorted((dashboard / "session_control_parts").glob("*.py"))
+    return "\n".join(path.read_text(encoding="utf-8") for path in paths)
+
+
 def test_every_tabulated_refusal_code_is_one_the_source_raises(doc_text: str) -> None:
     """The refusal table is the codes a caller reads back, so each must exist.
 
-    ``session_control.py`` is the only place that mints them, and the table is the
+    ``session_control.py`` and its ``session_control_parts`` owners are the only place
+    that mints them, and the table is the
     part of the page an agent consults while handling an error rather than while
     learning the surface -- so a code renamed there and left here sends the caller
     looking for a string it will never see. Asserted as literals rather than by
     importing a set, because the module keeps no enumeration of them.
     """
-    source = (
-        Path(__file__).parent.parent / "src" / "kiro_crew" / "dashboard" / "session_control.py"
-    ).read_text(encoding="utf-8")
+    source = _session_control_source()
     section = doc_text.split("## What you cannot reach", 1)[1].split("### Switches", 1)[0]
     # ROWS only. The prose around the table backticks plenty of non-codes
     # (``list_sessions``, a slot key), so a section-wide scan would assert those
@@ -195,9 +202,7 @@ def test_the_three_target_forms_match_the_resolver(doc_text: str) -> None:
     asserted, because a resolver that returned on the first key hit would make the
     page's advice pointless rather than wrong.
     """
-    source = (
-        Path(__file__).parent.parent / "src" / "kiro_crew" / "dashboard" / "session_control.py"
-    ).read_text(encoding="utf-8")
+    source = _session_control_source()
     assert 'code="ambiguous_target"' in source
     assert "address it by its session key instead" in source
     assert (

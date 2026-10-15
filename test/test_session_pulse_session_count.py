@@ -181,4 +181,6 @@ def test_session_control_create_does_not_opt_in() -> None:
     # subsumes it: the session-control create verb mints USER-origin slots
     # (privacy semantics) but must not count toward the survey. Passing
     # count_user_session=True there re-introduces the bug.
-    assert "dashboard/session_control.py" not in _opted_in_call_counts()
+    counts = _opted_in_call_counts()
+    assert "dashboard/session_control.py" not in counts
+    assert not [path for path in counts if path.startswith("dashboard/session_control_parts/")]

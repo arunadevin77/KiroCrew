@@ -1234,7 +1234,7 @@ def test_the_sid_refresh_sits_after_the_final_authorization(verb: str, emitter: 
 
     fn = next(
         node
-        for node in ast.walk(ast.parse(inspect.getsource(sc)))
+        for node in ast.walk(ast.parse(inspect.getsource(inspect.getmodule(getattr(sc, verb)))))
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == verb
     )
 
@@ -1275,7 +1275,7 @@ def test_the_slot_capture_precedes_the_resolutions_own_suspension(verb: str, res
 
     fn = next(
         node
-        for node in ast.walk(ast.parse(inspect.getsource(sc)))
+        for node in ast.walk(ast.parse(inspect.getsource(inspect.getmodule(getattr(sc, verb)))))
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == verb
     )
 
@@ -1488,7 +1488,7 @@ def test_no_suspension_between_the_final_authorization_and_the_append(verb: str,
 
     fn = next(
         node
-        for node in ast.walk(ast.parse(inspect.getsource(sc)))
+        for node in ast.walk(ast.parse(inspect.getsource(inspect.getmodule(getattr(sc, verb)))))
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == verb
     )
 

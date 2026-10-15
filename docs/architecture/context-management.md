@@ -640,7 +640,7 @@ the dashboard session-control server per session
 (`members.member_dispatch_session_server`); the member caller is authorized
 automatically for sessions it created, bounded by `agent.member_dispatch`.
 
-**The inheritance rule that matters:** `dashboard/session_control.py` resolves a
+**The inheritance rule that matters:** `dashboard/session_control_parts/session_create.py` resolves a
 new session's agent as `agent.strip() or caller_slot.agent` — an omitted `agent`
 makes the child inherit the **caller's** agent, so a session created from a
 conductor is born a conductor, with no file-writing tools and unable to do the
@@ -699,4 +699,4 @@ per-member permission control; both exist today, in the forms above.
 | Member identity, rules, briefing, activity, V2 essentials | `src/kiro_crew/members.py`, `src/kiro_crew/context_assembly/member.py` (`build_member_section`, `build_v2_essentials`), `src/kiro_crew/member_essential_context.py` |
 | Crew records, routing, binding | `src/kiro_crew/config/loader.py`, `src/kiro_crew/mcp_core_parts/crew.py` |
 | Per-member permissions | `src/kiro_crew/agent_capabilities.py`, `src/kiro_crew/agent_state.py` |
-| Session creation and agent inheritance | `src/kiro_crew/dashboard/session_control.py` |
+| Session creation and agent inheritance | `src/kiro_crew/dashboard/session_control_parts/session_create.py` |

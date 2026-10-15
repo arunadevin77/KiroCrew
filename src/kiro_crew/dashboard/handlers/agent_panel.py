@@ -165,7 +165,7 @@ async def _resolve_publishing_crew(
     # flipped still holds the grant, and nothing short of ending that session
     # would take it back. ``agent.crew_panel``'s own description promises the
     # withdrawal reaches "every member at once", and the two sibling switches in
-    # this subsystem keep that promise the same way -- ``session_control.py``
+    # this subsystem keep that promise the same way -- ``session_control_parts/caller_access.py``
     # reads them at the gate rather than at mount time. Read through
     # ``crew_panel_enabled``, so an unreadable or degraded config fails closed
     # here exactly as it does at the mount.

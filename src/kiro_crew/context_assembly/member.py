@@ -882,7 +882,7 @@ def operating_mode_block(agent_label: str) -> str:
     ``session_*`` tools this block names arrive as a per-session mount of the
     dashboard session-control server (``members.member_dispatch_session_server``),
     and the server authorizes member callers automatically
-    (``dashboard/session_control.py``), bounded to sessions the member created
+    (``dashboard/session_control_parts/caller_access.py``), bounded to sessions the member created
     itself -- so the instructions hold with zero configuration.
     """
     return (

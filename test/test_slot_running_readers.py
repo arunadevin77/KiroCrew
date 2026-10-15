@@ -168,7 +168,7 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("handlers/members.py", "api_member_thread"),
                 ("handlers/members.py", "api_members"),
                 ("handlers/messaging.py", "api_send_message"),
-                ("session_control.py", "create_session"),
+                ("session_control_parts/session_create.py", "create_session"),
                 # The roster verb. Reservation state, like `read_messages` beside
                 # it and for the same reason: it reports whether a session is
                 # working so a patrol knows whether to wait.
@@ -179,11 +179,11 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("session_control.py", "read_summary"),
                 ("session_control.py", "send_to_target"),
                 # Pre-pick idle check via _switch_target_busy (idle-only tool contract).
-                ("session_control.py", "set_model_target"),
+                ("session_control_parts/model_switch.py", "set_model_target"),
                 ("openai_compat.py", "api_completions"),
                 # Idle-only teardown: the same pre-lock and in-lock probe via
                 # _switch_target_busy, so a reserved slot between stages is busy.
-                ("session_control.py", "reload_target"),
+                ("session_control_parts/turn_control.py", "reload_target"),
                 # The idle sweep never picks or pops a slot holding a reservation.
                 ("slot_retention.py", "_still_idle_check"),
                 ("slot_retention.py", "select_idle_slot_keys"),

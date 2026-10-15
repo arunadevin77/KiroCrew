@@ -2177,6 +2177,44 @@ itself is a plain `agent.*` bool with no catalog entry, and a scope would need a
 new governance enforcement seam rather than a data-only append, so it is left to a
 follow-up.
 
+## Module layout
+
+`kiro_crew.dashboard.session_control` stays the only import path and the only patch
+seam for every verb: `src/kiro_crew/dashboard/session_control.py` is a mirrored facade
+(`kiro_crew._facade_mirror`) over the owner package
+`src/kiro_crew/dashboard/session_control_parts/`, one responsibility per module. A patch of
+`session_control.<name>` lands in every owner that binds the name, so a test patches the
+facade, never one owner; `test_facade_mirror_guards.py` holds the family to that contract
+and `test_session_control_parts_contract.py` to the rest of this layout. Every owner logs
+under the logger name `kiro_crew.dashboard.session_control`. New code for a responsibility
+goes to its owner, and the owners import each other lowest layer first, in this order:
+
+- `src/kiro_crew/dashboard/session_control_parts/caller_access.py`: who is calling, the
+  enablement gates, the member, cron and delegation ownership fences, and the audit record
+  every verb writes.
+- `src/kiro_crew/dashboard/session_control_parts/delivery_containment.py`: the
+  channel-mirror probes, the containment stamps a queued entry carries, the drop and
+  discard notices, and the audience-admission record.
+- `src/kiro_crew/dashboard/session_control_parts/target_authorization.py`: the owner-DM
+  judgement, a creator's eligibility, slot resolution, the refusal factories and
+  `authorize_target`.
+- `src/kiro_crew/dashboard/session_control_parts/turn_control.py`: stop, retry, continue,
+  end a wait, reload and close.
+- `src/kiro_crew/dashboard/session_control_parts/model_switch.py`: `session_set_model` and
+  the deferred model pick.
+- `src/kiro_crew/dashboard/session_control_parts/session_titles.py`: title cleaning,
+  `session_rename` and `session_generate_title`.
+- `src/kiro_crew/dashboard/session_control_parts/session_create.py`: `session_create` and
+  the spawn record a created or forked child gets.
+- `src/kiro_crew/dashboard/session_control_parts/session_tree.py`: `session_fork`,
+  `session_adopt` and `session_release`, and the tree-mutation lock and append fence.
+- `src/kiro_crew/dashboard/session_control_parts/session_status.py`: the read limits; the
+  read verbs themselves are still in the facade.
+
+The facade itself still holds `session_send` and `session_broadcast`, the read verbs
+(`session_status`, `session_read`, `session_summary`) and archived-session revival and
+listing.
+
 ## What is deliberately not here
 
 - **No delivery to a target outside the addressable set.** `session_send` writes

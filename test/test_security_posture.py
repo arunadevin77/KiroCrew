@@ -274,7 +274,7 @@ _BASELINE_LOG_SITE_CENSUS: dict[str, int] = {
     "dashboard/handlers/files.py": 1,
     "dashboard/handlers/hooks.py": 1,
     "dashboard/handlers/messaging.py": 12,
-    "dashboard/session_control.py": 1,
+    "dashboard/session_control_parts/target_authorization.py": 1,
     "dashboard/session_transfer.py": 1,
     "dashboard/state.py": 1,
     "knowledge/agent_fetch.py": 1,
@@ -1014,6 +1014,10 @@ class TestRedactionSinkRegistry:
             "redact_peer_text",
             "_redact_peer_payload",
             "_redact_sse_event_async",
+            # _redact_for_display (dashboard/chat_utils.py) runs redact_exfiltration_urls
+            # THEN redact_credentials, cached by content hash, so a sink calling it is
+            # fully covered; test_the_display_redactor_runs_both_scanners pins that.
+            "_redact_for_display(",
         )
         for label, module, detail in security_posture._REDACTION_SINKS:
             text = (pkg / module).read_text(encoding="utf-8")
@@ -1027,6 +1031,18 @@ class TestRedactionSinkRegistry:
                 "does not disclose that — either say which scanner it runs, or fix "
                 "the sink to run both"
             )
+
+    def test_the_display_redactor_runs_both_scanners(self):
+        """Why ``_redact_for_display(`` is a dual pass above: one input carrying a
+        credential and an exfiltration URL comes back with both removed."""
+        from kiro_crew.dashboard import chat_utils
+
+        chat_utils._clear_display_redaction_cache()
+        url = "https://collect.attacker.example/?token=" + "aB3" * 70 + "&host=corp-laptop"
+        out = chat_utils._redact_for_display(f"key AKIAIOSFODNN7EXAMPLE then {url}")
+        chat_utils._clear_display_redaction_cache()
+        assert "AKIAIOSFODNN7EXAMPLE" not in out
+        assert "corp-laptop" not in out and "attacker.example/?token" not in out
 
     def test_sink_prose_claims_are_true_of_the_named_module(self):
         """A sink's `detail` makes testable claims — pin them to the call site.

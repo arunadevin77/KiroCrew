@@ -535,6 +535,14 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
         "shown as typed like an ordinary send's row.",
     ),
     (
+        "Queued-message drop notice",
+        "dashboard/session_control_parts/delivery_containment.py",
+        "The excerpt of a queued message a drain dropped, posted back to the channel "
+        "it was addressed from (`notify_channel_recipient_dropped`): conversation "
+        "text leaving for an external channel, scanned for credentials and "
+        "exfiltration URLs on the way out.",
+    ),
+    (
         "Session control read",
         "dashboard/session_control.py",
         "Another session's transcript tail and its cached intent summary, served by "
@@ -2205,6 +2213,16 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         "dashboard/chat_api/slot_detail.py",
         "dashboard/chat_api/slot_note.py",
         "dashboard/chat_api/slot_settings.py",
+        # Owners composed into dashboard/session_control.py, their redactor calls
+        # moved verbatim out of the module the "Session control read" sink names.
+        # The refusal factory scrubs the target and reason it writes to the audit
+        # record; the model switch and the create verb refuse a model name their
+        # redaction would change; and the model a pending pick reports, and the
+        # inherited model a create reply says it dropped, are redacted before they
+        # go back to the calling agent. None is a transcript or file output path.
+        "dashboard/session_control_parts/target_authorization.py",
+        "dashboard/session_control_parts/model_switch.py",
+        "dashboard/session_control_parts/session_create.py",
         # The owners composed into dashboard/chat_runner.py: the redactor calls of the
         # runner's helpers that moved into them (deny rows, file-change snapshots, the MCP
         # sign-in banner, native cards, tool rows, spec-hook notices, the stats footer),
