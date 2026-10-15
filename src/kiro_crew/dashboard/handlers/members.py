@@ -717,8 +717,8 @@ async def api_members(request: web.Request) -> web.Response:
             try:
                 if slug_rows[slug] > 1:
                     logger.warning(
-                        "member slug %r is shared by %d members, so none of them "
-                        "gets a projection; rename one member so their slugs differ",
+                        "member slug %r is shared by %d members, so none of them gets a "
+                        "projection; recreate the one not owning its thread under a new slug",
                         slug,
                         slug_rows[slug],
                     )
@@ -774,8 +774,8 @@ async def api_members(request: web.Request) -> web.Response:
                 logged_name = svc.logged_name(slug)
                 if logged_name is not None and logged_name not in (row["name"], slug):
                     logger.warning(
-                        "member slug %r logs %r, so %r gets no projection; "
-                        "rename one member so their slugs differ",
+                        "member slug %r logs %r, so %r gets no projection; recreate "
+                        "the member not owning this slug's thread under a new slug",
                         slug,
                         logged_name,
                         row["name"],

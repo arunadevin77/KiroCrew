@@ -56,7 +56,9 @@ interface CrewNotesTabProps {
 
 /** The backend refused the read because two crewmates derive this slug: the
  *  notes file is shared, so it is nobody's to show or edit. A state of its own,
- *  in plain words, not a generic failure — the fix is a rename, not a retry. */
+ *  in plain words, not a generic failure — a rename keeps the slug, so the fix
+ *  is recreating the crewmate that does not own the thread under another name,
+ *  not a retry. */
 function isSlugCollision(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409
 }

@@ -28,6 +28,7 @@ import { type CreatedCrewmate, type CrewmateDraft } from './NewCrewmateDialog'
 import { useTranslation } from 'react-i18next'
 import { api, type MemberRosterRow } from '../../api/client'
 import { ApiError } from '../../api/apiError'
+import { crewDisplayName } from '../../components/AgentSelector'
 import { isAssistantMember } from '../../lib/assistantMember'
 import { useFirstGreeting } from './useFirstGreeting'
 import { MEMBERS_ROSTER_QUERY_KEY, memberThreadQueryKey, type MemberThreadOutcome } from '../../api/membersQuery'
@@ -870,7 +871,12 @@ export function MembersPageThreadColumn({
                      there is no draft to lose: the hand-off is safe. */
                   <div className="px-4 py-2">
                     <ErrorNotice
-                      message={t('pages.membersPage.slug_collision', { name: activeCollision })}
+                      message={t('pages.membersPage.slug_collision', {
+                        name: activeCollision,
+                        // The crewmate whose chat shows this notice is the one to
+                        // recreate, so it is named the way the header pill names it.
+                        self: active ? crewDisplayName(active) : '',
+                      })}
                       variant="inline"
                       askAgent
                       testId="member-thread-collision"

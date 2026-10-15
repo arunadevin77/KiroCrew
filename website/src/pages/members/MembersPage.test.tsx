@@ -1106,7 +1106,10 @@ describe('MembersPage thread', () => {
       { thread: { slot_key: 'member-oncall', slug: 'oncall', member: 'Oncall', created: false } },
     )
     fireEvent.click(await rosterRow('oncall'))
-    expect(await screen.findByText(/shares its short name with/i)).toBeInTheDocument()
+    const notice = await screen.findByText(/shares its short name with/i)
+    // It names both crewmates: the one whose chat this is goes, the owner stays.
+    expect(notice).toHaveTextContent('delete “oncall” and create it again')
+    expect(notice).toHaveTextContent('Keep “Oncall”.')
     // The misrouted thread is NOT mounted — that is the entire point.
     expect(screen.queryByTestId('chat-pane-stub')).toBeNull()
   })

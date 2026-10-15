@@ -92,7 +92,7 @@ A few situations make Kiro Crew refuse to open a thread rather than guess:
 |---|---|
 | bound to a crew the registry no longer names | The crewmate was renamed or deleted while its thread survived. Restore the name, or delete the thread from Older Sessions in the Sessions list. |
 | this thread's history exists but its binding is gone | The transcript is on disk with nothing claiming it. Handing it to whoever holds the name now would show one crewmate another's conversation. |
-| shares its short name with … | Two crewmates fold to the same short name and therefore the same thread. Renaming changes only the name a crewmate shows, never its short name, so delete one and create it again under a name that folds differently. |
+| shares its short name with … | Two crewmates fold to the same short name and therefore the same thread. Renaming changes only the name a crewmate shows, never its short name, so delete the crewmate that shows this notice, not the one it names, and create it again under a name that folds differently. Deleting the named one leaves its thread bound to a crewmate that is gone, and the other is refused instead. |
 
 ## Creating and editing
 
