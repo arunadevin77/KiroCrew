@@ -1,8 +1,8 @@
-"""Dashboard chat: session rename, session color, and title generation's session cleanup."""
+"""Dashboard chat: session rename, color, color theme, and title generation's session cleanup."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -534,3 +534,82 @@ class TestTitleGenerationSessionLeak:
 
         assert title == "Good"
         mock_client.destroy.assert_awaited_once()
+
+
+# ── Color theme tests ──
+
+
+class TestColorTheme:
+    """Tests for color_theme validation and slot assignment. Only "" and
+    ``custom-<slug>`` (installed packs) are valid; any built-in visual-theme
+    slug or junk value is coerced to "" (no persona path)."""
+
+    @pytest.mark.asyncio
+    async def test_color_theme_set_on_slot(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        with patch("kiro_crew.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hi", "slot": "theme-slot", "color_theme": "custom-mypack"},
+                )
+                assert resp.status == 200
+                assert state._slots["theme-slot"].color_theme == "custom-mypack"
+
+    @pytest.mark.asyncio
+    async def test_color_theme_cleared_to_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("theme-slot")
+        slot.color_theme = "custom-mypack"
+        with patch("kiro_crew.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hi", "slot": "theme-slot", "color_theme": ""},
+                )
+                assert resp.status == 200
+                assert slot.color_theme == ""
+
+    @pytest.mark.asyncio
+    async def test_color_theme_not_cleared_when_absent(self, tmp_path, monkeypatch):
+        """Omitting color_theme from body must not reset an existing theme."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("theme-slot")
+        slot.color_theme = "custom-mypack"
+        with patch("kiro_crew.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hi", "slot": "theme-slot"},
+                )
+                assert resp.status == 200
+                assert slot.color_theme == "custom-mypack"
+
+    @pytest.mark.asyncio
+    async def test_invalid_color_theme_coerced_to_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        with patch("kiro_crew.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hi", "slot": "theme-slot", "color_theme": "evil"},
+                )
+                assert resp.status == 200
+                assert state._slots["theme-slot"].color_theme == ""
+
+    @pytest.mark.asyncio
+    async def test_non_string_color_theme_coerced(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        with patch("kiro_crew.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hi", "slot": "theme-slot", "color_theme": 42},
+                )
+                assert resp.status == 200
+                assert state._slots["theme-slot"].color_theme == ""

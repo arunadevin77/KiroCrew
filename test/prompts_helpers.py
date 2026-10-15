@@ -41,7 +41,7 @@ def _no_turn_tail(monkeypatch):
     """Skip the turn's tail, which needs far more of a slot than ``_Slot`` models.
 
     The tail (and the done row the cycle's end appends) is pinned with a real
-    slot in ``test/test_dashboard_chat.py::TestRunChatEarlyExitHandOff``; here
+    slot in ``test/test_dashboard_chat_refusal.py::TestRunChatEarlyExitHandOff``; here
     only what prompt expansion writes is asserted.
     """
 

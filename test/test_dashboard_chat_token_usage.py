@@ -929,14 +929,24 @@ class TestPinnedModelWithheld:
             for path in owner_paths
         ]
         assert owners, "no chat_api owner module found beside chat_handlers"
+        # The turn's code is the runner plus the `chat_turn` owners its compose
+        # runs, so a runner teardown site may sit in either and both are scanned.
+        turn_owners = [
+            importlib.import_module(f"kiro_crew.dashboard.chat_turn.{path.stem}")
+            for path in sorted((Path(chat_runner.__file__).parent / "chat_turn").glob("[!_]*.py"))
+        ]
+        assert turn_owners, "no chat_turn owner module found beside chat_runner"
         teardowns = ("state.sessions.reset(", "state.sessions.discard_conversation(")
+        runner_sites = 0
         handler_sites = 0
-        for module in (chat_runner, chat_handlers, *owners):
+        for module in (chat_runner, *turn_owners, chat_handlers, *owners):
             lines = Path(module.__file__).read_text(encoding="utf-8").splitlines()
             sites = [i for i, line in enumerate(lines) if any(t in line for t in teardowns)]
-            if module is chat_runner or module is chat_handlers:
+            if module is chat_handlers:
                 assert sites, f"no teardown call site found in {module.__name__}"
-            if module is not chat_runner:
+            if module is chat_runner or module in turn_owners:
+                runner_sites += len(sites)
+            else:
                 handler_sites += len(sites)
             for i in sites:
                 # Asymmetric window: a drop placed AFTER the call has to clear the
@@ -949,6 +959,7 @@ class TestPinnedModelWithheld:
                     f"verdict and served model describe without dropping them -> "
                     f"{lines[i].strip()}"
                 )
+        assert runner_sites, "no teardown call site found in chat_runner or its chat_turn owners"
         # The reset funnel and the conversation discard: a scan that finds fewer
         # has lost sight of a handler teardown site rather than proven it safe.
         assert handler_sites >= 2, (
