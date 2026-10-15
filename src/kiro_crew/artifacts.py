@@ -125,6 +125,7 @@ from kiro_crew.artifact_store.rules import (  # noqa: F401 — re-export for API
     normalize_tag,
     slugify,
 )
+from kiro_crew.atomic_write import atomic_write as _atomic_write
 from kiro_crew.config.loader import KiroCrewConfig, config_dir
 from kiro_crew.constants import ARTIFACT_MAX_CONTENT_BYTES
 from kiro_crew.deploy.webapp_types import (  # noqa: F401 - facade surface
@@ -137,10 +138,9 @@ from kiro_crew.deploy.webapp_types import (  # noqa: F401 - facade surface
     webapp_metadata_from_dict,
 )
 from kiro_crew.metrics.events import ARTIFACTS_CREATED, emit_counter
-from kiro_crew.owner_only_files import GROUP_OTHER_BITS as _GROUP_OTHER_BITS
+from kiro_crew.owner_only_files import OWNER_ONLY_FILE_MODE as _OWNER_ONLY_FILE_MODE
 from kiro_crew.owner_only_files import is_owner_only_target as _is_owner_only_target
 from kiro_crew.owner_only_files import mkdirs_owner_only as _mkdirs_owner_only
-from kiro_crew.owner_only_files import owner_only_opener as _owner_only_opener
 from kiro_crew.publish_provider import DEFAULT_PROVIDER  # noqa: F401 - facade surface
 from kiro_crew.security import (
     canonical_path_refusal,
@@ -418,39 +418,16 @@ def _open_pinned_for_read(resolved: Path) -> int:
     )
 
 
-def _owner_only_tmp_opener(path: str, flags: int) -> int:
-    """:func:`_owner_only_opener` for a fixed-name ``.tmp`` that a crash can leave behind.
-
-    ``os.open`` applies the mode only when it creates the file, so a ``.tmp`` an
-    earlier version left at ``0644`` would be truncated, reused and then
-    published at that mode by the rename. The descriptor belongs to this write
-    alone (no lock is ever taken on a ``.tmp``), so it is narrowed here before
-    any byte is written.
-    """
-    fd = _owner_only_opener(path, flags)
-    if not platform_compat.IS_POSIX:
-        return fd
-    try:
-        mode = os.fstat(fd).st_mode & 0o7777
-        if mode & _GROUP_OTHER_BITS:
-            os.fchmod(fd, mode & ~_GROUP_OTHER_BITS)
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
-
-
 # The errnos that mean "this descriptor or filesystem has no fsync", as opposed
-# to "the writeback failed". Only the first class may be ignored: a descriptor
-# that cannot be synced on a given platform must not make the store unusable
-# there. Built with ``getattr`` because the errno module only defines the name
-# the host's C library has, and the set collapses duplicates on the platforms
-# where ENOTSUP and EOPNOTSUPP share a value.
-#
-# The import is aliased private (``_errno``) like ``_sys`` and ``_hmac`` above:
-# this module's ``__all__`` is derived from what it binds, so a bare ``import
-# errno`` would publish the errno module as part of the store's facade.
-_SYNC_UNSUPPORTED_ERRNOS = frozenset(
+# to "the writeback failed". A file fsync that fails with one of these is a
+# platform limit, not a claim about the data, so the store's writers fall back
+# to an unsynced-but-still-atomic publish rather than refusing every write
+# there. Every other OSError -- a full disk or a failing device reported at
+# ``fsync`` (ENOSPC, EIO) -- propagates, so a writeback error never publishes a
+# torn file. Built with ``getattr`` because the errno module only defines the
+# name the host's C library has, and the set collapses duplicates on the
+# platforms where ENOTSUP and EOPNOTSUPP share a value.
+_FILE_SYNC_UNSUPPORTED_ERRNOS = frozenset(
     code
     for code in (
         getattr(_errno, name, None) for name in ("EINVAL", "ENOSYS", "ENOTSUP", "EOPNOTSUPP")
@@ -459,75 +436,54 @@ _SYNC_UNSUPPORTED_ERRNOS = frozenset(
 )
 
 
-def _sync_before_publish(fh: Any) -> None:
-    """Flush *fh* to the device before its temp file is renamed into place.
-
-    A temp file plus a rename makes the SWAP atomic; it does not make the bytes
-    durable. The rename can land while the content is still only in the page
-    cache, so a crash leaves the artifact's name pointing at a file the kernel
-    never finished writing -- a torn read that the atomic rename was supposed to
-    rule out. Flushing the Python buffer and then ``fsync`` is what makes "the
-    rename published real bytes" true rather than likely.
-
-    The failure this raises on is the one that matters. A filesystem with delayed
-    allocation reports a full disk or a failing device at ``fsync``, not at
-    ``write``; treating that as advisory would let the caller's rename replace
-    the last good file with a partial one and report success, which is the exact
-    data loss the sync is here to prevent. So a writeback error propagates, the
-    caller never reaches its rename, and the previous version stays published.
-
-    An errno in :data:`_SYNC_UNSUPPORTED_ERRNOS` says the platform has no sync
-    for this descriptor rather than that the write failed, and that is logged and
-    ignored: the atomicity the rename gives still holds where the durability
-    cannot be had.
-    """
-    fh.flush()
-    try:
-        os.fsync(fh.fileno())
-    except OSError as exc:
-        if exc.errno not in _SYNC_UNSUPPORTED_ERRNOS:
-            raise
-        logger.debug("fsync is unsupported for fd %s: %s", fh.fileno(), exc)
-
-
-def _write_tmp_then_publish(
-    tmp: Path,
-    resolved: Path,
-    write_body: Callable[[Any], None],
-    mode: str,
-    **open_kwargs: Any,
+def _atomic_store_publish(
+    resolved: Path, content: str | bytes, *, newline: str | None, mode: int | None
 ) -> None:
-    """Write *tmp*, sync it to the device, then rename it onto *resolved*.
+    """Publish *content* at *resolved* through :func:`atomic_write`, synced.
 
-    The temp file is the write's alone; nothing publishes it until the rename, so
-    a failure before the rename must not leave it behind. A writeback error
-    reported at ``fsync`` (:func:`_sync_before_publish`) is exactly such a
-    failure: on a full disk the sync raises, the rename is skipped, and the
-    half-written ``meta.json.tmp`` would otherwise sit on a disk that is already
-    out of room. Unlink it on any error before the rename, best-effort -- the
-    original error is what the caller must see, so a failure to clean up is
-    swallowed.
+    ``atomic_write(fsync=True)`` is the store's single durability path: a unique
+    temp name, flush + fsync before the rename, the temp unlinked on error, and
+    the Windows rename retry.
+
+    *mode* is the published file's permission bits, or ``None`` for the umask
+    default. The store passes ``0o600`` explicitly for an owner-only root rather
+    than relying on ``atomic_write``'s own data-home default: that default keys
+    on a LEXICAL ``is_owner_only_target`` check, which the realpath-resolved
+    *resolved* fails when the data home is reached through a symlink, so the file
+    would publish at the umask mode. The store already decided owner-only from
+    the root as spelled (``self._owner_only``), so it carries that decision here.
+
+    One case needs more than a bare ``atomic_write`` call. ``atomic_write``
+    propagates every ``fsync`` error, but an fsync that fails because the
+    platform cannot sync this descriptor at all
+    (:data:`_FILE_SYNC_UNSUPPORTED_ERRNOS`) is a platform limit, not a claim
+    about the data, and the atomic tmp-file + rename is the durability available
+    there. On exactly those errnos this retries once with ``fsync=False`` so the
+    write still publishes atomically. Any OTHER ``OSError`` -- a full disk or a
+    failing device reported at ``fsync`` -- propagates untouched, so a real
+    writeback failure publishes nothing. The retry opens a fresh temp file;
+    ``atomic_write`` reclaims the first one on its way out, so no ``.tmp`` is
+    left behind.
+
+    ``atomic_write`` stages through a unique ``mkstemp`` name, so it leaves no
+    temp of its own on error. A ``<name>.tmp`` sibling at the fixed name a
+    crash on an earlier store could leave is a world-readable file sitting next
+    to the artifact; it is removed best-effort before publishing so a reader
+    listing the directory never sees it. A failure to remove it is swallowed:
+    the publish is what matters, and the file is not this write's to begin with.
     """
+    stale_tmp = resolved.with_suffix(resolved.suffix + ".tmp")
     try:
-        with open(tmp, mode, opener=open_kwargs.pop("opener", None), **open_kwargs) as fh:
-            write_body(fh)
-            _sync_before_publish(fh)
-    except BaseException:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise
-    tmp.replace(resolved)
-
-
-def _prepare_store_write(resolved: Path, *, owner_only: bool) -> Callable[[str, int], int] | None:
-    """Create *resolved*'s parent and return the opener for its tmp file."""
-    if owner_only:
-        _mkdirs_owner_only(resolved.parent)
-        return _owner_only_tmp_opener
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    return None
+        stale_tmp.unlink()
+    except OSError:
+        pass
+    try:
+        _atomic_write(resolved, content, fsync=True, newline=newline, mode=mode)
+    except OSError as exc:
+        if exc.errno not in _FILE_SYNC_UNSUPPORTED_ERRNOS:
+            raise
+        logger.debug("fsync is unsupported for %s: %s; publishing without it", resolved, exc)
+        _atomic_write(resolved, content, fsync=False, newline=newline, mode=mode)
 
 
 class ArtifactStore:
@@ -2908,14 +2864,17 @@ class ArtifactStore:
         if reason := _fence_refusal(resolved, "write"):
             raise ArtifactError(reason)
         self._refuse_write_outside_root(path, resolved)
-        # Atomic write: tmp file + rename. Inside the data home the tmp is 0600
-        # before the first byte is written (created so, or narrowed when a crash
-        # left one behind), so the published file is never readable by others.
-        opener = _prepare_store_write(resolved, owner_only=self._owner_only)
-        tmp = resolved.with_suffix(resolved.suffix + ".tmp")
-        _write_tmp_then_publish(
-            tmp, resolved, lambda fh: fh.write(text), "w", encoding="utf-8", opener=opener
-        )
+        # Durable atomic publish through the shared helper: unique tmp file +
+        # fsync-before-rename, the temp unlinked on error, and the Windows rename
+        # retry. newline="" keeps the bytes verbatim: the store reads these
+        # documents back and re-saves them, and translating on every save would
+        # accumulate carriage returns. mode carries the owner-only decision the
+        # store made from the root as spelled: atomic_write's own 0600 default
+        # keys on a lexical home check that a realpath-resolved path misses when
+        # the data home is a symlink, so the store passes 0600 explicitly rather
+        # than relying on it.
+        mode = _OWNER_ONLY_FILE_MODE if self._owner_only else None
+        _atomic_store_publish(resolved, text, newline="", mode=mode)
 
     def _read_bytes(self, path: Path) -> bytes:
         """Binary sibling of :meth:`_read_text` (image asset reads).
@@ -3004,9 +2963,11 @@ class ArtifactStore:
         if reason := _fence_refusal(resolved, "write"):
             raise ArtifactError(reason)
         self._refuse_write_outside_root(path, resolved)
-        opener = _prepare_store_write(resolved, owner_only=self._owner_only)
-        tmp = resolved.with_suffix(resolved.suffix + ".tmp")
-        _write_tmp_then_publish(tmp, resolved, lambda fh: fh.write(data), "wb", opener=opener)
+        # Binary payload (image sidecar): same durable atomic publish as the text
+        # writer. newline is a text concept and must stay None for bytes. mode
+        # carries the owner-only decision for the same reason as the text writer.
+        mode = _OWNER_ONLY_FILE_MODE if self._owner_only else None
+        _atomic_store_publish(resolved, data, newline=None, mode=mode)
 
     def _prune_versions(self, slug: str) -> None:
         versions_dir = self._artifact_dir(slug) / "versions"
