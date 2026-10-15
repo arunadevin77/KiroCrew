@@ -49,8 +49,10 @@ promise-sleep, `waitForTimeout`); a deliberate one says why with
   executor thread), and a ceiling of 30 s or more only names a hang -- a
   `wait_for(..., timeout=2)`, a `.result(timeout=5)` or a poll of N short sleeps bets
   on the runner's speed, and `test/test_wait_discipline_ratchet.py` holds each test
-  file to the number of those it already has (a renamed file keeps its line under its
-  new path: `python test/test_wait_discipline_ratchet.py --move OLD NEW`).
+  file to the number of those it already has: on a pull request each touched file is
+  compared to its count at the PR's merge-base, so merge order alone cannot turn main
+  red; on main the committed baseline is the catcher of last resort.  A renamed file
+  keeps its line under its new path: `python test/test_wait_discipline_ratchet.py --move OLD NEW`.
   [Class 2](#2-wall-clock-races).
 - **D2. One clock, injected or frozen at the seam the code reads.** Replace the module's
   own `time` / `datetime` name with a `ManualClock` (`kiro_crew.testing.clock`, or the
@@ -140,7 +142,7 @@ change; a function edited in place, or a site a `flake-ok` still excuses, has no
 left). When no merge-base is readable, the test
 warns `compared nothing` and passes rather than judge a change by sites other merged
 changes added. CI's Backend Tests checkout is depth 1 today, so it is a local, pre-push
-gate until that checkout keeps the merge commit's parents: run
+gate: run
 `python -m pytest -n0 test/test_flake_pattern_ratchet.py` before pushing. It does not
 count an order assertion (D4) or a network call (D10): those rest on review. A
 `flake-ok` line whose reason has ten characters or more, words and not just punctuation
