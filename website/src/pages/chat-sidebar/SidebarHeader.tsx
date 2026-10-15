@@ -2,7 +2,7 @@
  *  toggle, cleanup, model switch, tags) and the split New button with its create
  *  menu (private chats, import, Crew Members, folders, chat in a folder or on a
  *  crew). */
-import { Plus, Monitor, FolderPlus, FolderX, MessageSquarePlus, Folder, ChevronRight, ChevronDown, BrushCleaning, MoreVertical, Tag as TagIcon, Columns3, Loader2, Cpu, Users, Server } from 'lucide-react'
+import { Plus, Monitor, FolderPlus, FolderX, MessageSquarePlus, Folder, ChevronRight, ChevronDown, BrushCleaning, MoreVertical, Tag as TagIcon, Columns3, Loader2, Cpu, Users, Server, Megaphone } from 'lucide-react'
 import ErrorNotice, { ErrorNoticeMenuItem } from '../../components/ErrorNotice'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from '../../components/ui/dropdown-menu'
 import { LIST_HEADER_CLS, LIST_TITLE_CLS } from '../../components/listShell'
@@ -24,7 +24,7 @@ export function renderSidebarHeader(shell: SidebarScope): React.ReactNode {
     missingLanes, navigate, newChatMenuOpen, onMenuCloseAutoFocus, onOpenSlotInNewTab, openCrewMembers,
     paintedSidebarWidth, rawColumns, refuseCreateOffline, remoteCrewChatPreview, remoteCrewError, remoteCrewErrorId,
     restorePreBoardWidth, seedStateLanesMutation, setCleanupOpen, setFolderCleanupOpen, setFolderModal,
-    setManageTagsOpen, setNewChatMenuOpen, setRemoteCrewError, setSeedError, setToggleSaveFailed,
+    setBroadcastOpen, setManageTagsOpen, setNewChatMenuOpen, setRemoteCrewError, setSeedError, setToggleSaveFailed,
     tagColumnsEnabled, warmCrews } = shell
   const { setCleanupError, setCleanupExpanded } = shell.sessionCleanup
   const { setBulkModel, setBulkModelError, setBulkModelOpen, setBulkSkipRunning } = shell.bulkModel
@@ -106,6 +106,10 @@ export function renderSidebarHeader(shell: SidebarScope): React.ReactNode {
               <DropdownMenuItem onClick={() => { setBulkModelOpen(true); setBulkModel(''); setBulkSkipRunning(true); setBulkModelError('') }} {...uiLocation('sessions.list-menu.switch-model')}>
                 <Cpu size={14} className="text-muted" />
                 {i18nT('pages.chatSidebar.switch_all_to_model')}
+              </DropdownMenuItem>
+              <DropdownMenuItem data-testid="broadcast-menu-item" onClick={() => setBroadcastOpen(true)}>
+                <Megaphone size={14} className="text-muted" />
+                {i18nT('pages.chatSidebar.broadcast_menu')}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setManageTagsOpen(o => !o)} {...uiLocation('sessions.list-menu.manage-tags')}>
                 <TagIcon size={14} className="text-muted" />

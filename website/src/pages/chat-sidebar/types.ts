@@ -91,6 +91,8 @@ export interface Slot {
    *  and opens elsewhere. */
   surface?: string
   agent?: string
+  /** `member` when this is a crewmate's chat (wire `ChatSlot.agent_kind`). */
+  agent_kind?: 'member' | 'template' | ''
   // The agent that will actually answer, when it is NOT `agent`. The backend
   // stores `agent` verbatim — it is the user's intent, and rewriting it on disk
   // was destructive — and reports the divergence here instead. "" / absent means
@@ -178,6 +180,8 @@ export interface AgentInfo {
   /** Default session color (#rrggbb) for this agent, applied at render time to
    *  sessions created by it that carry no explicit per-session color. */
   session_color?: string
+  /** The roster namespace (`/api/agents/catalog`); `member` is a crewmate. */
+  selection_kind?: 'member' | 'template'
 }
 
 export type SessionFilterKey = 'unread' | 'running' | 'pinned' | 'recent'

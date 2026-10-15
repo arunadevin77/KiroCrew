@@ -45,6 +45,7 @@ const PINNED: Record<string, Counts> = {
   'src/pages/ArtifactDetailPage.tsx': { announced: 0, keepTarget: 0, plain: 2, reason: 'in-page nav intent + just-created slot; both self-handle within the page' },
   'src/pages/ChatPage.tsx': { announced: 2, keepTarget: 1, plain: 6, reason: 'flyout row + split-collapse announce; create path keeps target; the plain sites are deep-link restore, just-created slots, side-chat wiring and awaited flows with in-page error UI' },
   'src/pages/ProjectsPage.tsx': { announced: 0, keepTarget: 0, plain: 1, reason: 'switches to a just-created slot' },
+  'src/pages/ChatSidebar.tsx': { announced: 1, keepTarget: 0, plain: 0, reason: 'the broadcast panel\'s "Not confirmed · open" opens a LISTED row the way that row\'s own click does, so it announces' },
   'src/pages/chat-sidebar/CrewGroups.tsx': { announced: 1, keepTarget: 0, plain: 0, reason: 'the crew header\'s attention button opens a LISTED row the way that row\'s own click does, so it announces' },
   'src/pages/chat-sidebar/SessionRow.tsx': { announced: 3, keepTarget: 0, plain: 0, reason: 'every site is a gesture on a LISTED session row, so all three announce: the row\'s keyboard activation, its click, and the source chip\'s onActivateSlot' },
   'src/pages/chat-sidebar/folderBlocks.tsx': { announced: 2, keepTarget: 0, plain: 0, reason: 'every site is a gesture on a LISTED folder, so both announce: the two ways to reach a folder\'s conductor -- the item in both folder menus and the chat button in the folder row\'s own hover cluster' },

@@ -9,7 +9,7 @@ import { useStore } from 'react-redux'
 import { useAppDispatch, useAppSelector } from '../store'
 import type { RootState } from '../store'
 import { useConnected } from '../hooks/useConnected'
-import { fetchHistory, deleteHistorySession } from '../store/chatSlice'
+import { fetchHistory, deleteHistorySession, switchSlot } from '../store/chatSlice'
 import { api } from '../api/client'
 import { computeRecentRank, clampTintCount } from '../utils/recencyTint'
 import { useDndSensors } from '../hooks/useDndSensors'
@@ -85,6 +85,7 @@ import { renderHistoryPane } from './chat-sidebar/HistoryPane'
 import { renderFolderModal } from './chat-sidebar/folderModal'
 import { renderSessionCleanupPanel, useSessionCleanup } from './chat-sidebar/sessionCleanup'
 import { renderBulkModelPanel, useBulkModelSwitch } from './chat-sidebar/bulkModelSwitch'
+import BroadcastPanel from './chat-sidebar/BroadcastPanel'
 
 /** Stable empty group list for the board, which groups nothing. */
 const NO_CREW_GROUPS: CrewGroup[] = []
@@ -288,6 +289,7 @@ function ChatSidebar({
   const [cleanupOpen, setCleanupOpen] = useState(false)
   const [folderCleanupOpen, setFolderCleanupOpen] = useState(false)  // header ⋮ → "Clean up empty folders" panel
   const [manageTagsOpen, setManageTagsOpen] = useState(false)  // header ⋮ → "Manage tags…" panel (list-view tag CRUD)
+  const [broadcastOpen, setBroadcastOpen] = useState(false)  // header ⋮ → "Broadcast message…" panel
   const [filterSortOpen, setFilterSortOpen] = useState(false)
   const sessionCleanup = useSessionCleanup({ cleanupOpen, setCleanupOpen, activeSlot, dispatch, queryClient })
 
@@ -740,7 +742,7 @@ function ChatSidebar({
   const scope: SidebarScope = { activeDrag, activeFilters, activeModelKeys, activeModelRows, activeSlot,
     activeTagIds, activeTagNames, addColumnAfterMutation, allHiddenFolders, armHold, attachStripEdges,
     autoTitleError, availableLanes, boardError, boardFolderCollapsed, boardLaneActive, boardPeerCount,
-    bulkModel, changeRecentUnit, chatDropTarget, citedCreatorExists, cleanupOpen,
+    broadcastOpen, bulkModel, changeRecentUnit, chatDropTarget, citedCreatorExists, cleanupOpen,
     clearClosedSessionsWithConfirm, clearHiddenFilters, clearModelFilter, clearTagFilter, closeColumnPopover,
     closeRefused, collapsedCrews, collapsedHistoryGroups, collapsedSpaces, collapsible, columnEditId,
     columnMatches, columnPopoverImeLatch, columnPopoverRef, columnsError, columnsFailed, commitRecentAmount,
@@ -771,7 +773,7 @@ function ChatSidebar({
     setAutoTitleError, setBoardError, setCleanupOpen, setCollapsedHistoryGroups, setColumnEditId,
     setDerivedHintCol, setEditingId, setEditName, setEditScope, setFilterSortOpen, setFlatView,
     setFolderActionError, setFolderCleanupOpen, setFolderOfflineNotice, refuseCreateOffline, setFolderCreateError, setFolderModal, setFoldersShelved,
-    setHistoryFilter, setHistoryOpen, setLaneScrollEl, setManageTagsOpen, setModelFilterExcluded,
+    setHistoryFilter, setHistoryOpen, setLaneScrollEl, setBroadcastOpen, setManageTagsOpen, setModelFilterExcluded,
     setNewChatError, setNewChatMenuOpen, setRecentAmountDraft, setRemoteCrewError, setRenameError,
     setSeedError, setSlotFilter, setSortKey, setStaleCollapseMs, setStaleExpanded, setToggleSaveFailed,
     showAllFolders, shownCrewGroups, shownCrewRowCount, shownCrewRows, sidebarRows, slotFilter, slotFolders,
@@ -842,6 +844,13 @@ function ChatSidebar({
        *  running session left unskipped, so the red caveat renders only once
        *  the skip box is cleared with some session running. */}
       {bulkModel.bulkModelOpen && renderBulkModelPanel(scope)}
+
+      {/* Broadcast dialog — one message steered into every session the pick
+       *  reaches: a running turn takes it after its current tool call, an idle
+       *  session starts a new turn. Crewmate chats are left out by default. */}
+      {broadcastOpen && (
+        <BroadcastPanel slots={localSlots} folders={folders} tags={tagsData ?? []} agents={installedAgents} signals={{ subagentStartedCounts, subagentApprovalCounts, workflowActiveSet, automationRunningSet }} onClose={() => setBroadcastOpen(false)} onOpenSession={key => { dispatch(switchSlot({ key, announceOnMissing: true })); onSelectSlot?.(key) }} />
+      )}
 
       {/* Manage-tags panel — mirrors the Clean Up / Switch All panels. Renders
        *  the shared TagManagerList in 'manage' mode (no column context), so tag
