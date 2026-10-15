@@ -2367,6 +2367,10 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # the refusal prose and the record it hands back to the model.
         "mcp_mate.py",
         "mcp_gateway/backend.py",
+        # The backend's wire owner: it redacts the server-supplied identifiers and
+        # tool-call error text the backend's gateway log warnings carry, and like
+        # mcp_gateway/backend.py it is not an egress boundary.
+        "mcp_gateway/backend_wire.py",
         # The kirocrew-core tool handlers, moved out of mcp_core.py into their
         # domain modules. Same classification as mcp_core.py above for the same
         # reason: a tool result's user-visible surface is a registered sink

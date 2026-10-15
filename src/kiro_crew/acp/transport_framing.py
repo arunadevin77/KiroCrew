@@ -60,7 +60,7 @@ async def _drain_oversize_line(
     separator, so consuming it cannot cross into the next frame; retrying
     ``readuntil`` then either returns the remainder of the line or raises for
     another step. Same consume-prefix-and-retry drain as
-    ``mcp_gateway/backend.py::run_stdout_pump``; a plain ``read(n)`` would instead
+    ``mcp_gateway/backend_routing.py::run_stdout_pump``; a plain ``read(n)`` would instead
     eat into the NEXT frame.
 
     The recovered remainder is **discarded, never parsed**. It is a byte-slice of

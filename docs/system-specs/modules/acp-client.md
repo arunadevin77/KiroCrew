@@ -2035,7 +2035,7 @@ read by `_load_watchdog_settings`); the snapshot field is the seam.
 Existing signals are reused as-is — `session/update` for tool-call
 start/complete and agent text, `_kiro.dev/metadata` for the harness
 `stopReason`, `_kiro.dev/subagent/list_update` for native sub-agent identity,
-MCP `notifications/progress` routed per request by `mcp_gateway/backend.py`.
+MCP `notifications/progress` routed per request by `mcp_gateway/backend_routing.py`.
 None carries a wait reason or a resume condition, so one versioned extension is
 added under `params._meta["kirocrew/status"]` (or the inner `update._meta`,
 where kiro-cli carries `_meta.kiro`):
@@ -3238,7 +3238,7 @@ else clearing the buffer) and resumes the transport, as its own docstring states
 So `_reader_loop` reads through `readuntil(b"\n")` and, on `LimitOverrunError`,
 hands the line to `_drain_oversize_line()`, which consumes it **entirely, through
 its terminating newline**, and discards it — the same consume-prefix-and-retry
-drain as `mcp_gateway/backend.py::run_stdout_pump`, where a plain `read(n)` would
+drain as `mcp_gateway/backend_routing.py::run_stdout_pump`, where a plain `read(n)` would
 eat into the *next* frame. Draining the whole line rather than one prefix at a
 time is load-bearing, not tidiness: the unterminated branch's discard boundary is
 an arbitrary byte offset (`consumed = len(buffer)`), so surfacing the remainder as

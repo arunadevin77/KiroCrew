@@ -2,7 +2,7 @@
 
 The gateway recycles a pooled backend whose oldest call is past
 ``HEARTBEAT_TIMEOUT_SECS`` AND whose pings have gone unanswered for
-``PING_STALE_SECS`` (``mcp_gateway/backend.py``). A loop that reads nothing
+``PING_STALE_SECS`` (``mcp_gateway/backend_liveness.py``). A loop that reads nothing
 while a tool runs therefore has every call over five minutes recycled --
 ``wait`` included -- and every other session's call on the shared
 ``kirocrew-core`` backend queued behind it.

@@ -129,7 +129,7 @@ Both endpoints register through `server._deferred`, not the eager `handlers/__in
 ## Files and tests
 
 - `src/kiro_crew/mcp_gateway/apps.py` owns spool writing, URI extraction, marker insertion, stale-record cleanup, and the shared model/app visibility parser.
-- `src/kiro_crew/mcp_gateway/backend.py` injects UI capability for eligible stdio backends, captures declarations, fetches `ui://` resources, and delivers the marked result.
+- `src/kiro_crew/mcp_gateway/backend_mcp_apps.py` (bound onto `Backend` in `src/kiro_crew/mcp_gateway/backend.py`) injects UI capability for eligible stdio backends, captures declarations, fetches `ui://` resources, and delivers the marked result.
 - `src/kiro_crew/mcp_apps_render.py` validates and claims spool records, redacts app-bound payloads, strips markers, and broadcasts owner-scoped render events.
 - `src/kiro_crew/dashboard/handlers/mcp_apps.py` owns the authenticated HTTP relay, the dashboard-side session gates, and the `ui/message` delivery endpoint (capability verification + session injection).
 - `src/kiro_crew/mcp_gateway/app_call.py` owns capability, backend, visibility, schema, governance, forwarding, cancellation, and SEL decisions for callbacks.

@@ -4775,7 +4775,7 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
 #: the caller through :func:`mcp_core._resolve_session_key_strict`, whose first
 #: source is that block.
 #:
-#: Advertising is not cosmetic. ``mcp_gateway/backend.py`` strips any client-forged
+#: Advertising is not cosmetic. ``mcp_gateway/backend_stubs.py`` strips any client-forged
 #: caller block from EVERY forwarded request and re-injects its own only when the
 #: backend advertised this capability — so without the advertisement the block
 #: never arrives, and this server's resolver reads an empty identity no matter how

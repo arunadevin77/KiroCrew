@@ -1130,7 +1130,7 @@ Existing signals reused as-is: ACP `session/update` (`METHOD_SESSION_UPDATE` in
 `_kiro.dev/subagent/list_update` (`METHOD_SUBAGENT_LIST_UPDATE`) carries native
 sub-agent identity and status; MCP `notifications/progress` with
 `params._meta.progressToken` is already routed per request by
-`mcp_gateway/backend.py`. None of them carries a wait reason or a resume
+`mcp_gateway/backend_routing.py`. None of them carries a wait reason or a resume
 condition, so one extension is added:
 
 ```text

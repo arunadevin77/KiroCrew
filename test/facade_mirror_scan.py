@@ -730,7 +730,7 @@ def _text_aliases(text: str, spelling: str) -> set[str]:
     if head in text:
         from_import = rf"from\s+{re.escape(head)}\s+import\s+(\([^)]*\)|[^\n]*)"
         for block in _at(text, "from", from_import, also=""):
-            for alias in re.findall(rf"\b{re.escape(leaf)}(?:\s+as\s+(\w+))?", block):
+            for alias in re.findall(rf"\b{re.escape(leaf)}\b(?:\s+as\s+(\w+))?", block):
                 aliases.add(alias or leaf)
     return aliases
 

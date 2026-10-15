@@ -258,7 +258,7 @@ async def test_two_stubs_on_one_backend_are_told_apart(tmp_path: Path, short_soc
 
     The unit tests around ``kirocrew-cron`` prove the server CONSUMES the caller
     block. They cannot prove gatewayd SENDS one, which is the half that was
-    broken: ``backend.py`` strips any stub-supplied block from every forwarded
+    broken: ``backend_stubs.py`` strips any stub-supplied block from every forwarded
     request and re-injects its own only when the backend advertised
     ``kirocrew.caller-identity`` -- and that capability is parsed off a REAL
     ``initialize`` response, a step the in-process stub seam every other gateway

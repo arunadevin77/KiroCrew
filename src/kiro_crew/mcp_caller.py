@@ -823,8 +823,8 @@ def tenant_nonce_from_meta(meta: Any) -> str:
 # sets it at its own start), so behavior is unchanged.
 #
 # Trust: in the pooled topology gatewayd strips any stub-supplied
-# ``kirocrew.caller`` block from every inbound frame (``backend.py``
-# strip-on-forward + the initialize forge guard) and injects its own, built
+# ``kirocrew.caller`` block from every inbound frame (``backend_stubs.py``
+# strip-on-forward + the ``backend_handshake.py`` initialize forge guard) and injects its own, built
 # from the uid-gated claim-push at ``rekey()`` — so a block seen here is
 # gateway-authored. In the non-pooled stdio topology no client sends the
 # block and this stays ``None`` (callers fall back to env/HMAC-pid sources).

@@ -298,7 +298,7 @@ Two things depart from the webhook RFC, and this RFC records them as decisions:
   pauses and reports, as the webhook RFC §13 requires.
 - The gateway's own limits still apply: 1,024 subscriptions per stub
   (`_RESOURCE_SUBSCRIPTIONS_MAX_PER_STUB`) and 8,192 characters per URI
-  (`_RESOURCE_URI_MAX_LEN`), both in `backend.py`.
+  (`_RESOURCE_URI_MAX_LEN`), both in `backend_leases.py`.
 - A holder keeps its backend's refcount above zero, so the backend is never evicted
   while subscribed. A backend with refcount above zero is never an eviction
   target, and a spawn into a full pool is refused with a `capacity` rejection

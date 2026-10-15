@@ -128,7 +128,6 @@
 3951 src/kiro_crew/mcp_cron.py
 4804 src/kiro_crew/mcp_dashboard.py
 3778 src/kiro_crew/mcp_discovery.py
-5092 src/kiro_crew/mcp_gateway/backend.py
 3272 src/kiro_crew/mcp_gateway/rewriter.py
 3554 src/kiro_crew/mcp_gateway/stub.py
 3415 src/kiro_crew/mcp_shared.py
