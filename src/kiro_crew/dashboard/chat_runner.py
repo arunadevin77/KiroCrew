@@ -4335,6 +4335,19 @@ async def _route_model_for_turn(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
+        if _refused:
+            # The switch TO the tier model landed; it is the switch BACK that raised.
+            # So this is still the refusal the flag above marked, not a failed apply,
+            # and its row is the refusal row with ``p``.
+            logger.warning(
+                "model.route: restoring %r failed for slot %s (%s); the turn stays on "
+                "the model it switched to",
+                _live_model,
+                slot.key,
+                type(exc).__name__,
+            )
+            await _record_refused()
+            return
         logger.warning(
             "model.route: set_model(%r) failed for slot %s (%s); keeping the current model",
             _target,
