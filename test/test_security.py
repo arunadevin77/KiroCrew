@@ -4308,7 +4308,7 @@ class TestOAuthAuthorizationUrlRedaction:
         assert diagnostic.parameter is None
         assert diagnostic.shape.length == len(self.BARE_AWS_SECRET_ALNUM)
 
-    @pytest.mark.parametrize("parameter", ["state", "code_challenge"])
+    @pytest.mark.parametrize("parameter", ["state", "code_challenge", "client_id"])
     def test_recognized_oauth_entropy_does_not_hit_bare_secret_lottery(
         self, parameter: str
     ) -> None:
@@ -4318,7 +4318,8 @@ class TestOAuthAuthorizationUrlRedaction:
             url = self.NOTION_URL.replace(self.STATE, entropy, 1)
         else:
             entropy = base64.urlsafe_b64encode(digest).decode().rstrip("=")
-            url = self.NOTION_URL.replace(self.CHALLENGE, entropy, 1)
+            target = self.CHALLENGE if parameter == "code_challenge" else "client123"
+            url = self.NOTION_URL.replace(target, entropy, 1)
 
         # The fixed digest is deliberately one whose shape reaches the generic
         # bare-secret heuristic. OAuth entropy at an approved endpoint must not

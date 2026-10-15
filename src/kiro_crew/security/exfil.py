@@ -1563,19 +1563,22 @@ def current_scoped_exempt_hosts() -> frozenset[str]:
 
 # Markerless 40-character values collide with OAuth entropy only for these
 # authorization-request fields. ``code_verifier`` is intentionally absent: it
-# is sent to the token endpoint, not on this front channel.
-_OAUTH_ENTROPY_QUERY_PARAMS = frozenset({"code_challenge", "nonce", "state"})
+# is sent to the token endpoint, not on this front channel. A dynamically
+# registered OAuth client's ``client_id`` is public and Contra mints it as a
+# 43-character base64url identifier.
+_OAUTH_ENTROPY_QUERY_PARAMS = frozenset({"client_id", "code_challenge", "nonce", "state"})
 
 # The exemption is bounded to shapes the protocol itself can emit, so an
 # AWS-secret-shaped run cannot ride a front-channel parameter into the blanked
-# set. base64url (RFC 4648 s5) emits `-`/`_` and never `+`/`/`, and an S256
-# challenge is base64url of a 32-byte digest -- exactly 43 characters.
+# set. base64url (RFC 4648 s5) emits `-`/`_` and never `+`/`/`. An S256
+# challenge and Contra's dynamically registered public client id are exactly
+# 43 characters.
 _OAUTH_S256_CHALLENGE_RE = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 
 
 def _oauth_entropy_form_is_protocol_shaped(key: str, form: str) -> bool:
     """Return True when ONE decoded form of a value keeps a protocol shape."""
-    if key == "code_challenge":
+    if key in {"client_id", "code_challenge"}:
         return bool(_OAUTH_S256_CHALLENGE_RE.fullmatch(form))
     return "+" not in form and "/" not in form
 
