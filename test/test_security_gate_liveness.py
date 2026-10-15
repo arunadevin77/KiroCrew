@@ -331,7 +331,14 @@ def _url_payload_command(n: int) -> str:
 #: docstring, the runner and opener tables and the redirection and hidden-command
 #: patterns. It only narrows what auto-approves; no deny rule, threshold or pass
 #: moved.
-_PACKAGE_LINE_BUDGET = 29_293
+#:
+#: The bounded Mermaid pako branch and its stream state add canonical decoding,
+#: one decoded-byte budget across top-level states, and pako-only streaming under
+#: the existing payload ceiling. Each streamed payload byte is classified once,
+#: and termination rejoins the candidate with its terminating chunk before the
+#: ordinary credential-safe scan. Strict decoding and the pass-3-only exemption
+#: remain unchanged. The measured package total is 29,472 lines.
+_PACKAGE_LINE_BUDGET = 29_472
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
