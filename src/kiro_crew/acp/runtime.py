@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, NamedTuple, TypeVar
 from kiro_crew import (
     acp_tool_gate,
     agent_scratch,
+    mcp_declined_home,
     member_essential_context,
     platform_compat,
     runtime_death,
@@ -6183,6 +6184,33 @@ class AcpRuntime:
                 "restart the gateway."
             ) from exc
 
+    async def _refuse_if_delivery_exceeds(
+        self, decision: Any, projection: Any, mode_agent: str
+    ) -> None:
+        """Fail a mode switch whose spec pre-approves servers this session was delivered.
+
+        *decision* is the refused-home record the session started under, carried
+        from its delivery (:meth:`_with_declined_home_servers`) and never rebuilt:
+        what the session got and what the audit recorded stay that record's. The
+        spec judged is the one this switch activates -- *projection*'s view of
+        *mode_agent*, or the file without a projection. A no-op without a record.
+        """
+        if decision is None:
+            return
+        refusal = await asyncio.to_thread(
+            mcp_declined_home.replacement_refusal, decision, projection, mode_agent
+        )
+        if refusal:
+            raise AcpRuntimeError(f"Agent {mode_agent!r}: {refusal}")
+
+    async def refuse_mode_beyond_delivery(self, decision: Any, mode_agent: str) -> None:
+        """:meth:`_refuse_if_delivery_exceeds` against the newest adopted view, for a
+        mid-session ``set_mode`` (``AcpSessionHandle.set_mode``), whose send names
+        that view's alias."""
+        await self._refuse_if_delivery_exceeds(
+            decision, getattr(self, "_native_skill_projection", None), mode_agent
+        )
+
     def _refuse_if_view_unverified(self, mode_agent: str, used_generation: int) -> None:
         """Fail a start while the newest preparation of this runtime was not adopted.
 
@@ -6310,6 +6338,7 @@ class AcpRuntime:
         payload_snapshot: Any,
         wire_registered: bool,
         mode_id: str | None = None,
+        declined_decision: Any = None,
     ) -> str | None:
         """Send ``session/set_mode`` for *mode_agent* inside the derived-spec bracket.
 
@@ -6526,6 +6555,10 @@ class AcpRuntime:
                         missed = None
                 if sent_alias is not None:
                     self._refuse_if_view_unverified(mode_agent, used_generation)
+                if declined_decision is not None:
+                    await self._refuse_if_delivery_exceeds(
+                        declined_decision, projection_now, mode_agent
+                    )
                 try:
                     await self._send_and_await(
                         METHOD_SET_MODE, wire, timeout=budget, **untranslated
@@ -6692,6 +6725,7 @@ class AcpRuntime:
         member_dispatch: bool = False,
         crew_panel: bool = False,
         session_key: str = "",
+        session_work_dir: str | Path | None = None,
     ) -> SessionExtras:
         """The per-session payload for a wire-registered host, and what built it.
 
@@ -6716,6 +6750,7 @@ class AcpRuntime:
             member_dispatch=member_dispatch,
             crew_panel=crew_panel,
             session_key=session_key,
+            session_work_dir=session_work_dir,
         )
         # Judged HERE, on the payload, so every path that builds one -- session/new
         # and session/load alike -- is covered, and a host that builds none (kiro:
@@ -7092,6 +7127,40 @@ class AcpRuntime:
             )
         return entries, token
 
+    async def _with_declined_home_servers(
+        self, entries: list[dict[str, Any]], agent: str | None, work_dir: str | Path
+    ) -> tuple[list[dict[str, Any]], Any]:
+        """Append the ``mcp.json`` servers a refused shared spec cannot carry.
+
+        Empty unless this instance is refused the shared agent home (see
+        :mod:`kiro_crew.mcp_declined_home`). Called AFTER the stub session token is
+        attached, so a third-party server's environment never receives it, and with
+        every name already in the array, so nothing is registered twice.
+
+        Kiro only. KAS mounts ``~/.kiro/settings/mcp.json`` itself, each server
+        with its own environment, and lacks only the ``tools`` grant, which
+        ``KasHarness.session_extras`` adds (:func:`mcp_declined_home.kas_tool_grants`).
+        A delivered copy there would shadow that native mount with one the wire
+        carried, credentials included.
+
+        Also returns the decision record the delivery came from (``None`` when
+        none was made). The session start carries it to its mode switch
+        (:meth:`_activate_mode_bracketed`), which judges the spec it activates
+        against that record instead of deciding again.
+        """
+        if self.acp_backend == ACP_BACKEND_KIRO:
+            extra, decision = await asyncio.to_thread(
+                mcp_declined_home.session_delivery,
+                agent or self._agent,
+                work_dir=work_dir,
+                present={str(entry.get("name")) for entry in entries},
+                spec=mcp_declined_home.session_spec(
+                    getattr(self, "_native_skill_projection", None), agent or self._agent
+                ),
+            )
+            return (entries + extra if extra else entries), decision
+        return entries, None
+
     async def _unpooled_control_planes(
         self, entries: list[dict[str, Any]], agent: str | None, work_dir: str | Path
     ) -> list[dict[str, Any]]:
@@ -7296,6 +7365,9 @@ class AcpRuntime:
         denied_tools: frozenset[tuple[str, str]] = frozenset()
         mirrored_snapshot: Any = None
         ref_spec: Any = None
+        # The refused-home decision this start delivered under, carried to its
+        # mode switch (see _with_declined_home_servers).
+        declined_decision: Any = None
         if mcp_servers is None:
             # A mirrored host takes its whole array from the mirror; every other host
             # takes the pooled stubs it always took. Which one is a synchronous
@@ -7329,6 +7401,9 @@ class AcpRuntime:
                     pooled, agent or self._agent, session_work_dir
                 )
                 mcp_servers, stub_token = await self._own_stub_session(mcp_servers, session_key)
+                mcp_servers, declined_decision = await self._with_declined_home_servers(
+                    mcp_servers, agent or self._agent, session_work_dir
+                )
         else:
             # An explicit array is the caller's own composition (a mirror's
             # projection, a test double); it is not this method's to re-key, and it
@@ -7419,6 +7494,9 @@ class AcpRuntime:
             # the mount and the grant together so the two cannot disagree.
             crew_panel=panel_mounted,
             session_key=session_key,
+            # The session's own checkout, not the runtime's first one: the grant's
+            # workspace collision check must read the mcp.json KAS mounts here.
+            session_work_dir=session_work_dir,
         )
         kas_agents = kas_extras.custom_agents
         # The generation the wire payload was built from, or None when this host takes its
@@ -7542,6 +7620,7 @@ class AcpRuntime:
                 memory_mode=memory_mode,
                 session_key=session_key,
                 member_dispatch_mounted=member_mounted,
+                declined_decision=declined_decision,
             )
             if collector is None:
                 permit.release()
@@ -7573,6 +7652,7 @@ class AcpRuntime:
             payload_snapshot=payload_snapshot,
             session_key=session_key,
             member_dispatch_mounted=member_mounted,
+            declined_decision=declined_decision,
         )
 
     def _collect_late_start(
@@ -7597,6 +7677,7 @@ class AcpRuntime:
         memory_mode: str = "persistent",
         session_key: str = "",
         member_dispatch_mounted: bool = False,
+        declined_decision: Any = None,
     ) -> StartCollector | None:
         """Hand a timed-out ``session/new`` to a :class:`StartCollector`.
 
@@ -7680,6 +7761,7 @@ class AcpRuntime:
                     payload_snapshot=payload_snapshot,
                     session_key=session_key,
                     member_dispatch_mounted=member_dispatch_mounted,
+                    declined_decision=declined_decision,
                 )
                 # A declining (or raising) adopter answers False and the
                 # collector performs the one teardown.
@@ -7786,6 +7868,7 @@ class AcpRuntime:
         memory_mode: str = "persistent",
         session_key: str = "",
         member_dispatch_mounted: bool = False,
+        declined_decision: Any = None,
     ) -> AcpSessionHandle:
         """Everything after a successful ``session/new``: queue, handle, mode, drain.
 
@@ -7820,6 +7903,7 @@ class AcpRuntime:
         # The token this session's stubs carry, so a later claim (warm-pool
         # rekey) can name THIS session instead of every session on the runtime.
         handle.stub_session_token = stub_token
+        handle.declined_decision = declined_decision
         handle.member_dispatch_mounted = member_dispatch_mounted
         # The projection's client obligation, on the driver that answers this
         # session's permission requests. Empty for a host with no mirror and for a
@@ -7933,6 +8017,7 @@ class AcpRuntime:
                 payload_snapshot=payload_snapshot,
                 wire_registered=kas_agents is not None,
                 mode_id=mode_wire,
+                declined_decision=declined_decision,
             )
             set_mode_ran = True
             handle.active_agent = mode_agent
@@ -8224,6 +8309,7 @@ class AcpRuntime:
         # step, nothing to unwind, no shared coroutine that could grow a failure mode
         # later. A membership read is the sanctioned form of that comparison.
         mirrored = None
+        declined_decision: Any = None
         if has_mirror(self.acp_backend):
             mirrored = await self._mirrored_session_mcp(
                 active_agent,
@@ -8249,6 +8335,9 @@ class AcpRuntime:
                 pooled, active_agent, session_work_dir
             )
             mcp_servers, stub_token = await self._own_stub_session(mcp_servers, session_key)
+            mcp_servers, declined_decision = await self._with_declined_home_servers(
+                mcp_servers, active_agent, session_work_dir
+            )
         member_withheld = False
         # Whether the member session-control entry is IN the array, the one fact
         # the context builder needs to teach the session_* tools truthfully.
@@ -8358,6 +8447,7 @@ class AcpRuntime:
                 member_dispatch=bool(member_session_key) and not member_withheld,
                 crew_panel=panel_mounted,
                 session_key=session_key,
+                session_work_dir=session_work_dir,
             )
             kas_agents = kas_extras.custom_agents
             payload_snapshot = kas_extras.derived_spec_snapshot
@@ -8430,6 +8520,7 @@ class AcpRuntime:
         )
         # Mirrors create_session: the resumed session's own stub token.
         handle.stub_session_token = stub_token
+        handle.declined_decision = declined_decision
         handle.member_dispatch_mounted = member_mounted
         # Mirrors create_session: the resumed session re-declares the array, so it
         # re-derives the deny set that array came with and re-checks the generation.
@@ -8508,6 +8599,7 @@ class AcpRuntime:
                 payload_snapshot=payload_snapshot,
                 wire_registered=kas_agents is not None,
                 mode_id=mode_wire,
+                declined_decision=declined_decision,
             )
             set_mode_ran = True
             handle.active_agent = mode_agent
