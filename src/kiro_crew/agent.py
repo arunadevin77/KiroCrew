@@ -233,6 +233,7 @@ if TYPE_CHECKING:  # served by ``__getattr__`` at runtime; named here for mypy
         crew_owned_mcp_servers,
         emission_eligible_mcp_servers,
         managed_mcp_spec_entry,
+        managed_member_transport,
         sanitize_spec_env,
     )
     from kiro_crew.agent_materialization.mcp_aliases import (  # noqa: F401
@@ -2149,6 +2150,7 @@ _EXPORTS_BY_OWNER: dict[str, tuple[str, ...]] = {
         "crew_owned_mcp_servers",
         "_gated_off_servers",
         "managed_mcp_spec_entry",
+        "managed_member_transport",
         "_enforce_managed_mcp_ownership",
         "_managed_opt_in_entry",
         "CU_MCP_SERVER",

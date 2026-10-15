@@ -620,6 +620,26 @@ def _enforce_managed_mcp_ownership(
         entry["autoApprove"] = list(spec["autoApprove"])
 
 
+def managed_member_transport(name: str) -> dict[str, Any] | None:
+    """The entry a fresh default spec carries for managed server *name*, without approvals.
+
+    Built by the same two steps :func:`emit_managed_servers` takes for
+    ``kirocrew.json`` (the live invocation, then
+    :func:`_enforce_managed_mcp_ownership`), so a crewmate's private copy that
+    gains the server carries the default template's exact entry. ``autoApprove``
+    is left out: the capability editor keeps approvals as rows of their own.
+    ``None`` when a fresh build would not emit the server (``opt_in`` or a closed
+    gate) or its invocation cannot be resolved.
+    """
+    spec = agent_mod._MANAGED_MCP_SERVERS.get(name)
+    entry = managed_mcp_spec_entry(name)
+    if entry is None or not isinstance(spec, dict):
+        return None
+    _enforce_managed_mcp_ownership(entry, spec, _mcp_registry_mode(), auto_approve="own")
+    entry.pop("autoApprove", None)
+    return entry
+
+
 def emit_managed_servers(mcp: dict, *, gated_off: frozenset[str], registry_mode: bool) -> None:
     """Emit every eligible managed server into a freshly built ``mcpServers`` map."""
     for name, spec in agent_mod._MANAGED_MCP_SERVERS.items():

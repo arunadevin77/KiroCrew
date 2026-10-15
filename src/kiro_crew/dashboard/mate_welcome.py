@@ -92,16 +92,26 @@ _ONE_MORE_OF_CREW = (
     "over days. "
 )
 
-_WELCOME_OFFER = (
+_WELCOME_ASK_NAME = (
     "Say what you can help with right now: getting Kiro Crew set up, sorting out "
     "anything that is not working in it, or showing them around. Keep to those "
     "three; everyday jobs come up later once they know you. Finish by asking what "
     "they would like to call you (you, not them), in one short question the way a "
     'person would say it, such as "What would you like to call me?", and let '
     "that question end the message. "
+)
+
+_WELCOME_OFFER = _WELCOME_ASK_NAME + (
     "When they answer with a name for you, call update_self with display_name set "
     "to that name in the same reply, say plainly in that reply that you go by the "
     "new name from now on, and use it from then on."
+)
+
+#: :data:`_WELCOME_OFFER` for a Mate whose sessions do not load ``kirocrew-mate``
+#: (``member_mate_tools``): the user saves the name on its crewmate page.
+_WELCOME_OFFER_NO_TOOLS = _WELCOME_ASK_NAME + (
+    "When they answer with a name for you, use it from then on, and say in that "
+    "reply that they can save it as your name on your crewmate page."
 )
 
 #: Mate's welcome for a user with no other crewmate. ``{name}`` is its label.
@@ -110,6 +120,13 @@ FIRST_WELCOME = _KICKOFF_PREAMBLE + _WELCOME_INTRO + _FIRST_OF_CREW + _WELCOME_O
 #: Mate's welcome for a user who already has other crewmates.
 FIRST_WELCOME_WITH_CREW = _KICKOFF_PREAMBLE + _WELCOME_INTRO + _ONE_MORE_OF_CREW + _WELCOME_OFFER
 
+FIRST_WELCOME_NO_TOOLS = (
+    _KICKOFF_PREAMBLE + _WELCOME_INTRO + _FIRST_OF_CREW + _WELCOME_OFFER_NO_TOOLS
+)
+FIRST_WELCOME_WITH_CREW_NO_TOOLS = (
+    _KICKOFF_PREAMBLE + _WELCOME_INTRO + _ONE_MORE_OF_CREW + _WELCOME_OFFER_NO_TOOLS
+)
+
 
 #: A created crewmate's first message: a hello with its name, then one plain
 #: question about its goal. The user just picked its name and look on the
@@ -117,28 +134,48 @@ FIRST_WELCOME_WITH_CREW = _KICKOFF_PREAMBLE + _WELCOME_INTRO + _ONE_MORE_OF_CREW
 #: answer becomes a ``set_goal`` card, and the goal's follow-up comes from the
 #: check-ins proposed once it is saved (``dashboard/goal_setup.py``,
 #: ``set_check_ins``), so the kickoff offers no schedule of its own.
-GOAL_WELCOME = _KICKOFF_PREAMBLE + (
+_GOAL_HELLO = _KICKOFF_PREAMBLE + (
     "You are {name}, and the user just created you. Your first message is two "
     "short sentences, simple and direct: a hello that gives your name, then a "
     "question asking the user what your goal should be, said with the word goal "
     "and framed so it is clearly your goal for them, not theirs. Use "
     "the plainest words you can, everyday speech rather than technical terms. "
     "Leave out your template, role or agent type and any plan; work starts once "
-    "they answer. When the user states the goal or agrees to one, propose it with "
+    "they answer. "
+)
+
+GOAL_WELCOME = _GOAL_HELLO + (
+    "When the user states the goal or agrees to one, propose it with "
     "set_goal in that reply, in their words: it puts a card in this chat for them "
     "to press, and the goal is yours once they do. Following up on the goal is "
     "what your check-ins are for, and you suggest those after the goal is saved, "
     "so a separate schedule for it adds nothing."
 )
 
+#: :data:`GOAL_WELCOME` for a crewmate whose sessions do not load
+#: ``kirocrew-mate`` (``member_mate_tools``): the user saves the goal on the
+#: crewmate's Goals tab.
+GOAL_WELCOME_NO_TOOLS = _GOAL_HELLO + (
+    "When the user states the goal or agrees to one, say it back in their words "
+    "in that reply and ask them to add it on your Goals tab: the goal is yours "
+    "once they save it there. Following up on the goal is what your check-ins "
+    "are for, which they turn on on that tab once the goal is saved, so a "
+    "separate schedule for it adds nothing."
+)
+
 #: Appended to :data:`GOAL_WELCOME` when the create carried a description, so
 #: the crewmate confirms that goal instead of asking blind.
-_GOAL_KNOWN = (
+_GOAL_DRAFT = (
     " When you were created you were described as: {description!r}. Treat that as "
     "a first draft of your goal, so your second sentence restates it in your own "
     "plain words and asks whether that is the goal, in place of asking what your "
-    "goal should be. Once they confirm it, or reword it, propose that wording with "
-    "set_goal."
+    "goal should be. "
+)
+_GOAL_KNOWN = (
+    _GOAL_DRAFT + "Once they confirm it, or reword it, propose that wording with set_goal."
+)
+_GOAL_KNOWN_NO_TOOLS = _GOAL_DRAFT + (
+    "Once they confirm it, or reword it, ask them to save that wording on your Goals tab."
 )
 
 
@@ -161,32 +198,43 @@ def _recorded_goal(slug: str, member: str) -> str:
     )
 
 
-def goal_kickoff(entry: object, member: str, slug: str = "") -> str:
+def goal_kickoff(entry: object, member: str, slug: str = "", *, has_mate_tools: bool = True) -> str:
     """The hidden kickoff for crewmate *member*'s first turn; *entry* is its row.
 
     Names the crewmate by its label (its key when unlabelled) and, when the
     create carried a description or the crewmate's goal record (under *slug*)
-    already holds goals, asks it to confirm them.
+    already holds goals, asks it to confirm them. *has_mate_tools* picks the
+    wording: ``set_goal`` with the tools, the Goals tab without them.
     """
     label = getattr(entry, "display_name", "") or ""
     label = label.strip() if isinstance(label, str) else ""
-    text = GOAL_WELCOME.format(name=label or member)
+    welcome = GOAL_WELCOME if has_mate_tools else GOAL_WELCOME_NO_TOOLS
+    known = _GOAL_KNOWN if has_mate_tools else _GOAL_KNOWN_NO_TOOLS
+    text = welcome.format(name=label or member)
     description = getattr(entry, "description", "") or ""
     description = description.strip() if isinstance(description, str) else ""
     if not description:
         description = _recorded_goal(slug, member)
-    return text + _GOAL_KNOWN.format(description=description) if description else text
+    return text + known.format(description=description) if description else text
 
 
-def welcome_kickoff(entry: object, *, has_other_crewmates: bool) -> str:
+def welcome_kickoff(
+    entry: object, *, has_other_crewmates: bool, has_mate_tools: bool = True
+) -> str:
     """The hidden kickoff for Mate's first turn; *entry* is its config row.
 
     *has_other_crewmates* is whether the roster holds a crewmate besides Mate
-    and the reserved ``default`` member.
+    and the reserved ``default`` member; *has_mate_tools* whether its sessions
+    load ``update_self`` to take the name it is given.
     """
     label = getattr(entry, "display_name", "") or ""
     label = label.strip() if isinstance(label, str) else ""
-    template = FIRST_WELCOME_WITH_CREW if has_other_crewmates else FIRST_WELCOME
+    if has_mate_tools:
+        template = FIRST_WELCOME_WITH_CREW if has_other_crewmates else FIRST_WELCOME
+    else:
+        template = (
+            FIRST_WELCOME_WITH_CREW_NO_TOOLS if has_other_crewmates else FIRST_WELCOME_NO_TOOLS
+        )
     return template.format(name=label or ASSISTANT_DEFAULT_DISPLAY_NAME)
 
 
@@ -282,10 +330,15 @@ async def maybe_start_first_greeting(state: Any, slug: str) -> str:
     kind = await asyncio.to_thread(members_mod.owed_welcome_kind, slug, member)
     if kind is None:
         return NOT_OWED
+    from kiro_crew.member_mate_tools import binding_has_mate_tools
+
+    has_tools = await asyncio.to_thread(binding_has_mate_tools, entry)
     if kind == members_mod.WELCOME_KIND_GOAL:
-        kickoff = await asyncio.to_thread(goal_kickoff, entry, member, slug)
+        kickoff = await asyncio.to_thread(
+            goal_kickoff, entry, member, slug, has_mate_tools=has_tools
+        )
     else:
-        kickoff = welcome_kickoff(entry, has_other_crewmates=others)
+        kickoff = welcome_kickoff(entry, has_other_crewmates=others, has_mate_tools=has_tools)
     if not await asyncio.to_thread(claim_greeting_marker, slug, slot.key):
         return ALREADY_GREETED
     if slot.running or _has_content(slot) or state._slots.get(slot.key) is not slot:

@@ -53,6 +53,32 @@ SECTIONS = agent_state.CAPABILITY_SECTIONS
 MAX_OPERATIONS = 300
 MAX_DOCUMENT_BYTES = 1024 * 1024
 
+#: Managed servers a member's copy may carry when its Parent does not: the
+#: crewmate's own record, which every crewmate is meant to have. Its transport
+#: is never the request's: it is the entry the default template carries
+#: (:func:`_member_platform_transport`), refreshed on every projection.
+MEMBER_PLATFORM_SERVERS = frozenset({"kirocrew-mate"})
+
+
+def _member_platform_transport(name: str) -> dict | None:
+    from kiro_crew import agent as agent_mod
+
+    return agent_mod.managed_member_transport(name)
+
+
+def _platform_entry(transport: dict, disabled: bool) -> dict:
+    """*transport* as the copy's entry: ``disabled`` only when it is a mute.
+
+    An enabled entry carries no ``disabled`` key at all, exactly as the default
+    template's does. A ``"disabled": false`` would be a key a per-session element
+    cannot express, so the session mount would withhold the server's identity
+    element and every call would refuse ``identity_unattested``.
+    """
+    entry = {k: v for k, v in transport.items() if k != "disabled"}
+    if disabled:
+        entry["disabled"] = True
+    return entry
+
 
 class CapabilityError(ValueError):
     """A bounded machine code, never source bytes or credentials."""
@@ -808,6 +834,23 @@ def _maintain_owned(snap: dict, spec: dict) -> None:
         spec["mcpServers"] = {
             key: value for key, value in spec.get("mcpServers", {}).items() if key in selected
         }
+    else:
+        # A platform server the copy carries and its Parent does not is Crew's own
+        # entry, so it is kept current here the way an owned Parent's refresh keeps
+        # it, and retracted when a fresh build would not emit it.
+        parent_servers = snap["parent_spec"].get("mcpServers") or {}
+        for key in MEMBER_PLATFORM_SERVERS & selected.keys() - parent_servers.keys():
+            current = _member_platform_transport(key)
+            if current is None:
+                spec.get("mcpServers", {}).pop(key, None)
+                continue
+            entry = _platform_entry(current, selected[key].get("disabled") is True)
+            # A per-tool restriction the copy already holds survives the refresh:
+            # the transport is Crew's to keep current, the restriction is not.
+            retained = selected[key].get("disabledTools")
+            if retained:
+                entry["disabledTools"] = list(retained)
+            spec.setdefault("mcpServers", {})[key] = entry
     namespaced = {key for key in selected if ":" in key}
     if namespaced:
         current = _collect_app_mcp_servers(audit=False)
@@ -1053,9 +1096,16 @@ class CapabilityService:
                         if set(value) != {"disabled"} or type(value["disabled"]) is not bool:
                             raise CapabilityError("managed_transport_locked", 400)
                         original = parent_rows[section].get(key)
+                        platform = original is None and key in MEMBER_PLATFORM_SERVERS
+                        if platform:
+                            original = _member_platform_transport(key)
                         if original is None:
                             raise CapabilityError("managed_transport_unavailable")
-                        value = {**original, "disabled": value["disabled"]}
+                        value = (
+                            _platform_entry(original, value["disabled"])
+                            if platform
+                            else {**original, "disabled": value["disabled"]}
+                        )
                     elif ":" in key:
                         from kiro_crew.agent import _collect_app_mcp_servers
 

@@ -124,6 +124,11 @@ def create_first_crewmate_once() -> None:
     update_config_locked(mutate=prepare)
     if template and _create_private(template[0]):
         _mark(FIRST_CREWMATE_MARKER, created=True)
+        # Like every created crewmate: a configured default template without the
+        # crewmate's own tools gets them on Mate's private copy. Never raises.
+        from kiro_crew.member_mate_tools import grant_mate_tools_to_new_member
+
+        grant_mate_tools_to_new_member(ASSISTANT_MEMBER_NAME)
         _owe_first_welcome()
 
 

@@ -508,6 +508,14 @@ async def _api_kirocrew_agents_create(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": str(exc), "code": "member_memory_unavailable"}, status=409
             )
+    # A template without the crewmate's own tools gets them on the new member's
+    # private copy (member_mate_tools); the create stands whatever the outcome.
+    from kiro_crew.member_mate_tools import grant_mate_tools_to_new_member
+
+    async with _get_config_lock():
+        mate_tools = await _drained_to_thread(grant_mate_tools_to_new_member, name)
+    if mate_tools != "template_has_it":
+        logger.info("new crewmate %s: mate tools %s", name, mate_tools)
     # A crew APPEARING changes what the effort chain resolves even with no pin of
     # its own: the factory's captured config does not know the crew, so it cannot
     # read the binding the role default keys on, and a scheduled or messaging

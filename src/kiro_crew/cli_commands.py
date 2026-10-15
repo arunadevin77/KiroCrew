@@ -1622,6 +1622,10 @@ def _handle_agent(args: argparse.Namespace) -> None:
         else:
             print(f"Created agent: {args.name}")
         print(f"Workspace: {created.workspace}")
+        from kiro_crew.member_mate_tools import GRANTED, grant_mate_tools_to_new_member
+
+        if grant_mate_tools_to_new_member(args.name) == GRANTED:
+            print("Added the crewmate's own tools (kirocrew-mate) to its private copy")
 
     elif action == "update":
         if args.name not in cfg.agents:

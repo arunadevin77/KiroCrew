@@ -352,6 +352,47 @@ _MEMBER_DASHBOARD_ITEM = """
 _MEMBER_HOW_YOU_WORK = _MEMBER_HOW_YOU_WORK_COMMON + _MEMBER_BRIEFING_ITEM + _MEMBER_DASHBOARD_ITEM
 
 
+#: The identity sentence about the crewmate's own record when its sessions load
+#: the ``kirocrew-mate`` tools (:func:`member_mate_tools.binding_has_mate_tools`).
+_MATE_TOOLS_IDENTITY = (
+    "Your name, your description and your ghost face are yours: when the user "
+    "asks you to change one, call update_self (the kirocrew-mate server) "
+    "and it is done, shown in this chat as one line the user can undo. What "
+    "you run on, what this chat approves without asking and which tools you "
+    "have are the user's to grant: set_model, set_approval_mode and "
+    "request_capabilities each put a card in this chat for them to press. "
+    "Your goals are the user's too (set_goal proposes adding one, or a new "
+    "text for one, on a card). When the user tells you about something "
+    "long-term they want you to work toward, propose it as a goal with "
+    "set_goal rather than only keeping it in memory. Once one is set, work "
+    "out key results you can "
+    "check yourself and propose them with set_key_results (a card; link each "
+    "to the goals it serves, and propose none when a goal cannot be "
+    "measured), then record readings with key_result_progress (a reading can "
+    "be a number or a short note); the user sees all of it on your Goals tab. "
+    "A few goals and a few milestones are easier to track than many, so keep "
+    "the set small and suggest merging when it grows; the user decides. Your "
+    "check-ins (Daily Goal Reminder, Weekly report, Monthly review) are the "
+    "user's to turn on: set_check_ins proposes them on a card."
+)
+
+#: The same sentence for a crewmate whose sessions do not load those tools: the
+#: user makes each of these changes on the crewmate's own pages.
+_NO_MATE_TOOLS_IDENTITY = (
+    "Your name, description and face, what you run on, what this chat approves "
+    "without asking and which tools you have are the user's to change on your "
+    "crewmate page; you have no tool that changes them, so point the user there. "
+    "Your goals, their milestones and your check-ins (Daily Goal Reminder, Weekly "
+    "report, Monthly review) live on your Goals tab, which the user edits. When "
+    "the user tells you about something long-term they want you to work toward, "
+    "suggest they add it as a goal on your Goals tab rather than only keeping it "
+    "in memory, and when you can name milestones to check, write them in this "
+    "chat for the user to add there. A few goals and a few milestones are easier "
+    "to track than many, so keep the set small and suggest merging when it grows; "
+    "the user decides."
+)
+
+
 def _read_goal_block(slug: str, member: str) -> str:
     """The member's goal block (:func:`member_goals.context_block`), or ``""``.
 
@@ -460,6 +501,9 @@ def build_member_section(
     # is an operator-level event, not a routine one.)
     rules = ctx.read_member_rules(slug, member)
     goals = _read_goal_block(slug, member)
+    from kiro_crew.member_mate_tools import binding_has_mate_tools
+
+    has_mate_tools = binding_has_mate_tools(crew)
     # Layer-4 availability decides both the briefing read and the wording
     # around it (item 6 above, the placeholder below): where the pinned
     # briefing read fails closed (Windows — member_briefing_supported),
@@ -513,27 +557,11 @@ def build_member_section(
         )
         # The member's own record, named here so the model knows the tools exist
         # (Tool Search defers their schemas): what is its to change at once and
-        # what is the user's to grant through a card.
+        # what is the user's to grant through a card. Only when its sessions
+        # actually load them: a spec without the server gets the pages instead.
         identity.append(
-            "Your name, your description and your ghost face are yours: when the user "
-            "asks you to change one, call update_self (the kirocrew-mate server) "
-            "and it is done, shown in this chat as one line the user can undo. What "
-            "you run on, what this chat approves without asking and which tools you "
-            "have are the user's to grant: set_model, set_approval_mode and "
-            "request_capabilities each put a card in this chat for them to press. "
-            "Your goals are the user's too (set_goal proposes adding one, or a new "
-            "text for one, on a card). When the user tells you about something "
-            "long-term they want you to work toward, propose it as a goal with "
-            "set_goal rather than only keeping it in memory. Once one is set, work "
-            "out key results you can "
-            "check yourself and propose them with set_key_results (a card; link each "
-            "to the goals it serves, and propose none when a goal cannot be "
-            "measured), then record readings with key_result_progress (a reading can "
-            "be a number or a short note); the user sees all of it on your Goals tab. "
-            "A few goals and a few milestones are easier to track than many, so keep "
-            "the set small and suggest merging when it grows; the user decides. Your "
-            "check-ins (Daily Goal Reminder, Weekly report, Monthly review) are the "
-            "user's to turn on: set_check_ins proposes them on a card. When the user "
+            (_MATE_TOOLS_IDENTITY if has_mate_tools else _NO_MATE_TOOLS_IDENTITY)
+            + " When the user "
             "asks you to track something, record it as an item in your work ledger "
             "and keep it updated as it moves; to the user that is tracking, so call "
             "it tracking rather than a ledger."
@@ -569,9 +597,14 @@ def build_member_section(
             + rules
         )
     if goals:
+        readings = (
+            "Their current readings are in goal_read"
+            if has_mate_tools
+            else "Their current readings are on your Goals tab"
+        )
         parts.append(
             "\n\n[YOUR GOALS — set by the user; the key results measure how far "
-            "you are from them. Their current readings are in goal_read]\n" + goals
+            f"you are from them. {readings}]\n" + goals
         )
     if briefing_ok:
         parts.append(

@@ -19,6 +19,11 @@ left serving no goal. The setup nudge names the goal
 that changed by its number and lists every goal. When the crewmate is
 busy the nudge waits for its thread to go idle, for a bounded time, and one
 crewmate holds at most one waiting nudge: a newer save replaces it.
+
+Every nudge names the ``kirocrew-mate`` card tools only when the crewmate's
+sessions load them (:func:`kiro_crew.member_mate_tools.member_has_mate_tools`);
+without them it writes the milestones or check-ins in the chat and points the
+user at the Goals tab.
 """
 
 from __future__ import annotations
@@ -52,11 +57,15 @@ def changed_enough(before: str, after: str) -> bool:
     return difflib.SequenceMatcher(None, old, new).ratio() < SMALL_EDIT_RATIO
 
 
-def kickoff_prompt(rec: dict[str, Any], goal_id: str = "") -> str | None:
+def kickoff_prompt(
+    rec: dict[str, Any], goal_id: str = "", *, has_mate_tools: bool = True
+) -> str | None:
     """The hidden turn's text, built from the goal record as stored.
 
     Names the goal *goal_id* that was just added or changed (``None`` when it is
-    gone by the time the turn would run) and shows the whole list.
+    gone by the time the turn would run) and shows the whole list. Without the
+    ``kirocrew-mate`` tools (*has_mate_tools*) the milestones are written in
+    the chat for the user to add on the Goals tab.
     """
     numbers = member_goals.goal_numbers(rec)
     if goal_id not in numbers:
@@ -85,9 +94,15 @@ def kickoff_prompt(rec: dict[str, Any], goal_id: str = "") -> str | None:
         "candidate milestones, each something you can check and report as a "
         "number or a plain yes/no, with its target and why. Then end your turn so the "
         "chat stays free for the user; do not wait for the result.",
-        "3. When the result comes back, propose the milestones with set_key_results "
-        "(a card, the whole set, each milestone linked with goal_ids to the goals it "
-        "serves) and a one-sentence reason."
+        (
+            "3. When the result comes back, propose the milestones with set_key_results "
+            "(a card, the whole set, each milestone linked with goal_ids to the goals it "
+            "serves) and a one-sentence reason."
+            if has_mate_tools
+            else "3. When the result comes back, write the milestones in this chat (each "
+            "with its target and the goals it serves) with a one-sentence reason, and "
+            "ask the user to add the ones they want on your Goals tab."
+        )
         + (
             " You already have milestones: keep the ones that still fit, and add or "
             "change only what this goal needs."
@@ -95,8 +110,13 @@ def kickoff_prompt(rec: dict[str, Any], goal_id: str = "") -> str | None:
             else ""
         )
         + " When the goal cannot be measured, say so and propose none for it.",
-        "4. Do not bring up check-ins yet: once the user confirms the milestones you "
-        "will be told, and that is the moment for them.",
+        (
+            "4. Do not bring up check-ins yet: once the user confirms the milestones you "
+            "will be told, and that is the moment for them."
+            if has_mate_tools
+            else "4. Do not bring up check-ins yet: once the user saves the milestones "
+            "you will be told, and that is the moment for them."
+        ),
     ]
     lines.append(
         "A few goals and a few milestones are easier to track than many: keep the "
@@ -115,9 +135,11 @@ def _tasks(state: Any) -> dict[str, asyncio.Task[Any]]:
     return tasks
 
 
-async def _wait_and_send(
-    state: Any, slug: str, member: str, build: Callable[[dict[str, Any]], str | None]
-) -> str:
+#: Builds a nudge from the goal record and whether the crewmate has the mate tools.
+Build = Callable[[dict[str, Any], bool], str | None]
+
+
+async def _wait_and_send(state: Any, slug: str, member: str, build: Build) -> str:
     from kiro_crew.dashboard.goal_reminder import _idle_thread
     from kiro_crew.dashboard.mate_welcome import dispatch_hidden_turn
 
@@ -132,7 +154,10 @@ async def _wait_and_send(
                 rec = await asyncio.to_thread(member_goals.read_goals, slug, member)
             except member_goals.GoalsUnreadable:
                 return "skipped: goal record unreadable"
-            prompt = build(rec)
+            from kiro_crew.member_mate_tools import member_has_mate_tools
+
+            has_tools = await asyncio.to_thread(member_has_mate_tools, member)
+            prompt = build(rec, has_tools)
             if prompt is None:
                 return "skipped: nothing left to talk about"
             # The read ran off the loop: a turn may have started meanwhile.
@@ -145,12 +170,16 @@ async def _wait_and_send(
         await asyncio.sleep(POLL_SECS)
 
 
-def _goal_prompt(goal_id: str) -> Callable[[dict[str, Any]], str | None]:
-    return lambda rec: kickoff_prompt(rec, goal_id)
+def _goal_prompt(goal_id: str) -> Build:
+    return lambda rec, tools: kickoff_prompt(rec, goal_id, has_mate_tools=tools)
 
 
-def milestones_prompt(rec: dict[str, Any]) -> str | None:
-    """The hidden turn after the user confirms the crewmate's milestones card."""
+def milestones_prompt(rec: dict[str, Any], *, has_mate_tools: bool = True) -> str | None:
+    """The hidden turn after the user confirms the crewmate's milestones card.
+
+    Without the ``kirocrew-mate`` tools (*has_mate_tools*) the check-ins are
+    described and left to the user's Goals tab instead of ``set_check_ins``.
+    """
     krs = rec.get("key_results") or []
     if not krs:
         return None
@@ -182,12 +211,19 @@ def milestones_prompt(rec: dict[str, Any]) -> str | None:
             "them and say what you will work on first toward the goal. The check-ins "
             "already running will record readings against these milestones."
         )
-    else:
+    elif has_mate_tools:
         lines.append(
             "Reply in the user's language: acknowledge them in a sentence, then offer "
             "check-ins with set_check_ins. Say in one plain sentence each what the Daily "
             "Goal Reminder, the Weekly report and the Monthly review would do for them, "
             "propose the ones that fit this goal, and let the card decide."
+        )
+    else:
+        lines.append(
+            "Reply in the user's language: acknowledge them in a sentence, then offer "
+            "check-ins. Say in one plain sentence each what the Daily Goal Reminder, the "
+            "Weekly report and the Monthly review would do for them, suggest the ones "
+            "that fit this goal, and tell the user they turn them on on your Goals tab."
         )
     return "\n".join(lines)
 
@@ -197,7 +233,7 @@ def _schedule(
     key: str,
     slug: str,
     member: str,
-    build: Callable[[dict[str, Any]], str | None],
+    build: Build,
     what: str,
 ) -> None:
     if state is None:
@@ -234,14 +270,23 @@ def schedule_nudge(state: Any, slug: str, member: str, goal_id: str) -> None:
 
 def schedule_milestones_nudge(state: Any, slug: str, member: str) -> None:
     """Tell *member* the user confirmed its milestones, once its thread is idle."""
-    _schedule(state, f"{slug}:milestones", slug, member, milestones_prompt, "milestones confirmed")
+    _schedule(
+        state,
+        f"{slug}:milestones",
+        slug,
+        member,
+        lambda rec, tools: milestones_prompt(rec, has_mate_tools=tools),
+        "milestones confirmed",
+    )
 
 
-def removed_prompt(rec: dict[str, Any], goal_id: str) -> str | None:
+def removed_prompt(rec: dict[str, Any], goal_id: str, *, has_mate_tools: bool = True) -> str | None:
     """The hidden turn after the user removes goal *goal_id* on the Goals tab.
 
     ``None`` unless that removal is the record's newest one (an Undo put it
-    back, or another goal was removed since).
+    back, or another goal was removed since). Without the ``kirocrew-mate``
+    tools (*has_mate_tools*) the milestone change is suggested in the chat for
+    the user to make on the Goals tab.
     """
     removed = rec.get("removed_goal")
     if not isinstance(removed, dict) or removed.get("goal", {}).get("id") != goal_id:
@@ -265,8 +310,13 @@ def removed_prompt(rec: dict[str, Any], goal_id: str) -> str | None:
         "Reply in one or two short sentences, in the user's language: acknowledge the "
         "removal and stop work that only served it. "
         + (
-            "Then propose, with set_key_results (a card, the whole set), dropping or "
-            "relinking the milestones above; the user decides."
+            (
+                "Then propose, with set_key_results (a card, the whole set), dropping or "
+                "relinking the milestones above; the user decides."
+                if has_mate_tools
+                else "Then suggest, in this chat, dropping or relinking the milestones "
+                "above on your Goals tab; the user decides."
+            )
             if orphans
             else "Ask nothing else."
         )
@@ -280,4 +330,11 @@ def schedule_removed_nudge(state: Any, slug: str, member: str, goal_id: str) -> 
     It shares the goal-setup slot: a later save replaces it, and it replaces a
     nudge still waiting for the goal the user just removed.
     """
-    _schedule(state, slug, slug, member, lambda rec: removed_prompt(rec, goal_id), "goal removed")
+    _schedule(
+        state,
+        slug,
+        slug,
+        member,
+        lambda rec, tools: removed_prompt(rec, goal_id, has_mate_tools=tools),
+        "goal removed",
+    )

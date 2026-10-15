@@ -796,13 +796,17 @@ same terms: always emitted, no `autoApprove`, and exactly the tools in
 `agent._MATE_AUTO_GRANTS` as exact `allowedTools` grants (`update_self`, which
 writes the calling crewmate's name, description or ghost face on the user's word
 and leaves one undoable row in its chat; `set_model`, `set_approval_mode`,
-`request_capabilities`, `set_goal` and `set_key_results`, which only offer a
+`request_capabilities`, `set_goal`, `set_key_results` and `set_check_ins`, which only offer a
 change card; `goal_read`, `key_result_progress` and `save_goal_report`, which
 read and write the calling
 crewmate's own goal record directly). An existing spec gains
 the ref and those grants once
 (`mate_platform_granted.json`). Every tool acts on the calling crewmate alone
-and refuses outside its own dashboard turn.
+and refuses outside its own dashboard turn. A crewmate created on a template
+that lacks the server gets it on its own private copy at creation
+(`member_mate_tools.grant_mate_tools_to_new_member`, through the capability
+editor), with the default template's transport and the same grants; its other
+fields keep following the template.
 
 `rebuild_agent_config` creates the first crewmate (`mate`, shown as
 Mate) once, bound to the same template a crewmate you create gets, with its
