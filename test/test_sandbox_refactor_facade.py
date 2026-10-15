@@ -16,7 +16,8 @@ imports the facade at all.
 This file also holds what both facades share -- ``kiro_crew.sandbox`` and
 ``kiro_crew.platform_compat`` -- so ``test_platform_compat_refactor_facade`` runs the same
 checks on its facade: the static shape of a facade module, the owner-import scan, and the
-census of every facade patch in the test trees, which is read once for both facades.
+census of every facade patch in the test trees, which is read once for both facades, in
+``CENSUS_PARTS`` size-balanced parts so that no single test walks the whole tree.
 
 The seam rows patch ONE name with a stub that raises ``_Reached`` and then drive a
 function that must read that name. ``_Reached`` derives from ``BaseException`` on
@@ -460,6 +461,10 @@ register_owners(
 _SETTERS = frozenset({"setattr", "delattr"})
 _DYNAMIC = create_guard._DYNAMIC
 _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
+_FUNCTIONS = frozenset({ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda})
+_LOOPS = frozenset({ast.For, ast.AsyncFor})
+#: Nodes with no call inside and no binding: a name, a constant, an expression context.
+_LEAVES = frozenset({ast.Name, ast.Constant, ast.Load, ast.Store, ast.Del})
 
 #: Every module-level name either facade holds or forwards. A patch of a name neither
 #: has cannot be a facade patch: ``monkeypatch.setattr`` and ``mock.patch`` refuse a
@@ -586,7 +591,9 @@ def _patches_at(call: ast.Call, binding: _Binding) -> set[tuple[str, str]]:
     return set()
 
 
-def monkeypatch_targets(tree: ast.Module) -> list[tuple[int, str, str, str]]:
+def monkeypatch_targets(
+    tree: ast.Module, *, source: str | None = None
+) -> list[tuple[int, str, str, str]]:
     """``(line, enclosing function, facade, name)`` for each ``monkeypatch.setattr`` /
     ``delattr`` and ``mock.patch*`` of a facade attribute.
 
@@ -595,11 +602,21 @@ def monkeypatch_targets(tree: ast.Module) -> list[tuple[int, str, str, str]]:
     whose object reads a name the site cannot resolve -- a parameter, or a target over
     anything else -- is ``(<dynamic>, <dynamic>)`` when a facade could be that object,
     and a facade patch whose name the site cannot spell names ``<dynamic>``. A patch of
-    an object the file names as something else -- an instance, a class -- is none."""
+    an object the file names as something else -- an instance, a class -- is none.
+
+    *source* is the text *tree* came from, when the caller has it; it lets the scope
+    read bindings from statements alone (``create_guard._Scope``). The walk dispatches
+    on the node's exact type and never enters a name, a constant or an expression
+    context, which hold no call and bind nothing: those are most of a module's nodes,
+    and this walk runs over every test file in the tree."""
     found: list[tuple[int, str, str, str]] = []
 
     def visit(node: ast.AST, bindings: list[_Binding], where: str) -> None:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        kind = type(node)
+        if kind in _LEAVES:
+            return
+        if kind in _FUNCTIONS:
+            assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
             outer: list[ast.AST] = [*getattr(node, "decorator_list", []), *node.args.defaults]
             outer += [d for d in node.args.kw_defaults if d is not None]
             for child in outer:
@@ -610,21 +627,24 @@ def monkeypatch_targets(tree: ast.Module) -> list[tuple[int, str, str, str]]:
             for child in node.body if isinstance(node.body, list) else [node.body]:
                 visit(child, inner, where)
             return
-        if isinstance(node, ast.ClassDef):
+        if kind is ast.ClassDef:
+            assert isinstance(node, ast.ClassDef)
             for child in node.decorator_list:
                 visit(child, bindings, where)
             where = node.name if where == "<module>" else f"{where}.{node.name}"
             for child in node.body:
                 visit(child, bindings, where)
             return
-        if isinstance(node, (ast.For, ast.AsyncFor)):
+        if kind in _LOOPS:
+            assert isinstance(node, (ast.For, ast.AsyncFor))
             visit(node.iter, bindings, where)
             for child in node.body:
                 visit(child, _iterate(bindings, node.target, node.iter), where)
             for child in node.orelse:
                 visit(child, bindings, where)
             return
-        if isinstance(node, _COMPREHENSIONS):
+        if kind in _COMPREHENSIONS:
+            assert isinstance(node, _COMPREHENSIONS)
             current = bindings
             for generator in node.generators:
                 visit(generator.iter, current, where)
@@ -635,58 +655,128 @@ def monkeypatch_targets(tree: ast.Module) -> list[tuple[int, str, str, str]]:
             for part in parts:
                 visit(part, current, where)
             return
-        if isinstance(node, ast.Call):
+        if kind is ast.Call:
+            assert isinstance(node, ast.Call)
             hits: set[tuple[str, str]] = set()
             for binding in bindings:
                 hits |= _patches_at(node, binding)
             found.extend((node.lineno, where, facade, name) for facade, name in sorted(hits))
-        for child in ast.iter_child_nodes(node):
-            visit(child, bindings, where)
+        for field in node._fields:
+            child = getattr(node, field, None)
+            if isinstance(child, ast.AST):
+                visit(child, bindings, where)
+            elif isinstance(child, list):
+                for item in child:
+                    if isinstance(item, ast.AST):
+                        visit(item, bindings, where)
 
-    visit(tree, [(create_guard._Scope(tree), frozenset())], "<module>")
+    scope = create_guard._Scope(tree, source=source)
+    visit(tree, [(scope, frozenset())], "<module>")
     return found
 
 
+_Patch = tuple[str, int, str, str, str]
+
+#: How many parts the census is read in. The per-test timeout bounds ONE test, and the
+#: whole census -- every test file parsed and walked, under coverage, on a shared
+#: runner -- is more than one test's budget. Each part is one test of
+#: ``check_shared_bindings``, so the budget bounds a quarter of the tree; the parts
+#: hold about the same amount of source, and the sum of the work does not change.
+CENSUS_PARTS = 4
+
+
 @functools.lru_cache(maxsize=1)
-def facade_patches() -> tuple[tuple[str, int, str, str, str], ...]:
-    """``(file, line, enclosing function, facade, name)`` for every facade patch under
-    ``test/``, each ``src/**/tests`` and the root conftest, read once for both facades."""
+def census_parts() -> tuple[tuple[Path, ...], ...]:
+    """The files the census parses, dealt into ``CENSUS_PARTS`` parts of about equal
+    source size: each file, largest first, joins the lightest part so far. Only the
+    paths are kept; the text is read again by the part that parses it, so nothing here
+    retains the tree's source for the process lifetime."""
     roots = [_REPO / "test", *sorted((_REPO / "src" / "kiro_crew").rglob("tests"))]
     paths = [_REPO / "conftest.py", *(p for root in roots for p in sorted(root.rglob("*.py")))]
-    patches: list[tuple[str, int, str, str, str]] = []
+    sizes: list[tuple[int, Path]] = []
     for path in paths:
         text = path.read_text(encoding="utf-8")
-        if not create_guard._worth_parsing(text):
-            continue
+        if create_guard._worth_parsing(text):
+            sizes.append((len(text), path))
+    parts: list[list[Path]] = [[] for _ in range(CENSUS_PARTS)]
+    loads = [0] * CENSUS_PARTS
+    for size, path in sorted(sizes, key=lambda item: (-item[0], item[1])):
+        lightest = loads.index(min(loads))
+        parts[lightest].append(path)
+        loads[lightest] += size
+    return tuple(tuple(sorted(part)) for part in parts)
+
+
+@functools.lru_cache(maxsize=CENSUS_PARTS)
+def census_part(index: int) -> tuple[_Patch, ...]:
+    """``(file, line, enclosing function, facade, name)`` for every facade patch in the
+    files of census part *index*, read once for both facades."""
+    patches: list[_Patch] = []
+    for path in census_parts()[index]:
+        text = path.read_text(encoding="utf-8")
         relative = path.relative_to(_REPO).as_posix()
         patches.extend(
             (relative, line, where, facade, name)
-            for line, where, facade, name in monkeypatch_targets(ast.parse(text))
+            for line, where, facade, name in monkeypatch_targets(ast.parse(text), source=text)
         )
     return tuple(patches)
+
+
+def facade_patches() -> tuple[_Patch, ...]:
+    """Every facade patch under ``test/``, each ``src/**/tests`` and the root conftest,
+    in file then line order: the union of the parts, each read on its first use."""
+    rows = (row for index in range(CENSUS_PARTS) for row in census_part(index))
+    return tuple(sorted(rows, key=lambda row: (row[0], row[1])))
+
+
+def shared_bindings(
+    facade: ModuleType,
+    seams: dict[tuple[str, str], tuple[str, tuple[str, ...]]],
+    patches: tuple[_Patch, ...],
+) -> set[str]:
+    """The names *patches* rebind through *facade* that the facade AND an owner both
+    bind: such a patch lands in the facade's namespace only. A forwarded name is not
+    one, nor a name the facade alone binds, nor a seam name, which the owner imports
+    from the facade when it runs."""
+    seam_names = {name for _facade, names in seams.values() for name in names}
+    shared: set[str] = set()
+    for _path, _line, _where, patched, name in patches:
+        if patched != facade.__name__ or name == _DYNAMIC or name in seam_names:
+            continue
+        if name in facade._EXPORTS or name not in vars(facade):
+            continue
+        if any(name in vars(owner) for owner in _ALL_OWNERS.values()):
+            shared.add(name)
+    return shared
 
 
 def check_shared_bindings(
     facade: ModuleType,
     seams: dict[tuple[str, str], tuple[str, tuple[str, ...]]],
     expected: frozenset[str],
+    part: int,
 ) -> None:
-    """A name both the facade and an owner bind takes a patch through the facade in the
-    facade's namespace only; each such name a test patches is listed, so a new one cannot
-    miss an owner's reader silently. A seam name is not one: the owner imports the
-    facade's binding when it runs."""
-    seam_names = {name for _facade, names in seams.values() for name in names}
-    patches = [row for row in facade_patches() if row[3] == facade.__name__]
-    assert len(patches) > 50, f"the scan saw only {len(patches)} patches of {facade.__name__}"
-    shared: set[str] = set()
-    for _path, _line, _where, _facade, name in patches:
-        if name == _DYNAMIC or name in seam_names:
-            continue
-        if name in facade._EXPORTS or name not in vars(facade):
-            continue
-        if any(name in vars(owner) for owner in _ALL_OWNERS.values()):
-            shared.add(name)
-    assert shared == set(expected)
+    """Every shared name the tests of census *part* patch through *facade* is listed, so
+    a new one cannot miss an owner's reader silently. One part per test keeps each
+    test's work a bounded share of the tree; ``check_listed_bindings_are_patched``
+    reads the whole."""
+    assert shared_bindings(facade, seams, census_part(part)) <= set(expected)
+
+
+def check_listed_bindings_are_patched(
+    facade: ModuleType,
+    seams: dict[tuple[str, str], tuple[str, tuple[str, ...]]],
+    expected: frozenset[str],
+) -> None:
+    """The whole census, read from the parts: the listed names are exactly the shared
+    names some test patches, so a stale entry is refused too, and the scan saw enough
+    patches of *facade* to have measured anything. In file order this test follows the
+    per-part checks and reads their cached parts; shuffled, it pays for the parts not yet
+    read, which costs time and nothing else."""
+    patches = facade_patches()
+    seen = sum(1 for row in patches if row[3] == facade.__name__)
+    assert seen > 50, f"the scan saw only {seen} patches of {facade.__name__}"
+    assert shared_bindings(facade, seams, patches) == set(expected)
 
 
 # --------------------------------------------------------------------------- #
@@ -899,8 +989,13 @@ def test_every_plan_object_the_facade_binds_is_a_listed_alias() -> None:
 _SANDBOX_SHARED_BINDINGS_PATCHED: frozenset[str] = frozenset({"time"})
 
 
-def test_a_patched_name_bound_by_the_facade_and_an_owner_is_a_listed_one() -> None:
-    check_shared_bindings(sandbox, _SEAM_IMPORTS, _SANDBOX_SHARED_BINDINGS_PATCHED)
+@pytest.mark.parametrize("part", range(CENSUS_PARTS))
+def test_a_patched_name_bound_by_the_facade_and_an_owner_is_a_listed_one(part: int) -> None:
+    check_shared_bindings(sandbox, _SEAM_IMPORTS, _SANDBOX_SHARED_BINDINGS_PATCHED, part)
+
+
+def test_every_listed_shared_binding_is_still_patched() -> None:
+    check_listed_bindings_are_patched(sandbox, _SEAM_IMPORTS, _SANDBOX_SHARED_BINDINGS_PATCHED)
 
 
 def test_the_patch_scan_reads_every_binding_of_a_patch_site() -> None:

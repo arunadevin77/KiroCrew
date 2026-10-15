@@ -29,8 +29,10 @@ import copy
 import importlib
 import importlib.util
 import re
+from collections import deque
 from contextlib import nullcontext
 from pathlib import Path
+from typing import Iterator
 from unittest import mock
 
 import pytest
@@ -97,6 +99,35 @@ _LITERALS = (
 #: Calls whose result is the module their first argument names.
 _IMPORTERS = frozenset({"importlib.import_module", "pytest.importorskip"})
 
+#: The one expression that binds a name. Every other binding the scan reads -- an
+#: import, a def, a class, an assignment -- is a statement, so a tree whose source
+#: spells no ``:=`` can be read from its statement bodies alone.
+_WALRUS = ":="
+
+#: The fields that hold a list of statements, or the handlers and cases whose bodies do.
+_BLOCKS = frozenset({"body", "orelse", "finalbody", "handlers", "cases"})
+
+
+def _statements(tree: ast.AST) -> Iterator[ast.stmt]:
+    """Every statement in *tree*, at any depth, without entering an expression.
+
+    Expression nodes are most of a module's tree and bind nothing but a ``NamedExpr``,
+    so a caller that has read the source and seen no ``:=`` walks a fraction of the
+    nodes ``ast.walk`` visits for the same bindings. The order is ``ast.walk``'s own --
+    breadth first, children in field order -- because a name bound twice keeps the
+    binding that order visits last.
+    """
+    pending: deque[ast.AST] = deque([tree])
+    while pending:
+        node = pending.popleft()
+        if isinstance(node, ast.stmt):
+            yield node
+        for field in node._fields:
+            if field in _BLOCKS:
+                block = getattr(node, field)
+                if isinstance(block, list):
+                    pending.extend(block)
+
 
 def _facade_spelling(dotted: str) -> str:
     """*dotted*, or the facade it spells as another kiro_crew module's attribute.
@@ -142,12 +173,16 @@ class _Scope:
     closest to a facade wins.
     """
 
-    def __init__(self, tree: ast.AST) -> None:
+    def __init__(self, tree: ast.AST, *, source: str | None = None) -> None:
+        """*source* is the text *tree* was parsed from, when the caller has it: a
+        source with no ``:=`` binds names in statements only, so the walk skips every
+        expression. Without it every node is visited."""
         self.names: dict[str, str] = {"mocker": "mocker"}
         self.strings: dict[str, str] = {}
         self._views: dict[frozenset[str], _Scope] = {}
         assignments: list[tuple[str, ast.expr]] = []
-        for node in ast.walk(tree):
+        nodes = ast.walk(tree) if source is None or _WALRUS in source else _statements(tree)
+        for node in nodes:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.asname:
@@ -312,9 +347,10 @@ def _parameters(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> fr
     return frozenset(arg.arg for arg in named if arg is not None)
 
 
-def _create_patches(tree: ast.Module) -> list[tuple[int, str, str]]:
-    """``(line, test function, name)`` for each patch that may create a forwarded name."""
-    scope = _Scope(tree)
+def _create_patches(tree: ast.Module, *, source: str | None = None) -> list[tuple[int, str, str]]:
+    """``(line, test function, name)`` for each patch that may create a forwarded name.
+    *source* is the text *tree* came from, when the caller has it (see ``_Scope``)."""
+    scope = _Scope(tree, source=source)
     found: list[tuple[int, str, str]] = []
 
     def visit(node: ast.AST, function: str, parameters: frozenset[str]) -> None:
@@ -617,6 +653,53 @@ def test_the_case_names_are_what_the_cases_claim() -> None:
     assert _KEPT_PC not in platform_compat._EXPORTS and _KEPT_PC in vars(platform_compat)
 
 
+def test_the_statement_walk_binds_what_the_full_walk_binds() -> None:
+    """A scope read from statement bodies alone -- through every block kind, at any
+    depth -- is the scope ``ast.walk`` builds, including which of two bindings of one
+    name stands: the one the breadth-first order visits last. A source that spells
+    ``:=`` takes the full walk, because the statement walk cannot see that binding."""
+    source = (
+        "import mock\n"
+        "import kiro_crew\n"
+        "from kiro_crew import platform_compat\n"
+        "try:\n"
+        "    import kiro_crew.sandbox as first\n"
+        "except ImportError:\n"
+        "    from unittest import mock\n"
+        "else:\n"
+        "    other = 'kiro_crew.sandbox'\n"
+        "finally:\n"
+        "    first = platform_compat\n"
+        "class C:\n"
+        "    def m(self):\n"
+        "        with open(x) as fh:\n"
+        "            for i in y:\n"
+        "                while z:\n"
+        "                    if q:\n"
+        "                        inner = kiro_crew.sandbox\n"
+        "                    else:\n"
+        "                        alias = other\n"
+        "match v:\n"
+        "    case 1:\n"
+        "        matched = first\n"
+        "async def f():\n"
+        "    async with a as b:\n"
+        "        async for c in d:\n"
+        "            nested = alias\n"
+    )
+    tree = ast.parse(source)
+    full, statements = _Scope(tree), _Scope(tree, source=source)
+    assert (statements.names, statements.strings) == (full.names, full.strings)
+    assert statements.names["mock"] == "unittest.mock"
+    assert statements.names["first"] == "kiro_crew.sandbox"
+    assert statements.names["inner"] == "kiro_crew.sandbox"
+    assert statements.strings["nested"] == "kiro_crew.sandbox"
+    assert statements.names["matched"] == "kiro_crew.sandbox"
+    walrus = "from kiro_crew import sandbox\nif (bound := sandbox):\n    pass\n"
+    assert _Scope(ast.parse(walrus), source=walrus).names["bound"] == "kiro_crew.sandbox"
+    assert "bound" not in _Scope(ast.parse(walrus), source="").names
+
+
 def test_a_facade_reached_as_a_module_attribute_is_the_facade() -> None:
     """The attribute rule, pinned both ways: any kiro_crew module's ``sandbox`` or
     ``platform_compat`` binding IS that facade, and any other attribute is itself."""
@@ -686,7 +769,7 @@ def test_no_test_patches_a_forwarded_name_that_it_may_create() -> None:
             continue
         parsed += 1
         relative = path.relative_to(_REPO).as_posix()
-        for line, function, name in _create_patches(ast.parse(text)):
+        for line, function, name in _create_patches(ast.parse(text), source=text):
             hits.setdefault((relative, function), []).append(f"line {line}: {name}")
     assert scanned > 100, f"the scan read only {scanned} test files, so it measured nothing"
     assert parsed > 50, f"the scan parsed only {parsed} files, so its prefilter is too tight"

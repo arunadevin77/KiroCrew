@@ -203,8 +203,15 @@ def test_the_owners_log_under_the_compatibility_layer_s_name() -> None:
 _PC_SHARED_BINDINGS_PATCHED: frozenset[str] = frozenset({"Path"})
 
 
-def test_a_patched_name_bound_by_the_facade_and_an_owner_is_a_listed_one() -> None:
-    shared.check_shared_bindings(platform_compat, _SEAM_IMPORTS, _PC_SHARED_BINDINGS_PATCHED)
+@pytest.mark.parametrize("part", range(shared.CENSUS_PARTS))
+def test_a_patched_name_bound_by_the_facade_and_an_owner_is_a_listed_one(part: int) -> None:
+    shared.check_shared_bindings(platform_compat, _SEAM_IMPORTS, _PC_SHARED_BINDINGS_PATCHED, part)
+
+
+def test_every_listed_shared_binding_is_still_patched() -> None:
+    shared.check_listed_bindings_are_patched(
+        platform_compat, _SEAM_IMPORTS, _PC_SHARED_BINDINGS_PATCHED
+    )
 
 
 # --------------------------------------------------------------------------- #

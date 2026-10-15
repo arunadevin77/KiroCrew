@@ -5549,6 +5549,23 @@ Two more, from a 5x full-suite run whose per-test probe recorded wall time and R
   per run, while different ratchet files still scan in parallel. Do not put every
   ratchet in one shared group — that serializes several minutes of scanning onto a
   single worker while the others sit idle at the tail.
+- **A whole-tree walk inside one test is one test's timeout budget.** The per-test
+  timeout bounds a test, not a walk, and a census that parses every test file that
+  could patch a facade (`test_sandbox_refactor_facade.py`: ~870 files, ~50 MB) is
+  more than one test's budget under coverage on a shared runner: 27 s idle and bare,
+  50 s idle under `--cov` (the pure-Python visitor doubles, `ast.parse` does not), past
+  120 s on an eight-vCPU shard beside four workers. Two fixes, neither touching an
+  assertion. Read bindings from statements only: `ast.walk` visits every node, but an
+  import, a def, a class and an assignment are statements, and the one expression that
+  binds a name is a `NamedExpr`, so a source with no `:=` is read from its statement
+  bodies -- a sixth of the nodes -- in `ast.walk`'s own breadth-first order, which
+  matters because a name bound twice keeps the binding visited last. Then deal the
+  files into size-balanced parts and run one parametrized test per part, with one
+  whole-census test after them that reads the parts' caches: each test's work is a
+  bounded share of the tree, the sum is unchanged, and in file order the final test
+  costs nothing. The per-part check asserts `found <= listed`; only the whole-census
+  one asserts equality, because a stale entry is visible only to the whole. Prove it
+  with the planted-violation check below, on a part and on the whole.
 
 Neither of these shows up as a *failure*, which is why they survive: the suite is
 green, just three times slower than it needs to be, and every timing-sensitive test
