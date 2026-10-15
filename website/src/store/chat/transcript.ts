@@ -5,6 +5,7 @@
  *  every slot-detail reducer cuts and merges by. Nothing here touches chat
  *  state; callers pass the arrays in. */
 import type { ChatMessage } from '../../types'
+import { isStopEvent } from '../../lib/stopEvent'
 import { jsonEqual } from '../../utils/structuralEqual'
 import { secureRandomId } from '../../utils/secureId'
 
@@ -209,15 +210,18 @@ export function preserveSettledMcpOauth(existing: ChatMessage[], merged: ChatMes
  *  same `meta.id` in the PRIOR transcript (`existing`, the live state the tab
  *  already held): if that copy is settled, carry its settled `meta`/content
  *  onto the merged row. A row with no settled prior copy, and every non-stop
- *  row, pass through untouched. Also collapses the two-rows-one-id case the
- *  issue notes (a backend that recorded two rows for one press) once one is
- *  settled, by first restoring then dropping any `stopping` duplicate of a
- *  settled id. */
+ *  row, pass through untouched.
+ *
+ *  Scope is deliberately the stale-snapshot regression only: a backend that
+ *  recorded two SEPARATE rows for one stop id is a backend-writer concern, not
+ *  one this merge pass papers over. */
 export function preserveSettledStopState(existing: ChatMessage[], merged: ChatMessage[]): ChatMessage[] {
+  // Reuse the one stop-event predicate (`lib/stopEvent.ts`) rather than
+  // re-checking half of it; the id is the backend's upsert key.
   const stopId = (m: ChatMessage): string | undefined => {
-    const meta = m.meta as { kind?: string; id?: unknown } | undefined
-    if (meta?.kind !== 'stop_event') return undefined
-    return typeof meta.id === 'string' && meta.id ? meta.id : undefined
+    if (!isStopEvent(m)) return undefined
+    const id = (m.meta as { id?: unknown } | undefined)?.id
+    return typeof id === 'string' && id ? id : undefined
   }
   const isStopping = (m: ChatMessage): boolean =>
     (m.meta as { state?: string } | undefined)?.state === 'stopping'
@@ -231,22 +235,16 @@ export function preserveSettledStopState(existing: ChatMessage[], merged: ChatMe
   if (!settledPrior.size) return merged
 
   let changed = false
-  const seenSettled = new Set<string>()
   const result: ChatMessage[] = []
   for (const m of merged) {
     const id = stopId(m)
     if (id !== undefined && isStopping(m) && settledPrior.has(id)) {
-      // A later-arriving settled copy of this id already landed earlier in the
-      // merged list: drop this stale `stopping` duplicate rather than keep two.
-      if (seenSettled.has(id)) { changed = true; continue }
       // Carry the settled prior row's state forward in place.
       const prior = settledPrior.get(id)!
       result.push({ ...m, content: prior.content, cls: prior.cls, meta: { ...(m.meta || {}), ...(prior.meta || {}) } })
-      seenSettled.add(id)
       changed = true
       continue
     }
-    if (id !== undefined && !isStopping(m) && settledPrior.has(id)) seenSettled.add(id)
     result.push(m)
   }
   return changed ? result : merged

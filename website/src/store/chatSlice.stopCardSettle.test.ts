@@ -90,12 +90,13 @@ describe('preserveSettledStopState', () => {
     expect((out[0].meta as { state?: string }).state).toBe('stop_failed_reset')
   })
 
-  it('collapses a two-rows-one-id pair once one is settled', () => {
-    // A merged list holding both a settled and a stale stopping copy of one id.
+  it('upgrades a stale stopping copy of a settled id rather than leaving it pulsing', () => {
+    // Scope is the stale-snapshot regression: carry the settled state onto a
+    // stopping row of the same id. Collapsing two SEPARATE backend rows for one
+    // id is a backend-writer concern and deliberately not done here.
     const out = preserveSettledStopState([row('stop_failed_reset', 'm1')], [row('stop_failed_reset', 'm1'), row('stopping')])
     const cards = out.filter(m => (m.meta as { kind?: string }).kind === 'stop_event')
-    expect(cards).toHaveLength(1)
-    expect((cards[0].meta as { state?: string }).state).toBe('stop_failed_reset')
+    expect(cards.map(c => (c.meta as { state?: string }).state)).toEqual(['stop_failed_reset', 'stop_failed_reset'])
   })
 
   it('leaves an id that is still only stopping untouched', () => {
