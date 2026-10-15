@@ -4120,6 +4120,38 @@ class TestDynamicSubagentSizingFields:
         assert a.subagent_auto_max == 24
         assert a.subagent_spawn_stagger_secs == 1.5
 
+    @_requires_jsonschema
+    def test_deprecated_warning_is_once_per_value(self, monkeypatch, caplog) -> None:
+        from kiro_crew.config import validation
+
+        monkeypatch.setattr(validation, "_REPORTED_DEPRECATED_FIELDS", set())
+
+        def notices() -> list[str]:
+            return [
+                record.getMessage()
+                for record in caplog.records
+                if record.name == "kiro_crew.config.loader"
+                and "deprecated field 'agent.subagent_cpu_cost_cores'" in record.getMessage()
+            ]
+
+        with caplog.at_level(logging.WARNING, logger="kiro_crew.config.loader"):
+            _load_from_dict({"agent": {"subagent_cpu_cost_cores": 0.8}})
+            assert len(notices()) == 1
+
+            caplog.clear()
+            _load_from_dict({"agent": {"subagent_cpu_cost_cores": 0.8}})
+            assert notices() == []
+
+            _load_from_dict({"agent": {"subagent_cpu_cost_cores": 0.9}})
+            assert len(notices()) == 1
+
+            caplog.clear()
+            _load_from_dict({"agent": {"subagent_cpu_cost_cores": 0.9}})
+            assert notices() == []
+
+            _load_from_dict({"agent": {"subagent_cpu_cost_cores": 0.8}})
+            assert notices() == []
+
     def test_to_dict_round_trip(self) -> None:
         cfg = _load_from_dict(
             {
