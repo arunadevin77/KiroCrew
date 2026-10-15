@@ -3247,3 +3247,115 @@ def test_absent_managed_literal_resource_still_refuses(env):
     _write_template(agents, "writer-template", ["file://memory/never-written.md"])
     with pytest.raises(MemberEssentialContextError, match="managed"):
         documents_for_member("writer-template", str(project))
+
+
+def _hard_link_from_store(tmp_path: Path, name: str, body: str, dest: Path) -> Path:
+    """Place *dest* as a second hard link to a file in an installer-owned store.
+
+    The shape an installer leaves when it cannot create symbolic links: the
+    steering name is a regular file whose inode has another name elsewhere.
+    """
+    store = tmp_path / "installer-store"
+    store.mkdir(exist_ok=True)
+    original = store / name
+    original.write_text(body, encoding="utf-8")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    os.link(original, dest)
+    assert os.stat(dest).st_nlink == 2
+    return dest
+
+
+def test_declared_steering_glob_names_a_hard_linked_file_instead_of_refusing(env, tmp_path):
+    """A hard-linked steering file under the declared glob does not stop the member.
+
+    The no-follow read still refuses the second name, so the file stays unread;
+    it is named in-band and the regular steering beside it loads.
+    """
+    _declare_steering_glob_only(env)
+    linked = _hard_link_from_store(
+        tmp_path,
+        "style.md",
+        "HARDLINKED_STEERING_BODY",
+        env.project / ".kiro" / "steering" / "vendor-style.md",
+    )
+    bodies = _snapshot_bodies(env)
+    assert "HARDLINKED_STEERING_BODY" not in bodies
+    assert "Always guide: explain assumptions." in bodies
+    assert f"[Essential source: {_mec.ESSENTIAL_UNREADABLE_SKIP_SOURCE}:writer-template]" in bodies
+    assert str(linked) in bodies
+
+
+def test_two_templates_leaving_out_different_hard_links_still_build(env, tmp_path):
+    """Each template's unreadable-steering note carries its own label.
+
+    Merging an owner and an execution template that each leave out a
+    different hard-linked steering file must not trip the
+    changed-during-preparation guard.
+    """
+    steering = env.project / ".kiro" / "steering"
+    first = _hard_link_from_store(tmp_path, "a.md", "HARDLINK_A", steering / "a" / "a.md")
+    second = _hard_link_from_store(tmp_path, "b.md", "HARDLINK_B", steering / "b" / "b.md")
+    agents = env.project / ".kiro" / "agents"
+    _write_template(agents, "writer-template", ["file://.kiro/steering/a/*.md"])
+    _write_template(agents, "runner-template", ["file://.kiro/steering/b/*.md"])
+    _write_kiro_settings(env.project / ".kiro", {"chat.disableInheritingDefaultResources": True})
+    message = env.builder._build_v2_essentials(
+        env.store,
+        member=env.member,
+        project=str(env.project),
+        provider_type=PROVIDER_ACP,
+        execution_template="runner-template",
+    )
+    assert f"{_mec.ESSENTIAL_UNREADABLE_SKIP_SOURCE}:writer-template" in message
+    assert f"{_mec.ESSENTIAL_UNREADABLE_SKIP_SOURCE}:runner-template" in message
+    assert str(first) in message and str(second) in message
+    assert "HARDLINK_A" not in message and "HARDLINK_B" not in message
+
+
+def test_implicit_global_steering_names_a_hard_linked_file_instead_of_refusing(env, tmp_path):
+    steering = Path.home() / ".kiro" / "steering"
+    steering.mkdir(parents=True, exist_ok=True)
+    (steering / "plain.md").write_text("PLAIN_STEERING_BODY", encoding="utf-8")
+    linked = _hard_link_from_store(
+        tmp_path, "rules.md", "HARDLINKED_GLOBAL_BODY", steering / "vendor" / "rules.md"
+    )
+    message = _member_message(env)
+    assert "HARDLINKED_GLOBAL_BODY" not in message
+    assert "PLAIN_STEERING_BODY" in message
+    assert str(linked) in message
+    sources = dict(_mec.kiro_launch_documents("writer-template", str(env.project)))
+    assert str(linked) not in sources
+    assert "PLAIN_STEERING_BODY" in sources.values()
+
+
+def test_projected_steering_glob_leaves_a_hard_linked_file_out(env, tmp_path):
+    _hard_link_from_store(
+        tmp_path,
+        "style.md",
+        "HARDLINKED_STEERING_BODY",
+        env.project / ".kiro" / "steering" / "vendor-style.md",
+    )
+    definition = {"id": "worker", "resources": ["file://.kiro/steering/**/*.md"]}
+    documents = _mec.projected_resource_documents(definition, str(env.project))
+    assert "Always guide: explain assumptions." in documents.values()
+    assert not any("HARDLINKED_STEERING_BODY" in body for body in documents.values())
+
+
+def test_declared_non_steering_hard_link_still_refuses(env, tmp_path):
+    """Only steering is left out; any other declared source the read refuses still refuses."""
+    _hard_link_from_store(
+        tmp_path, "guide.md", "HARDLINKED_GUIDE", env.project / "notes" / "guide.md"
+    )
+    _declare(env, ["file://notes/guide.md"])
+    with pytest.raises(MemberEssentialContextError, match="missing, unreadable"):
+        _snapshot_bodies(env)
+
+
+def test_unreadable_steering_note_names_each_file_once():
+    first, second = Path("a.md"), Path("b.md")
+    assert _mec._skipped_unreadable_note([], "t") is None
+    note = _mec._skipped_unreadable_note([first, second, first], "t")
+    assert note is not None
+    source, body = note
+    assert source == f"{_mec.ESSENTIAL_UNREADABLE_SKIP_SOURCE}:t"
+    assert body.count(str(first)) == 1 and "2 steering files" in body

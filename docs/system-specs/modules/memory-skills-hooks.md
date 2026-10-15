@@ -1755,7 +1755,16 @@ refuses, and so does a link under any other declared glob. The launch-record siz
 check (`_declared_files_fit`, `projected_launch_paths`) does not opt in: it measures
 what kiro-cli loads and cannot measure a link it does not follow, so a link still
 withholds that record (the size check reports unfit, the path read refuses) and the
-folder sends every guide itself. There is no mtime-only content cache or automatic
+folder sends every guide itself. A steering document (implicit global or project
+scan, or a declared match with a `steering` path component) that passes the path
+screen, containment and the managed-state check but that the no-follow descriptor
+read still refuses -- a hard link an installer placed, a reparse point that is not
+a link, a file that changed shape between the walk and the open -- is likewise left
+out unread: the snapshot names it in one core
+`essential-context#unreadable-skipped:<template>` note, and the KAS document reader and `kiro_launch_documents` skip it with a
+warning. The read itself is unchanged, so the file is never opened through the
+second name. Any other declared source the read refuses still refuses the turn,
+and an oversized or non-UTF-8 steering file still raises. There is no mtime-only content cache or automatic
 retrieval on the warm path.
 
 Structural-marker scanning copies contiguous ASCII segments without per-character

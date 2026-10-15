@@ -30,6 +30,11 @@ ESSENTIAL_LINKED_SKIP_SOURCE = "essential-context#linked-skipped"
 #: Source-label prefix of the in-band notice that names declared literal
 #: resources skipped because they do not exist; the full label appends ``:<template>``.
 ESSENTIAL_MISSING_SKIP_SOURCE = "essential-context#missing-skipped"
+#: Source-label prefix of the in-band notice that names steering documents the
+#: no-follow descriptor read refused (a hard link, a reparse point that is not a
+#: link) and that were left out instead of refusing the whole turn; the full
+#: label appends ``:<template>``.
+ESSENTIAL_UNREADABLE_SKIP_SOURCE = "essential-context#unreadable-skipped"
 _MAX_SKIPPED_LISTED = 10
 _MAX_DIRECTORY_ENTRIES = 2048
 _MAX_DOCUMENTS = 64
@@ -75,6 +80,19 @@ class _ManagedEssentialSourceError(MemberEssentialContextError):
     def __init__(self, message: str, *, workspace_entry: str | None = None) -> None:
         super().__init__(message)
         self.workspace_entry = workspace_entry
+
+
+class _UnreadableEssentialSourceError(MemberEssentialContextError):
+    """An admitted, contained source the no-follow descriptor read refused.
+
+    Raised only after the path screen, the admitted-root containment check and
+    the managed-state isolation have all passed, when
+    :func:`safe_read_file_bytes_nolink` still returns nothing: the file is a hard
+    link, carries a reparse point the read does not open, changed shape between
+    the walk and the open, or is otherwise not a regular file it may read. A
+    steering document refused this way is left out unread and named; every other
+    source keeps failing closed.
+    """
 
 
 #: Top-level workspace names the product itself writes as managed state. An entry
@@ -228,8 +246,13 @@ def _read(path: Path, root: Path) -> str:
             allow_truncate=False,
         )
         if data is None:
-            raise ValueError("missing, unreadable, or outside the admitted document root")
+            raise _UnreadableEssentialSourceError(
+                f"Essential source {path}: missing, unreadable, or outside the admitted "
+                "document root"
+            )
         return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except _UnreadableEssentialSourceError:
+        raise
     except (OSError, ValueError) as exc:
         raise MemberEssentialContextError(f"Essential source {path}: {exc}") from exc
 
@@ -322,6 +345,34 @@ def _skipped_linked_note(linked: list[Path]) -> tuple[str, str] | None:
         f"not read: {listed}. The host may still load linked steering natively, so its "
         "text can appear elsewhere in your context; this note only says the snapshot "
         "does not carry it.",
+    )
+
+
+def _skipped_unreadable_note(unreadable: list[Path], template: str) -> tuple[str, str] | None:
+    """The in-band note naming steering documents the descriptor read refused, or ``None``.
+
+    An installer that places steering by hard link (or a file that carries a
+    reparse point that is not a link) passes the path screen and containment,
+    then is refused by :func:`safe_read_file_bytes_nolink`. The file is still
+    not read; only the consequence differs: it is left out and named here, so
+    the member starts and the agent does not assume its contents. kiro-cli
+    reads the file natively.
+    """
+    unique = list(dict.fromkeys(unreadable))
+    if not unique:
+        return None
+    listed = ", ".join(str(path) for path in unique[:_MAX_SKIPPED_LISTED])
+    more = len(unique) - _MAX_SKIPPED_LISTED
+    if more > 0:
+        listed += f", and {more} more"
+    return (
+        f"{ESSENTIAL_UNREADABLE_SKIP_SOURCE}:{template}",
+        f"STEERING NOT IN THIS SNAPSHOT. {len(unique)} steering "
+        f"file{'' if len(unique) == 1 else 's'} could not be read safely (a hard link, "
+        f"a reparse point that is not a link, or otherwise unreadable) and "
+        f"{'was' if len(unique) == 1 else 'were'} left out: {listed}. The host may "
+        "still load them natively, so their text can appear elsewhere in your context; "
+        "this note only says the snapshot does not carry them.",
     )
 
 
@@ -667,6 +718,7 @@ def documents_for_member(
     skipped: list[Path] = []
     linked: list[Path] = []
     missing: list[Path] = []
+    unreadable: list[Path] = []
     project_root = _admitted_project_root(project)
 
     def _mark_core(source: str) -> None:
@@ -681,6 +733,7 @@ def documents_for_member(
             if native_only
             else (
                 _skipped_linked_note(linked),
+                _skipped_unreadable_note(unreadable, template),
                 _skipped_managed_note(skipped, template),
                 _missing_declared_note(
                     [path for path in missing if path.suffix.lower() == ".md"], template
@@ -697,7 +750,17 @@ def documents_for_member(
         if Path(os.path.abspath(path)) in seen:
             return
         if body is None:
-            body = _read(path, root)
+            try:
+                body = _read(path, root)
+            except _UnreadableEssentialSourceError as exc:
+                if not steering:
+                    raise
+                # Contained and admitted, but the descriptor read refused it (a
+                # hard link an installer placed, a non-link reparse point). Left
+                # out unread and named, as a linked steering entry is.
+                logger.warning("Steering %s not loaded: %s", path, exc)
+                unreadable.append(path)
+                return
         if steering:
             fields, _ = split_frontmatter(body, STEERING_LOADER)
             inclusion = fields.get("inclusion", "always").strip().casefold()
@@ -1036,13 +1099,21 @@ def projected_resource_documents(definition: dict, cwd: str) -> dict[str, str]:
     Conditional inclusion stays with the native selector; skill URI resources
     and object-form ``knowledgeBase`` declarations keep their on-demand
     behavior and are never treated as full text. A link a steering glob reaches
-    inside its root is left out unread, as in the snapshot, which names it.
+    inside its root is left out unread, as in the snapshot, which names it. So is
+    a steering document the no-follow descriptor read refuses (a hard link, a
+    non-link reparse point).
     """
     documents: dict[str, str] = {}
     for path, root in _projected_resource_paths(definition, cwd, linked=[]):
         if str(path) in documents:
             continue
-        body = _read(path, root)
+        try:
+            body = _read(path, root)
+        except _UnreadableEssentialSourceError as exc:
+            if "steering" not in path.parts:
+                raise
+            logger.warning("Steering %s not loaded: %s", path, exc)
+            continue
         if "steering" in path.parts:
             fields, _ = split_frontmatter(body, STEERING_LOADER)
             inclusion = fields.get("inclusion", "always").strip().casefold()
@@ -1077,7 +1148,11 @@ def kiro_launch_documents(template: str, project: str | None) -> list[tuple[str,
         return list(declared.items())
     # A link here is left out, as in the snapshot: kiro-cli follows it natively.
     for path in _matches(Path.home(), ".kiro/steering/**/*.md", linked=[]):
-        body = _read(path, Path.home())
+        try:
+            body = _read(path, Path.home())
+        except _UnreadableEssentialSourceError as exc:
+            logger.warning("Steering %s not loaded: %s", path, exc)
+            continue
         fields, _ = split_frontmatter(body, STEERING_LOADER)
         if fields.get("inclusion", "always").strip().casefold() == "always":
             declared[str(path)] = body
