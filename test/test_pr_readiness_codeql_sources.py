@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from test_pr_readiness_evaluate import pytestmark  # noqa: F401 - same POSIX bash + jq skip
 from test_pr_readiness_evaluate import Runner, _bucket, _lane_log, _run_json
 
 
