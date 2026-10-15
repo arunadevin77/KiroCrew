@@ -710,3 +710,329 @@ class TestSendMessageStreamBranches:
             chunks.append(c)
 
         assert client._turn_done.is_set()
+
+
+class TestDispatchSubagentEvents:
+    """_dispatch_events must yield EVENT_SUBAGENT_LIST and EVENT_SUBAGENT_ACTIVITY
+    for kiro-cli's _kiro.dev/subagent/list_update and _kiro.dev/session/update
+    notifications."""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_yields_subagent_list_and_activity(self):
+        from kiro_crew.acp.types import (
+            EVENT_SUBAGENT_ACTIVITY,
+            EVENT_SUBAGENT_LIST,
+            JsonRpcMessage,
+        )
+
+        client = AcpClient()
+
+        subs = [{"sessionId": "s1", "role": "explorer", "status": {"type": "working"}}]
+        frames = [
+            ("subagent_list", JsonRpcMessage(params={"subagents": subs})),
+            # tool_call_chunk → toolCallId attribution
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "tool_call_chunk",
+                            "toolCallId": "tc-1",
+                            "title": "read",
+                        },
+                    }
+                ),
+            ),
+            # agent_message_chunk → sub-agent text
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "text": "hello from sub",
+                        },
+                    }
+                ),
+            ),
+            # non-dict subagents payload must be ignored (no yield)
+            ("subagent_list", JsonRpcMessage(params={"subagents": "nope"})),
+            ("complete", JsonRpcMessage(result={"stopReason": "end_turn"})),
+        ]
+
+        async def _fake_loop(req_id, timeout):
+            for f in frames:
+                yield f
+
+        client._prompt_loop = _fake_loop  # type: ignore[assignment]
+
+        events = []
+        async for ev in client._dispatch_events(req_id=1, timeout=1.0):
+            events.append(ev)
+
+        lists = [e for e in events if e.kind == EVENT_SUBAGENT_LIST]
+        acts = [e for e in events if e.kind == EVENT_SUBAGENT_ACTIVITY]
+        assert len(lists) == 1
+        assert lists[0].subagents == subs
+        # one tool-call activity (with toolCallId) + one text activity
+        tc = [a for a in acts if a.tool_call_id == "tc-1"]
+        txt = [a for a in acts if a.text == "hello from sub"]
+        assert len(tc) == 1 and tc[0].sub_session_id == "s1" and tc[0].title == "read"
+        assert len(txt) == 1 and txt[0].sub_session_id == "s1"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_ignores_activity_naming_this_session(self):
+        """A frame naming THIS session is the parent's own stream, not a child's.
+
+        kiro-cli carries the parent turn's own ``tool_call_chunk`` on
+        ``_kiro.dev/session/update`` with ``params.sessionId`` set to the
+        parent's session, the same method a child's update arrives on, so the
+        sessionId is the only separator. Recorded live in
+        ``test/fixtures/acp_frames/kiro/session.jsonl``. Both carriers are
+        checked so one guard cannot cover half the shape.
+        """
+        from kiro_crew.acp.types import EVENT_SUBAGENT_ACTIVITY, JsonRpcMessage
+
+        client = AcpClient()
+        client._session_id = "own-1"
+
+        frames = [
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "own-1",
+                        "update": {
+                            "sessionUpdate": "tool_call_chunk",
+                            "toolCallId": "tc-own",
+                            "title": "shell",
+                        },
+                    }
+                ),
+            ),
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "own-1",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "text": "the parent's own streamed text",
+                        },
+                    }
+                ),
+            ),
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "child-1",
+                        "update": {
+                            "sessionUpdate": "tool_call_chunk",
+                            "toolCallId": "tc-child",
+                            "title": "read",
+                        },
+                    }
+                ),
+            ),
+            ("complete", JsonRpcMessage(result={"stopReason": "end_turn"})),
+        ]
+
+        async def _fake_loop(req_id, timeout):
+            for f in frames:
+                yield f
+
+        client._prompt_loop = _fake_loop  # type: ignore[assignment]
+
+        events = []
+        async for ev in client._dispatch_events(req_id=1, timeout=1.0):
+            events.append(ev)
+
+        acts = [e for e in events if e.kind == EVENT_SUBAGENT_ACTIVITY]
+        assert [a.sub_session_id for a in acts] == ["child-1"]
+        assert acts[0].tool_call_id == "tc-child"
+
+    @pytest.mark.asyncio
+    async def test_a_long_roster_leaves_the_client_remembering_no_child_id(self):
+        """``AcpClient`` is a PASSTHROUGH for the native-child roster: it yields
+        the full list and retains nothing.
+
+        The roster cap (``NATIVE_CHILD_ROSTER_CAP``) binds every store that
+        REMEMBERS child ids -- the parent handle's counted set, its KAS display
+        roster, and ``AcpRuntime``'s routing recognition set. This asserts the
+        client is not a fourth such store, so the class is closed at three: a
+        store added here would need the same cap, the same overflow count and
+        the same answer for a child past it, and one that arrives without them
+        is the one-of-N shape that makes a cap decision partial.
+        """
+        from kiro_crew.acp.types import EVENT_SUBAGENT_LIST, JsonRpcMessage
+
+        client = AcpClient()
+        roster = [{"sessionId": f"c-{i}"} for i in range(5000)]
+        frames = [
+            ("subagent_list", JsonRpcMessage(params={"subagents": roster})),
+            ("complete", JsonRpcMessage(result={"stopReason": "end_turn"})),
+        ]
+
+        async def _fake_loop(req_id, timeout):
+            for f in frames:
+                yield f
+
+        client._prompt_loop = _fake_loop  # type: ignore[assignment]
+        events = [ev async for ev in client._dispatch_events(req_id=1, timeout=1.0)]
+
+        lists = [e for e in events if e.kind == EVENT_SUBAGENT_LIST]
+        assert len(lists) == 1 and lists[0].subagents == roster
+        probes = {"c-0", "c-2500", "c-4999"}
+        for name, value in vars(client).items():
+            if isinstance(value, (set, frozenset)):
+                assert not probes & set(value), name
+            elif isinstance(value, dict):
+                assert not probes & {str(k) for k in value}, name
+            elif isinstance(value, (list, tuple)):
+                assert not probes & {str(v) for v in value}, name
+
+    @pytest.mark.asyncio
+    async def test_dispatch_redacts_and_extracts_subagent_output(self):
+        """Sub-agent titles/text are LLM-influenced, so credentials + exfil URLs
+        must be scrubbed before they surface as EVENT_SUBAGENT_ACTIVITY. Also
+        the streamed text must be read from the nested ``content.text`` shape
+        kiro-cli 2.10.0 emits, not only the flat top-level ``text`` field."""
+        from kiro_crew.acp.types import (
+            EVENT_SUBAGENT_ACTIVITY,
+            JsonRpcMessage,
+        )
+
+        client = AcpClient()
+
+        frames = [
+            # tool_call_chunk with a credential embedded in the title
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "tool_call_chunk",
+                            "toolCallId": "tc-1",
+                            "title": "leak AKIAIOSFODNN7EXAMPLE now",
+                        },
+                    }
+                ),
+            ),
+            # agent_message_chunk with the text under nested content.text (2.10.0)
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {"text": "secret AKIAIOSFODNN7EXAMPLE here"},
+                        },
+                    }
+                ),
+            ),
+            ("complete", JsonRpcMessage(result={"stopReason": "end_turn"})),
+        ]
+
+        async def _fake_loop(req_id, timeout):
+            for f in frames:
+                yield f
+
+        client._prompt_loop = _fake_loop  # type: ignore[assignment]
+
+        events = []
+        async for ev in client._dispatch_events(req_id=1, timeout=1.0):
+            events.append(ev)
+
+        acts = [e for e in events if e.kind == EVENT_SUBAGENT_ACTIVITY]
+        tc = [a for a in acts if a.tool_call_id == "tc-1"]
+        txt = [a for a in acts if a.text]
+        # Title redacted (credential scrubbed, no raw AKIA leaks through).
+        assert len(tc) == 1
+        assert "AKIAIOSFODNN7EXAMPLE" not in tc[0].title
+        assert "[REDACTED" in tc[0].title
+        # Nested content.text was extracted (robustness) AND redacted (security).
+        assert len(txt) == 1 and txt[0].sub_session_id == "s1"
+        assert "AKIAIOSFODNN7EXAMPLE" not in txt[0].text
+        assert "[REDACTED" in txt[0].text
+
+    @pytest.mark.asyncio
+    async def test_dispatch_subagent_text_edge_cases(self):
+        """Regression guards for the nested-vs-flat content.text extraction:
+        (1) an EMPTY nested content.text must not shadow a populated flat
+        top-level ``text`` (older payloads); (2) a reasoning/thinking content
+        block must NOT surface as user-visible sub-agent output; (3) a non-dict
+        ``content`` must not raise (the flat pre-port read tolerated it)."""
+        from kiro_crew.acp.types import (
+            EVENT_SUBAGENT_ACTIVITY,
+            JsonRpcMessage,
+        )
+
+        client = AcpClient()
+
+        frames = [
+            # (1) empty nested content.text + populated flat text -> flat wins
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {"text": ""},
+                            "text": "flat fallback output",
+                        },
+                    }
+                ),
+            ),
+            # (2) reasoning/thinking content block -> suppressed (no user text)
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {"type": "thinking", "text": "internal reasoning"},
+                        },
+                    }
+                ),
+            ),
+            # (3) non-dict content -> must not crash; flat text used if present
+            (
+                "subagent_activity",
+                JsonRpcMessage(
+                    params={
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": ["a", "list", "block"],
+                            "text": "flat when content is a list",
+                        },
+                    }
+                ),
+            ),
+            ("complete", JsonRpcMessage(result={"stopReason": "end_turn"})),
+        ]
+
+        async def _fake_loop(req_id, timeout):
+            for f in frames:
+                yield f
+
+        client._prompt_loop = _fake_loop  # type: ignore[assignment]
+
+        events = []
+        async for ev in client._dispatch_events(req_id=1, timeout=1.0):
+            events.append(ev)
+
+        txt = [e.text for e in events if e.kind == EVENT_SUBAGENT_ACTIVITY and e.text]
+        # (1) flat fallback surfaced when nested content.text is empty.
+        assert "flat fallback output" in txt
+        # (2) the reasoning block was never surfaced as sub-agent output.
+        assert "internal reasoning" not in txt
+        # (3) non-dict content did not crash and the flat text still surfaced.
+        assert "flat when content is a list" in txt

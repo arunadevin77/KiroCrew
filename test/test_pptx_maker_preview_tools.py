@@ -148,7 +148,7 @@ class TestLauncherInstall:
         fake_python = tmp_path / "venv" / "bin" / "python"
         fake_python.parent.mkdir(parents=True)
         fake_python.write_text("#!/bin/sh\n")
-        # `Path.chmod`, matching the convention in `test_acp_client.py`: the SAST
+        # `Path.chmod`, matching the convention in `test_acp_client_binary_resolution.py`: the SAST
         # insecure-file-permissions rule matches `os.chmod` specifically, and a
         # fixture executable is exactly the case it is not meant to flag.
         fake_python.chmod(0o700)

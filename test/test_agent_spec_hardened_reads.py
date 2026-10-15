@@ -472,7 +472,7 @@ class TestLoadSteeringResources:
     every platform: Windows ``expanduser`` reads ``USERPROFILE``, so setting
     ``HOME`` alone left the real profile dir in play, the marker could never
     load, and the refusal assertion passed vacuously while the valid-spec one
-    failed (same ``setattr(Path, "home", ...)`` shape as test_acp_client.py).
+    failed (same ``setattr(Path, "home", ...)`` shape as test_acp_client_binary_resolution.py).
     """
 
     @staticmethod

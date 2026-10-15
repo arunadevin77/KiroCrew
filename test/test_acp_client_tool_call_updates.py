@@ -1,7 +1,10 @@
-"""Tests for ACP client: tool_call_update extraction and refinement and result content shapes."""
+"""Tests for ACP client: tool_call_update extraction and refinement, result content shapes and the
+is_shell signal.
+"""
 
 import hashlib
 
+import pytest
 from acp_client_helpers import _native_projection_for_fake_processes  # noqa: F401 - fixture
 from acp_client_helpers import _pin_the_installed_kiro_cli_version  # noqa: F401 - fixture
 
@@ -1014,3 +1017,373 @@ class TestExtractToolCallRefinement:
         assert event.tool_purpose.startswith("Use ")
         assert event.tool_purpose.endswith("to list buckets")
         assert "AKIAIOSFODNN7EXAMPLE" not in event.tool_purpose
+
+
+class TestAcpClientIsShellSignal:
+    """The canonical is_shell flow: the ACP shell kind ("execute") must be
+    captured at the tool_call boundary and inherited by the later
+    permission_request event (which carries no reliable kind), so the dashboard
+    exempts long shell command titles from the 256-char cap. Without the
+    inherited kind the permission path rejects long shell commands as
+    "Tool name exceeds max length 256".
+    """
+
+    def _tool_call_msg(self, kind, tool_call_id="tc-1", command="echo hi"):
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        return JsonRpcMessage(
+            method="session/update",
+            params={
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": tool_call_id,
+                    "title": "Running a very long command",
+                    "kind": kind,
+                    "rawInput": {"command": command},
+                }
+            },
+        )
+
+    def _permission_msg(self, tool_call_id="tc-1", kind=None):
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        tool_call = {"toolCallId": tool_call_id, "title": "x" * 400}
+        # By default no "kind" on the permission payload — mirrors live
+        # behaviour where the request_permission toolCall carries an empty
+        # kind. Pass kind=... to exercise the payload-kind fallback branch.
+        if kind is not None:
+            tool_call["kind"] = kind
+        return JsonRpcMessage(
+            id=42,
+            method="session/request_permission",
+            params={
+                "toolCall": tool_call,
+                "options": [{"optionId": "allow_once", "name": "Allow once"}],
+            },
+        )
+
+    def _refinement_msg(self, kind, tool_call_id="tc-1", command="echo hi"):
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        update = {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": tool_call_id,
+            "title": "refined title",
+            "rawInput": {"command": command},
+        }
+        # kind is optional on a refinement; only include it when provided so
+        # tests can exercise the no-clobber path (kind absent).
+        if kind is not None:
+            update["kind"] = kind
+        return JsonRpcMessage(method="session/update", params={"update": update})
+
+    def test_execute_kind_marks_event_is_shell(self, tmp_path):
+        from kiro_crew.acp.client import AcpClient
+
+        client = AcpClient(work_dir=tmp_path)
+        ev = client._extract_tool_event(self._tool_call_msg("execute"))
+        assert ev is not None
+        assert ev.is_shell is True
+        assert client._tool_call_is_shell.get("tc-1") is True
+
+    def test_non_shell_kind_not_is_shell(self, tmp_path):
+        from kiro_crew.acp.client import AcpClient
+
+        client = AcpClient(work_dir=tmp_path)
+        ev = client._extract_tool_event(self._tool_call_msg("edit"))
+        assert ev is not None
+        assert ev.is_shell is False
+
+    def test_permission_event_inherits_is_shell_from_tool_call(self, tmp_path):
+        from kiro_crew.acp.client import AcpClient
+
+        client = AcpClient(work_dir=tmp_path)
+        # 1. tool_call notification arrives first (kind="execute")
+        client._extract_tool_event(self._tool_call_msg("execute"))
+        # 2. permission request for the SAME toolCallId carries no kind
+        perm = client._build_permission_event(self._permission_msg())
+        assert perm.is_shell is True  # inherited via the toolCallId cache
+
+    def test_permission_event_non_shell_stays_false(self, tmp_path):
+        from kiro_crew.acp.client import AcpClient
+
+        client = AcpClient(work_dir=tmp_path)
+        client._extract_tool_event(self._tool_call_msg("edit"))
+        perm = client._build_permission_event(self._permission_msg())
+        assert perm.is_shell is False
+
+    def test_permission_event_inherits_trusted_tool_identity(self, tmp_path):
+        # The client caches the trusted _meta.kiro identity (mcpServerName +
+        # toolName) from the tool_call so the later permission event (which
+        # carries no _meta) can rebuild mcp__<server>__<tool> for the
+        # app-own-server auto-approve's per-tool governance. Without the
+        # tool_name cache the permission event's tool_name is always "" and the
+        # auto-approve fails closed (never fires).
+        from kiro_crew.acp.client import AcpClient
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        client = AcpClient(work_dir=tmp_path)
+        tc = JsonRpcMessage(
+            method="session/update",
+            params={
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "tc-1",
+                    "title": "Doing app work",  # prose, not the canonical mcp__ form
+                    "kind": "other",
+                    "rawInput": {},
+                    "_meta": {
+                        "kiro": {
+                            "toolName": "list_intakes",
+                            "mcpServerName": "beehive:beehive-mcp",
+                        }
+                    },
+                }
+            },
+        )
+        client._extract_tool_event(tc)
+        perm = client._build_permission_event(self._permission_msg())
+        assert perm.tool_name == "list_intakes"
+        assert perm.mcp_server_name == "beehive:beehive-mcp"
+
+    def test_permission_event_does_not_promote_title_on_identity_cache_miss(self, tmp_path):
+        """Legacy per-session transport fails closed without ``_meta.kiro``."""
+        from kiro_crew.acp.client import AcpClient
+        from kiro_crew.acp.types import JsonRpcMessage
+        from kiro_crew.trust_patterns import approval_command
+
+        client = AcpClient(work_dir=tmp_path)
+        client._extract_tool_event(
+            JsonRpcMessage(
+                method="session/update",
+                params={
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "tc-1",
+                        "title": "mcp__beehive:beehive-mcp__list_intakes",
+                        "kind": "other",
+                        "rawInput": {},
+                    }
+                },
+            )
+        )
+
+        perm = client._build_permission_event(self._permission_msg())
+
+        assert perm.tool_name == ""
+        assert perm.mcp_server_name == ""
+        assert (
+            approval_command(
+                perm.tool_input,
+                is_shell=perm.is_shell,
+                tool_name=perm.tool_name,
+                mcp_server_name=perm.mcp_server_name,
+            )
+            == ""
+        )
+
+    def test_structured_non_shell_reprompt_keeps_argument_provenance(self, tmp_path):
+        """A repeated MCP permission retains both display and raw provenance."""
+        from kiro_crew.acp.client import AcpClient
+        from kiro_crew.acp.types import JsonRpcMessage
+        from kiro_crew.trust_patterns import approval_command
+
+        client = AcpClient(work_dir=tmp_path)
+        client._extract_tool_event(
+            JsonRpcMessage(
+                method="session/update",
+                params={
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "tc-1",
+                        "title": "Looking up the record",
+                        "kind": "other",
+                        "rawInput": {"record_id": "sensitive-record"},
+                        "_meta": {
+                            "kiro": {
+                                "toolName": "read_record",
+                                "mcpServerName": "records:primary",
+                            }
+                        },
+                    }
+                },
+            )
+        )
+
+        first = client._build_permission_event(self._permission_msg())
+        repeated = client._build_permission_event(self._permission_msg())
+
+        assert first.tool_input
+        assert repeated.tool_input == first.tool_input
+        assert repeated.raw_tool_params == {"record_id": "sensitive-record"}
+        assert (
+            approval_command(
+                repeated.tool_input,
+                is_shell=repeated.is_shell,
+                tool_name=repeated.tool_name,
+                mcp_server_name=repeated.mcp_server_name,
+                raw_tool_params=repeated.raw_tool_params,
+            )
+            == ""
+        )
+
+    @pytest.mark.parametrize("raw_input", ["/etc/secret", ["/etc/secret"]])
+    def test_non_dict_non_shell_reprompt_cannot_become_durable_tool_trust(
+        self, tmp_path, raw_input
+    ):
+        """String/list rawInput must not become argument-free after one prompt."""
+        from kiro_crew.acp.client import AcpClient
+        from kiro_crew.acp.types import JsonRpcMessage
+        from kiro_crew.trust_patterns import approval_command
+
+        client = AcpClient(work_dir=tmp_path)
+        client._extract_tool_event(
+            JsonRpcMessage(
+                method="session/update",
+                params={
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "tc-1",
+                        "title": "Reading a path",
+                        "kind": "read",
+                        "rawInput": raw_input,
+                        "_meta": {"kiro": {"toolName": "read_path", "mcpServerName": "files"}},
+                    }
+                },
+            )
+        )
+
+        first = client._build_permission_event(self._permission_msg())
+        repeated = client._build_permission_event(self._permission_msg())
+
+        assert repeated.tool_input == first.tool_input
+        assert repeated.tool_input
+        assert (
+            approval_command(
+                repeated.tool_input,
+                is_shell=repeated.is_shell,
+                tool_name=repeated.tool_name,
+                mcp_server_name=repeated.mcp_server_name,
+                raw_tool_params=repeated.raw_tool_params,
+            )
+            == ""
+        )
+
+    def test_end_to_end_long_shell_title_passes_validation(self, tmp_path):
+        """The full regression: a 400-char shell title validates only because
+        is_shell propagated from tool_call → permission → _validate_tool_name."""
+        from kiro_crew.acp.client import AcpClient
+        from kiro_crew.dashboard.chat_utils import _validate_tool_name
+
+        client = AcpClient(work_dir=tmp_path)
+        client._extract_tool_event(self._tool_call_msg("execute"))
+        perm = client._build_permission_event(self._permission_msg())
+        # Mirrors the chat_runner call site.
+        assert _validate_tool_name(perm.title, is_shell=perm.is_shell) == perm.title
+
+    def test_refinement_kindless_does_not_clobber_cached_shell(self, tmp_path):
+        """A refinement update that omits `kind` must NOT overwrite the
+        is_shell=True cached by the initial tool_call notification (kind is
+        optional on updates). This pins the no-clobber invariant."""
+        from kiro_crew.acp.client import AcpClient
+
+        client = AcpClient(work_dir=tmp_path)
+        # 1. initial tool_call carries kind="execute" → caches True
+        client._extract_tool_event(self._tool_call_msg("execute"))
+        # 2. refinement arrives WITHOUT a kind — must preserve the cached True
+        ev = client._extract_tool_call_refinement(self._refinement_msg(None))
+        assert ev is not None
+        assert ev.is_shell is True
+        assert client._tool_call_is_shell.get("tc-1") is True
+
+    def test_refinement_with_kind_refreshes_shell_signal(self, tmp_path):
+        """A refinement that DOES carry a kind refreshes the cached signal."""
+        from kiro_crew.acp.client import AcpClient
+
+        client = AcpClient(work_dir=tmp_path)
+        # initial tool_call had no shell kind (edit) → cached False
+        client._extract_tool_event(self._tool_call_msg("edit"))
+        # refinement now reports kind="execute" → must flip cache to True
+        ev = client._extract_tool_call_refinement(self._refinement_msg("execute"))
+        assert ev is not None
+        assert ev.is_shell is True
+        assert client._tool_call_is_shell.get("tc-1") is True
+
+    def test_permission_payload_kind_is_not_trusted_on_cache_miss(self, tmp_path):
+        """SECURITY (deny-by-default): a cache miss must NOT be rescued by the
+        permission payload's own kind. The payload is agent/LLM-influenced, so
+        trusting kind="execute" there would let a malicious agent waive the
+        length cap on the very name being validated. With no preceding
+        tool_call to populate the cache, is_shell must stay False even when the
+        payload claims kind="execute"."""
+        from kiro_crew.acp.client import AcpClient
+
+        client = AcpClient(work_dir=tmp_path)
+        # No _extract_tool_event call → cache miss; payload tries kind="execute".
+        perm = client._build_permission_event(self._permission_msg(kind="execute"))
+        assert perm.is_shell is False
+
+    def test_permission_event_does_not_pop_shell_cache(self, tmp_path):
+        """The permission event must read the cached signal with .get(), not
+        .pop(): a later tool_call_update refinement for the same toolCallId
+        reads the same cache, so popping would make it wrongly see is_shell=
+        False. The read must use .get(), not a .pop() that consumes the entry."""
+        from kiro_crew.acp.client import AcpClient
+
+        client = AcpClient(work_dir=tmp_path)
+        client._extract_tool_event(self._tool_call_msg("execute"))
+        perm = client._build_permission_event(self._permission_msg())
+        assert perm.is_shell is True
+        # Entry survives → a post-permission refinement still resolves True.
+        assert client._tool_call_is_shell.get("tc-1") is True
+        ev = client._extract_tool_call_refinement(self._refinement_msg(None))
+        assert ev is not None and ev.is_shell is True
+
+    def test_is_shell_kind_is_none_safe(self):
+        """_is_shell_kind tolerates a non-str/None kind without raising — the
+        ACP payload can carry "kind": null (JSON-legal), and equality keeps the
+        classifier crash-free where a `.lower()`-based predicate would not."""
+        from kiro_crew.acp.client import _is_shell_kind
+
+        assert _is_shell_kind(None) is False
+        assert _is_shell_kind("") is False
+        assert _is_shell_kind("edit") is False
+        assert _is_shell_kind("execute") is True
+
+    def test_permission_event_null_kind_does_not_crash(self, tmp_path):
+        """A request_permission payload carrying "kind": null (JSON-legal, and
+        emitted by real ACP/MCP servers) must not crash event construction, and
+        the resulting title must still validate. Guards the chat-runner event
+        loop against a null-kind AttributeError on the length-cap path."""
+        from kiro_crew.acp.client import AcpClient
+        from kiro_crew.acp.types import JsonRpcMessage
+        from kiro_crew.dashboard.chat_utils import _validate_tool_name
+
+        client = AcpClient(work_dir=tmp_path)
+        msg = JsonRpcMessage(
+            id=7,
+            method="session/request_permission",
+            params={
+                "toolCall": {"toolCallId": "tc-null", "title": "ReadFile", "kind": None},
+                "options": [{"optionId": "allow_once", "name": "Allow once"}],
+            },
+        )
+        perm = client._build_permission_event(msg)
+        # No cached tool_call → deny-by-default; short non-shell name validates.
+        assert perm.is_shell is False
+        assert _validate_tool_name(perm.title, is_shell=perm.is_shell) == "ReadFile"
+
+    def test_is_shell_propagates_through_to_llm_event(self):
+        """AcpProvider._to_llm_event re-wraps an event field-by-field; the
+        is_shell flag must survive that copy or the dashboard (which consumes
+        the re-wrapped LLMEvent) would never see it on the live ACP path."""
+        from kiro_crew.acp.types import AcpEvent
+        from kiro_crew.providers.acp import AcpProvider
+        from kiro_crew.providers.base import EVENT_PERMISSION_REQUEST
+
+        src = AcpEvent(kind=EVENT_PERMISSION_REQUEST, title="x" * 400, is_shell=True)
+        wrapped = AcpProvider._to_llm_event(src)
+        assert wrapped.is_shell is True
+        # And the default carries through as False when not a shell tool.
+        not_shell = AcpProvider._to_llm_event(AcpEvent(kind=EVENT_PERMISSION_REQUEST))
+        assert not_shell.is_shell is False

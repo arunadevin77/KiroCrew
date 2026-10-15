@@ -4,6 +4,7 @@ environment, session cwd, backend selection, ensure_ready and spawn-argv refusal
 
 import asyncio
 import os
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -859,6 +860,83 @@ class TestEnsureReadyRecreatesWorkDir:
         await client.ensure_ready()
         assert work_dir.is_dir()
         client._spawn.assert_not_called()
+
+
+class TestSpawnEnvScrub:
+    """The default auto/standard ACP spawn path applies the full child scrub.
+
+    The parent-side enforcement is mandatory for raw Windows Kiro delegation;
+    POSIX launchers apply the same sensitive/Python scrub inline.
+    """
+
+    @pytest.mark.asyncio
+    async def test_client_spawn_scrubs_sensitive_env_on_default_auto(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "0000:FAKE-telegram")
+        monkeypatch.setenv("WECOM_BOT_ID", "FAKE-wecom-bot")
+        monkeypatch.setenv("WECOM_SECRET", "FAKE-wecom-secret")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-FAKE")
+        monkeypatch.setenv("KIROCREW_OWNER_ID", "U_FAKE_OWNER")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "FAKE-secret")
+        monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/fake-agent.sock")
+        monkeypatch.setenv("PYTHONPATH", "/gateway/pythonpath")
+        monkeypatch.setenv("PYTHONHOME", "/gateway/pythonhome")
+        # AWS account identity and a benign key are not denied.
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "FAKE-akid")
+        monkeypatch.setenv("KIROCREW_UNRELATED_KEEPME", "keep-this-value")
+
+        captured: dict[str, object] = {}
+
+        class _StopSpawn(Exception):
+            pass
+
+        async def _fake_exec(*_args, **kwargs):
+            captured["env"] = kwargs.get("env")
+            raise _StopSpawn()
+
+        # **_ absorbs the environ/home the spawn path now pins, so the search and
+        # the "not found" diagnostic cannot read different environments.
+        monkeypatch.setattr(acp_client, "_resolve_kiro_bin", lambda **_: "/fake/kiro")
+        monkeypatch.setattr(
+            acp_client,
+            "wrap_argv",
+            lambda argv, mode, strip_python_env=False, is_kiro_cli=None, **_kw: (
+                argv,
+                None,
+            ),
+        )
+        monkeypatch.setattr(acp_client, "cgroup_scope_argv", lambda argv: argv)
+        monkeypatch.setattr(acp_client, "augmented_path", lambda p: p)
+        monkeypatch.setattr(acp_client, "resolve_krb5_ccname", lambda env: None)
+        monkeypatch.setattr(acp_client, "_resolve_ssh_auth_sock", lambda env: None)
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+
+        client = AcpClient(sandbox_mode="auto")  # default tier
+        with pytest.raises(_StopSpawn):
+            await client._spawn()
+
+        env = captured["env"]
+        assert isinstance(env, dict)
+        for key in (
+            "TELEGRAM_BOT_TOKEN",
+            "WECOM_BOT_ID",
+            "WECOM_SECRET",
+            "SLACK_BOT_TOKEN",
+            "KIROCREW_OWNER_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "PYTHONPATH",
+            "PYTHONHOME",
+        ):
+            assert key not in env, f"{key} leaked into ACP child env"
+        # The default tier leaves ~/.ssh readable, so the agent socket is kept:
+        # git-over-SSH works while every other credential above stays scrubbed.
+        if sys.platform == "win32":
+            # Windows has no SSH_AUTH_SOCK (a named-pipe agent): never forwarded.
+            assert "SSH_AUTH_SOCK" not in env, "SSH_AUTH_SOCK leaked into ACP child env"
+        else:
+            assert env.get("SSH_AUTH_SOCK") == "/tmp/fake-agent.sock"
+        assert env.get("KIROCREW_UNRELATED_KEEPME") == "keep-this-value"
+        assert env.get("AWS_ACCESS_KEY_ID") == "FAKE-akid"
+        assert env.get("KIROCREW_RUNTIME_PYTHON") == sys.executable
 
 
 def test_resolve_spawn_agent_argv_converts_a_refusal_to_acperror(tmp_path):

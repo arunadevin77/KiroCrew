@@ -1,18 +1,22 @@
 """Tests for ACP client: locating the backend binaries: the vendored claude adapter, the claude
-executables and mise.
+executables, mise, the kiro-cli override and node installs.
 """
 
 import os
+import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from acp_client_helpers import _native_projection_for_fake_processes  # noqa: F401 - fixture
 from acp_client_helpers import _pin_the_installed_kiro_cli_version  # noqa: F401 - fixture
-from acp_client_helpers import _POSIX_EXEC_PATHS_ONLY
+from acp_client_helpers import _POSIX_EXEC_PATHS_ONLY, _stop_stderr_drain
+from spawn_test_helpers import strip_spawn_shim
 
 from conftest import cap_node_module_walk
 from kiro_crew.acp.client import (
     _CLAUDE_ACP_PKG_ENTRY,
+    AcpClient,
     _resolve_vendored_claude_acp,
     _vendored_acp_roots,
 )
@@ -349,3 +353,389 @@ class TestMiseWhich:
         mock_sub.TimeoutExpired = subprocess.TimeoutExpired
         monkeypatch.setattr(client_mod, "subprocess_mod", mock_sub)
         assert _mise_which("claude-agent-acp") is None
+
+
+class TestResolveKiroBinEnvOverride:
+    """_resolve_kiro_bin honors the KIROCREW_KIRO_BIN override for environments
+    (e.g. AgentSpaces/DevSpaces) where the toolbox shim is broken."""
+
+    def test_env_override_used_when_valid(self, tmp_path):
+        from kiro_crew.acp.client import _resolve_kiro_bin
+        from kiro_crew.kiro_prerequisite import TrustedAcpExecutableSnapshot
+
+        fake = tmp_path / "kiro-cli"
+        fake.write_text("#!/bin/sh\n")
+        fake.chmod(0o755)
+        with (
+            patch(
+                "kiro_crew.acp.client.resolve_kiro_cli",
+                return_value=str(fake),
+            ),
+            patch(
+                "kiro_crew.kiro_prerequisite.snapshot_trusted_acp_executable",
+                return_value=TrustedAcpExecutableSnapshot("/immutable/kiro-cli"),
+            ),
+        ):
+            assert _resolve_kiro_bin() == "/immutable/kiro-cli"
+
+    def test_resolver_returns_installed_path_without_copying(self, tmp_path):
+        # The resolver hands back the user's installed binary path itself. It must
+        # never substitute a private copy: Kiro CLI 2.15+ exec's a sibling
+        # subcommand binary resolved relative to its own path, so a copy into a
+        # flat dir breaks every spawn with ENOENT.
+        from kiro_crew.acp import client as client_module
+
+        macos_dir = tmp_path / "Kiro CLI.app" / "Contents" / "MacOS"
+        macos_dir.mkdir(parents=True)
+        source = macos_dir / "kiro-cli"
+        source.write_bytes(b"source")
+        source.chmod(0o700)
+        (macos_dir / "kiro-cli-chat").write_bytes(b"sibling")
+
+        with patch.object(client_module, "resolve_kiro_cli", return_value=str(source)):
+            launch_path = client_module._resolve_kiro_bin()
+
+        assert launch_path == str(source)
+        # The sibling the CLI dispatches to is still beside the launch path.
+        assert (Path(launch_path).parent / "kiro-cli-chat").exists()
+
+    def test_windows_resolver_accepts_runnable_candidate_anywhere(self, tmp_path):
+        from kiro_crew.acp import client as client_module
+
+        # Trust is "it runs": a Windows CLI outside Program Files (winget/scoop,
+        # a venv Scripts dir) resolves for ACP launch rather than being rejected.
+        candidate = tmp_path / "venv" / "Scripts" / "kiro-cli.exe"
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(b"runnable")
+        program_files = tmp_path / "Program Files"
+
+        with (
+            patch.object(client_module.platform_compat, "IS_WINDOWS", True),
+            patch.object(
+                client_module,
+                "resolve_kiro_cli",
+                return_value=str(candidate),
+            ),
+            patch.dict(
+                "os.environ",
+                {"ProgramFiles": str(program_files)},
+                clear=True,
+            ),
+        ):
+            assert client_module._resolve_kiro_bin() == os.path.realpath(str(candidate))
+
+    @pytest.mark.asyncio
+    async def test_spawn_launches_self_updated_override(self, tmp_path):
+        from kiro_crew import sandbox as sandbox_module
+        from kiro_crew.acp import client as client_module
+        from kiro_crew.kiro_prerequisite import KiroPrerequisiteService
+
+        fake = tmp_path / "kiro-cli"
+        fake.write_bytes(b"#!/bin/sh\n# original\n")
+        fake.chmod(0o755)
+        mock_exec = AsyncMock()
+        # nosemgrep: kirocrew.mock-pid-allocatable -- pre-existing literal pid on a mocked process; tracked for a de-flake pass
+        mock_exec.return_value.pid = 12345
+        with (
+            patch.dict("os.environ", {"KIROCREW_KIRO_BIN": str(fake)}),
+            patch("kiro_crew.session._track_pid"),
+            patch("kiro_crew.session._track_session_pid"),
+            patch.object(client_module, "_get_child_pids", return_value=[]),
+            # This test asserts WHICH bytes get launched, not that the spawn is
+            # sandboxed (covered by test_sandbox_*.py). A CI runner with
+            # kernel.apparmor_restrict_unprivileged_userns=1 genuinely cannot
+            # build a namespace sandbox and wrap_argv fail-closes by design, so
+            # pin the decision instead of inheriting the host's capability.
+            patch.object(sandbox_module, "_allow_unsandboxed_exec", return_value=True),
+            patch.object(
+                client_module,
+                "resolve_kiro_cli",
+                return_value=str(fake),
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                mock_exec,
+            ),
+        ):
+            # A Kiro self-update legitimately rewrites the binary after gateway
+            # start. Trust is "it runs", so the updated bytes still launch — the
+            # snapshot just pins whatever bytes are resolved at spawn time.
+            KiroPrerequisiteService(home=tmp_path, data_home=tmp_path / "data")
+            fake.write_bytes(b"#!/bin/sh\n# self-updated\n")
+            fake.chmod(0o755)
+
+            client = AcpClient(work_dir=tmp_path / "workspace")
+            await client._spawn()
+            mock_exec.assert_awaited()
+
+            await _stop_stderr_drain(client)
+
+    @pytest.mark.asyncio
+    async def test_spawn_passes_installed_path_through_exact_wrappers(self, tmp_path):
+        from kiro_crew.acp import client as client_module
+
+        fake = tmp_path / "kiro-cli"
+        fake.write_bytes(b"#!/bin/sh\n")
+        fake.chmod(0o755)
+        launch_path = str(fake)
+        mock_exec = AsyncMock(side_effect=RuntimeError("spawn failed"))
+        wrapped: dict[str, object] = {}
+
+        def capture_wrap(argv, mode, **kwargs):
+            wrapped.update(argv=list(argv), mode=mode, kwargs=kwargs)
+            return ["/usr/bin/sandbox-wrapper", *argv], None
+
+        with (
+            patch.object(
+                client_module,
+                "_resolve_kiro_bin",
+                return_value=launch_path,
+            ),
+            patch.object(client_module, "wrap_argv", side_effect=capture_wrap),
+            patch.object(
+                client_module, "assert_voice_runtime_outside_agent_workspace"
+            ) as voice_guard,
+            patch.object(
+                client_module,
+                "cgroup_scope_argv",
+                side_effect=lambda argv: ["/usr/bin/cgroup-wrapper", *argv],
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                mock_exec,
+            ),
+        ):
+            client = AcpClient(work_dir=tmp_path / "workspace")
+
+            with pytest.raises(RuntimeError, match="spawn failed"):
+                await client._spawn()
+
+        launch_argv = wrapped["argv"]
+        assert isinstance(launch_argv, list)
+        assert launch_argv == [launch_path, "acp", "--agent", client._agent]
+        assert wrapped["mode"] == "auto"
+        wrap_kwargs = dict(wrapped["kwargs"])
+        # The per-session terminal-log window is allocated at spawn time; its
+        # path is runtime-owned, so only its presence and shape are pinned here.
+        extra_private = wrap_kwargs.pop("extra_private_dirs")
+        assert isinstance(extra_private, (list, tuple))
+        # The default tier leaves ~/.ssh readable, so the ssh-agent socket is kept.
+        assert wrap_kwargs == {
+            "strip_python_env": True,
+            "is_kiro_cli": True,
+            **({} if sys.platform == "win32" else {"forward_ssh_auth_sock": True}),
+        }
+        voice_guard.assert_called_once_with(client._work_dir)
+        spawn_call = mock_exec.await_args
+        assert strip_spawn_shim(spawn_call.args) == (
+            "/usr/bin/cgroup-wrapper",
+            "/usr/bin/sandbox-wrapper",
+            launch_path,
+            "acp",
+            "--agent",
+            client._agent,
+        )
+        # No inherited snapshot descriptor: the installed binary is exec'd in
+        # place, so there is nothing to hand down to the wrapper chain.
+        #
+        # macOS is the exception, and for a different fd:
+        # bind_voice_safe_agent_workspace opens the agent workspace as a
+        # directory descriptor there so the child enters it by fchdir instead of
+        # re-resolving a pathname a same-UID symlink retarget could aim
+        # elsewhere. _spawn hands that descriptor to create_subprocess_limited
+        # as chdir_fd, which folds exactly that one fd into pass_fds so the
+        # spawn shim inherits it. Off darwin the binding returns None, so
+        # chdir_fd is None and pass_fds stays absent. The binding is also gated
+        # on the harness owning an internal sandbox (ACP_BACKENDS_INTERNAL_SANDBOX,
+        # which the default Kiro backend built here belongs to), so a backend
+        # outside that set stays on the pathname cwd whatever the platform says.
+        if sys.platform == "darwin":
+            pass_fds = spawn_call.kwargs["pass_fds"]
+            # Exactly the bound workspace descriptor, nothing else: no snapshot
+            # fd is inherited here, so the only descriptor handed down is the
+            # one the fchdir binding produced. Which int it is, is pinned on
+            # every OS by the forced-darwin companion below.
+            assert isinstance(pass_fds, tuple)
+            assert len(pass_fds) == 1
+            assert isinstance(pass_fds[0], int) and pass_fds[0] >= 0
+        else:
+            assert "pass_fds" not in spawn_call.kwargs
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason=(
+            "the binding opens the workspace as a directory descriptor, which "
+            "needs O_DIRECTORY; Windows has no such flag and os.open on a "
+            "directory raises, so a forced-darwin binding refuses with "
+            "'cannot-verify' before any spawn is attempted"
+        ),
+    )
+    async def test_spawn_passes_exactly_the_bound_workspace_fd_on_darwin(
+        self, tmp_path, monkeypatch
+    ):
+        # The darwin half of the assertion above runs on no CI shard, because no
+        # macOS job collects this module. The binding gate is a runtime
+        # sys.platform read rather than an import-time constant, so forcing the
+        # platform runs the REAL binding on any POSIX host and pins the whole
+        # composition: _spawn -> bind_voice_safe_agent_workspace_async ->
+        # create_subprocess_limited(chdir_fd=...) -> a pass_fds holding exactly
+        # that descriptor. Spy-and-delegate rather than stub, so the fd compared
+        # against pass_fds is the one the real binding opened.
+        from kiro_crew.acp import client as client_module
+
+        fake = tmp_path / "kiro-cli"
+        fake.write_bytes(b"#!/bin/sh\n")
+        fake.chmod(0o755)
+        launch_path = str(fake)
+        mock_exec = AsyncMock(side_effect=RuntimeError("spawn failed"))
+        bound_fds: list[int | None] = []
+        real_bind = client_module.bind_voice_safe_agent_workspace_async
+
+        async def spy_bind(workspace):
+            spawn_dir, descriptor = await real_bind(workspace)
+            bound_fds.append(descriptor)
+            return spawn_dir, descriptor
+
+        with (
+            patch.object(client_module, "_resolve_kiro_bin", return_value=launch_path),
+            patch.object(
+                client_module,
+                "wrap_argv",
+                side_effect=lambda argv, mode, **kwargs: (list(argv), None),
+            ),
+            patch.object(client_module, "assert_voice_runtime_outside_agent_workspace"),
+            patch.object(client_module, "cgroup_scope_argv", side_effect=lambda argv: list(argv)),
+            patch.object(
+                client_module, "bind_voice_safe_agent_workspace_async", side_effect=spy_bind
+            ),
+            patch("asyncio.create_subprocess_exec", mock_exec),
+        ):
+            client = AcpClient(work_dir=tmp_path / "workspace")
+            monkeypatch.setattr(sys, "platform", "darwin")
+
+            with pytest.raises(RuntimeError, match="spawn failed"):
+                await client._spawn()
+
+        assert len(bound_fds) == 1
+        bound_fd = bound_fds[0]
+        assert isinstance(bound_fd, int)
+        # The spy reads the descriptor before _spawn's failure handler closes it,
+        # so the value survives even though the fd itself does not.
+        assert mock_exec.await_args.kwargs["pass_fds"] == (bound_fd,)
+
+    def test_env_override_ignored_when_missing_file(self, tmp_path):
+        # A configured-but-nonexistent path must not be returned; resolution
+        # falls through to the normal candidates / PATH lookup.
+        from kiro_crew.acp.client import _resolve_kiro_bin
+
+        missing = str(tmp_path / "does-not-exist")
+        with (
+            patch.dict("os.environ", {"KIROCREW_KIRO_BIN": missing}),
+            patch(
+                "kiro_crew.acp.client.resolve_kiro_cli",
+                return_value=None,
+            ),
+        ):
+            assert _resolve_kiro_bin() is None
+
+    def test_env_override_ignored_when_not_executable(self, tmp_path):
+        from kiro_crew.acp.client import _resolve_kiro_bin
+
+        nonexec = tmp_path / "kiro-cli"
+        nonexec.write_text("#!/bin/sh\n")
+        nonexec.chmod(0o644)  # not executable
+        with (
+            patch.dict("os.environ", {"KIROCREW_KIRO_BIN": str(nonexec)}),
+            patch(
+                "kiro_crew.acp.client.resolve_kiro_cli",
+                return_value=None,
+            ),
+        ):
+            assert _resolve_kiro_bin() is None
+
+    def test_no_env_falls_through(self):
+        # With no override set, resolution uses the normal candidate/PATH path
+        # and never returns the override sentinel.
+        from kiro_crew.acp.client import _resolve_kiro_bin
+
+        env = {k: v for k, v in os.environ.items() if k != "KIROCREW_KIRO_BIN"}
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch(
+                "kiro_crew.acp.client.resolve_kiro_cli",
+                return_value=None,
+            ),
+        ):
+            # Should not raise; returns either a real path or None.
+            result = _resolve_kiro_bin()
+            assert result is None or isinstance(result, str)
+
+
+class TestMiseNodeInstallsDir:
+    """ACP node resolution must honour mise's real data root.
+
+    ``_mise_node_installs_dir`` must not hardcode ``~/.local/share/mise``,
+    silently missing installs whenever ``MISE_DATA_DIR`` or ``XDG_DATA_HOME``
+    relocated the data dir — while ``env.mise_data_dir`` already resolved the
+    same root correctly for the build toolchain. These pin the consolidated
+    behaviour for the helper and both of its consumers' entry points.
+    """
+
+    @pytest.fixture(autouse=True)
+    # nosemgrep: kirocrew.test-autouse-shared-monkeypatch -- no test in this module calls monkeypatch.undo()
+    def _clean_env(self, monkeypatch):
+        monkeypatch.delenv("MISE_DATA_DIR", raising=False)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+
+    def test_default_layout_is_unchanged(self, tmp_path, monkeypatch):
+        from kiro_crew.acp import client as client_mod
+
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        assert (
+            client_mod._mise_node_installs_dir()
+            == tmp_path / ".local" / "share" / "mise" / "installs" / "node"
+        )
+
+    def test_mise_data_dir_env_is_honoured(self, tmp_path, monkeypatch):
+        from kiro_crew.acp import client as client_mod
+
+        monkeypatch.setenv("MISE_DATA_DIR", str(tmp_path / "custom-mise"))
+        assert (
+            client_mod._mise_node_installs_dir() == tmp_path / "custom-mise" / "installs" / "node"
+        )
+
+    def test_xdg_data_home_is_honoured(self, tmp_path, monkeypatch):
+        from kiro_crew.acp import client as client_mod
+
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+        assert (
+            client_mod._mise_node_installs_dir() == tmp_path / "xdg" / "mise" / "installs" / "node"
+        )
+
+    @_POSIX_EXEC_PATHS_ONLY
+    def test_resolve_node_for_script_under_custom_mise_data_dir(self, tmp_path, monkeypatch):
+        from kiro_crew.acp import client as client_mod
+
+        monkeypatch.setenv("MISE_DATA_DIR", str(tmp_path / "custom-mise"))
+        version_dir = tmp_path / "custom-mise" / "installs" / "node" / "22.1.0"
+        node_bin = version_dir / "bin" / "node"
+        node_bin.parent.mkdir(parents=True)
+        node_bin.write_text("#!/bin/sh\nexit 0\n")
+        node_bin.chmod(0o755)
+        script = version_dir / "lib" / "node_modules" / "some-tool" / "cli.js"
+        script.parent.mkdir(parents=True)
+        script.write_text("#!/usr/bin/env node\n")
+
+        assert client_mod._resolve_node_for_script(str(script)) == str(node_bin)
+
+    @_POSIX_EXEC_PATHS_ONLY
+    def test_resolve_node_for_script_outside_mise_returns_none(self, tmp_path, monkeypatch):
+        from kiro_crew.acp import client as client_mod
+
+        monkeypatch.setenv("MISE_DATA_DIR", str(tmp_path / "custom-mise"))
+        script = tmp_path / "elsewhere" / "cli.js"
+        script.parent.mkdir(parents=True)
+        script.write_text("#!/usr/bin/env node\n")
+
+        assert client_mod._resolve_node_for_script(str(script)) is None

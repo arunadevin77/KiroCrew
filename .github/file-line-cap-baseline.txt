@@ -193,7 +193,6 @@
 4051 src/kiro_crew/work_ledger.py
 2641 test/conftest.py
 2535 test/eventlog/test_eventlog.py
-4935 test/test_acp_client.py
 2317 test/test_acp_client_more_coverage.py
 3482 test/test_acp_deepseek_backend.py
 2852 test/test_acp_pi_backend.py

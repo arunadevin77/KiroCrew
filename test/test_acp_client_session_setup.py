@@ -2,6 +2,8 @@
 advertised model list.
 """
 
+import asyncio
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,7 +11,7 @@ import pytest
 from acp_client_helpers import _native_projection_for_fake_processes  # noqa: F401 - fixture
 from acp_client_helpers import _pin_the_installed_kiro_cli_version  # noqa: F401 - fixture
 
-from kiro_crew.acp.client import AcpClient, AcpError
+from kiro_crew.acp.client import _DRAIN_DURATION, _DRAIN_IDLE_EXIT, AcpClient, AcpError
 from kiro_crew.acp.types import ACP_BACKEND_CLAUDE
 
 # ── Coverage push: session lifecycle ──
@@ -621,3 +623,95 @@ class TestCaptureAvailableModels:
         c = self._client()
         c._capture_available_models({"models": {}, "availableModels": [{"modelId": "x"}]})
         assert c.available_models() == []
+
+
+class TestAcpClientDrainEarlyExit:
+    """_drain_notifications exits early once MCP servers go quiet, bounded by
+    the hard cap. Guards the TTFT optimization (idle early-exit) against
+    regressing into either a full-cap wait or a premature exit while active."""
+
+    def test_idle_exit_constant_below_duration_constant(self):
+        # The idle early-exit only short-circuits the drain if it can fire
+        # before the hard cap. If a future edit bumps _DRAIN_IDLE_EXIT to or
+        # above _DRAIN_DURATION, the cap always fires first, the idle path
+        # becomes dead code, and cold-start TTFT silently regresses to the full
+        # cap. The default-bound drain tests pass explicit duration/idle_exit
+        # args, so only this assertion guards the module constants themselves.
+        assert _DRAIN_IDLE_EXIT < _DRAIN_DURATION, (
+            "_DRAIN_IDLE_EXIT must stay strictly below _DRAIN_DURATION "
+            "to keep the idle early-exit reachable"
+        )
+
+    @pytest.mark.asyncio
+    async def test_drain_exits_early_when_quiet(self, tmp_path):
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        client = AcpClient(work_dir=tmp_path)
+        # Pre-buffered notification (arrived during _wait_for_response) — exercises
+        # the buffered-drain path in addition to the live-read path (CR feedback).
+        client._mcp_notifications = [
+            JsonRpcMessage(
+                method="_kiro.dev/mcp/server_initialized", params={"name": "buffered-mcp"}
+            ),
+        ]
+
+        # Two live MCP notifications, then quiet (None) forever.
+        msgs = [
+            JsonRpcMessage(
+                method="_kiro.dev/mcp/server_initialized", params={"name": "builder-mcp"}
+            ),
+            JsonRpcMessage(method="_kiro.dev/mcp/server_initialized", params={"name": "node"}),
+        ]
+        calls = {"n": 0}
+
+        async def fake_read(timeout):
+            if calls["n"] < len(msgs):
+                m = msgs[calls["n"]]
+                calls["n"] += 1
+                return m
+            await asyncio.sleep(timeout)  # honor the poll timeout, return nothing
+            return None
+
+        client._read_message = fake_read  # type: ignore[assignment]
+
+        start = time.monotonic()
+        # Hard cap 10s; idle window 0.2s for a fast test.
+        await client._drain_notifications(duration=10.0, idle_exit=0.2)
+        elapsed = time.monotonic() - start
+
+        # Tight window proves it was the IDLE exit that fired (~0.2s after the last
+        # live message), not the 10s cap NOR an instant exit from a swallowed
+        # exception / always-None read (CR feedback). Floor guards against the
+        # idle logic being deleted; ceiling guards against the full-cap wait.
+        # flake-ok: the idle-exit window is the subject here: the floor proves the 0.2 s idle exit fired and the ceiling that the 10 s cap did not; a virtual clock is tracked for a de-flake pass
+        assert 0.15 < elapsed < 1.0, f"expected ~0.2s idle exit, got {elapsed:.2f}s"
+        assert calls["n"] == 2  # both LIVE notifications were drained
+        # The buffered notification is consumed + the buffer cleared by the drain.
+        assert client._mcp_notifications == []
+
+    @pytest.mark.asyncio
+    async def test_drain_respects_hard_cap_when_chatty(self, tmp_path):
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        client = AcpClient(work_dir=tmp_path)
+        client._mcp_notifications = []
+
+        # A server that never goes quiet — the cap must bound the wait.
+        reads = {"n": 0}
+
+        async def fake_read(timeout):
+            reads["n"] += 1
+            return JsonRpcMessage(method="_kiro.dev/mcp/progress", params={"name": "slow"})
+
+        client._read_message = fake_read  # type: ignore[assignment]
+
+        start = time.monotonic()
+        await client._drain_notifications(duration=0.5, idle_exit=5.0)
+        elapsed = time.monotonic() - start
+
+        # Idle never triggers (always chatty), so the 0.5s cap bounds it.
+        # flake-ok: the hard cap is the subject here: the floor proves the 0.5 s cap was waited out and the ceiling that it bounded the chatty stream; a virtual clock is tracked for a de-flake pass
+        assert 0.4 < elapsed < 2.0, f"hard cap not respected (took {elapsed:.2f}s)"
+        # Confirm the drain loop actually iterated (processed reads), not just
+        # that the timer expired (CR feedback).
+        assert reads["n"] > 0, "drain loop never read a message during the cap window"

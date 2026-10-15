@@ -1185,3 +1185,164 @@ class TestReadMessageStderrRedaction:
             await client._read_message(timeout=1.0)
 
         assert "AKIAIOSFODNN7EXAMPLE" not in str(exc_info.value)
+
+
+class TestTrackMetadataCredits:
+    """_track_metadata extracts per-turn credits from kiro meteringUsage."""
+
+    @staticmethod
+    def _metadata_msg(credit_values, *, pct=17.1):
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        return JsonRpcMessage(
+            method="_kiro.dev/metadata",
+            params={
+                "contextUsagePercentage": pct,
+                "meteringUsage": [
+                    {"value": v, "unit": "credit", "unitPlural": "credits"} for v in credit_values
+                ],
+            },
+        )
+
+    def test_accumulates_credits_from_metering_usage(self):
+        client = AcpClient()
+        client._track_metadata(self._metadata_msg([0.63]))
+        assert client.last_prompt_stats.credits == pytest.approx(0.63)
+        assert client.last_prompt_stats.context_pct == pytest.approx(17.1)
+
+    def test_sums_credits_across_notifications(self):
+        client = AcpClient()
+        client._track_metadata(self._metadata_msg([0.5]))
+        client._track_metadata(self._metadata_msg([0.25, 0.25]))
+        assert client.last_prompt_stats.credits == pytest.approx(1.0)
+
+    def test_ignores_non_credit_units_and_bad_values(self):
+        client = AcpClient()
+        msg = self._metadata_msg([])
+        msg.params["meteringUsage"] = [
+            {"value": 5, "unit": "token"},
+            {"value": "x", "unit": "credit"},
+            {"value": 0.4, "unit": "credit"},
+        ]
+        client._track_metadata(msg)
+        assert client.last_prompt_stats.credits == pytest.approx(0.4)
+
+    def test_metadata_without_metering_usage_leaves_credits_zero(self):
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        client = AcpClient()
+        client._track_metadata(
+            JsonRpcMessage(
+                method="_kiro.dev/metadata",
+                params={"contextUsagePercentage": 12.5},
+            )
+        )
+        assert client.last_prompt_stats.credits == 0.0
+        assert client.last_prompt_stats.context_pct == pytest.approx(12.5)
+
+
+class TestTrackMetadataWindowResolution:
+    """_track_metadata derives context_window_tokens from the resolved model
+    when no usage_update has set it (kiro-cli 2.10+ does not send one)."""
+
+    @staticmethod
+    def _metadata_msg(pct):
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        return JsonRpcMessage(
+            method="_kiro.dev/metadata",
+            params={"contextUsagePercentage": pct},
+        )
+
+    def test_resolves_1m_window_from_resolved_model_id(self):
+        client = AcpClient()
+        assert client._model == "auto"
+        client._resolved_model_id = "claude-opus-4.6"
+        client._track_metadata(self._metadata_msg(25.0))
+        assert client.last_prompt_stats.context_window_tokens == 1_000_000
+        assert client.last_prompt_stats.context_used_tokens == 250_000
+        assert client.last_prompt_stats.context_pct == pytest.approx(25.0)
+
+    def test_resolves_200k_window_for_200k_model(self):
+        client = AcpClient()
+        client._resolved_model_id = "claude-opus-4.5"
+        client._track_metadata(self._metadata_msg(50.0))
+        assert client.last_prompt_stats.context_window_tokens == 200_000
+        assert client.last_prompt_stats.context_used_tokens == 100_000
+
+    def test_falls_back_to_self_model_when_resolved_model_id_unset(self):
+        client = AcpClient()
+        client._model = "claude-sonnet-4.6"
+        client._track_metadata(self._metadata_msg(10.0))
+        assert client.last_prompt_stats.context_window_tokens == 1_000_000
+
+    def test_does_not_overwrite_window_already_set_by_usage_update(self):
+        client = AcpClient()
+        client._resolved_model_id = "claude-opus-4.5"  # would resolve to 200K
+        # Simulate a real usage_update having established authoritative counts
+        # (1M window, 300K used -> 30%). context_tokens_from_usage marks them
+        # authoritative — the shape a real usage_update leaves behind.
+        client.last_prompt_stats.context_window_tokens = 1_000_000
+        client.last_prompt_stats.context_used_tokens = 300_000
+        client.last_prompt_stats.context_pct = 30.0
+        client.last_prompt_stats.context_tokens_from_usage = True
+        client._track_metadata(self._metadata_msg(50.0))
+        # Metadata must neither re-resolve the window (no backfill once
+        # authoritative) nor clobber the usage-derived pct to its own 50%.
+        assert client.last_prompt_stats.context_window_tokens == 1_000_000
+        assert client.last_prompt_stats.context_pct == pytest.approx(30.0)
+
+    def test_no_model_resolvable_leaves_window_zero(self):
+        client = AcpClient()
+        client._model = ""
+        client._resolved_model_id = None
+        client._track_metadata(self._metadata_msg(5.0))
+        assert client.last_prompt_stats.context_window_tokens == 0
+
+    def test_non_registry_uncached_model_leaves_window_zero_not_200k(self):
+        # REGRESSION (gpt-5.6-terra showed 200K): a model that is NEITHER in the
+        # registry NOR the kiro-list cache must NOT be backfilled to a guessed
+        # 200k — that would override the frontend's authoritative per-model
+        # window. Leave it 0 so the frontend cache drives the meter; kiro's real
+        # usage_update.size still sets the correct window when it comes. Use a
+        # clearly-synthetic id so a real kiro-list cache (which legitimately
+        # carries GPT/DeepSeek windows) can't make this model "known".
+        client = AcpClient()
+        client._resolved_model_id = "totally-unknown-model-xyz"
+        client._track_metadata(self._metadata_msg(10.0))
+        assert client.last_prompt_stats.context_window_tokens == 0
+        # pct is still recorded so the frontend can derive used from its window.
+        assert client.last_prompt_stats.context_pct == pytest.approx(10.0)
+
+    def test_kiro_cached_non_registry_model_backfills_real_window(self):
+        # The flip side of the centralization: once the kiro-list cache is seeded
+        # with a non-Anthropic model's real window, the backfill SHOULD report it
+        # (it is now a "known" window), instead of the old no-op. This is what
+        # lets GPT/DeepSeek sessions show their real window before a usage_update.
+        import kiro_crew.model_registry as mr
+
+        saved = dict(mr._KIRO_WINDOWS)
+        try:
+            mr._KIRO_WINDOWS["deepseek-3.2"] = 164000
+            client = AcpClient()
+            client._resolved_model_id = "deepseek-3.2"
+            client._track_metadata(self._metadata_msg(50.0))
+            assert client.last_prompt_stats.context_window_tokens == 164000
+            assert client.last_prompt_stats.context_used_tokens == 82000
+        finally:
+            mr._KIRO_WINDOWS.clear()
+            mr._KIRO_WINDOWS.update(saved)
+
+    def test_malformed_pct_does_not_raise_or_update_stats(self):
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        client = AcpClient()
+        client._resolved_model_id = "claude-opus-4.6"
+        client.last_prompt_stats.context_pct = 42.0
+        client._track_metadata(
+            JsonRpcMessage(
+                method="_kiro.dev/metadata", params={"contextUsagePercentage": "not-a-number"}
+            )
+        )
+        assert client.last_prompt_stats.context_pct == 42.0
+        assert client.last_prompt_stats.context_window_tokens == 0
