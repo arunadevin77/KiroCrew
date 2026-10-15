@@ -1567,7 +1567,14 @@ def _substitution_bodies(text: str) -> "list[str]":
         # substitution does -- ``cat <(kirocrew token)`` executes the inner command and
         # feeds its output through a pipe.  Same paren-nesting walk.
         if text.startswith(("<(", ">(", "$("), i):
-            end, proven = _matching_close_paren(text, i + 2)
+            # bash parses the body in a fresh quoting context, so the span is
+            # proven from the slice at NEUTRAL state, as the argv_floor walk
+            # does. The matcher skips a NESTED substitution, a ``${...}``
+            # expansion and a heredoc body as units, so a ``"`` or ``)`` inside
+            # one of those stays sealed inside it and the enclosing span closes at
+            # its OWN matching ``)``.
+            rel, proven = _matching_close_paren(text[i + 2 :])
+            end = i + 2 + rel
             bodies.append(text[i + 2 : end - 1] if proven else text[i + 2 :])
             i = end
             continue
@@ -2384,9 +2391,120 @@ def _arms_case_context(text: str, index: int, in_case_body: bool = False) -> boo
     return True  # chain too deep to decide -- arm, the long direction
 
 
-def _matching_close_paren(text: str, open_end: int) -> "tuple[int, bool]":
-    """``(index just past the matching ``)``, proven)`` for a paren opened before
-    *open_end*, walked QUOTE-AWARELY through :func:`_iter_shell_chars`.
+def _heredoc_redirect(text: str, lt: int) -> "tuple[str, bool] | None":
+    """``(delimiter, strip_tabs)`` for a heredoc redirect ``<<`` at *lt*, else None.
+
+    A heredoc feeds its BODY -- the lines between the operator's newline and the
+    delimiter line -- to the command on stdin, so a ``)`` in that body is DATA,
+    not the close of an enclosing ``$(``. :func:`_matching_close_paren` skips the
+    body, so ``$(cat <<'E'\\n)\\nE\\n ... )`` closes the span at the real ``)``
+    and every command up to it is scanned as part of the body. Returns None for a here-STRING
+    (``<<<``), whose operand is one word, not a body (:func:`_here_string_payload`).
+
+    The delimiter is the operator's tag with quote removal applied, since bash
+    matches the body's terminator against the UNQUOTED tag; ``<<-`` additionally
+    strips leading TABS from each body line and the terminator.
+    """
+    if not text.startswith("<<", lt) or text.startswith("<<<", lt):
+        return None
+    j = lt + 2
+    strip = False
+    if text[j : j + 1] == "-":
+        strip = True
+        j += 1
+    while text[j : j + 1] in (" ", "\t"):
+        j += 1
+    delim: list[str] = []
+    n = len(text)
+    while j < n and text[j] not in " \t\n;&|<>()`":
+        ch = text[j]
+        if ch in "'\"":
+            j += 1
+            while j < n and text[j] != ch:
+                delim.append(text[j])
+                j += 1
+            j += 1
+        elif ch == "\\" and j + 1 < n:
+            delim.append(text[j + 1])
+            j += 2
+        else:
+            delim.append(ch)
+            j += 1
+    return ("".join(delim), strip) if delim else None
+
+
+def _skip_heredoc_bodies(text: str, after_newline: int, pending: "list[tuple[str, bool]]") -> int:
+    """Index just past the bodies of the *pending* heredocs opened on the line that
+    ended at *after_newline* - 1. Bodies run in operator order; an unterminated
+    body reaches the end (the extractor then over-scans, the safe direction)."""
+    pos = after_newline
+    n = len(text)
+    for delim, strip in pending:
+        while pos <= n:
+            nl = text.find("\n", pos)
+            line = text[pos:] if nl == -1 else text[pos:nl]
+            if (line.lstrip("\t") if strip else line) == delim:
+                pos = n if nl == -1 else nl + 1
+                break
+            if nl == -1:
+                return n
+            pos = nl + 1
+    return pos
+
+
+def _matching_close_brace(text: str) -> int:
+    """Index just past the ``}`` that closes a ``${`` opened just before *text*.
+
+    A parameter expansion's body is quote-aware and nests: a ``}`` inside a quote
+    (``${x:-"}"}``) or inside a nested ``${``/``$(`` is data, not the close.
+    Returns ``len(text)`` when it never closes -- the caller then over-reads,
+    the fail-closed side for an extractor. The sole caller SKIPS the expansion so
+    its interior does not leak into an enclosing paren span, so an over-read is
+    safe.
+    """
+    depth = 1
+    pos = 0
+    state = 0
+    ansi = False
+    while pos < len(text):
+        jumped = False
+        for step in _iter_shell_chars(text[pos:], state, ansi):
+            off = pos + step.offset
+            if step.state != 1:
+                if text.startswith(("$(", "<(", ">("), off):
+                    rel, _ = _matching_close_paren(text[off + 2 :])
+                    pos, state, ansi = off + 2 + rel, step.state, step.ansi
+                    jumped = True
+                    break
+                if text.startswith("${", off):
+                    pos = off + 2 + _matching_close_brace(text[off + 2 :])
+                    state, ansi = step.state, step.ansi
+                    jumped = True
+                    break
+                if step.char == "`":
+                    pos, _ = _matching_close_backtick(text, off + 1)
+                    state, ansi = step.state, step.ansi
+                    jumped = True
+                    break
+            if not step.active:
+                continue
+            if step.char == "{":
+                depth += 1
+            elif step.char == "}":
+                depth -= 1
+                if depth == 0:
+                    return off + len(step.text)
+        if not jumped:
+            break
+    return len(text)
+
+
+def _matching_close_paren(text: str) -> "tuple[int, bool]":
+    """``(index just past the matching ``)``, proven)`` for a paren opened just
+    before *text*, walked QUOTE-AWARELY through :func:`_iter_shell_chars`.
+
+    *text* is the slice after the opener, so the walk starts at neutral state:
+    bash parses a substitution body in its own quoting context.
 
     THE one span computation for a substitution or subshell body. Both the
     git-publish boundary walk and the nested-payload EXTRACTOR read it, because a
@@ -2429,12 +2547,47 @@ def _matching_close_paren(text: str, open_end: int) -> "tuple[int, bool]":
     pos = 0
     state = 0
     ansi = False
+    pending_heredocs: "list[tuple[str, bool]]" = []
+    # ``((`` opens ARITHMETIC (a ``((...))`` command, or ``$((...))`` when the
+    # opener before *text* plus its first ``(`` form the pair). Each entry is the
+    # depth the arithmetic closes back to; while one is open no heredoc is read.
+    arith: "list[int]" = [0] if text.startswith("(") else []
+    here_string_end = 0
     while pos <= len(text):
         jumped = False
         for step in _iter_shell_chars(text[pos:], state, ansi):
             off = pos + step.offset
-            if off < open_end:
-                continue
+            # A nested substitution opens a FRESH quoting context: bash parses a
+            # ``$(...)`` the same inside ``"..."`` as outside, so its inner quotes,
+            # parens and heredocs must not leak into THIS span. Skip it whole,
+            # then resume the OUTER quote state. The inner ``"`` of
+            # ``echo "$(echo "$(echo ")")"; bash -c '<push>')"`` therefore stays
+            # inside its own substitution, and the span closes at the ``)`` that
+            # ends the body, so the ``bash -c`` behind it is scanned. A ``$`` is
+            # literal only inside a single quote (state 1); ``<(`` / ``>(`` are
+            # process subs only when unquoted.
+            if step.state != 1:
+                if text.startswith("$(", off) or (
+                    step.state == 0 and text.startswith(("<(", ">("), off)
+                ):
+                    rel, _ = _matching_close_paren(text[off + 2 :])
+                    pos = off + 2 + rel
+                    state, ansi = step.state, step.ansi
+                    jumped = True
+                    break
+                # ``${...}`` is a parameter expansion whose default value can hold
+                # a ``)`` or ``"`` as data (``${x:-")"}``); skip to its ``}`` so
+                # that interior does not close or re-quote this span either.
+                if text.startswith("${", off):
+                    pos = off + 2 + _matching_close_brace(text[off + 2 :])
+                    state, ansi = step.state, step.ansi
+                    jumped = True
+                    break
+                if step.char == "`":
+                    pos, _ = _matching_close_backtick(text, off + 1)
+                    state, ansi = step.state, step.ansi
+                    jumped = True
+                    break
             if not step.active:
                 continue
             ch = step.char
@@ -2449,6 +2602,26 @@ def _matching_close_paren(text: str, open_end: int) -> "tuple[int, bool]":
                 state, ansi = 0, False
                 jumped = True
                 break
+            # A heredoc body is stdin DATA, so the ``)`` on a body line is not a
+            # close. The operator is noted here and the body is skipped when the
+            # line it rides on ends, so the ``)`` BEFORE the newline (the real
+            # close in ``$(cat <<E)``) is still read. A here-string ``<<<`` is
+            # one operator, so its later ``<`` characters do not open a heredoc,
+            # and inside arithmetic ``<<`` is a shift, not a redirect.
+            if ch == "<" and off >= here_string_end and not arith:
+                if text.startswith("<<<", off):
+                    here_string_end = off + 3
+                    continue
+                hd = _heredoc_redirect(text, off)
+                if hd is not None:
+                    pending_heredocs.append(hd)
+                    continue
+            if ch == "\n" and pending_heredocs:
+                pos = _skip_heredoc_bodies(text, off + 1, pending_heredocs)
+                pending_heredocs = []
+                state, ansi = 0, False
+                jumped = True
+                break
             if _word_at(text, off, "case") and _arms_case_context(text, off, cases > 0):
                 cases += 1
                 continue
@@ -2458,11 +2631,15 @@ def _matching_close_paren(text: str, open_end: int) -> "tuple[int, bool]":
             if cases and ch in "()":
                 continue
             if ch == "(":
+                if text.startswith("((", off):
+                    arith.append(depth)
                 depth += 1
             elif ch == ")":
                 depth -= 1
                 if depth == 0:
                     return (off + len(step.text), True)
+                while arith and depth <= arith[-1]:
+                    arith.pop()
         if not jumped:
             break
     return (len(text), False)
