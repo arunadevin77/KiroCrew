@@ -1,10 +1,11 @@
-"""Dashboard chat: slot lifecycle and permanent delete versus save."""
+"""Dashboard chat: slot lifecycle, permanent delete versus save, bulk cleanup, a task-less stop or delete."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
@@ -799,3 +800,310 @@ class TestSlotLifecycle:
                 # an app token never receives its OWN approval resolution.
                 {"id": "req-rej", "approved": False, "slot": "s1"},
             )
+
+
+# ── Tests: slot.task None guard ──
+
+
+class TestSlotTaskNoneGuard:
+    """stop/delete must not crash when slot.task is None."""
+
+    @pytest.mark.asyncio
+    async def test_stop_not_running(self, tmp_path: Path) -> None:
+        state = _make_state(tmp_path)
+        state.sessions.reset = AsyncMock()
+        state.get_or_create_slot("s1")
+        # task is None → running is False → stop is a no-op
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/slots/s1/stop")
+            assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_delete_not_running(self, tmp_path: Path) -> None:
+        state = _make_state(tmp_path)
+        state.get_or_create_slot("s1")
+        # task is None → running is False → delete skips cancel
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.delete("/api/chat/slots/s1")
+            assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_stop_with_real_task_cancels(self, tmp_path: Path) -> None:
+        state = _make_state(tmp_path)
+        state.sessions.stop_turn = AsyncMock(return_value="soft")
+        slot = state.get_or_create_slot("s1")
+        slot.task = asyncio.get_running_loop().create_future()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/slots/s1/stop")
+            assert resp.status == 200
+            state.sessions.stop_turn.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_with_real_task_cancels(self, tmp_path: Path) -> None:
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("s1")
+        slot.task = asyncio.get_running_loop().create_future()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            with patch("kiro_crew.dashboard.chat_handlers.save_slot_off_loop"):
+                resp = await client.delete("/api/chat/slots/s1")
+            assert resp.status == 200
+            assert slot.task.cancelled()
+
+
+# ── Bulk cleanup tests ──
+
+
+class TestBulkCleanup:
+    @pytest.mark.asyncio
+    async def test_cleanup_archives_stale_sessions(self, tmp_path, monkeypatch):
+        """Stale sessions are archived; fresh and pinned are kept."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        from datetime import datetime, timedelta, timezone
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        fresh_ts = datetime.now(timezone.utc).isoformat()
+
+        stale = state.get_or_create_slot("stale1")
+        stale.append("user", "old msg", ts=old_ts)
+        stale.drain()
+
+        fresh = state.get_or_create_slot("fresh1")
+        fresh.append("user", "new msg", ts=fresh_ts)
+        fresh.drain()
+
+        pinned = state.get_or_create_slot("pinned1")
+        pinned.pinned = True
+        pinned.append("user", "pinned msg", ts=old_ts)
+        pinned.drain()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/slots/cleanup",
+                json={"max_inactive_days": 3, "active_slot": "fresh1"},
+            )
+            data = await resp.json()
+            assert data["ok"] is True
+            assert data["archived"] == 1
+            assert "stale1" in data["keys"]
+
+        assert "stale1" not in state._slots
+        assert "fresh1" in state._slots
+        assert "pinned1" in state._slots
+
+    @pytest.mark.asyncio
+    async def test_cleanup_skips_active_slot(self, tmp_path, monkeypatch):
+        """The active slot is never archived even if stale."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        from datetime import datetime, timedelta, timezone
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        slot = state.get_or_create_slot("active")
+        slot.append("user", "old", ts=old_ts)
+        slot.drain()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/slots/cleanup",
+                json={"max_inactive_days": 1, "active_slot": "active"},
+            )
+            data = await resp.json()
+            assert data["archived"] == 0
+        assert "active" in state._slots
+
+    @pytest.mark.asyncio
+    async def test_cleanup_saves_to_history(self, tmp_path, monkeypatch):
+        """Archived sessions are persisted to conversation log."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        from datetime import datetime, timedelta, timezone
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        slot = state.get_or_create_slot("to-archive")
+        slot.append("user", "save me", ts=old_ts)
+        slot.append("assistant", "saved", ts=old_ts)
+        slot.drain()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            await client.post(
+                "/api/chat/slots/cleanup",
+                json={"max_inactive_days": 3},
+            )
+
+        msgs = state.conversation_log.read_messages("dashboard:to-archive")
+        assert len(msgs) == 2
+        assert msgs[0]["content"] == "save me"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_defaults_to_3_days(self, tmp_path, monkeypatch):
+        """Without max_inactive_days, defaults to 3."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        from datetime import datetime, timedelta, timezone
+
+        ts_2d = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        slot = state.get_or_create_slot("recent")
+        slot.append("user", "hi", ts=ts_2d)
+        slot.drain()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/slots/cleanup", json={})
+            data = await resp.json()
+            assert data["archived"] == 0
+
+    @pytest.mark.asyncio
+    async def test_cleanup_empty_slots_uses_created_at(self, tmp_path, monkeypatch):
+        """Slots with no messages use created_at for staleness."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        from datetime import datetime, timedelta, timezone
+
+        slot = state.get_or_create_slot("empty-old")
+        slot.created_at = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/slots/cleanup",
+                json={"max_inactive_days": 7},
+            )
+            data = await resp.json()
+            assert data["archived"] == 1
+            assert "empty-old" in data["keys"]
+
+    @pytest.mark.asyncio
+    async def test_cleanup_no_stale_returns_zero(self, tmp_path, monkeypatch):
+        """When all sessions are fresh, nothing is archived."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        from datetime import datetime, timezone
+
+        fresh_ts = datetime.now(timezone.utc).isoformat()
+        slot = state.get_or_create_slot("fresh")
+        slot.append("user", "hi", ts=fresh_ts)
+        slot.drain()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/slots/cleanup",
+                json={"max_inactive_days": 1},
+            )
+            data = await resp.json()
+            assert data["ok"] is True
+            assert data["archived"] == 0
+            assert data["keys"] == []
+
+    @pytest.mark.asyncio
+    async def test_cleanup_rollback_on_save_failure(self, tmp_path, monkeypatch):
+        """When _save_slot_to_history raises, slot is restored and reported as failed."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        from datetime import datetime, timedelta, timezone
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        slot = state.get_or_create_slot("fail-save")
+        slot.append("user", "msg", ts=old_ts)
+        slot.drain()
+
+        with patch(
+            "kiro_crew.dashboard.chat_handlers.save_slot_off_loop",
+            side_effect=OSError("disk full"),
+        ):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat/slots/cleanup",
+                    json={"max_inactive_days": 1},
+                )
+                data = await resp.json()
+                assert data["archived"] == 0
+                assert "fail-save" in data["failed"]
+
+        # Slot must be restored (not lost)
+        assert "fail-save" in state._slots
+        # No history entry should exist (save failed)
+        msgs = state.conversation_log.read_messages("dashboard:fail-save")
+        assert len(msgs) == 0
+
+    @pytest.mark.asyncio
+    async def test_cleanup_cancels_running_task(self, tmp_path, monkeypatch):
+        """Running tasks on stale slots are cancelled after archive."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        from datetime import datetime, timedelta, timezone
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        slot = state.get_or_create_slot("running1")
+        slot.append("user", "msg", ts=old_ts)
+        slot.drain()
+        slot.task = asyncio.get_running_loop().create_future()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/slots/cleanup",
+                json={"max_inactive_days": 1},
+            )
+            data = await resp.json()
+            assert data["archived"] == 1
+        assert slot.task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_skips_unparseable_timestamps(self, tmp_path, monkeypatch):
+        """Slots with unparseable timestamps are skipped, not archived."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+
+        slot = state.get_or_create_slot("bad-ts")
+        slot.append("user", "hi", ts="not-a-date")
+        slot.created_at = "also-not-a-date"
+        slot.drain()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/slots/cleanup",
+                json={"max_inactive_days": 1},
+            )
+            data = await resp.json()
+            assert data["archived"] == 0
+        assert "bad-ts" in state._slots
+
+    @pytest.mark.asyncio
+    async def test_cleanup_dry_run_returns_keys_without_archiving(self, tmp_path, monkeypatch):
+        """dry_run=True returns stale keys and active_is_stale but does not archive anything."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        from datetime import datetime, timedelta, timezone
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        fresh_ts = datetime.now(timezone.utc).isoformat()
+
+        stale = state.get_or_create_slot("stale1")
+        stale.append("user", "old msg", ts=old_ts)
+        stale.drain()
+
+        active_stale = state.get_or_create_slot("active1")
+        active_stale.append("user", "old active msg", ts=old_ts)
+        active_stale.drain()
+
+        fresh = state.get_or_create_slot("fresh1")
+        fresh.append("user", "new msg", ts=fresh_ts)
+        fresh.drain()
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/slots/cleanup",
+                json={"max_inactive_days": 3, "active_slot": "active1", "dry_run": True},
+            )
+            data = await resp.json()
+            assert data["ok"] is True
+            assert data["dry_run"] is True
+            assert "stale1" in data["keys"]
+            assert "active1" not in data["keys"]
+            assert data["count"] == 1
+            assert data["active_is_stale"] is True
+
+        # Slots should NOT have been removed
+        assert "stale1" in state._slots
+        assert "active1" in state._slots
+        assert "fresh1" in state._slots

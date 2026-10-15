@@ -1,7 +1,7 @@
 """Coverage for the guard and failure paths of
 :mod:`kiro_crew.dashboard.chat_regenerate`.
 
-``test_dashboard_chat.py::TestRegenerateAndVariants`` covers the happy paths of
+``test_dashboard_chat_regenerate.py::TestRegenerateAndVariants`` covers the happy paths of
 regenerate and variant switching. Untested there: ``edit-resend`` in its
 entirety (it is not even wired into the shared test app), every 400/404/409
 guard on all three endpoints, the readiness latch that must fire BEFORE the

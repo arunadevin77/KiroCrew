@@ -5,7 +5,7 @@ validation, path→id resolution, mkdir -p, session-reference resolution, the
 requests sent, and result formatting. Each case runs one tools/call frame
 through ``mcp_dashboard.TABLE`` against an in-memory dashboard and asserts on
 the reply and on what the dashboard was asked; the endpoints themselves are
-tested by ``test_folder_store_writer.py`` and ``test_dashboard_chat.py``.
+tested by ``test_folder_store_writer.py`` and ``test_dashboard_chat_folders.py``.
 """
 
 from __future__ import annotations

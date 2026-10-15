@@ -2364,8 +2364,9 @@ turn's tail and cleared at the cycle's end), so a cycle of local commands
 and cancelled replays titles nothing, and a provider reply followed by a
 queued local command is still titled.
 
-Pinned by `test/test_dashboard_chat.py::TestRunChatEarlyExitHandOff` and
-the superseded-replay cases in `TestRunChatRefusalFallback`.
+Pinned by `test/test_dashboard_chat_refusal.py::TestRunChatEarlyExitHandOff` and
+the superseded-replay cases in `TestRunChatRefusalFallbackReplay`
+(`test/test_dashboard_chat_refusal_replay.py`).
 
 ### Agent welcome message (`welcomeMessage`)
 

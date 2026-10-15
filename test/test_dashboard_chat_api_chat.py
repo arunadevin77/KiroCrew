@@ -1,8 +1,10 @@
-"""Dashboard chat: the ``/api/chat`` handler — body forwarding, drain on disconnect, browse gating."""
+"""Dashboard chat: the ``/api/chat`` handler — request forwarding, agent passing, receipts, disconnects."""
 
 from __future__ import annotations
 
 import asyncio
+import json
+from unittest.mock import MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -342,3 +344,252 @@ class TestApiChatNoBrowseMarker:
         assert slot is not None
         user_msgs = [m for m in slot.messages if m.get("role") == "user"]
         assert user_msgs and not user_msgs[-1]["content"].startswith("[BROWSE]")
+
+
+# ── Agent passing via /api/chat (AgentRock integration) ──
+
+
+class TestApiChatAgentPassing:
+    @pytest.mark.asyncio
+    async def test_agent_set_on_new_slot(self, tmp_path, monkeypatch):
+        from kiro_crew.config import loader
+
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "agentrock--my-aim-agent.json").write_text(
+            json.dumps({"name": "my-aim-agent"}), encoding="utf-8"
+        )
+        monkeypatch.setattr(loader, "kiro_agents_dir", lambda: agents_dir)
+        monkeypatch.setattr(loader, "_MATERIALIZED_AGENTS", frozenset())
+        monkeypatch.setattr(loader, "_MATERIALIZED_AGENTS_READY", False)
+        await asyncio.to_thread(loader.refresh_materialized_agents)
+        state = _make_state(tmp_path)
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat?ws=1",
+                json={"message": "hello", "slot": "agentrock-my-skill", "agent": "my-aim-agent"},
+            )
+            data = await resp.json()
+            assert resp.status == 200, data
+            assert data["ok"] is True
+            assert state._slots["agentrock-my-skill"].agent == "my-aim-agent"
+
+    @pytest.mark.asyncio
+    async def test_agent_mismatch_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("slot-x")
+        slot.agent = "agent-a"
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat?ws=1",
+                json={"message": "hello", "slot": "slot-x", "agent": "agent-b"},
+            )
+            assert resp.status == 409
+
+    @pytest.mark.asyncio
+    async def test_empty_agent_on_agent_slot_allowed(self, tmp_path, monkeypatch):
+        """Follow-up message with no agent on an agent-bound slot must not 409."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("slot-y")
+        slot.agent = "agent-a"
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat?ws=1",
+                json={"message": "follow-up", "slot": "slot-y", "agent": ""},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_agent_name_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        from unittest.mock import patch
+
+        state = _make_state(tmp_path)
+        with patch("kiro_crew.dashboard.chat_handlers._emit_agent_assignment") as mock_emit:
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hello", "slot": "s1", "agent": "../evil"},
+                )
+            assert resp.status == 400
+            mock_emit.assert_called_once_with("s1", "../evil", outcome="denied_invalid")
+
+    @pytest.mark.asyncio
+    async def test_credential_shaped_invalid_agent_is_redacted_in_sel(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        from unittest.mock import MagicMock, patch
+
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("member-dr-eggbot", agent="dr. eggbot", mode="member")
+        unsafe = "crew password=shortvalue"
+        audit = MagicMock()
+        with patch("kiro_crew.dashboard.chat_utils.sel", return_value=audit):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                response = await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hello", "slot": slot.key, "agent": unsafe},
+                )
+
+        assert response.status == 400
+        event = audit.log.call_args.args[0]
+        assert event.agent == "crew password=[REDACTED]"
+        assert unsafe not in event.agent
+
+    @pytest.mark.asyncio
+    async def test_non_string_agent_logs_actual_value(self, tmp_path, monkeypatch):
+        """Fix for Post 22: str(agent) preserves malicious input in audit trail."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        from unittest.mock import patch
+
+        state = _make_state(tmp_path)
+        with patch("kiro_crew.dashboard.chat_handlers._emit_agent_assignment") as mock_emit:
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hello", "slot": "s1", "agent": 123},
+                )
+            assert resp.status == 400
+            mock_emit.assert_called_once_with("s1", "123", outcome="denied_invalid")
+
+    @pytest.mark.asyncio
+    async def test_no_agent_no_emit(self, tmp_path, monkeypatch):
+        """Fix for Post 23: no SEL event when no agent involved (reduces audit noise)."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        from unittest.mock import patch
+
+        state = _make_state(tmp_path)
+        with patch("kiro_crew.dashboard.chat_handlers._emit_agent_assignment") as mock_emit:
+            async with TestClient(TestServer(_make_app(state))) as client:
+                await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hi", "slot": "no-agent-slot"},
+                )
+            mock_emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sel_event_on_running_slot_rejection(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        from unittest.mock import MagicMock, patch
+
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("slot-r")
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
+        slot.task = mock_task
+        with patch("kiro_crew.dashboard.chat_handlers._emit_agent_assignment") as mock_emit:
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat?ws=1",
+                    json={"message": "hi", "slot": "slot-r", "agent": "new-agent"},
+                )
+                assert resp.status == 409
+            mock_emit.assert_called_once_with("slot-r", "new-agent", outcome="denied_running")
+
+
+class TestApiChatSendReceiptMid:
+    """The immediate-dispatch receipt carries the user row's server-minted `mid`.
+
+    Correlated dashboard sends also echo the row before their reply starts.
+    The receipt and echo must agree on identity regardless of arrival order.
+    """
+
+    @pytest.mark.asyncio
+    async def test_idle_steer_echoes_user_before_the_reply(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("echo-slot")
+        echoed: list[dict] = []
+        broadcast_ws = state.broadcast_ws
+
+        def record_echo(kind, data):
+            if kind == "chat_message":
+                echoed.append(data)
+            broadcast_ws(kind, data)
+
+        monkeypatch.setattr(state, "broadcast_ws", record_echo)
+
+        async def fake_run_chat(st, sl, msg, *, _directive_user_origin):
+            # The frontend can see this turn's first chunk before the HTTP
+            # receipt. Its user row must already be on the ordered event stream.
+            assert [(row["slot"], row["role"]) for row in echoed] == [("echo-slot", "user")]
+            sl.append("assistant", "reply")
+
+        monkeypatch.setattr("kiro_crew.dashboard.chat_handlers._run_chat", fake_run_chat)
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat?ws=1",
+                json={
+                    "message": "pasted\ttable\r\n1\t42",
+                    "slot": "echo-slot",
+                    "steer": True,
+                    "meta": {"sendId": "s-echo", "pastes": [{"seq": 1, "content": "table"}]},
+                },
+            )
+            assert resp.status == 200
+            receipt = await resp.json()
+            await slot.task
+
+        assert len(echoed) == 1
+        assert [row["role"] for row in slot.messages] == ["user", "assistant"]
+        user = echoed[0]
+        assert user["content"] == "pasted\ttable\r\n1\t42"
+        assert user["meta"]["sendId"] == "s-echo"
+        assert user["meta"]["mid"] == receipt["mid"]
+        assert user["meta"]["pastes"][0]["content"] == "table"
+
+    @pytest.mark.asyncio
+    async def test_immediate_dispatch_receipt_carries_the_user_row_mid(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+
+        async def fake_run_chat(st, sl, msg, *, _directive_user_origin):
+            sl.append("chunk", "ack", "chunk")
+
+        monkeypatch.setattr("kiro_crew.dashboard.chat_handlers._run_chat", fake_run_chat)
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat?ws=1",
+                json={"message": "hello", "slot": "mid-slot"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+
+        assert data["ok"] is True
+        # The receipt id must be the SAME id stamped on the appended user row —
+        # that is the identity the client stamps on the optimistic bubble and
+        # the pin endpoint keys on.
+        slot = state._slots["mid-slot"]
+        user_rows = [m for m in slot.messages if m["role"] == "user"]
+        assert user_rows, "the send must have appended a user row"
+        row_mid = user_rows[-1]["meta"]["mid"]
+        assert row_mid
+        assert data["mid"] == row_mid
+
+    @pytest.mark.asyncio
+    async def test_queued_send_receipt_carries_no_mid(self, tmp_path, monkeypatch):
+        """A busy slot queues the message and broadcasts its own queue card; the
+        optimistic bubble is not this row's receipt, so no `mid` is returned
+        (mirrors `confirmedDelivered`, which excludes a queued acceptance)."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("busy-slot")
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
+        slot.task = mock_task  # slot.running is True → the busy/queue branch
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat?ws=1",
+                json={"message": "queue me", "slot": "busy-slot"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+
+        assert data["queued"] is True
+        assert "mid" not in data

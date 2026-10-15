@@ -686,3 +686,32 @@ class TestHistoryKeyPrefix:
         msgs = log.read_messages("dashboard:chat-1")
         assert len(msgs) == 2
         assert log.read_messages("dashboard:dashboard:chat-1") == []
+
+
+class TestHistoryKeyFor:
+    """Tests for _history_key_for — canonical history key from slot key."""
+
+    def test_already_canonical(self):
+        from kiro_crew.dashboard.chat import _history_key_for
+
+        assert _history_key_for("dashboard:chat-1-100") == "dashboard:chat-1-100"
+
+    def test_strips_single_prefix(self):
+        from kiro_crew.dashboard.chat import _history_key_for
+
+        assert _history_key_for("dashboard_chat-1-100") == "dashboard:chat-1-100"
+
+    def test_strips_double_prefix(self):
+        from kiro_crew.dashboard.chat import _history_key_for
+
+        assert _history_key_for("dashboard_dashboard_chat-1-100") == "dashboard:chat-1-100"
+
+    def test_strips_triple_prefix(self):
+        from kiro_crew.dashboard.chat import _history_key_for
+
+        assert _history_key_for("dashboard_dashboard_dashboard_x") == "dashboard:x"
+
+    def test_raw_key_gets_prefix(self):
+        from kiro_crew.dashboard.chat import _history_key_for
+
+        assert _history_key_for("chat-1-100") == "dashboard:chat-1-100"
