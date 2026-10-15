@@ -101,7 +101,7 @@ const TONE: Record<'accent' | 'ok' | 'warn' | 'info', string> = {
   accent: 'bg-accent-subtle text-accent',
   ok: 'bg-ok-subtle text-ok-text',
   warn: 'bg-warn-subtle text-warn-text',
-  info: 'bg-info-subtle text-info',
+  info: 'bg-info-subtle text-info-text',
 }
 
 const Row = forwardRef(function Row({ icon, tone = 'accent', label, sub, onClick, testId, 'data-ui-location': uiLocationId }: {

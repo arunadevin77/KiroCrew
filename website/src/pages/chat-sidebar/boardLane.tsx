@@ -357,7 +357,7 @@ export function createBoardLane(shell: SidebarScope & LaneRows & FolderBlocks) {
             *  lanes and drop actions are local mutations. Every filtered peer
             *  row is therefore omitted here and represented by this exact count. */}
           {boardPeerCount > 0 && (
-            <div className="mx-2 mt-2 px-2 py-1.5 rounded-md bg-info-subtle border border-info/40 text-info text-[11px] flex items-center gap-1.5">
+            <div className="mx-2 mt-2 px-2 py-1.5 rounded-md bg-info-subtle border border-info/40 text-info-text text-[11px] flex items-center gap-1.5">
               <Server size={11} aria-hidden="true" className="shrink-0" />
               <span className="min-w-0">
                 {i18nT('pages.chatSidebar.remote_sessions_not_shown_in_board_view', { count: boardPeerCount })}

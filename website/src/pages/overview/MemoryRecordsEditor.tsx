@@ -17,7 +17,7 @@ const PAGE_SIZE = 50
 const MANUAL_LIMIT = 500
 const ICONS = { fact: Lightbulb, directive: ShieldCheck, episode: History }
 export const MEMORY_RECORD_LABELS = { fact: 'memoryV2.fact', directive: 'memoryV2.directive', episode: 'memoryV2.episode' } as const
-const TINTS = { fact: 'bg-accent-subtle text-accent', directive: 'bg-info/10 text-info', episode: 'bg-warn-subtle text-warn-text' }
+const TINTS = { fact: 'bg-accent-subtle text-accent', directive: 'bg-info/10 text-info-text', episode: 'bg-warn-subtle text-warn-text' }
 const identity = (row: { kind: string; id: string }) => `${row.kind}:${row.id}`
 // A button names the value it brings back; a long value is cut so the label stays one line.
 const shortBody = (text: string) => { const flat = text.replace(/\s+/g, ' ').trim(); return flat.length > 40 ? `${flat.slice(0, 39)}…` : flat }

@@ -2668,7 +2668,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
 // Static theme-token class sets (Tailwind JIT needs literal strings, not
 // interpolated tone names).
 const _SYNC_TONES: Record<string, { wrap: string; btn: string }> = {
-  info: { wrap: 'border-info/40 bg-info-subtle text-info', btn: 'border-info/40 text-info hover:bg-info/10' },
+  info: { wrap: 'border-info/40 bg-info-subtle text-info-text', btn: 'border-info/40 text-info-text hover:bg-info/10' },
   warn: { wrap: 'border-warn/40 bg-warn-subtle text-warn-text', btn: 'border-warn/40 text-warn-text hover:bg-warn/10' },
   danger: { wrap: 'border-danger/40 bg-danger-subtle text-danger-text', btn: 'border-danger/40 text-danger-text hover:bg-danger/10' },
 }

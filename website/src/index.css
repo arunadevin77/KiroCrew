@@ -685,10 +685,12 @@ html:lang(ko) {
    it, so the text stays as coloured as the floor allows. Danger keeps 55%
    (`bg-danger/25` on hover: 4.82:1 in tokyonight-light; 60% would be
    4.35:1). Ok keeps 60% (`bg-ok/20`: 4.56:1 in amoled-light; 61% would be
-   4.45:1). statusTextContrast.test.ts reads both shares from this rule and
-   measures every paired tint in every light palette. */
-:root{--ok-text:var(--ok);--danger-text:var(--danger);}
-[data-mode="light"]{--ok-text:color-mix(in srgb, var(--ok) 60%, #000);--danger-text:color-mix(in srgb, var(--danger) 55%, #000);}
+   4.45:1). Info (`text-info-text` on `bg-info-subtle`, `bg-info/N`) reads
+   1.69:1 plain in amoled-light and keeps 58% (`bg-info/15`: 4.53:1 in
+   amoled-light; 59% would be 4.41:1). statusTextContrast.test.ts reads every
+   share from this rule and measures every paired tint in every light palette. */
+:root{--ok-text:var(--ok);--danger-text:var(--danger);--info-text:var(--info);}
+[data-mode="light"]{--ok-text:color-mix(in srgb, var(--ok) 60%, #000);--danger-text:color-mix(in srgb, var(--danger) 55%, #000);--info-text:color-mix(in srgb, var(--info) 58%, #000);}
 :root,[data-theme="dark"],[data-theme="amber-dark"]{
   --search-highlight:rgba(255,167,38,.45);--search-highlight-current:rgba(255,120,0,.85);--search-highlight-current-border:rgba(255,255,255,.9);
   --bg:#12141a;--bg-accent:#14161d;--bg-elevated:#1a1d25;--bg-hover:#262a35;

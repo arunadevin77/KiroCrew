@@ -1,11 +1,12 @@
 /**
- * Ok- and danger-hued text on its own tinted fill clears the WCAG 1.4.3 text
- * floor (4.5:1) in every built-in LIGHT palette. Plain `--ok` on `--ok-subtle`
- * reads 1.97:1 in amoled-light and plain `--danger` on `--danger-subtle` 2.37:1
- * in tokyonight-light. `--ok-text` / `--danger-text` have the shape of
- * `--warn-text`: the plain hue in dark palettes and, under
- * `[data-mode="light"]`, the hue darkened toward black, so they still read as
- * success and error. `text-ok-text` and `text-danger-text` paint them.
+ * Ok-, danger- and info-hued text on its own tinted fill clears the WCAG 1.4.3
+ * text floor (4.5:1) in every built-in LIGHT palette. Plain `--ok` on
+ * `--ok-subtle` reads 1.97:1 in amoled-light, plain `--danger` on
+ * `--danger-subtle` 2.37:1 in tokyonight-light and plain `--info` on
+ * `bg-info-subtle` 1.69:1 in amoled-light. `--ok-text` / `--danger-text` /
+ * `--info-text` have the shape of `--warn-text`: the plain hue in dark palettes
+ * and, under `[data-mode="light"]`, the hue darkened toward black, so they
+ * still read as success, error and info. `text-<hue>-text` paints them.
  *
  * This file reads each mix from index.css, measures it against every tint the
  * source pairs with it over `--bg`, `--bg-elevated` and `--card`, and refuses a
@@ -27,9 +28,12 @@ import {
   lightShare, lightText, lum, mix, pairedTints, patterns, plainOnTint, subtleShare, tokenRgb,
 } from './statusTextTint'
 
-const HUES = ['ok', 'danger'] as const
+const HUES = ['ok', 'danger', 'info'] as const
+/** How many source lines pair each hue's tint with its text token, at least:
+ *  the premise that the measured set is the real one. */
+const MIN_SITES: Record<(typeof HUES)[number], number> = { ok: 30, danger: 30, info: 10 }
 
-describe('ok and danger text on their own tints in light palettes', () => {
+describe('ok, danger and info text on their own tints in light palettes', () => {
   it('anchors the premise: the rules exist and the light palettes are found', () => {
     const bridge = readFileSync(resolve(__dirname, '../tailwind-theme.css'), 'utf8')
     for (const hue of HUES) {
@@ -63,7 +67,7 @@ describe('ok and danger text on their own tints in light palettes', () => {
         // The premise: the pairings exist and the subtle fill plus the common
         // alpha tint are among them, so a new stronger tint is measured here
         // rather than assumed.
-        expect(sites.length).toBeGreaterThanOrEqual(30)
+        expect(sites.length).toBeGreaterThanOrEqual(MIN_SITES[hue])
         expect([...tints.keys()]).toEqual(expect.arrayContaining(['subtle', '/10']))
         const failures: string[] = []
         for (const t of LIGHT_THEMES) {

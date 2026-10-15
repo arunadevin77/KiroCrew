@@ -706,7 +706,7 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
               runsNow && !waitingOnPerson
                 ? writeDisabled ? 'border-border bg-bg text-muted' : 'border-ok/30 bg-ok-subtle text-ok-fg'
                 : finished
-                  ? 'border-info/30 bg-info-subtle text-info'
+                  ? 'border-info/30 bg-info-subtle text-info-text'
                   : 'border-warn/30 bg-warn-subtle text-warn-fg'
             }`}
           >

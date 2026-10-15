@@ -18,11 +18,11 @@ interface WelcomeViewProps {
 /** Icon and tint per suggestion kind. */
 export const SUGGESTION_KIND_STYLE: Record<SuggestionKind, { Icon: LucideIcon; tile: string }> = {
   code: { Icon: Code2, tile: 'bg-accent-subtle text-accent' },
-  review: { Icon: Eye, tile: 'bg-info-subtle text-info' },
+  review: { Icon: Eye, tile: 'bg-info-subtle text-info-text' },
   ops: { Icon: Activity, tile: 'bg-danger-subtle text-danger-text' },
   tasks: { Icon: ListChecks, tile: 'bg-ok-subtle text-ok-text' },
   write: { Icon: FileText, tile: 'bg-warn-subtle text-warn-text' },
-  research: { Icon: Search, tile: 'bg-info-subtle text-info' },
+  research: { Icon: Search, tile: 'bg-info-subtle text-info-text' },
   schedule: { Icon: Clock, tile: 'bg-accent-subtle text-accent' },
   general: { Icon: Sparkles, tile: 'bg-accent-subtle text-accent' },
 }

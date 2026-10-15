@@ -1,7 +1,7 @@
 /**
  * Shared measure-and-scan helpers for status-hued TEXT on its own tinted fill:
  * `--warn-text` (glassWarnTextContrast.test.ts) and `--ok-text` /
- * `--danger-text` (statusTextContrast.test.ts). One copy, so the scanner and
+ * `--danger-text` / `--info-text` (statusTextContrast.test.ts). One copy, so the scanner and
  * the arithmetic cannot drift between the hues.
  *
  * Each `--<hue>-text` token is the plain hue under `:root` and, under
@@ -15,7 +15,7 @@ import { join, relative, resolve, sep } from 'node:path'
 import { relativeLuminance, parseCssColor } from '../lib/iconContrast'
 import { CSS, THEMES, resolveVar } from './themePalette'
 
-export type StatusHue = 'warn' | 'ok' | 'danger'
+export type StatusHue = 'warn' | 'ok' | 'danger' | 'info'
 export interface Rgb { r: number; g: number; b: number }
 
 export const MIN_TEXT = 4.5
@@ -24,6 +24,8 @@ export const SURFACES = ['--bg', '--bg-elevated', '--card'] as const
 
 /** index.css with comments stripped, so a rule quoted in prose is not read. */
 export const ACTIVE = CSS.replace(/\/\*[\s\S]*?\*\//g, '')
+/** tailwind-theme.css with comments stripped: the `--color-*` bridge. */
+export const BRIDGE = readFileSync(resolve(__dirname, '../tailwind-theme.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 export const LIGHT_THEMES = THEMES.filter((t) => t === 'light' || t.endsWith('-light'))
 export const DARK_THEMES = THEMES.filter((t) => !LIGHT_THEMES.includes(t))
 
@@ -39,6 +41,13 @@ export function tokenRgb(theme: string, prop: string): Rgb {
  *  hue a `bg-<hue>-subtle` fill lays over its surface. */
 export function subtleShare(theme: string, hue: StatusHue): number {
   const raw = resolveVar(theme, `--${hue}-subtle`)
+  // A hue with no `--<hue>-subtle` token (info) gets its fill from the
+  // tailwind bridge as a fixed mix of the hue toward transparent.
+  if (raw === undefined) {
+    const m = new RegExp(`--color-${hue}-subtle:\\s*color-mix\\(in srgb,\\s*var\\(--${hue}\\)\\s*(\\d+)%,\\s*transparent\\)`).exec(BRIDGE)
+    if (!m) throw new Error(`theme ${theme}: --${hue}-subtle resolves to nothing and the bridge has no mix for it`)
+    return Number(m[1]) / 100
+  }
   const c = raw === undefined ? null : parseCssColor(raw)
   if (!c) throw new Error(`theme ${theme}: --${hue}-subtle=${raw} is not a colour this test can measure`)
   return c.a

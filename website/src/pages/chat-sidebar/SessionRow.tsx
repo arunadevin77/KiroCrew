@@ -1339,7 +1339,7 @@ export const SessionRow = memo(function SessionRow({ view, actions }: SessionRow
                 *  crew's participants and read as "people are in it" on a cold read. */}
               {!peerId && onOpenElsewhere && (
                 <span
-                  className="shrink-0 inline-flex items-center gap-0.5 text-[10px] px-1 rounded bg-info-subtle text-info border border-info/40"
+                  className="shrink-0 inline-flex items-center gap-0.5 text-[10px] px-1 rounded bg-info-subtle text-info-text border border-info/40"
                   data-testid="members-page-chip">
                   <ExternalLink size={9} className="shrink-0" aria-hidden="true" />
                   {i18nT('pages.chatSidebar.members_page_chip')}
