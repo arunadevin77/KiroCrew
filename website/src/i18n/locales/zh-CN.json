@@ -10874,6 +10874,9 @@
         "last_tool": "最后一个工具：",
         "links": "Links",
         "load_output_from_disk": "从磁盘加载输出",
+        "never_started": "未曾启动",
+        "never_started_low_memory_reason": "未能及时释放足够内存；请释放内存，然后使用“重试失败项”",
+        "never_started_memory_pressure_reason": "macOS 内存压力未能及时缓解；等压力缓解或某个正在运行的代理完成后，使用“重试失败项”",
         "loading": "正在加载…",
         "loading_workspace": "正在加载工作区…",
         "logs": "日志",
@@ -11306,14 +11309,14 @@
       },
       "subagentQueued": {
         "low_memory": "等待开始 — 需要 {{required}} 可用内存，当前可用 {{available}}；请释放内存以继续",
-        "low_memory_limit": "等待开始 — 需要 {{required}} 可用内存，当前可用 {{available}}；请释放内存以继续；若内存持续不足 {{limit}}，将不启动而结束",
+        "low_memory_limit": "等待开始 — 需要 {{required}} 可用内存，当前可用 {{available}}；请释放内存以继续；若内存持续不足 {{limit}}，将不会启动",
         "low_memory_no_figures": "等待开始 — 可用内存不足；请释放内存以继续",
-        "low_memory_no_figures_limit": "等待开始 — 可用内存不足；请释放内存以继续；若内存持续不足 {{limit}}，将不启动而结束",
+        "low_memory_no_figures_limit": "等待开始 — 可用内存不足；请释放内存以继续；若内存持续不足 {{limit}}，将不会启动",
         "low_memory_no_figures_no_limit": "等待开始 — 可用内存不足；请释放内存以继续；等待没有时间上限",
         "low_memory_no_limit": "等待开始 — 需要 {{required}} 可用内存，当前可用 {{available}}；请释放内存以继续；等待没有时间上限",
-        "memory_pressure": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；压力缓解或其他代理完成后开始",
-        "memory_pressure_limit": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；压力缓解或其他代理完成后开始；若内存持续不足 {{limit}}，将不启动而结束",
-        "memory_pressure_no_limit": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；压力缓解或其他代理完成后开始；等待没有时间上限"
+        "memory_pressure": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解",
+        "memory_pressure_limit": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；若内存持续不足 {{limit}}，将不会启动",
+        "memory_pressure_no_limit": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；等待没有时间上限"
       },
       "subagentRunCard": {
         "agent_finished_other": "{{count}} 个代理已完成",
@@ -11321,6 +11324,7 @@
         "agent_never_started_other": "{{count}} 个代理未曾启动",
         "agent_ran_of_total_other": "{{total}} 个代理中有 {{count}} 个已运行",
         "never_started_memory_pressure_other": "{{count}} 个未曾启动 — macOS 内存压力未能及时缓解；等压力缓解或某个正在运行的代理完成后，使用子代理面板中的“重试失败项”（活动监视器“内存”标签页会显示压力）",
+        "never_started_low_memory_other": "{{count}} 个未曾启动 — 未能及时释放足够内存；请释放内存，然后使用子代理面板中的“重试失败项”",
         "agent_other": "{{count}} 个代理",
         "agent_queued_other": "{{count}} 个代理已排队",
         "agent_running_other": "{{count}} 个代理运行中",

@@ -10874,6 +10874,9 @@
         "last_tool": "最後のツール:",
         "links": "Links",
         "load_output_from_disk": "ディスクから出力を読み込む",
+        "never_started": "開始されませんでした",
+        "never_started_low_memory_reason": "時間内に十分なメモリが空きませんでした。メモリを空けてから、「失敗を再試行」を使ってください",
+        "never_started_memory_pressure_reason": "macOS のメモリプレッシャーが時間内に下がりませんでした。プレッシャーが下がるか実行中のエージェントが終了したら、「失敗を再試行」を使ってください",
         "loading": "読み込み中…",
         "loading_workspace": "ワークスペースを読み込み中…",
         "logs": "ログ",
@@ -11306,14 +11309,14 @@
       },
       "subagentQueued": {
         "low_memory": "開始待ち — {{required}} の空きメモリが必要です（現在の空き {{available}}）。続行するにはメモリを空けてください",
-        "low_memory_limit": "開始待ち — {{required}} の空きメモリが必要です（現在の空き {{available}}）。続行するにはメモリを空けてください。メモリ不足が {{limit}} 続くと、開始されずに終了します",
+        "low_memory_limit": "開始待ち — {{required}} の空きメモリが必要です（現在の空き {{available}}）。続行するにはメモリを空けてください。メモリ不足が {{limit}} 続くと、開始されません",
         "low_memory_no_figures": "開始待ち — 空きメモリが不足しています。続行するにはメモリを空けてください",
-        "low_memory_no_figures_limit": "開始待ち — 空きメモリが不足しています。続行するにはメモリを空けてください。メモリ不足が {{limit}} 続くと、開始されずに終了します",
+        "low_memory_no_figures_limit": "開始待ち — 空きメモリが不足しています。続行するにはメモリを空けてください。メモリ不足が {{limit}} 続くと、開始されません",
         "low_memory_no_figures_no_limit": "開始待ち — 空きメモリが不足しています。続行するにはメモリを空けてください。待機時間の上限はありません",
         "low_memory_no_limit": "開始待ち — {{required}} の空きメモリが必要です（現在の空き {{available}}）。続行するにはメモリを空けてください。待機時間の上限はありません",
-        "memory_pressure": "開始待ち — macOS がメモリプレッシャーを報告しています。ほかのアプリを閉じると下がります。プレッシャーが下がるか、ほかのエージェントが終了すると開始します",
-        "memory_pressure_limit": "開始待ち — macOS がメモリプレッシャーを報告しています。ほかのアプリを閉じると下がります。プレッシャーが下がるか、ほかのエージェントが終了すると開始します。メモリ不足が {{limit}} 続くと、開始されずに終了します",
-        "memory_pressure_no_limit": "開始待ち — macOS がメモリプレッシャーを報告しています。ほかのアプリを閉じると下がります。プレッシャーが下がるか、ほかのエージェントが終了すると開始します。待機時間の上限はありません"
+        "memory_pressure": "開始待ち — macOS がメモリプレッシャーを報告しています。ほかのアプリを閉じると下がります",
+        "memory_pressure_limit": "開始待ち — macOS がメモリプレッシャーを報告しています。ほかのアプリを閉じると下がります。メモリ不足が {{limit}} 続くと、開始されません",
+        "memory_pressure_no_limit": "開始待ち — macOS がメモリプレッシャーを報告しています。ほかのアプリを閉じると下がります。待機時間の上限はありません"
       },
       "subagentRunCard": {
         "agent_finished_other": "{{count}} 個のエージェントが完了",
@@ -11321,6 +11324,7 @@
         "agent_never_started_other": "{{count}} 個のエージェントが開始されませんでした",
         "agent_ran_of_total_other": "{{total}} 個中 {{count}} 個のエージェントが実行されました",
         "never_started_memory_pressure_other": "{{count}} 個が開始されませんでした — macOS のメモリプレッシャーが時間内に下がりませんでした。プレッシャーが下がるか実行中のエージェントが終了したら、サブエージェントパネルの「失敗を再試行」を使ってください（プレッシャーはアクティビティモニタの「メモリ」タブで確認できます）",
+        "never_started_low_memory_other": "{{count}} 個が開始されませんでした — 時間内に十分なメモリが空きませんでした。メモリを空けてから、サブエージェントパネルの「失敗を再試行」を使ってください",
         "agent_other": "{{count}} 個のエージェント",
         "agent_queued_other": "{{count}} 個のエージェントが待機中",
         "agent_running_other": "{{count}} 個のエージェントが実行中",

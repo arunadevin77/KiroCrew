@@ -21,7 +21,7 @@ import { openActivityToTab, selectSubagent, switchSlot, isAwaitingSpawnApproval 
 import { sanitizeLlmOutput } from '../../utils/sanitize'
 import type { ChatMessage, SubagentActivity } from '../../types'
 import { SPAWN_LAUNCH_MARKER } from './types'
-import { isNeverStarted, queuedWaitText } from './subagentQueuedReason'
+import { neverStartedKind, queuedWaitText } from './subagentQueuedReason'
 
 import { i18nT } from '../../i18n/t'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
@@ -145,7 +145,7 @@ const EMPTY_SUBAGENTS: Record<string, SubagentActivity> = {}
 
 /** Terminal statuses, tallied across the launch's own ids only. */
 function tally(agents: (SubagentActivity | undefined)[]) {
-  let running = 0, awaiting = 0, done = 0, failed = 0, stopped = 0, unknown = 0, neverStarted = 0
+  let running = 0, awaiting = 0, done = 0, failed = 0, stopped = 0, unknown = 0, neverStarted = 0, neverStartedPressure = 0
   for (const a of agents) {
     if (!a) { unknown++; continue }
     // A run parked on an unanswered spawn approval launched no process, so it
@@ -160,12 +160,14 @@ function tally(agents: (SubagentActivity | undefined)[]) {
       failed++
       // A run the gate ended before it launched anything: the header must not
       // call it "finished", which the blind reader read as success.
-      if (isNeverStarted(a.error)) neverStarted++
+      const kind = neverStartedKind(a.error)
+      if (kind) neverStarted++
+      if (kind === 'memory_pressure') neverStartedPressure++
     }
     else if (a.status === 'stopped') stopped++
     else unknown++
   }
-  return { running, awaiting, done, failed, stopped, unknown, neverStarted }
+  return { running, awaiting, done, failed, stopped, unknown, neverStarted, neverStartedPressure }
 }
 
 const SubagentRunCard = memo(function SubagentRunCard({
@@ -266,14 +268,22 @@ const SubagentRunCard = memo(function SubagentRunCard({
   // result, and the shared registries wrap this card through ctx.row. Re-applying
   // it here nested one clamp inside another and inset the card by a second full
   // gutter, so it sat 20px right of every sibling row and 40px narrower.
-  // A member the memory-pressure hold ended is a failure the card states in
-  // full, whether or not the rest of its wave ran: a mixed wave's header still
-  // says "finished", and without this the one member that never started would
-  // read as success. It renders through the shared error surface, as a
-  // sibling AFTER the card's button, never inside it.
-  const neverStarted = counts.neverStarted > 0
-    ? i18nT('pages.chat.subagentRunCard.never_started_memory_pressure', { count: counts.neverStarted })
-    : null
+  // A member a memory wait ended is a failure the card states in full, whether
+  // or not the rest of its wave ran: a mixed wave's header still says
+  // "finished", and without this the one member that never started would read
+  // as success. Each note names the reason those members actually ended with:
+  // the macOS pressure hold, or the low-memory wait running past its bound. It
+  // renders through the shared error surface, as a sibling AFTER the card's
+  // button, never inside it.
+  const neverStartedLowMemory = counts.neverStarted - counts.neverStartedPressure
+  const neverStartedNotes = [
+    counts.neverStartedPressure > 0
+      ? i18nT('pages.chat.subagentRunCard.never_started_memory_pressure', { count: counts.neverStartedPressure })
+      : null,
+    neverStartedLowMemory > 0
+      ? i18nT('pages.chat.subagentRunCard.never_started_low_memory', { count: neverStartedLowMemory })
+      : null,
+  ].filter((note): note is string => note !== null)
 
   const card = (
     <button
@@ -360,19 +370,22 @@ const SubagentRunCard = memo(function SubagentRunCard({
     </button>
   )
 
-  if (!neverStarted) return card
+  if (neverStartedNotes.length === 0) return card
   return (
     <div className="w-full">
       {card}
       {/* No hand-off: the chat composer beside this card may hold an unsent
           draft, which the hand-off's navigation to a new chat would discard;
           the Subagents panel's own error rows carry the hand-off. */}
-      <ErrorNotice
-        variant="inline"
-        className="mt-1 px-3"
-        testId="subagent-card-never-started-reason"
-        message={neverStarted}
-      />
+      {neverStartedNotes.map(note => (
+        <ErrorNotice
+          key={note}
+          variant="inline"
+          className="mt-1 px-3"
+          testId="subagent-card-never-started-reason"
+          message={note}
+        />
+      ))}
     </div>
   )
 })

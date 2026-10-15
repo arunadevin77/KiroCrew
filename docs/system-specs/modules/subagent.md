@@ -661,7 +661,14 @@ It keeps a start (`_memory_pressure_holds`) when, in addition:
   (never inside it), counted ("1 never started — ...") and naming the panel's
   Retry failed control,
   so a mixed wave's "finished" header cannot hide it and the retry is not read
-  as automatic; the wave digest the parent reads says the same after its tally,
+  as automatic. Each note names the reason its members ended with: the card
+  tells this terminal from the low-memory expiry (`QUEUED_WAIT_EXPIRED_TEXT`)
+  by `neverStartedPressurePrefix` in the same file, and gives each its own
+  counted note. The Subagents panel heads such a run "Never started", not
+  "Error", and replaces the backend terminal (written for the parent agent,
+  Slack and the CLI, none of which has the control) with a sentence naming the
+  same reason and the Retry failed control; it still counts under Retry failed,
+  which is the way out that sentence names. The wave digest the parent reads says the same after its tally,
   "K of the ❌ never started", counting members whose error opens with
   `NEVER_STARTED_MEMORY_PREFIX`, the opening words of both memory terminals (a refusal is not counted, since resubmitting it
   would only be refused again; a member the spent episode ended at once IS
@@ -1083,7 +1090,7 @@ made; no gate reads it back. Two consumers:
   `agent.subagent_queue_max_wait_secs` read as the frame is published
   through `taskq_memory_wait_bound_secs` (the reader the sweep and the
   pressure hold use; `0` is no bound). The chip states it as how long
-  memory may stay short before the rows end without starting (a total,
+  memory may stay short before the rows never start (a total,
   not a countdown: the bound is counted as parked time, and the pressure
   hold restarts it whenever the lane starts something). At `0` the chip
   says they wait with no time limit; with the field absent it says neither.

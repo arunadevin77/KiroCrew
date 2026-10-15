@@ -831,7 +831,7 @@ describe('ActivityViewer — queued subagents', () => {
     })
     const text = screen.getByTestId('subagent-queued-banner').textContent ?? ''
     expect(text).toBe(
-      '1 waiting to start — macOS reports memory pressure; close other apps to ease it; they start once it eases or other agents finish',
+      '1 waiting to start — macOS reports memory pressure; close other apps to ease it',
     )
     expect(text).not.toMatch(/GB/)
   })
@@ -841,7 +841,7 @@ describe('ActivityViewer — queued subagents', () => {
       wrapper: queuedWrapper(1, { reason: 'memory_pressure', max_wait_secs: 1800 }),
     })
     expect(screen.getByTestId('subagent-queued-banner').textContent).toBe(
-      '1 waiting to start — macOS reports memory pressure; close other apps to ease it; they start once it eases or other agents finish; they end without starting if memory stays short for 30\u00A0minutes',
+      '1 waiting to start — macOS reports memory pressure; close other apps to ease it; they never start if memory stays short for 30\u00A0minutes',
     )
   })
 
@@ -850,7 +850,7 @@ describe('ActivityViewer — queued subagents', () => {
       wrapper: queuedWrapper(1, { reason: 'low_memory', max_wait_secs: 3600 }),
     })
     expect(screen.getByTestId('subagent-queued-banner').textContent).toBe(
-      '1 waiting to start — not enough free memory; free up memory to continue; they end without starting if memory stays short for 1\u00A0hour',
+      '1 waiting to start — not enough free memory; free up memory to continue; they never start if memory stays short for 1\u00A0hour',
     )
   })
 
@@ -860,7 +860,7 @@ describe('ActivityViewer — queued subagents', () => {
     })
     const text = screen.getByTestId('subagent-queued-banner').textContent ?? ''
     expect(text).toMatch(/4\.5\s?GB/)
-    expect(text).toContain('they end without starting if memory stays short for 1\u00A0minute 30\u00A0seconds')
+    expect(text).toContain('they never start if memory stays short for 1\u00A0minute 30\u00A0seconds')
   })
 
   it('says outright that a 0 bound waits with no time limit', () => {
@@ -877,7 +877,7 @@ describe('ActivityViewer — queued subagents', () => {
     })
     const text = screen.getByTestId('subagent-queued-banner').textContent ?? ''
     expect(text).not.toContain('time limit')
-    expect(text).not.toContain('end without starting')
+    expect(text).not.toContain('never start')
   })
 
   it('tells the user what to do about a memory wait', () => {

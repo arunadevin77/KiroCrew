@@ -2604,9 +2604,9 @@ def test_the_user_docs_state_the_hold_bounds_the_code_uses() -> None:
     english = json.loads((root / "website/src/i18n/locales/en.json").read_text(encoding="utf-8"))
     chip_en = english["pages"]["chat"]["subagentQueued"]
     # A duration the memory must stay short for, not a deadline from now.
-    assert chip_en["memory_pressure_limit"].endswith(
-        "they end without starting if memory stays short for {{limit}}"
-    )
+    # The chip names the same outcome the terminal report does: they never start.
+    for key in ("low_memory_limit", "low_memory_no_figures_limit", "memory_pressure_limit"):
+        assert chip_en[key].endswith("they never start if memory stays short for {{limit}}"), key
     assert chip_en["memory_pressure_no_limit"].endswith("they wait with no time limit")
 
 
@@ -2629,6 +2629,12 @@ def test_the_card_and_the_gate_agree_on_the_never_started_prefix() -> None:
     for terminal in (MEMORY_PRESSURE_NEVER_STARTED, QUEUED_WAIT_EXPIRED_TEXT):
         assert terminal.startswith(NEVER_STARTED_MEMORY_PREFIX)
         assert "; retry once " in terminal
+    # The card names the reason each run ended with, so the pressure prefix
+    # matches the pressure terminal alone.
+    pressure = phrases["neverStartedPressurePrefix"]
+    assert pressure.startswith(NEVER_STARTED_MEMORY_PREFIX)
+    assert MEMORY_PRESSURE_NEVER_STARTED.startswith(pressure)
+    assert not QUEUED_WAIT_EXPIRED_TEXT.startswith(pressure)
 
 
 def test_event_loop_spawns_validate_the_agent_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:

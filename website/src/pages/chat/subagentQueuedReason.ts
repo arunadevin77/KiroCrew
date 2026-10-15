@@ -145,9 +145,26 @@ export function queuedWaitText(reason: SubagentQueuedReason | undefined): string
  *  pins it against the Python constant. */
 export const NEVER_STARTED_PREFIX = backendPhrases.neverStartedPrefix
 
+/** The opening words of `MEMORY_PRESSURE_NEVER_STARTED` alone, which tell the
+ *  pressure hold's terminal apart from the low-memory expiry
+ *  (`QUEUED_WAIT_EXPIRED_TEXT`). Pinned against both Python constants by
+ *  `test_the_card_and_the_gate_agree_on_the_never_started_prefix`. */
+const NEVER_STARTED_PRESSURE_PREFIX = backendPhrases.neverStartedPressurePrefix
+
 /** Whether a terminal run's error says it never started. */
 export function isNeverStarted(error: string | undefined): boolean {
   return typeof error === 'string' && error.startsWith(NEVER_STARTED_PREFIX)
+}
+
+/** Why a run that never started ended: the macOS pressure hold, or the
+ *  low-memory wait running past its bound. `null` for a run that started. Any
+ *  other never-started terminal reads as the low-memory one, the gate's default
+ *  memory wait. */
+export type NeverStartedKind = 'memory_pressure' | 'low_memory'
+
+export function neverStartedKind(error: string | undefined): NeverStartedKind | null {
+  if (!isNeverStarted(error)) return null
+  return error!.startsWith(NEVER_STARTED_PRESSURE_PREFIX) ? 'memory_pressure' : 'low_memory'
 }
 
 /** Whether the wait is on host memory: the gate deferred the start until enough

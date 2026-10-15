@@ -56,6 +56,7 @@ import { __resetPanelTabs } from '../hooks/usePanelTabs'
 import type { SubagentActivity, ToolActivity, Artifact } from '../types'
 import type { ExtractedLink } from '../utils/extractChatLinks'
 import { i18nT } from '../i18n/t'
+import { consumeChatHandoff, setGatewayConnected } from '../utils/errorReport'
 
 const SLOT = 'test-slot'
 
@@ -259,6 +260,54 @@ describe('ActivityViewer — subagent transcript loading', () => {
     expect(screen.getByText('(no output: it never started)')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Load output from disk' })).not.toBeInTheDocument()
     expect(api.spawnStatus).not.toHaveBeenCalled()
+  })
+
+  it('says a low-memory expiry never started and names the Retry failed control', () => {
+    const { container } = renderPanel(
+      <ActivityViewer
+        {...baseProps}
+        view="subagents"
+        subagents={{ s1: mkAgent('s1', { status: 'error', error: 'never started: waiting for memory (not enough memory freed up in time); retry once memory frees up' }) }}
+      />,
+    )
+    fireEvent.click(cardHeader(container))
+    expect(screen.getByText('Never started')).toBeInTheDocument()
+    expect(screen.queryByText('Error')).not.toBeInTheDocument()
+    expect(screen.getByText('Not enough memory freed up in time; free up memory, then use “Retry failed”')).toBeInTheDocument()
+    expect(screen.queryByText(/retry once memory frees up/)).not.toBeInTheDocument()
+    // Still retryable: the control the notice names is the one that does it.
+    expect(screen.getByText(/Retry failed \(1\)/)).toBeInTheDocument()
+  })
+
+  it('names the macOS pressure reason only for a run the pressure hold ended', () => {
+    const { container } = renderPanel(
+      <ActivityViewer
+        {...baseProps}
+        view="subagents"
+        subagents={{ s1: mkAgent('s1', { status: 'error', error: 'never started: waiting for memory (macOS memory pressure did not ease in time); retry once it eases or a running agent finishes' }) }}
+      />,
+    )
+    fireEvent.click(cardHeader(container))
+    expect(screen.getByText('Never started')).toBeInTheDocument()
+    expect(screen.getByText('macOS memory pressure did not ease in time; once it eases or a running agent finishes, use “Retry failed”')).toBeInTheDocument()
+  })
+
+  it('hands the agent the backend terminal, not the reworded notice', () => {
+    const terminal = 'never started: waiting for memory (not enough memory freed up in time); retry once memory frees up'
+    setGatewayConnected(true)
+    const { container } = renderPanel(
+      <ActivityViewer
+        {...baseProps}
+        view="subagents"
+        subagents={{ s1: mkAgent('s1', { status: 'error', error: terminal }) }}
+      />,
+    )
+    fireEvent.click(cardHeader(container))
+    const notice = screen.getByText('Not enough memory freed up in time; free up memory, then use “Retry failed”').closest('[role="alert"]') as HTMLElement
+    fireEvent.click(within(notice).getByRole('button', { name: /Ask the agent/ }))
+    const prompt = consumeChatHandoff() ?? ''
+    expect(prompt).toContain(`- Message: ${terminal}`)
+    expect(prompt).not.toContain('then use “Retry failed”')
   })
 
   it('waits for output on a running agent instead of reading from disk', () => {

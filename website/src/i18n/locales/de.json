@@ -11032,6 +11032,9 @@
         "last_tool": "Letztes Werkzeug:",
         "links": "Links",
         "load_output_from_disk": "Ausgabe vom Datenträger laden",
+        "never_started": "Nie gestartet",
+        "never_started_low_memory_reason": "Nicht rechtzeitig genug Speicher frei geworden; gib Speicher frei und nutze dann „Fehlgeschlagene wiederholen“",
+        "never_started_memory_pressure_reason": "Der Speicherdruck von macOS hat nicht rechtzeitig nachgelassen; sobald er nachlässt oder ein laufender Agent fertig ist, nutze „Fehlgeschlagene wiederholen“",
         "loading": "Wird geladen…",
         "loading_workspace": "Arbeitsbereich wird geladen …",
         "logs": "Protokolle",
@@ -11470,14 +11473,14 @@
       },
       "subagentQueued": {
         "low_memory": "wartet auf den Start — benötigt {{required}} freien Speicher, aktuell {{available}} frei; gib Speicher frei, um fortzufahren",
-        "low_memory_limit": "wartet auf den Start — benötigt {{required}} freien Speicher, aktuell {{available}} frei; gib Speicher frei, um fortzufahren; sie enden ohne Start, wenn der Speicher {{limit}} lang knapp bleibt",
+        "low_memory_limit": "wartet auf den Start — benötigt {{required}} freien Speicher, aktuell {{available}} frei; gib Speicher frei, um fortzufahren; sie starten nie, wenn der Speicher {{limit}} lang knapp bleibt",
         "low_memory_no_figures": "wartet auf den Start — nicht genug freier Speicher; gib Speicher frei, um fortzufahren",
-        "low_memory_no_figures_limit": "wartet auf den Start — nicht genug freier Speicher; gib Speicher frei, um fortzufahren; sie enden ohne Start, wenn der Speicher {{limit}} lang knapp bleibt",
+        "low_memory_no_figures_limit": "wartet auf den Start — nicht genug freier Speicher; gib Speicher frei, um fortzufahren; sie starten nie, wenn der Speicher {{limit}} lang knapp bleibt",
         "low_memory_no_figures_no_limit": "wartet auf den Start — nicht genug freier Speicher; gib Speicher frei, um fortzufahren; sie warten ohne Zeitlimit",
         "low_memory_no_limit": "wartet auf den Start — benötigt {{required}} freien Speicher, aktuell {{available}} frei; gib Speicher frei, um fortzufahren; sie warten ohne Zeitlimit",
-        "memory_pressure": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie starten, sobald er nachlässt oder andere Agenten fertig sind",
-        "memory_pressure_limit": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie starten, sobald er nachlässt oder andere Agenten fertig sind; sie enden ohne Start, wenn der Speicher {{limit}} lang knapp bleibt",
-        "memory_pressure_no_limit": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie starten, sobald er nachlässt oder andere Agenten fertig sind; sie warten ohne Zeitlimit"
+        "memory_pressure": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken",
+        "memory_pressure_limit": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie starten nie, wenn der Speicher {{limit}} lang knapp bleibt",
+        "memory_pressure_no_limit": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie warten ohne Zeitlimit"
       },
       "subagentRunCard": {
         "agent_finished_one": "{{count}} Agent abgeschlossen",
@@ -11490,6 +11493,8 @@
         "agent_ran_of_total_other": "{{count}} von {{total}} Agenten liefen",
         "never_started_memory_pressure_one": "{{count}} nie gestartet — der Speicherdruck von macOS hat nicht rechtzeitig nachgelassen; sobald er nachlässt oder ein laufender Agent fertig ist, nutze „Fehlgeschlagene wiederholen“ im Subagenten-Panel — der Tab „Speicher“ der Aktivitätsanzeige zeigt den Druck",
         "never_started_memory_pressure_other": "{{count}} nie gestartet — der Speicherdruck von macOS hat nicht rechtzeitig nachgelassen; sobald er nachlässt oder ein laufender Agent fertig ist, nutze „Fehlgeschlagene wiederholen“ im Subagenten-Panel — der Tab „Speicher“ der Aktivitätsanzeige zeigt den Druck",
+        "never_started_low_memory_one": "{{count}} nie gestartet — nicht rechtzeitig genug Speicher frei geworden; gib Speicher frei und nutze dann „Fehlgeschlagene wiederholen“ im Subagenten-Panel",
+        "never_started_low_memory_other": "{{count}} nie gestartet — nicht rechtzeitig genug Speicher frei geworden; gib Speicher frei und nutze dann „Fehlgeschlagene wiederholen“ im Subagenten-Panel",
         "agent_one": "{{count}} Agent",
         "agent_other": "{{count}} Agenten",
         "agent_queued_one": "{{count}} Agent in der Warteschlange",

@@ -6435,6 +6435,9 @@
         "last_tool": "Last tool:",
         "links": "Links",
         "load_output_from_disk": "Load output from disk",
+        "never_started": "Never started",
+        "never_started_low_memory_reason": "Not enough memory freed up in time; free up memory, then use “Retry failed”",
+        "never_started_memory_pressure_reason": "macOS memory pressure did not ease in time; once it eases or a running agent finishes, use “Retry failed”",
         "loading": "Loading…",
         "no_links_yet": "No links in this session yet. Mention a URL in the chat and it will appear here.",
         "no_output_never_started": "(no output: it never started)",
@@ -6684,14 +6687,14 @@
       },
       "subagentQueued": {
         "low_memory": "waiting to start — needs {{required}} of free memory, {{available}} free now; free up memory to continue",
-        "low_memory_limit": "waiting to start — needs {{required}} of free memory, {{available}} free now; free up memory to continue; they end without starting if memory stays short for {{limit}}",
+        "low_memory_limit": "waiting to start — needs {{required}} of free memory, {{available}} free now; free up memory to continue; they never start if memory stays short for {{limit}}",
         "low_memory_no_figures": "waiting to start — not enough free memory; free up memory to continue",
-        "low_memory_no_figures_limit": "waiting to start — not enough free memory; free up memory to continue; they end without starting if memory stays short for {{limit}}",
+        "low_memory_no_figures_limit": "waiting to start — not enough free memory; free up memory to continue; they never start if memory stays short for {{limit}}",
         "low_memory_no_figures_no_limit": "waiting to start — not enough free memory; free up memory to continue; they wait with no time limit",
         "low_memory_no_limit": "waiting to start — needs {{required}} of free memory, {{available}} free now; free up memory to continue; they wait with no time limit",
-        "memory_pressure": "waiting to start — macOS reports memory pressure; close other apps to ease it; they start once it eases or other agents finish",
-        "memory_pressure_limit": "waiting to start — macOS reports memory pressure; close other apps to ease it; they start once it eases or other agents finish; they end without starting if memory stays short for {{limit}}",
-        "memory_pressure_no_limit": "waiting to start — macOS reports memory pressure; close other apps to ease it; they start once it eases or other agents finish; they wait with no time limit"
+        "memory_pressure": "waiting to start — macOS reports memory pressure; close other apps to ease it",
+        "memory_pressure_limit": "waiting to start — macOS reports memory pressure; close other apps to ease it; they never start if memory stays short for {{limit}}",
+        "memory_pressure_no_limit": "waiting to start — macOS reports memory pressure; close other apps to ease it; they wait with no time limit"
       },
       "subagentRunCard": {
         "open_in_the_subagents_panel": "Open in the Subagents panel",

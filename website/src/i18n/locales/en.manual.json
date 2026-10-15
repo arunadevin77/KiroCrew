@@ -5221,6 +5221,8 @@
         "agent_ran_of_total_other": "{{count}} of {{total}} agents ran",
         "never_started_memory_pressure_one": "{{count}} never started — macOS memory pressure did not ease in time; once it eases (Activity Monitor’s Memory tab shows it) or a running agent finishes, use “Retry failed” in the Subagents panel",
         "never_started_memory_pressure_other": "{{count}} never started — macOS memory pressure did not ease in time; once it eases (Activity Monitor’s Memory tab shows it) or a running agent finishes, use “Retry failed” in the Subagents panel",
+        "never_started_low_memory_one": "{{count}} never started — not enough memory freed up in time; free up memory, then use “Retry failed” in the Subagents panel",
+        "never_started_low_memory_other": "{{count}} never started — not enough memory freed up in time; free up memory, then use “Retry failed” in the Subagents panel",
         "agent_one": "{{count}} agent",
         "agent_other": "{{count}} agents",
         "agent_queued_one": "{{count}} agent queued",

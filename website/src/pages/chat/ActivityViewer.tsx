@@ -35,7 +35,7 @@ import ErrorBoundary from '../../components/ErrorBoundary'
 const CrewLogTab = lazy(() => import('./CrewLogPanel').then(m => ({ default: m.CrewLogTab })))
 import SessionSummaryTab from './SessionSummaryTab'
 import { i18nT } from '../../i18n/t'
-import { isNeverStarted, queuedWaitText } from './subagentQueuedReason'
+import { isNeverStarted, neverStartedKind, queuedWaitText } from './subagentQueuedReason'
 import GitPanel from '../../components/GitPanel'
 import { fmtDateFields, fmtElapsed } from '../../i18n/format'
 import { isModelDowngrade } from './subagentCompletion'
@@ -43,6 +43,8 @@ import { normalizeModelKey } from '../../lib/model'
 import { fmtCredits } from '../../i18n/format'
 import MarkdownRenderer from '../../components/MarkdownRenderer'
 import { sanitizeLlmOutput } from '../../utils/sanitize'
+import { findReport, type ErrorReport } from '../../utils/errorReport'
+
 const STATUS = {
   pending: <Lock size={12} className="text-muted" />,
   running: <LoaderIcon size={12} className="text-accent animate-spin" />,
@@ -288,7 +290,34 @@ function SubagentPane({ a, slot, onClick, selected }: { a: SubagentActivity; slo
       : a.status === 'running' ? (a.streaming ? i18nT('pages.chat.activityViewer.running') : i18nT('pages.chat.activityViewer.starting'))
         : a.status === 'done' ? i18nT('pages.chat.activityViewer.complete')
           : a.status === 'stopped' ? i18nT('pages.chat.activityViewer.stopped')
-            : a.error?.includes('Cancelled') ? i18nT('pages.chat.activityViewer.cancelled') : i18nT('pages.chat.activityViewer.error')
+            : a.error?.includes('Cancelled') ? i18nT('pages.chat.activityViewer.cancelled')
+              // A run a memory wait ended never ran, so the header says that rather
+              // than "Error". It still counts under "Retry failed": retrying it is
+              // the way out its notice names.
+              : isNeverStarted(a.error) ? i18nT('pages.chat.activityViewer.never_started')
+                : i18nT('pages.chat.activityViewer.error')
+
+  // The gate's terminal for a run that never started is written for every
+  // reader (the parent agent, Slack, the CLI), none of which has this panel's
+  // "Retry failed" control. Here the notice names the reason the run ended with
+  // and that control instead.
+  const neverStarted = neverStartedKind(a.error)
+  const errorMessage = neverStarted === 'memory_pressure'
+    ? i18nT('pages.chat.activityViewer.never_started_memory_pressure_reason')
+    : neverStarted === 'low_memory'
+      ? i18nT('pages.chat.activityViewer.never_started_low_memory_reason')
+      : a.error
+  // The rewording is for the reader; "Ask the agent" still hands off the
+  // backend terminal, so the agent sees what the gate actually reported.
+  const errorReport: ErrorReport | undefined = neverStarted && a.error
+    ? findReport(a.error) ?? {
+      id: `subagent-never-started-${a.id}`,
+      at: 0,
+      source: 'system',
+      message: a.error,
+      route: typeof location === 'undefined' ? '' : location.pathname,
+    }
+    : undefined
 
   return (
     // Card-level mouse convenience that selects the subagent; it wraps its own
@@ -413,7 +442,7 @@ function SubagentPane({ a, slot, onClick, selected }: { a: SubagentActivity; slo
           shared notice (hand-off on: nothing in this panel is unsaved). */}
       {a.error && (
         <div className="px-3 py-1.5 text-[12px] border-t border-border/20 space-y-0.5">
-          <ErrorNotice variant="inline" message={a.error} askAgent />
+          <ErrorNotice variant="inline" message={errorMessage ?? a.error} report={errorReport} askAgent />
           {a.lastTool && <div className="text-muted/40">{i18nT('pages.chat.activityViewer.last_tool')} {a.lastTool}</div>}
         </div>
       )}
