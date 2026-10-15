@@ -59,6 +59,17 @@ export function isKiroBackend(cfg: AcpBackendConfig | undefined): boolean {
  * assumed to bill in credits.
  */
 export function reportsCredits(cfg: AcpBackendConfig | undefined): boolean {
+  return isKiroHarness(cfg)
+}
+
+/**
+ * True only when a LOADED config runs one of the Kiro harnesses: kiro-cli
+ * itself or its KAS relay. Both are backed by the Kiro service, which is what
+ * gives them the behaviors other harnesses lack (credit billing, model
+ * fallback inside the turn). Resolves the choice through
+ * `configuredAcpBackend`, so "no choice" follows the same default.
+ */
+export function isKiroHarness(cfg: AcpBackendConfig | undefined): boolean {
   if (cfg === undefined) return false
   const backend = configuredAcpBackend(cfg)
   return backend === ACP_BACKEND_KIRO || backend === ACP_BACKEND_KAS

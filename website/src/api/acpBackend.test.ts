@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { ACP_BACKEND_KAS, ACP_BACKEND_KIRO, configuredAcpBackend, DEFAULT_ACP_BACKEND, isKiroBackend, reportsCredits } from './acpBackend'
+import { ACP_BACKEND_KAS, ACP_BACKEND_KIRO, configuredAcpBackend, DEFAULT_ACP_BACKEND, isKiroBackend, reportsCredits, isKiroHarness } from './acpBackend'
 
 describe('isKiroBackend', () => {
   it('is false while the config has not loaded: nothing Kiro-only renders on a guess', () => {
@@ -53,6 +53,25 @@ describe('reportsCredits', () => {
   it('is false for a harness that bills in tokens or dollars', () => {
     for (const backend of ['claude', 'codex', 'opencode', 'pi', 'goose', 'deepseek', 'some-future-harness']) {
       expect(reportsCredits({ agent: { acp_backend: backend } }), backend).toBe(false)
+    }
+  })
+})
+
+describe('isKiroHarness', () => {
+  it('is false while the config has not loaded', () => {
+    expect(isKiroHarness(undefined)).toBe(false)
+  })
+
+  it('is true for kiro-cli, the KAS relay, and "no choice" (absent or empty), which resolves to the default', () => {
+    expect(isKiroHarness({ agent: { acp_backend: ACP_BACKEND_KIRO } })).toBe(true)
+    expect(isKiroHarness({ agent: { acp_backend: ACP_BACKEND_KAS } })).toBe(true)
+    expect(isKiroHarness({})).toBe(true)
+    expect(isKiroHarness({ agent: { acp_backend: '' } })).toBe(true)
+  })
+
+  it('is false for every other harness', () => {
+    for (const id of ['claude', 'codex', 'opencode', 'goose', 'pi', 'deepseek']) {
+      expect(isKiroHarness({ agent: { acp_backend: id } })).toBe(false)
     }
   })
 })
