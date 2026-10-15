@@ -1898,10 +1898,14 @@ async def _run_uninstall(
                 if app_reg_name:
                     from kiro_crew.apps.registry import app_source_dir
 
-                    ws_dir = app_source_dir(app_reg_name)
-                    if ws_dir.is_dir():
-                        await asyncio.to_thread(platform_compat.rmtree_force, ws_dir)
-                        uninstall_log.append(f"Removed workspace for {app_reg_name}")
+                    try:
+                        ws_dir = app_source_dir(app_reg_name)
+                    except ValueError as exc:  # the name is read from app-writable installed.json
+                        logger.warning("Uninstall of %s skipped the clone removal: %s", name, exc)
+                    else:
+                        if ws_dir.is_dir():
+                            await asyncio.to_thread(platform_compat.rmtree_force, ws_dir)
+                            uninstall_log.append(f"Removed workspace for {app_reg_name}")
     if not result.ok:
         sel().log_api_access(
             caller="dashboard",

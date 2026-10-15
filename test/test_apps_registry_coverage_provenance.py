@@ -399,6 +399,16 @@ class TestSourceStrings:
         monkeypatch.setattr(registry, "config_dir", lambda: tmp_path)
         assert registry.app_source_dir("demo") == tmp_path / "app-sources" / "demo"
 
+    # `...` and `.. ` are ordinary names on POSIX, but Windows drops a trailing dot or
+    # space when it opens a path, so there they name the root or its parent.
+    @pytest.mark.parametrize("name", ["..", "../", "../x", ".", "", "a/b", "/etc", "...", ".. "])
+    def test_app_source_dir_refuses_a_name_that_is_not_one_checkout(
+        self, monkeypatch, tmp_path, name
+    ):
+        monkeypatch.setattr(registry, "config_dir", lambda: tmp_path)
+        with pytest.raises(ValueError):
+            registry.app_source_dir(name)
+
 
 class TestServerPlatform:
     def test_reports_os_and_arch(self):

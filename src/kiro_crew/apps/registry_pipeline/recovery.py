@@ -245,7 +245,19 @@ def _app_sources_dir() -> Path:
 
 
 def app_source_dir(name: str) -> Path:
-    """Return ~/.kiro/crew/app-sources/{name}/ — persistent clone directory."""
+    """Return ~/.kiro/crew/app-sources/{name}/ — persistent clone directory.
+
+    Raises ValueError unless *name* passes ``app_name_error``, the app-name contract
+    every install already enforces, so a name read back from app-writable metadata
+    (``registry:<name>`` in ``installed.json``) cannot aim a caller outside the root
+    or at the root itself.
+    """
+    # Deferred: every module-level name here is also exported by the registry facade.
+    from kiro_crew.apps.manifest import app_name_error
+
+    error = app_name_error(name)
+    if error:
+        raise ValueError(error)
     return _app_sources_dir() / name
 
 
