@@ -383,7 +383,8 @@ the target's queue. `session_queue` is how the sender sees and manages that queu
 2  q-5e6f  yours   "Ignore the snapshot rerun, CI already did it"
 ```
 
-- `list` shows every queued entry in run order. `yours` marks entries you queued;
+- `list` shows the first 50 queued entries in run order; any beyond that are
+  counted in `omitted`, not listed. `yours` marks entries you queued;
   `person` marks a message the session's own human typed; `other` is anything
   else (another session, an app, a scheduled job). Excerpts are redacted and cut
   to 200 characters.
@@ -391,9 +392,15 @@ the target's queue. `session_queue` is how the sender sees and manages that queu
 - `move` puts one of YOUR entries at `position`. It can always move later. It can
   move earlier only past your own entries, so it never jumps ahead of a person's
   message or another session's (`move_blocked`).
+- A `cancel` or `move` behaves exactly like the queue card's own cancel and
+  drag. It changes the queue in memory, tells open tabs, and is saved by the next
+  periodic flush. A gateway restart before that flush can bring the old queue
+  back, just as it can after a person cancels from the card.
 
 A person's queued message is never cancellable or movable here, and neither is
-another session's (`not_your_entry`). Ownership is the sender stamp
+another session's (`not_your_entry`). Neither is a steer of yours that missed
+its turn and was put back in the queue: its steer row already promises it will
+run. Ownership is the sender stamp
 `session_send` writes on the entry: your slot key and your tab identity. The
 restore path drops that stamp on purpose, so entries that were queued before a
 gateway restart list as `other` and only the person can cancel them.

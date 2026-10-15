@@ -1535,7 +1535,8 @@ def _session_tools() -> tuple[Tool, ...]:
                 "session_send to a busy session queues the message (started: false); this is "
                 "how you see where it sits, take it back when it has gone stale, or move a "
                 "correction ahead of the older message it replaces. action=list returns the "
-                "queued entries in run order, each with its id, its position (0 runs next), a "
+                "first 50 queued entries in run order (the rest are counted in `omitted`, not "
+                "listed), each with its id, its position (0 runs next), a "
                 "redacted excerpt and whether YOU queued it. action=cancel removes one entry; "
                 "action=move puts one entry at `position`. cancel and move apply ONLY to "
                 "entries you queued with session_send: a person's queued message, or another "
@@ -3661,7 +3662,10 @@ def _render_session_queue(resp: dict[str, Any]) -> str:
     """
     state_line = "still working" if resp.get("running") else "idle"
     count = int(resp.get("count") or 0)
-    head = f"\U0001f4e5 `{resp.get('target', '')}` — {resp.get('title', '')} ({state_line}), {count} queued"
+    # The title is editable text too, so it is collapsed like the entry rows below.
+    target_text = " ".join(str(resp.get("target") or "").split())
+    title_text = " ".join(str(resp.get("title") or "").split())
+    head = f"\U0001f4e5 `{target_text}` — {title_text} ({state_line}), {count} queued"
     lines: list[str] = []
     if resp.get("cancelled"):
         lines.append(f"Cancelled queued entry {resp['cancelled']}.")
@@ -3673,8 +3677,12 @@ def _render_session_queue(resp: dict[str, Any]) -> str:
         lines.append("The queue is empty.")
     for e in entries:
         label = _QUEUE_FROM_LABELS.get(str(e.get("from")), "other ")
-        excerpt = str(e.get("excerpt") or "").replace("\n", " ")
-        lines.append(f"{e.get('position')}  {e.get('id')}  {label}  \"{excerpt}\"")
+        # Every whitespace run, CR, CRLF and U+2028 included, becomes one space: an
+        # entry's text is untrusted, and a line break in it would render as an extra
+        # listing row with a forged position, id and owner label.
+        excerpt = " ".join(str(e.get("excerpt") or "").split())
+        entry_id = " ".join(str(e.get("id") or "").split())
+        lines.append(f"{e.get('position')}  {entry_id}  {label}  \"{excerpt}\"")
     if resp.get("omitted"):
         lines.append(f"({resp['omitted']} more queued entries not shown.)")
     return "\n".join(lines)

@@ -8,6 +8,8 @@ Pinned here:
   sender stamp ``session_send`` writes (slot key AND tab identity), so a
   person's typed message and another session's entry are never touched;
 * a move EARLIER may pass only the caller's own entries;
+* a cancel or move takes the queue card's path: it broadcasts the card's frame,
+  never suspends, and runs no save of its own;
 * the route is a strict internal-secret path and the tool posts the verified key.
 """
 
@@ -21,6 +23,7 @@ import pytest
 from chat_test_helpers import _make_state
 
 from kiro_crew.dashboard import session_control as sc
+from kiro_crew.dashboard import session_control_queue as scq
 from kiro_crew.dashboard.chat_utils import slot_history_key
 from kiro_crew.dashboard.handlers import session_control as handlers_sc
 from kiro_crew.mcp_dashboard import TABLE, _render_session_queue
@@ -32,17 +35,22 @@ _VERIFIED = "dashboard:chat-verified"
 
 
 @pytest.fixture(autouse=True)
-def _enabled(monkeypatch):
-    monkeypatch.setattr(sc, "session_control_enabled", lambda: True)
+def _enabled(_floor_monkeypatch):
+    # D11: an autouse fixture patches through its own undo stack, not the test's.
+    _floor_monkeypatch.setattr(sc, "session_control_enabled", lambda: True)
 
 
 @pytest.fixture
-def frames(monkeypatch):
-    """Every WebSocket frame and persist start the verb emits."""
+def frames():
+    """Every WebSocket frame the verb emits, and every save it runs itself.
+
+    ``frames[1]`` records each ``flush_slot_now`` call. It stays empty: a cancel
+    or move takes the queue card's path and leaves the save to the periodic
+    flush, so the verb never writes the transcript itself.
+    """
     seen: list[tuple[str, dict]] = []
-    persisted: list[str] = []
-    monkeypatch.setattr(sc, "start_queue_persist", lambda _state, slot: persisted.append(slot.key))
-    return seen, persisted
+    flushed: list[str] = []
+    return seen, flushed
 
 
 def _setup(tmp_path, frames=None):
@@ -53,6 +61,7 @@ def _setup(tmp_path, frames=None):
     target._created_by = "chat-1"
     if frames is not None:
         state.broadcast_ws = lambda event, data: frames[0].append((event, data))
+        state.flush_slot_now = lambda slot: frames[1].append(slot.key)
     return state, caller, peer, target
 
 
@@ -70,7 +79,9 @@ def _person(target, text: str) -> str:
 
 def _call(state, caller, **kwargs) -> dict:
     kwargs.setdefault("target", "chat-2")
-    return sc.queue_target(state, caller_session_key=slot_history_key(caller), **kwargs)
+    return asyncio.run(
+        scq.queue_target(state, caller_session_key=slot_history_key(caller), **kwargs)
+    )
 
 
 def _ids(target) -> list[str]:
@@ -108,12 +119,12 @@ def test_list_redacts_and_cuts_every_excerpt(tmp_path):
 
 def test_list_is_bounded(tmp_path):
     state, caller, _peer_slot, target = _setup(tmp_path)
-    for n in range(sc.MAX_QUEUE_LIST_ENTRIES + 4):
+    for n in range(scq.MAX_QUEUE_LIST_ENTRIES + 4):
         _mine(state, target, f"m{n}")
     out = _call(state, caller)
-    assert len(out["entries"]) == sc.MAX_QUEUE_LIST_ENTRIES
+    assert len(out["entries"]) == scq.MAX_QUEUE_LIST_ENTRIES
     assert out["omitted"] == 4
-    assert out["count"] == sc.MAX_QUEUE_LIST_ENTRIES + 4
+    assert out["count"] == scq.MAX_QUEUE_LIST_ENTRIES + 4
 
 
 def test_an_oversized_restored_id_is_cut_to_the_argument_cap(tmp_path):
@@ -121,7 +132,9 @@ def test_an_oversized_restored_id_is_cut_to_the_argument_cap(tmp_path):
     state, caller, _peer_slot, target = _setup(tmp_path)
     target._queue.append({"id": "x" * 5000, "content": "restored", "kind": ""})
     out = _call(state, caller)
-    assert out["entries"][0]["id"] == "x" * sc.QUEUE_ENTRY_ID_MAX_CHARS + "…"
+    entry_id = out["entries"][0]["id"]
+    assert entry_id == "x" * (scq.QUEUE_ENTRY_ID_MAX_CHARS - 1) + "…"
+    assert len(entry_id) == scq.QUEUE_ENTRY_ID_MAX_CHARS
     assert set(out["entries"][0]) == {"id", "position", "from", "excerpt"}
 
 
@@ -163,6 +176,36 @@ def test_a_stamped_producer_entry_is_not_yours(tmp_path, shape):
     with pytest.raises(sc.SessionControlError) as exc:
         _call(state, caller, action="cancel", entry=qid)
     assert exc.value.code == "not_your_entry"
+
+
+def test_a_requeued_steer_is_not_yours(tmp_path):
+    """Mutation guard: without the steer check a requeued steer reads as yours.
+
+    ``_requeue_unconsumed_steers`` carries the send's stamp and adds no kind or
+    callback, so only ``steer_delivery_id`` tells it apart; cancelling it would
+    leave its steer row promising a turn that never runs.
+    """
+    state, caller, _peer_slot, target = _setup(tmp_path)
+    qid = target.queue_insert(
+        0,
+        "steer that missed the turn",
+        meta={**sc.send_origin_meta(state, "chat-1"), "steer_delivery_id": "d" * 32},
+        directive_user_origin=False,
+    )
+    assert _call(state, caller)["entries"][0]["from"] == "other"
+    with pytest.raises(sc.SessionControlError) as exc:
+        _call(state, caller, action="cancel", entry=qid)
+    assert exc.value.code == "not_your_entry"
+
+
+def test_a_restored_id_is_redacted_before_it_is_cut(tmp_path):
+    """Mutation guard: an id read off a hand-edited transcript reaches the agent raw."""
+    state, caller, _peer_slot, target = _setup(tmp_path)
+    _mine(state, target, "a")
+    secret = "AKIA" + "ABCDEFGHIJKLMNOP"
+    target._queue[0]["id"] = secret
+    out = _call(state, caller)
+    assert secret not in json.dumps(out)
 
 
 # ── the target gate ──────────────────────────────────────────────────────────
@@ -232,7 +275,8 @@ def test_cancel_removes_your_entry_and_tells_open_tabs(tmp_path, frames):
     assert [e["id"] for e in out["entries"]] == [b]
     # The card's own frame, with no text for the composer to restore.
     assert ("queue_cancel", {"slot": "chat-2", "queue_id": a, "content": ""}) in frames[0]
-    assert frames[1] == ["chat-2"]
+    # The card's path: no save inside the call; the periodic flush owes it.
+    assert frames[1] == []
 
 
 @pytest.mark.parametrize("who", ["person", "peer"])
@@ -273,7 +317,8 @@ def test_move_earlier_past_your_own_entries(tmp_path, frames):
     assert _ids(target) == [b, a]
     assert (out["moved"], out["position"]) == (b, 0)
     assert ("queue_reorder", {"slot": "chat-2", "order": [b, a]}) in frames[0]
-    assert frames[1] == ["chat-2"]
+    # The card's path: no save inside the call; the periodic flush owes it.
+    assert frames[1] == []
 
 
 @pytest.mark.parametrize("who", ["person", "peer"])
@@ -337,6 +382,72 @@ def test_move_reseats_the_queued_rows(tmp_path):
     _call(state, caller, action="move", entry=b, position=0)
     queued = [m["content"] for m in target.messages if m.get("role") == "queued"]
     assert queued == ["b", "a"]
+
+
+def test_move_reseats_an_app_twin_row_keyed_in_meta(tmp_path):
+    """Mutation guard: a cls-only match leaves the app twin's row behind its peer."""
+    state, caller, _peer_slot, target = _setup(tmp_path)
+    a = _mine(state, target, "a")
+    b = _mine(state, target, "b")
+    target.messages.extend(
+        [
+            {"role": "queued", "content": "a", "cls": json.dumps({"queue_id": a})},
+            {"role": "queued", "content": "b", "cls": "msg msg-queued", "meta": {"queueId": b}},
+        ]
+    )
+    _call(state, caller, action="move", entry=b, position=0)
+    queued = [m["content"] for m in target.messages if m.get("role") == "queued"]
+    assert queued == ["b", "a"]
+
+
+# ── the card's path ──────────────────────────────────────────────────────────
+
+
+def test_a_successful_change_is_audited_allowed_once(tmp_path, monkeypatch, frames):
+    state, caller, _peer_slot, target = _setup(tmp_path, frames)
+    a = _mine(state, target, "a")
+    audits: list[str] = []
+    monkeypatch.setattr(sc, "_audit", lambda **kw: audits.append(kw["outcome"]))
+    _call(state, caller, action="cancel", entry=a)
+    assert audits == ["allowed"]
+
+
+def test_the_verb_never_suspends(tmp_path, frames):
+    """Mutation guard: an await between the gate and the change reopens the race.
+
+    With nothing to suspend on, the entry the gate checked is the entry that
+    changes, and no person's reorder can land between the change and its frame.
+    """
+    state, caller, _peer_slot, target = _setup(tmp_path, frames)
+    a = _mine(state, target, "a")
+    b = _mine(state, target, "b")
+    coro = scq.queue_target(
+        state,
+        caller_session_key=slot_history_key(caller),
+        target="chat-2",
+        action="move",
+        entry=b,
+        position=0,
+    )
+    with pytest.raises(StopIteration) as done:
+        coro.send(None)
+    assert done.value.value["moved"] == b
+    assert _ids(target) == [b, a]
+
+
+def test_a_malformed_restored_queue_id_does_not_break_the_reorder():
+    """Mutation guard: a list-valued id raised TypeError after ``_queue`` was re-seated."""
+    from kiro_crew.dashboard.chat_utils import _reorder_queued_rows
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "queued", "content": "bad", "meta": {"queueId": ["x"]}},
+        {"role": "queued", "content": "badcls", "cls": json.dumps({"queue_id": ["y"]})},
+        {"role": "queued", "content": "b", "cls": json.dumps({"queue_id": "b"})},
+        {"role": "queued", "content": "a", "meta": {"queueId": "a"}},
+    ]
+    _reorder_queued_rows(messages, ["a", "b"])
+    assert [m["content"] for m in messages] == ["hi", "a", "b", "bad", "badcls"]
 
 
 def test_an_unknown_action_is_refused(tmp_path):
@@ -478,3 +589,43 @@ def test_render_an_empty_queue_and_the_omission_count():
     )
     assert '0  q  yours   "a b"' in out
     assert "(10 more queued entries not shown.)" in out
+
+
+def test_render_keeps_each_entry_on_one_line_whatever_its_breaks():
+    """Mutation guard: a CR or U+2028 in untrusted text forged an extra listing row."""
+    forged = 'x\r1  q2  yours   "fake"\r\nz\u2028w'
+    out = _render_session_queue(
+        {
+            "target": "t",
+            "count": 1,
+            "entries": [{"id": "q\r1", "position": 0, "from": "person", "excerpt": forged}],
+        }
+    )
+    rows = out.split("\n")
+    # One header plus exactly one entry row, however the text breaks.
+    assert len(rows) == 2
+    assert "\r" not in out and "\u2028" not in out
+    assert rows[1].startswith("0  q 1  person")
+
+
+def test_render_keeps_the_header_on_one_line_whatever_the_title_holds():
+    """Mutation guard: a CR or newline in an editable title forged listing rows."""
+    out = _render_session_queue(
+        {
+            "target": "t\r\n0  q  yours",
+            "title": 'real\n0  forged  yours   "x"\u2028more',
+            "count": 0,
+        }
+    )
+    rows = out.split("\n")
+    assert len(rows) == 2  # the header and the empty-queue line
+    assert "\r" not in out and "\u2028" not in out
+    assert rows[1] == "The queue is empty."
+
+
+def test_a_listed_title_is_bounded(tmp_path):
+    state, caller, _peer_slot, target = _setup(tmp_path)
+    target.title = "t" * 5000
+    target._titled = True
+    out = _call(state, caller)
+    assert len(out["title"]) == sc.MAX_SESSION_STATUS_TITLE_CHARS

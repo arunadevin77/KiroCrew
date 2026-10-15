@@ -78,7 +78,14 @@ a new row in `_session_tools()`, its body, and its schema in
 **Two verbs here write into another session's conversation: `session_send` and
 `session_broadcast`.** Reading returns a transcript tail, stopping cancels a turn
 the way the Stop button does, creating opens an empty session, and sending
-delivers a message that the target runs as its next turn. Delivery is the
+delivers a message that the target runs as its next turn. `session_queue` adds
+no new content to the target: its `cancel` and `move` arms remove or reorder an
+entry already in the target's queue, and the queued transcript row that mirrors
+it, and only for entries the caller itself queued. Both arms take the queue
+card's own path (`DELETE .../queue/{id}`, `PUT .../queue/order`): the change
+lands in memory, the same tab frame is broadcast, and the periodic flush saves
+it, so the verb makes no durability promise the card does not. Nothing in
+`queue_target` suspends between the gate and the reply. Delivery is the
 sharpest verb and is bounded accordingly: the body is redacted through
 `sanitize_outbound` before it is persisted, it is prefixed with a `[sent by
 session <caller> via <verb>]` envelope so the target's transcript can never

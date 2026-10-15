@@ -18,6 +18,7 @@ from aiohttp import web
 
 from kiro_crew import conductor_patrol, session_ledger
 from kiro_crew.dashboard import session_control as sc
+from kiro_crew.dashboard import session_control_queue as scq
 from kiro_crew.dashboard.handlers._shared import (
     _read_session_key,
     internal_memory_scope,
@@ -839,7 +840,7 @@ async def api_session_control_queue(request: web.Request) -> web.Response:
         # After the body read, like `summary`: `queue_target` is synchronous from
         # its gate to its write, so this is the last suspension before the gate.
         await sc.prewarm_enabled_check()
-        result = sc.queue_target(
+        result = await scq.queue_target(
             state,
             caller_session_key=_read_session_key(request),
             target=target,
