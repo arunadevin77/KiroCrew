@@ -4,7 +4,10 @@ The gateway is split by responsibility across the modules of this package, and
 ``kiro_crew.slack.gateway`` stays its only import path and its only patch surface:
 nothing but the facade imports an owner.
 
-Each owner holds functions and classes taken verbatim from the one-module gateway.
+Each owner holds the gateway's functions and classes, moved verbatim or, for the cron
+callback, cut out of its closure with only re-plumbing edits (closure inputs become
+parameters, calls to former closures become ``self.`` calls); the list is in
+``docs/system-specs/modules/slack-gateway.md`` (Composition).
 A function whose first parameter is ``self`` is an orchestrator method: the facade
 binds it as the ``GatewayOrchestrator`` attribute of the same name, so every call
 site, ``patch.object`` target, ``GatewayOrchestrator.__new__`` fixture and unbound

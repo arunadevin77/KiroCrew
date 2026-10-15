@@ -522,6 +522,83 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
             "(cfg: 'KiroCrewConfig', *, no_dashboard: 'bool' = False, no_crons: 'bool' = False, no_tunnel: 'bool' = False, no_open: 'bool' = False, port_override: 'str | None' = None, json_ready: 'bool' = False, approval_mode: 'str | None' = None, test_mode: 'bool' = False) -> 'None'",
         ),
     ),
+    # The cron decomposition: _init_cron and the four failure-alert helpers keep their
+    # BASE shapes; the other twelve are the phases cut out of _init_cron's closure.
+    "cron_fire": (
+        ("_init_cron", "async method", "(self, *, arm: 'bool' = True) -> 'None'"),
+        ("_cron_capture", "async method", "(self, job: 'CronJob') -> '_CronCapture'"),
+        (
+            "_resolve_cron_agent",
+            "method",
+            "(self, cron_execution: 'ExecutionContext', alias: 'str | None', *, template_namespace: 'bool' = False, sequence_step: 'bool' = False) -> \"'tuple[str | None, str | None, str | None]'\"",
+        ),
+        (
+            "_acquire_with_model_fallback",
+            "async method",
+            "(self, job: 'CronJob', cron_execution: 'ExecutionContext', key: 'str', agent_id: 'str | None', cwd: 'str | None' = None, crew_agent: 'str | None' = None, *, execution: 'ExecutionContext | None' = None, replace_execution: 'bool' = False) -> \"'tuple[LLMProvider, bool, bool, bool]'\"",
+        ),
+        (
+            "_retained_session_agent_mismatch",
+            "method",
+            "(self, job: 'CronJob', key: 'str', agent: 'str | None') -> 'str | None'",
+        ),
+    ),
+    "cron_exec": (
+        ("_cron_run_command", "async method", "(self, job: 'CronJob') -> 'str | None'"),
+        (
+            "_deliver_script_result",
+            "async method",
+            "(self, job: 'CronJob', message: 'str', *, remove: 'bool' = False) -> 'None'",
+        ),
+        ("_cron_run_script", "async method", "(self, job: 'CronJob') -> 'str | None'"),
+    ),
+    "cron_turn": (
+        (
+            "_cron_run_sequence",
+            "async method",
+            "(self, job: 'CronJob', cap: '_CronCapture') -> 'str | None'",
+        ),
+        (
+            "_cron_run_single",
+            "async method",
+            "(self, job: 'CronJob', cap: '_CronCapture', *, retry: 'Callable[[CronJob], Awaitable[str | None]]') -> 'str | None'",
+        ),
+    ),
+    "cron_delivery": (
+        (
+            "_deliver_cron_agent_result",
+            "async method",
+            "(self, job: 'CronJob', session_key: 'str', client: 'LLMProvider', result_text: 'str', rh: 'str', _ctx_reading: 'Any', _turn_stats: 'dict[str, Any] | None') -> 'str'",
+        ),
+    ),
+    "cron_failure": (
+        (
+            "_failure_alert_is_duplicate",
+            "method",
+            "(self, job: 'CronJob', failure_hash: 'str') -> 'bool'",
+        ),
+        ("_slack_safe_fenced", "method", "(self, text: 'str') -> 'str'"),
+        (
+            "_deliver_failure_alert",
+            "async method",
+            "(self, job: 'CronJob', *, mrkdwn: 'str', plain: 'str', actor_key: 'str', silent: 'bool' = False) -> 'tuple[bool, bool, bool]'",
+        ),
+        (
+            "_advance_failure_dedup",
+            "method",
+            "(self, job: 'CronJob', failure_hash: 'str', *, channel_delivered: 'bool', slack_failed: 'bool') -> 'None'",
+        ),
+        (
+            "_alert_cron_failure",
+            "async method",
+            "(self, job: 'CronJob', detail: 'str', *, denied: 'bool' = False) -> 'None'",
+        ),
+        (
+            "_cron_single_failure",
+            "async method",
+            "(self, job: 'CronJob', exc: 'Exception', session_key: 'str', _gate_counted: 'bool', _job_owns_failure: 'bool', _hand_over_streak: 'bool') -> 'None'",
+        ),
+    ),
 }
 
 
@@ -944,8 +1021,8 @@ def test_a_fresh_facade_import_loads_every_owner(tmp_path: Path) -> None:
 #: it, so each set is exact; a set changes in the commit that points the token's
 #: guards at its new home (``slack-gateway.md``, Composition).
 _GUARDED_TOKEN_HOMES: dict[str, frozenset[str]] = {
-    "persist_token_record": frozenset({"gateway", "heartbeat_turns"}),
-    ".read_messages": frozenset({"gateway", "nudge_wiring"}),
+    "persist_token_record": frozenset({"cron_turn", "gateway", "heartbeat_turns"}),
+    ".read_messages": frozenset({"cron_delivery", "nudge_wiring"}),
     "begin_turn": frozenset({"nudge_channel_fire"}),
     "os._exit": frozenset({"exit_path"}),
     "save_conversation_turn_off_loop": frozenset({"gateway", "nudge_channel_fire"}),
@@ -954,26 +1031,32 @@ _GUARDED_TOKEN_HOMES: dict[str, frozenset[str]] = {
     "isolated_python_argv": frozenset({"install_repair", "update_apply"}),
     "respawn_executable": frozenset({"update_apply", "update_schedule"}),
     "reexec_python_module": frozenset({"update_schedule"}),
-    "_running_script_ids.add": frozenset({"gateway"}),
+    "_running_script_ids.add": frozenset({"cron_exec"}),
     "caused_by_this_session": frozenset({"gateway"}),
     "note_shared_death": frozenset({"gateway"}),
     "clear_marker": frozenset({"exit_path"}),
     "init_socket_mode": frozenset({"service_boot"}),
-    "build_message": frozenset({"gateway", "heartbeat_turns", "nudge_channel_fire"}),
+    "build_message": frozenset(
+        {"cron_fire", "cron_turn", "gateway", "heartbeat_turns", "nudge_channel_fire"}
+    ),
     "VectorMemoryStore": frozenset({"gateway", "service_boot"}),
     "configure_default_ladder": frozenset({"gateway"}),
     "eventlog_hooks": frozenset({"exit_path", "nudge_wiring", "service_boot"}),
     "autonudge_state": frozenset({"nudge_wiring"}),
-    "_run_chat": frozenset({"gateway", "nudge_dashboard_fire", "result_egress"}),
-    "spawn_guarded_turn": frozenset({"gateway", "nudge_dashboard_fire"}),
+    "_run_chat": frozenset(
+        {"cron_exec", "cron_fire", "gateway", "nudge_dashboard_fire", "result_egress"}
+    ),
+    "spawn_guarded_turn": frozenset({"cron_exec", "gateway", "nudge_dashboard_fire"}),
     "compose_nudge_body": frozenset({"gateway", "nudge_channel_fire", "nudge_dashboard_fire"}),
-    "clear_shared_deaths": frozenset({"gateway"}),
-    "run_in_cron_pool(": frozenset({"gateway"}),
-    "consecutive_failures": frozenset({"gateway"}),
+    "clear_shared_deaths": frozenset({"cron_exec", "gateway"}),
+    "run_in_cron_pool(": frozenset({"cron_exec"}),
+    "consecutive_failures": frozenset({"cron_exec", "cron_failure", "cron_turn", "gateway"}),
     "_delivery_queued": frozenset({"gateway"}),
     "_digest_held": frozenset({"gateway"}),
-    "_deliver_failure_alert": frozenset({"gateway"}),
-    "render_for_slack(": frozenset({"gateway", "nudge_channel_fire", "result_egress"}),
+    "_deliver_failure_alert": frozenset({"cron_failure", "gateway"}),
+    "render_for_slack(": frozenset(
+        {"cron_delivery", "gateway", "nudge_channel_fire", "result_egress"}
+    ),
 }
 
 

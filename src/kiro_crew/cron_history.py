@@ -566,7 +566,7 @@ class CronHistoryStore:
         #
         # One boundary this does not reach: a command cron's failure path caps
         # the JOB FIELD it writes (``job.last_error = err_str[:200]`` in
-        # slack/gateway.py), which is a registry-size decision about crons.json,
+        # slack/gateway_runtime/cron_exec.py), which is a registry-size decision about crons.json,
         # not a decision about this record. The recorder still passes that field
         # over whole, so such a summary is simply as long as the field it came
         # from. Lifting that cap belongs to whoever owns the registry's size.

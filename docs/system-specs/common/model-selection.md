@@ -568,7 +568,7 @@ its own once the cache refreshes with a list that carries it.
   A startup pin that a kiro session withholds because the account does not serve
   it (`AcpClient._apply_startup_model` on the dedicated runtime, the kiro start in
   `providers/acp_runtime_start.py` on the shared one) is recorded in `model_pin_refused` the same
-  way, so the cron acquire step in `slack/gateway.py` annotates the result and
+  way, so the cron acquire step in `slack/gateway_runtime/cron_fire.py` annotates the result and
   blanks the pinned model on the usage row instead of billing a model that never ran.
   Both refusals carry `advertised_but_refused` from the same verdict, which selects
   the adapter-mismatch wording; `AcpModelUnavailable` requires `backend=` and shows

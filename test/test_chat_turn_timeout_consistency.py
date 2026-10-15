@@ -6,7 +6,7 @@ was later hoisted to a shared constant and added to chat_runner.py's
 queue-drain path, but the primary user-typed turn (chat_handlers.py), the
 cron injection path (handlers/messaging.py), the Slack/dashboard nudge path
 (slack/gateway.py:_handle_nudge), and the cron-script delivery path
-(slack/gateway.py:_deliver_script_result) remained unwrapped — depending on
+(slack/gateway_runtime/cron_exec.py:_deliver_script_result) remained unwrapped — depending on
 the inner ACP _DEFAULT_PROMPT_TIMEOUT (14400s) instead.
 
 This module verifies the cap value is correct AND that all helper-visible
@@ -30,10 +30,13 @@ import ast
 from pathlib import Path
 
 _CHAT_API = Path(__file__).resolve().parent.parent / "src" / "kiro_crew" / "dashboard" / "chat_api"
+_GATEWAY_RUNTIME = (
+    Path(__file__).resolve().parent.parent / "src" / "kiro_crew" / "slack" / "gateway_runtime"
+)
 
 # Source files known to contain ``_run_chat`` dispatches.  When a new
-# dispatch site lands in another file, add it here. The chat handlers are
-# scanned whole: the facade and every ``chat_api`` owner it composes.
+# dispatch site lands in another file, add it here. The chat handlers and the
+# Slack gateway are scanned whole: each facade and every owner it composes.
 _DISPATCH_FILES = (
     "src/kiro_crew/dashboard/chat_handlers.py",
     *(f"src/kiro_crew/dashboard/chat_api/{path.name}" for path in sorted(_CHAT_API.glob("*.py"))),
@@ -47,8 +50,10 @@ _DISPATCH_FILES = (
     "src/kiro_crew/dashboard/chat_runner.py",
     "src/kiro_crew/dashboard/handlers/messaging.py",
     "src/kiro_crew/slack/gateway.py",
-    "src/kiro_crew/slack/gateway_runtime/nudge_dashboard_fire.py",
-    "src/kiro_crew/slack/gateway_runtime/result_egress.py",
+    *(
+        f"src/kiro_crew/slack/gateway_runtime/{path.name}"
+        for path in sorted(_GATEWAY_RUNTIME.glob("*.py"))
+    ),
 )
 
 

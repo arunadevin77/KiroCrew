@@ -1953,8 +1953,8 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # fallback-served warning line ONCE, centrally, so every consumer gets
         # the same safe text. They own no output — the scrubbed text reaches a
         # human only through the delivering surfaces (the cron/heartbeat alert
-        # paths in slack/gateway.py and the sub-agent completion path in
-        # subagent.py), which are the registered sinks.
+        # paths composed into slack/gateway.py and the sub-agent completion path
+        # in subagent.py), which are the registered sinks.
         "llm_helpers.py",
         # Shared in-band deny-notice builder: redacts the provider-authored tool
         # title ONCE, centrally, before the notice is steered back into the
@@ -2455,9 +2455,14 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # The owners composed into slack/gateway.py, in the same class as that
         # facade: they redact the install-repair, update and boot logs, the
         # AutoNudge notices, the nudge and heartbeat turns' posted replies, the
-        # approval prompts and the unattended results they deliver, and
-        # slack/gateway.py stays the registered "Slack cron / notification posts"
-        # sink for all of it, so the split adds no egress path of its own.
+        # approval prompts, the cron runs' results and failure alerts and the
+        # unattended results they deliver, and slack/gateway.py stays the
+        # registered "Slack cron / notification posts" sink for all of it, so the
+        # split adds no egress path of its own.
+        "slack/gateway_runtime/cron_delivery.py",
+        "slack/gateway_runtime/cron_exec.py",
+        "slack/gateway_runtime/cron_failure.py",
+        "slack/gateway_runtime/cron_fire.py",
         "slack/gateway_runtime/heartbeat_turns.py",
         "slack/gateway_runtime/install_repair.py",
         "slack/gateway_runtime/nudge_channel_fire.py",

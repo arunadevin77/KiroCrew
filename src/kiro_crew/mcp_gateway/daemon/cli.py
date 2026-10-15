@@ -250,7 +250,7 @@ async def _amain(argv: Optional[list[str]] = None) -> int:
     hb_task = asyncio.create_task(_heartbeat(), name="mcp-gateway-heartbeat")
 
     # Fill the sandbox probe cache BEFORE any backend is spawned on-loop. See the
-    # matching site in slack/gateway.py: the wait is what makes the guarantee
+    # matching site in slack/gateway_runtime/service_boot.py: the wait is what makes the guarantee
     # hold, since a fire-and-forget prewarm leaves the first spawn racing the
     # warm thread and reading a cold-cache transient as "no sandbox backend".
     try:

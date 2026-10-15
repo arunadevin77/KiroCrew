@@ -585,9 +585,14 @@ class TestAnOverlappingWakeCostsNoFailureStrike:
 
     def test_the_consumer_treats_skipped_as_non_counting(self):
         """The status is inert unless the consumer honours it -- pin that too."""
-        gateway = pathlib.Path(
-            importlib.import_module("kiro_crew.slack.gateway").__file__
-        ).read_text(encoding="utf-8")
+        slack_dir = pathlib.Path(importlib.import_module("kiro_crew.slack.gateway").__file__).parent
+        gateway = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [
+                slack_dir / "gateway.py",
+                *sorted((slack_dir / "gateway_runtime").glob("*.py")),
+            ]
+        )
         # Both cron dispatch paths must intercept it before the strike branch.
         assert gateway.count('== "skipped"') == 2
 
@@ -609,8 +614,13 @@ class TestARefusedOverlapIsNotPersistedAsASuccessfulRun:
     """
 
     def _dispatch_source(self) -> str:
-        return pathlib.Path(importlib.import_module("kiro_crew.slack.gateway").__file__).read_text(
-            encoding="utf-8"
+        slack_dir = pathlib.Path(importlib.import_module("kiro_crew.slack.gateway").__file__).parent
+        return "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [
+                slack_dir / "gateway.py",
+                *sorted((slack_dir / "gateway_runtime").glob("*.py")),
+            ]
         )
 
     def _skipped_branches(self, source: str) -> list[str]:

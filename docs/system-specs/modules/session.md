@@ -623,7 +623,7 @@ retirement machinery detects and recycles them, in `session_lifecycle.py`
 `chat_runner.py` (`_retire_sessions_on_identity_change`), against baselines
 owned by `KiroPrerequisiteService`. The gate runs before each dashboard chat
 turn acquires its session (`_run_chat`) and before each agent cron run does
-(`_acquire_with_model_fallback` in `slack/gateway.py`, every `agent_sequence`
+(`_acquire_with_model_fallback` in `slack/gateway_runtime/cron_fire.py`, every `agent_sequence`
 step included). A `cron:` key never claims a warm-pool process
 (`bypass_stateless`), so the child that can still hold the previous account is
 the cron's own session: a fire whose sub-agents are still running skips the
@@ -2820,7 +2820,7 @@ The reset needs the surface's own session manager and the re-run needs its own o
 | Dashboard chat | `chat_runner` AcpError arm, queued replay with Stop guards |
 | Slack thread | `handler._replay_abandoned`, the nested replay |
 | Channel agent | `_stream_task` verdict into `_recover_busy_agent` |
-| Cron, one agent | `_cron_callback` ACP-death reset-and-retry arm |
+| Cron, one agent | `_cron_run_single` ACP-death reset-and-retry arm (`slack/gateway_runtime/cron_turn.py`) |
 | Cron, sequence step | one-shot re-run of the step |
 | Subagent completion into a parent | `_inject_with_retry`, reset and re-claim |
 | Subagent run | `_schedule_cancel_recovery(reason="session_not_found")` |

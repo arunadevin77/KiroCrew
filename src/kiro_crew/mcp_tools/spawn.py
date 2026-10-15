@@ -905,7 +905,7 @@ def spawn_run(name: str, args: dict[str, Any]) -> str | DeferredTool:
     errors: list[str] = []
     transport_errors: list[str] = []
     # Forward this session's own approval_mode (set as an env var at
-    # process spawn -- see gateway.py cron dispatch, mirroring
+    # process spawn -- see _cron_extra_env in slack/gateway_runtime/cron_fire.py, mirroring
     # KIROCREW_SESSION_KEY/KIROCREW_CHANNEL_ID) so a cron running with
     # approval_mode="auto" deterministically auto-approves its own
     # spawn_run subagent launches. Without this, SubagentManager.spawn's

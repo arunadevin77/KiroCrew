@@ -1836,7 +1836,10 @@ async def callback(job):
                 ("subagents.pending_work_count",),
             ),
             "cron": (
-                [root / "slack" / "gateway.py"],
+                [
+                    root / "slack" / "gateway.py",
+                    *sorted((root / "slack" / "gateway_runtime").glob("*.py")),
+                ],
                 2,
                 ("len(self._running_script_ids)",),
             ),

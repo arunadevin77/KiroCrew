@@ -98,7 +98,8 @@ EXPECTED_SITES = {
     # persist emit (default True) would mis-file a linked-channel turn under the
     # slot's `dashboard` key.
     "dashboard/handlers/hooks.py": 1,
-    "slack/gateway.py": 2,  # 2 cron
+    "slack/gateway.py": 0,  # the facade: its owners persist the gateway's rows
+    "slack/gateway_runtime/cron_turn.py": 2,  # 2 cron
     "slack/gateway_runtime/heartbeat_turns.py": 1,  # _persist_turn_row helper
     # (the helper is the single call site for
     # heartbeat + its timeout + monitor + its

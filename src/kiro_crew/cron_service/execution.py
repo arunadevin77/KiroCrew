@@ -56,7 +56,8 @@ def _pool_queue_allowance(job: CronJob | None) -> int:
     armed, spending an execution budget it has no allowance to cover; the fix
     for that belongs at the gate's dispatch, not in a wider deadline here, since
     widening would also delay the wedged-delivery backstop for runs that never
-    queue at all. See the gate sites in slack/gateway.py.
+    queue at all. See the gate sites in slack/gateway_runtime/cron_fire.py and
+    cron_exec.py.
     """
     if job is None:
         return 0

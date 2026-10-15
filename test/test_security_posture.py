@@ -288,10 +288,11 @@ _BASELINE_LOG_SITE_CENSUS: dict[str, int] = {
     "mcp_tools/skills.py": 2,
     "messaging/sessions_view.py": 1,
     "slack/events.py": 2,
-    "slack/gateway.py": 2,
-    # Owners composed into slack/gateway.py (boot-time install repair, the
-    # unattended result delivery, the tool-approval callbacks): the same gateway
-    # process as the facade's own sites.
+    "slack/gateway.py": 1,
+    # Owners composed into slack/gateway.py (the cron script arm, boot-time install
+    # repair, the unattended result delivery, the tool-approval callbacks): the
+    # same gateway process as the facade's own sites.
+    "slack/gateway_runtime/cron_exec.py": 1,
     "slack/gateway_runtime/install_repair.py": 2,
     "slack/gateway_runtime/result_egress.py": 1,
     "slack/gateway_runtime/turn_approvals.py": 2,

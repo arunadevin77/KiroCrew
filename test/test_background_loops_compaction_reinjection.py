@@ -2,7 +2,7 @@
 
 ``session_compaction`` marks ``needs_reinjection`` on a live session after an
 in-place compaction dropped its session-start context. The two cron turn loops in
-``slack/gateway.py`` (single-agent and ``agent_sequence``) and the task runner's
+``slack/gateway_runtime/cron_turn.py`` (single-agent and ``agent_sequence``) and the task runner's
 ``execute_task`` loop are their own copies of the turn loop, so each must
 read-and-clear the flag itself, forward it to ``build_message``, and put it back
 when the turn that consumed it never lands -- the contract the dashboard runner

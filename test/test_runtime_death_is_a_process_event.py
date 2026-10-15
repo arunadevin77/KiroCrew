@@ -480,6 +480,170 @@ def _names_ever_given_a_real_value(tree: ast.AST) -> set[str]:
     return real
 
 
+#: The Slack gateway's facade and the owners composed onto its globals, read as ONE
+#: unit: a function there that asks the predicate about a parameter is filled only
+#: by its callers, and those callers live in other files of the same unit.
+_GATEWAY_UNIT = (
+    _SRC / "slack" / "gateway.py",
+    *sorted((_SRC / "slack" / "gateway_runtime").glob("*.py")),
+)
+#: How many caller-to-callee hops a parameter subject may be followed through.
+_FILL_DEPTH = 6
+
+
+def _scope_real_names(fn: ast.AST) -> set[str]:
+    """Names *fn* itself assigns a real value, not counting nested functions."""
+    own: list[ast.stmt] = []
+    stack = list(ast.iter_child_nodes(fn))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            own.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return _names_ever_given_a_real_value(ast.Module(body=own, type_ignores=[]))
+
+
+def _param_names(fn: ast.AST) -> list[str]:
+    args = fn.args
+    return [a.arg for a in list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)]
+
+
+def _unit_dead_subjects(sources: dict[str, str]) -> tuple[int, list[str]]:
+    """``(subjects checked, dead subjects)`` for files read as one unit.
+
+    A subject the asking function assigns, or one given a real value anywhere in the
+    unit, is filled as in the per-file rule. A subject that is a PARAMETER of the
+    asking function is filled only when every call of that function in the unit
+    passes, for it, a name the calling function assigns a real value or itself
+    receives as a parameter that is filled the same way (followed through at most
+    ``_FILL_DEPTH`` callers). A function no call in the unit reaches fills nothing,
+    and neither does one the unit reaches by a route the calls cannot be read
+    through: a ``getattr`` naming it, or an assignment binding it under another name.
+
+    An attribute call's arguments start at the function's first parameter, except
+    on a ``self.`` or ``cls.`` receiver, where Python binds that parameter itself.
+    """
+    trees = {name: ast.parse(src) for name, src in sources.items()}
+    parents: dict[ast.AST, ast.AST] = {}
+    functions: list[ast.AST] = []
+    calls: list[ast.Call] = []
+    assigns: list[ast.Assign] = []
+    unit_real: set[str] = set()
+    for tree in trees.values():
+        unit_real |= _names_ever_given_a_real_value(tree)
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                functions.append(node)
+            elif isinstance(node, ast.Call):
+                calls.append(node)
+            elif isinstance(node, ast.Assign):
+                assigns.append(node)
+
+    def enclosing(node: ast.AST) -> list[ast.AST]:
+        chain = []
+        cur = parents.get(node)
+        while cur is not None:
+            if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                chain.append(cur)
+            cur = parents.get(cur)
+        return chain
+
+    def calls_of(fn: ast.AST) -> list[ast.Call]:
+        return [
+            c
+            for c in calls
+            if (isinstance(c.func, ast.Name) and c.func.id == fn.name)
+            or (isinstance(c.func, ast.Attribute) and c.func.attr == fn.name)
+        ]
+
+    def reached_unreadably(fn: ast.AST) -> bool:
+        """Whether a ``getattr`` or an alias assignment reaches *fn*."""
+        for call in calls:
+            if (
+                isinstance(call.func, ast.Name)
+                and call.func.id == "getattr"
+                and len(call.args) >= 2
+                and isinstance(call.args[1], ast.Constant)
+                and call.args[1].value == fn.name
+            ):
+                return True
+        for node in assigns:
+            value = node.value
+            named = (isinstance(value, ast.Name) and value.id == fn.name) or (
+                isinstance(value, ast.Attribute) and value.attr == fn.name
+            )
+            # A binding under the function's own name (the class body's
+            # ``name = _owner.name``) is reached by the same calls; any other
+            # name is an alias whose calls this scan does not follow.
+            if named and any(
+                not (isinstance(t, ast.Name) and t.id == fn.name) for t in node.targets
+            ):
+                return True
+        return False
+
+    def name_filled(node: ast.AST, name: str, depth: int) -> bool:
+        for scope in enclosing(node):
+            if name in _scope_real_names(scope):
+                return True
+            if name in _param_names(scope):
+                return param_filled(scope, name, depth + 1)
+        return False
+
+    def param_filled(fn: ast.AST, name: str, depth: int) -> bool:
+        if depth > _FILL_DEPTH:
+            return False
+        sites = calls_of(fn)
+        if not sites or reached_unreadably(fn):
+            return False
+        params = _param_names(fn)
+        for call in sites:
+            receiver = call.func.value if isinstance(call.func, ast.Attribute) else None
+            bound = (
+                isinstance(receiver, ast.Name)
+                and receiver.id in ("self", "cls")
+                and params[:1] in (["self"], ["cls"])
+            )
+            index = params.index(name) - (1 if bound else 0)
+            passed = None
+            if name in [a.arg for a in fn.args.posonlyargs + fn.args.args] and 0 <= index < len(
+                call.args
+            ):
+                passed = call.args[index]
+            for kw in call.keywords:
+                if kw.arg == name:
+                    passed = kw.value
+            if not isinstance(passed, ast.Name) or not name_filled(call, passed.id, depth):
+                return False
+        return True
+
+    checked = 0
+    dead: list[str] = []
+    for file_name, tree in trees.items():
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "caused_by_this_session"
+                and node.args
+                and isinstance(node.args[0], ast.Name)
+            ):
+                continue
+            checked += 1
+            subject = node.args[0].id
+            asker = enclosing(node)
+            if asker and subject in _param_names(asker[0]):
+                filled = param_filled(asker[0], subject, 0)
+            else:
+                filled = subject in unit_real
+            if not filled:
+                dead.append(f"{file_name}:{subject}")
+    return checked, dead
+
+
 def test_the_guards_subject_is_a_provider_the_turn_actually_obtained():
     """A guard that asks about a variable nothing ever fills is not a guard.
 
@@ -489,10 +653,17 @@ def test_the_guards_subject_is_a_provider_the_turn_actually_obtained():
     into "always charge" while every guard still reads as present, which no
     structural check on the guard alone can see. So each subject name must also be
     assigned a real value somewhere, not only initialised to ``None``.
+
+    The Slack gateway's facade and its composed owners are read as one unit
+    (``_unit_dead_subjects``): there a subject that is a parameter is filled only by
+    what its callers pass.
     """
     checked = 0
     dead: list[str] = []
+    unit = set(_GATEWAY_UNIT)
     for path in sorted(_SRC.rglob("*.py")):
+        if path in unit:
+            continue
         src = path.read_text(encoding="utf-8")
         if "caused_by_this_session" not in src:
             continue
@@ -513,8 +684,107 @@ def test_the_guards_subject_is_a_provider_the_turn_actually_obtained():
             if name in real or name in params:
                 continue
             dead.append(f"{path.name}:{name}")
+    unit_checked, unit_dead = _unit_dead_subjects(
+        {path.name: path.read_text(encoding="utf-8") for path in _GATEWAY_UNIT}
+    )
+    checked += unit_checked
+    dead += unit_dead
     assert checked >= 4, f"only {checked} guard subjects found -- scan is broken"
     assert not dead, f"ownership guard asks about a name nothing ever fills: {dead}"
+
+
+_UNIT_ASKER = (
+    "def charge(job, provider):\n" "    return runtime_death.caused_by_this_session(provider)\n"
+)
+
+
+def test_the_unit_rule_follows_a_parameter_subject_to_the_capture():
+    """Positive control: the caller captures the provider it passes."""
+    turn = "async def run(job):\n    client = await acquire()\n    return charge(job, client)\n"
+
+    assert _unit_dead_subjects({"owner.py": _UNIT_ASKER, "turn.py": turn}) == (1, [])
+
+
+def test_the_unit_rule_fails_when_the_capture_is_gone():
+    """The caller still passes the name, but only ever initialised it to ``None``."""
+    turn = "async def run(job):\n    client = None\n    pass\n    return charge(job, client)\n"
+
+    assert _unit_dead_subjects({"owner.py": _UNIT_ASKER, "turn.py": turn}) == (
+        1,
+        ["owner.py:provider"],
+    )
+
+
+def test_the_unit_rule_fails_on_a_caller_passing_none():
+    turn = "async def run(job):\n    client = await acquire()\n    return charge(job, None)\n"
+
+    assert _unit_dead_subjects({"owner.py": _UNIT_ASKER, "turn.py": turn}) == (
+        1,
+        ["owner.py:provider"],
+    )
+
+
+def test_the_unit_rule_fails_when_nothing_calls_the_asker():
+    assert _unit_dead_subjects({"owner.py": _UNIT_ASKER}) == (1, ["owner.py:provider"])
+
+
+_UNIT_METHOD_ASKER = (
+    "def charge(self, job, provider):\n"
+    "    return runtime_death.caused_by_this_session(provider)\n"
+)
+
+
+@pytest.mark.parametrize(
+    "client,dead",
+    [("await acquire()", []), ("None", ["owner.py:provider"])],
+    ids=["captured", "never-captured"],
+)
+def test_the_unit_rule_reads_a_self_call_past_the_bound_receiver(client: str, dead: list) -> None:
+    turn = (
+        "async def run(self, job):\n"
+        f"    client = {client}\n"
+        "    return self.charge(job, client)\n"
+    )
+
+    assert _unit_dead_subjects({"owner.py": _UNIT_METHOD_ASKER, "turn.py": turn}) == (1, dead)
+
+
+@pytest.mark.parametrize(
+    "client,dead",
+    [("await acquire()", []), ("None", ["owner.py:provider"])],
+    ids=["captured", "never-captured"],
+)
+def test_the_unit_rule_reads_an_explicit_self_call_from_its_first_argument(
+    client: str, dead: list
+) -> None:
+    turn = (
+        "async def run(self, job):\n"
+        f"    client = {client}\n"
+        "    return Orchestrator.charge(self, job, client)\n"
+    )
+
+    assert _unit_dead_subjects({"owner.py": _UNIT_METHOD_ASKER, "turn.py": turn}) == (1, dead)
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "    return getattr(self, 'charge')(job, client)\n",
+        "    fire = self.charge\n    return fire(job, client)\n",
+    ],
+    ids=["getattr", "alias"],
+)
+def test_the_unit_rule_fails_closed_on_a_route_it_cannot_read(route: str) -> None:
+    turn = "async def run(self, job):\n    client = await acquire()\n" + route
+    owner = (
+        _UNIT_METHOD_ASKER
+        + "\n\nasync def direct(self, job):\n    client = await acquire()\n    return self.charge(job, client)\n"
+    )
+
+    assert _unit_dead_subjects({"owner.py": owner, "turn.py": turn}) == (
+        1,
+        ["owner.py:provider"],
+    )
 
 
 def test_the_shared_streak_is_never_bound_as_a_budget():
@@ -692,17 +962,20 @@ def test_the_cron_streak_is_keyed_to_the_job_not_the_run():
     to the run, the streak could never exceed 1 and auto-pause would be disabled
     for exactly the jobs whose runtime keeps dying.
     """
-    src = (_SRC / "slack" / "gateway.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
     subjects: list[str] = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in {"note_shared_death", "clear_shared_deaths"}
-            and node.args
-        ):
-            subjects.append(ast.unparse(node.args[0]))
+    for path in [
+        _SRC / "slack" / "gateway.py",
+        *sorted((_SRC / "slack" / "gateway_runtime").glob("*.py")),
+    ]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"note_shared_death", "clear_shared_deaths"}
+                and node.args
+            ):
+                subjects.append(ast.unparse(node.args[0]))
     assert subjects, "no shared-death call found in the cron path -- scan is broken"
     for got in subjects:
         assert "job.id" in got, f"cron shared-death streak keyed to {got!r}, not the job"

@@ -649,7 +649,8 @@ class TestVettingHoldsAtClaimTime:
     def test_the_message_arm_has_no_pool_queue_between_vet_and_dispatch(self):
         """Disposition for the third gate site, by measurement not assertion.
 
-        ``gateway.py`` has exactly four fire-time gate sites and exactly two
+        The gateway (``gateway.py`` and its owners) has exactly four fire-time
+        gate sites and exactly two
         execution-pool dispatches. Both dispatches sit in the command/script
         blocks, which return before the message gate is reached, and the goal
         check-in gate returns into its hidden turn before either — so neither
@@ -657,7 +658,21 @@ class TestVettingHoldsAtClaimTime:
         class cannot apply to them. Pinned here so a future dispatch added
         after the message gate fails this test rather than shipping unnoticed.
         """
-        source = Path(gw.__file__).read_text(encoding="utf-8")
+        slack_dir = Path(gw.__file__).resolve().parent
+        runtime = slack_dir / "gateway_runtime"
+        # The message arm runs on from its gate in cron_fire.py through cron_turn.py,
+        # cron_delivery.py and cron_failure.py, so those, then the facade, come last.
+        message_path = [
+            runtime / f"{n}.py" for n in ("cron_fire", "cron_turn", "cron_delivery", "cron_failure")
+        ]
+        source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [
+                *(p for p in sorted(runtime.glob("*.py")) if p not in message_path),
+                *message_path,
+                slack_dir / "gateway.py",
+            ]
+        )
         gate_sites = source.count("await _await_cron_fire_time_gate(")
         pool_sites = source.count("await run_in_cron_pool(")
         assert gate_sites == 4, f"gate-site count changed ({gate_sites}); re-audit the sweep"

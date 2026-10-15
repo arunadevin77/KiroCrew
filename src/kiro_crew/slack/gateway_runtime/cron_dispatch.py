@@ -6,8 +6,8 @@ choosing its own governance, the first-run tab pre-create, the claim-time re-vet
 inside the cron-pool worker with its handoff against an awaiter that gave up, and
 the one-shot post-token CONTINUE resume of an agent turn.
 
-The cron callback that sequences them stays in the facade: the usage-row,
-runtime-death and dispatch-site audits count its call sites there.
+The cron callback that sequences them lives in ``cron_fire.py``, its command and
+script arms in ``cron_exec.py`` and its agent turns in ``cron_turn.py``.
 
 Composed by :mod:`kiro_crew.slack.gateway`, whose globals its functions run on;
 see :mod:`kiro_crew.slack.gateway_runtime`.

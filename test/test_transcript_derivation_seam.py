@@ -125,7 +125,7 @@ PLUMBING: frozenset[tuple[str, str]] = frozenset(
         ("kiro_crew/history_projection.py", "_read_messages_locked"),
         ("kiro_crew/history_projection.py", "_recent_via_tail"),
         ("kiro_crew/history_projection.py", "read_messages_chained"),
-        ("kiro_crew/slack/gateway.py", "read_messages"),
+        ("kiro_crew/slack/gateway_runtime/cron_delivery.py", "read_messages"),
         ("kiro_crew/slack/gateway_runtime/nudge_wiring.py", "read_messages"),
         # A yes/no "does this session already have turns" check on its OWN
         # transcript, gating a write to that transcript; no rows leave.

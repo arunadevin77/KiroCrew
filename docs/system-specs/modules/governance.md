@@ -2079,7 +2079,9 @@ read-your-writes should add it deliberately, with its own tests.
   cron *capability* on/off gate in `mcp_cron._vet_cron_capability_governance`.
   Both run at `cron_add` (authoring) AND again at fire time — for EVERY job
   kind — via the shared `mcp_cron.vet_job_at_fire_time(job)` entry point
-  called from `slack.gateway._cron_callback` immediately before execution:
+  reached through `_await_cron_fire_time_gate` immediately before execution, from
+  `_cron_callback` (`slack/gateway_runtime/cron_fire.py`, the message and goal-reminder
+  gates) and from `_cron_run_command` / `_cron_run_script` (`cron_exec.py`):
   `command` jobs re-run the capability gate + the `commands` ceiling + the
   command-body COMPOSITION scan (`mcp_cron._vet_shell_command`, audited under
   the `cron_command_body` scope), `script`

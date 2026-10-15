@@ -3212,8 +3212,9 @@ lacking them should close the finding, not file it:
 
 An unattended cron run has no inbound message to answer, so its output is
 delivered proactively, and the Slack gateway chooses ONE surface instead of
-broadcasting to every one it can reach. The cron callback and the failure alerts
-in `slack/gateway.py`, and `_deliver_cron_response` and `_deliver_channel_reply` in
+broadcasting to every one it can reach. The cron callback's delivery and failure
+alerts in `slack/gateway_runtime/cron_delivery.py` and `cron_failure.py`, and
+`_deliver_cron_response` and `_deliver_channel_reply` in
 `slack/gateway_runtime/result_egress.py`, choose and redact each leg; the origin and channel-conversation helpers they call are
 `slack/gateway_runtime/delivery.py`. The choice is that a job belongs to the
 conversation that scheduled it: `job.session_key` records the creating session's
