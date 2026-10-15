@@ -120,7 +120,6 @@
 2038 src/kiro_crew/history_search.py
 2857 src/kiro_crew/hooks.py
 6535 src/kiro_crew/instances/ssh_tunnel_manager.py
-4897 src/kiro_crew/kiro_prerequisite.py
 2007 src/kiro_crew/knowledge/ingestion.py
 4540 src/kiro_crew/knowledge/store.py
 3928 src/kiro_crew/llm_helpers.py

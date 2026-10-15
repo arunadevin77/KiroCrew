@@ -2,13 +2,14 @@
 
 The status, update and repair routes and who may read what, and the contract that Kiro
 Crew detects Kiro CLI but never installs it or signs in for the user (including the
-read-only-probe tripwire over ``kiro_prerequisite.py``'s source).
+read-only-probe tripwire over the source of ``kiro_prerequisite.py`` and its owners).
 """
 
 from __future__ import annotations
 
 import asyncio
 import copy
+import importlib
 import inspect
 from pathlib import Path
 from types import SimpleNamespace
@@ -1054,7 +1055,14 @@ class TestKiroCrewNeverSetsUpKiroCli:
     def test_every_spawn_is_a_read_only_probe(self) -> None:
         # Only --version and whoami remain, so no spawn can mutate the user's
         # machine or write a credential.
-        source = Path(prerequisite_module.__file__).read_text(encoding="utf-8")
+        # The facade composes its owners, so its code is the facade's text plus theirs.
+        source = "\n".join(
+            Path(module.__file__).read_text(encoding="utf-8")
+            for module in (
+                prerequisite_module,
+                *map(importlib.import_module, prerequisite_module._OWNERS),
+            )
+        )
         assert '"--version"' in source
         assert '"whoami"' in source
         # Matched as a STANDALONE QUOTED TOKEN, the shape a flag has when it is an
