@@ -373,7 +373,7 @@ describe('Save as new template', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('“default” is reserved for a built-in agent. Pick another name, such as “default-custom”. The crewmate keeps its name; only its template needs a new one.')
+    expect(alert).toHaveTextContent('“default” is reserved for a built-in agent. Pick another name, such as “default-custom”. The mate keeps its name; only its template needs a new one.')
     expect(alert).not.toHaveTextContent('KAS')
     // The dialog stays open with the typed name, so the user can retype.
     expect(screen.getByRole('textbox')).toHaveValue('default')

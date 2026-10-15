@@ -142,7 +142,7 @@ describe('CrewScheduleList states and doors', () => {
     expect(onCreate).toHaveBeenCalledTimes(1)
   })
 
-  it('says in words that nothing wakes the crewmate, with the create door still offered', () => {
+  it('says in words that nothing wakes the mate, with the create door still offered', () => {
     setup([])
     expect(screen.getByTestId('crew-schedule-empty')).toHaveTextContent(/Nothing wakes this crewmate on its own yet/)
     expect(screen.getByTestId('crew-schedule-create')).toHaveTextContent('New schedule')

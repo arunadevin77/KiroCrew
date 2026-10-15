@@ -282,7 +282,7 @@ describe('CrewEditorDialog — in-place bot editor (CREW-18688)', () => {
     if (!dangerTab) return
     fireEvent.click(dangerTab)
     // Two-step: 'Delete crewmate' arms the confirm row, then confirm runs it.
-    fireEvent.click(await within(dialog).findByRole('button', { name: 'Delete crewmate' }))
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Delete mate' }))
     fireEvent.click(await within(dialog).findByTestId('confirm-delete-crew'))
     await waitFor(() => expect(mockApi.deleteKirocrewAgent).toHaveBeenCalled())
   })
@@ -363,7 +363,7 @@ describe('CrewEditorDialog — in-place bot editor (CREW-18688)', () => {
     const dangerTab = within(dialog).queryByTestId('crew-rail-danger')
     if (!dangerTab) return
     fireEvent.click(dangerTab)
-    fireEvent.click(await within(dialog).findByRole('button', { name: 'Delete crewmate' }))
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Delete mate' }))
     fireEvent.click(await within(dialog).findByTestId('cancel-delete-crew'))
     // Back to the un-armed state: the confirm button is gone.
     expect(within(dialog).queryByTestId('confirm-delete-crew')).toBeNull()
@@ -405,7 +405,7 @@ describe('CrewEditorDialog — in-place bot editor (CREW-18688)', () => {
     const dialog = await screen.findByRole('dialog', { name: /Edit crewmate/ })
     await waitFor(() => expect(mockApi.agentsInstalled).toHaveBeenCalled())
     fireEvent.change(within(dialog).getByTestId('display-name-input'), { target: { value: 'Renamed' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Chat with this crewmate' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Chat with this mate' }))
     expect(await screen.findByTestId('crew-sched-discard-confirm')).toBeInTheDocument()
   })
 

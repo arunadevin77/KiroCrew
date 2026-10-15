@@ -119,7 +119,7 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 
-describe("a send while a crewmate works", () => {
+describe("a send while a mate works", () => {
   it('shows in the chat at once, as a steer into the running turn, before any echo', async () => {
     const store = renderCrewmate(true)
     await send('also check the logs')

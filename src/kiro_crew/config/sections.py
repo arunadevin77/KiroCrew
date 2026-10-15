@@ -3437,8 +3437,8 @@ class DashboardConfig:
     crewmate_threads: bool = field(
         default=False,
         metadata=_meta(
-            "Reply threads on crewmate chat messages",
-            "Let any message in a crewmate's chat carry its own reply thread, "
+            "Reply threads on mate chat messages",
+            "Let any message in a mate's chat carry its own reply thread, "
             "opened in the side panel while the main chat stays visible. Off by "
             "default: the thread routes answer not-found, no thread frame is sent, "
             "and the dashboard draws no Reply in thread control. Takes effect on "
@@ -3448,11 +3448,11 @@ class DashboardConfig:
     crewmates_in_agent_picker: bool = field(
         default=False,
         metadata=_meta(
-            "Crewmates in the chat agent picker",
-            "List crewmates in the chat composer's agent picker, beside the agent "
-            "templates, so a chat can be switched onto a crewmate (and its own "
+            "Mates in the chat agent picker",
+            "List mates in the chat composer's agent picker, beside the agent "
+            "templates, so a chat can be switched onto a mate (and its own "
             "workspace and memory) without opening it from the Crew page. Off by "
-            "default: the picker lists templates plus any crewmate no listed "
+            "default: the picker lists templates plus any mate no listed "
             "template already covers; the default agent stays even when covered, "
             "unless a template shares its name. Takes effect when the dashboard is "
             "reloaded; no gateway restart.",
@@ -4088,11 +4088,11 @@ class DashboardConfig:
     crewmates_onboarded: bool = field(
         default=False,
         metadata=_meta(
-            "Crewmates Onboarded",
+            "Mates Onboarded",
             "Whether the user has finished or dismissed the first-run Meet CrewMates "
-            "flow (the four-step introduction that creates the first crewmate). "
+            "flow (the four-step introduction that creates the first mate). "
             "Server-backed like the other first-run flags so a second machine does "
-            "not replay it. Also set when the flow is re-run from the Crewmates page.",
+            "not replay it. Also set when the flow is re-run from the Mates page.",
         ),
     )
     user_role: str = field(
@@ -4321,12 +4321,12 @@ class KiroCrewAgentConfig:
         default="",
         metadata=_meta(
             "Worker Model",
-            "Model for the sessions this crewmate dispatches through "
+            "Model for the sessions this mate dispatches through "
             "session_create when the call names none. Empty copies the "
-            "crewmate's model pin when set; with both fields empty, no session "
+            "mate's model pin when set; with both fields empty, no session "
             "model is pinned and the worker's own agent or the global default "
             "decides. Unlike 'model', 'auto' is a real pin here: workers run "
-            "on the backend's own default, which is how a crewmate on a costly "
+            "on the backend's own default, which is how a mate on a costly "
             "model keeps its workers cheap. An explicit model on the call wins.",
         ),
     )
@@ -4334,12 +4334,12 @@ class KiroCrewAgentConfig:
         default="",
         metadata=_meta(
             "Worker Reasoning Effort",
-            "Reasoning effort for the sessions this crewmate dispatches through "
+            "Reasoning effort for the sessions this mate dispatches through "
             "session_create when the call names none. Empty means: while the "
-            "workers run the crewmate's own model (worker_model empty and no model "
-            "on the call) they take the crewmate's own effort (the field above); "
+            "workers run the mate's own model (worker_model empty and no model "
+            "on the call) they take the mate's own effort (the field above); "
             "under any other model no level is pinned and the worker's agent "
-            "decides as usual (its own crew pin if it runs as a crewmate, else "
+            "decides as usual (its own crew pin if it runs as a mate, else "
             "agent.reasoning_effort, else the model default). Set, one of the five "
             "standard levels. An explicit effort on the call wins.",
         ),
@@ -4348,7 +4348,7 @@ class KiroCrewAgentConfig:
         default="",
         metadata=_meta(
             "Approval Mode",
-            "Tool approval for this crewmate's own Crewmates-page thread: normal, "
+            "Tool approval for this mate's own Mates-page thread: normal, "
             "trust_reads or trust. Empty means the user never chose one, and the "
             "thread opens in trust.",
         ),

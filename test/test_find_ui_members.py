@@ -38,7 +38,7 @@ def _conditions(placement: dict[str, Any]) -> list[str]:
 def _has_preview_flag(placement: dict[str, Any]) -> bool:
     # The Crewmates preview prerequisite every control on the page carries.
     return any(
-        r["kind"] == "preview_flag" and r.get("setting_id") == "developer.crewmates"
+        r["kind"] == "preview_flag" and r.get("setting_id") == "developer.mates"
         for r in placement["requires"]
     )
 
