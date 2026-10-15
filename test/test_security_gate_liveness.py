@@ -335,7 +335,12 @@ def _url_payload_command(n: int) -> str:
 #: Raised again, from 29,293, for the ``engines`` leaf in ``paths.py``: the KAS
 #: engine bundle the gateway installs and later executes joins the file-tool floor
 #: beside ``playwright-cli`` -- one entry and its reason. No matcher moved.
-_PACKAGE_LINE_BUDGET = 29_296
+#:
+#: Raised again, from 29,296, for the ssh-self floor's cron-line exemption: a
+#: whole input that is one bare cron line (``0 9 * * 1 job``) skips that floor.
+#: One regex and one predicate in ``shell_normalizer.py`` and a three-line
+#: check in ``is_denied``; the floor's own walk is unchanged.
+_PACKAGE_LINE_BUDGET = 29_326
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

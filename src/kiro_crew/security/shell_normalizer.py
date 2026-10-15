@@ -1511,6 +1511,31 @@ def _substitution_depth_delta(token: str) -> int:
     return token.count("$(") + token.count("`") // 2 - token.count(")")
 
 
+_CRON_NUM = r"[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*(?:/[0-9]+)?"
+#: A WHOLE input that is one bare cron line: a numeric (or ``*/N``) first field,
+#: four more fields, then plain words. No quote, ``$``, backtick, separator,
+#: redirect, paren, brace, backslash, ``~``, ``!`` or newline anywhere.
+_BARE_CRON_LINE_RE = re.compile(
+    rf"[ \t]*(?:\*/[0-9]+|{_CRON_NUM})(?:[ \t]+(?:\*|\*/[0-9]+|{_CRON_NUM})){{4}}"
+    r"(?:[ \t]+[a-z0-9_./,:@%+=-]+)*[ \t]*\Z"
+)
+
+
+def _is_bare_cron_line(text_lower: str) -> bool:
+    """True when the whole input is a bare cron line (``0 9 * * 1 job``).
+
+    The ssh-self floor reads each ``*`` as a glob that can name an ssh verb.
+    Here the only command is the first field, a program named by digits (or
+    ``dir/N``), so no ``*`` can be argv[0]. With no separator in the text, no
+    function or alias can rename that word first. Only the TOP-LEVEL input
+    qualifies: a nested value (a proxycommand, a function body) keeps the walk.
+    A literal ssh-family verb anywhere also keeps the walk.
+    """
+    return _BARE_CRON_LINE_RE.match(text_lower) is not None and not any(
+        verb in text_lower for verb in ("ssh", "scp", "sftp", "rsync")
+    )
+
+
 def _ends_argv(token: str) -> bool:
     """True if *token* ends the current command's argv.
 

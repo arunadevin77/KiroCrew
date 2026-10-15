@@ -9423,6 +9423,66 @@ class TestSandboxEscapeSshSelf:
         assert _denied_by("ssh 127.0.0.? id") == self._RULE
         assert _denied_by("ssh remo?e.example.com id") is None
 
+    # A whole-input cron line whose first field is a number or ``*/N``: the
+    # only command is that field, so no ``*`` is argv[0]. Refused on main.
+    _BARE_CRON_LINES = (
+        "0 9 * * 1",
+        "*/5 * * * *",
+        "0 * * * *",
+        "*/15 * * * * /usr/bin/backup --quiet",
+        "0-30/5 9 * * 1-5 job",
+        "0,30 * * * *",
+        "30 2 1 * * /opt/report.sh",
+    )
+
+    @pytest.mark.parametrize("text", _BARE_CRON_LINES)
+    def test_bare_cron_line_is_not_a_self_target(self, text):
+        assert _denied_by(text) is None
+
+    @pytest.mark.parametrize("verb", ["ssh", "scp", "sftp", "rsync"])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # With files ``ssh`` and ``user@localhost`` here, bash expands
+            # ``* * id`` to ``ssh user@localhost ssh user@localhost id``.
+            "* * id",
+            "* *",
+            "* * * * * /usr/bin/backup",
+            "schedule: 30 2 1 * * (daily)",
+            "sudo * * id",
+            "timeout -k 9 9 * * id",
+            "env * * id",
+            "x=1 * * id",
+            "x=1 0 9 * * 1",
+            "ls; * * id",
+            "0 9 * * 1; * * id",
+            "0 '$(' ; * * id",
+            "0\n* * id",
+            "9>f * * id",
+            "sh -c '* * id'",
+            "0 * * id",
+            # A function or alias can rename the numeric field first (Opus 5.5
+            # and GPT 6.1 findings on b0267ff166).
+            '0() { "$@"; }; 0 * * * * id',
+            "alias 0=sudo; 0 * * * * id",
+            'function 0 { "$@"; }; 0 * * * * id',
+            'export -f 0; bash -c "0 9 * * 1 id"',
+            "ssh -o proxycommand='0 9 * * 1 x' far",
+            # A literal verb, a quote, an expansion or a redirect keeps the walk.
+            "0 9 * * 1 ssh localhost",
+            "0 9 * * 1 $x",
+            "0 9 * * 1 > * *",
+        ],
+    )
+    def test_cron_skip_stays_off_where_a_glob_may_run(self, monkeypatch, verb, cmd):
+        real = _argv_floor._ssh_family_verb
+        monkeypatch.setattr(
+            _argv_floor,
+            "_ssh_family_verb",
+            lambda tok: verb if real(tok) and set("*?[") & set(tok) else real(tok),
+        )
+        assert _denied_by(cmd) == self._RULE
+
     def test_dns_alias_fails_closed_until_resolved(self, monkeypatch):
         # A hostname this floor cannot classify textually may still resolve
         # to a loopback or local address (a DNS alias).  The verdict comes

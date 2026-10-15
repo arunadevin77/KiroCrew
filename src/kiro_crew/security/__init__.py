@@ -1417,6 +1417,11 @@ def is_denied(
         pattern = _rules._SELF_PROTECTION_FLOOR_BY_ID.get(rule_id)
         if pattern is None or pattern not in floor_enabled:
             continue
+        # A whole-input bare cron line (``0 9 * * 1 job``) names no ssh argv: its
+        # ``*`` words are arguments of the numeric first field. Top level only.
+        cron_line = _submodule("shell_normalizer")._is_bare_cron_line
+        if predicate is _argv._is_ssh_to_self and cron_line(lower):
+            continue
         # The mint predicate also gets the command AS SUBMITTED: it decodes base64
         # literals to read the name they hide, and base64 does not survive the
         # lower-casing every other predicate reads.
