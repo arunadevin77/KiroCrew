@@ -9906,7 +9906,8 @@
       "no_microphone_found_connect_one_or_pick_a_differ": "마이크를 찾을 수 없습니다. 마이크를 연결하거나 설정에서 다른 장치를 선택하세요."
     },
     "theme": {
-      "high_contrast": "🔆 고대비"
+      "high_contrast": "🔆 고대비",
+      "nu_disco": "🪩 Nu Disco"
     },
     "useCronActions": {
       "failed_to_cancel_job": "작업을 취소하지 못했습니다",

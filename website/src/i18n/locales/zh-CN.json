@@ -9906,7 +9906,8 @@
       "no_microphone_found_connect_one_or_pick_a_differ": "未找到麦克风。连接一个麦克风，或在设置中选择其他设备。"
     },
     "theme": {
-      "high_contrast": "🔆 高对比度"
+      "high_contrast": "🔆 高对比度",
+      "nu_disco": "🪩 Nu Disco"
     },
     "useCronActions": {
       "failed_to_cancel_job": "取消任务失败",

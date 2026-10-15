@@ -10190,7 +10190,8 @@
       "no_microphone_found_connect_one_or_pick_a_differ": "Aucun microphone trouvé. Connectez-en un ou choisissez un autre périphérique dans les Paramètres."
     },
     "theme": {
-      "high_contrast": "🔆 Contraste élevé"
+      "high_contrast": "🔆 Contraste élevé",
+      "nu_disco": "🪩 Nu Disco"
     },
     "useCronActions": {
       "failed_to_cancel_job": "Échec de l’annulation de la tâche",

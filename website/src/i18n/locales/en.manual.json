@@ -4459,7 +4459,8 @@
       "unknown": "Unknown"
     },
     "theme": {
-      "high_contrast": "🔆 High Contrast"
+      "high_contrast": "🔆 High Contrast",
+      "nu_disco": "🪩 Nu Disco"
     },
     "usePanelTabs": {
       "artifacts": "Artifacts",

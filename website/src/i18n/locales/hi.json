@@ -10048,7 +10048,8 @@
       "no_microphone_found_connect_one_or_pick_a_differ": "कोई माइक्रोफ़ोन नहीं मिला। एक कनेक्ट करें या सेटिंग में कोई दूसरा डिवाइस चुनें।"
     },
     "theme": {
-      "high_contrast": "🔆 हाई कॉन्ट्रास्ट"
+      "high_contrast": "🔆 हाई कॉन्ट्रास्ट",
+      "nu_disco": "🪩 Nu Disco"
     },
     "useCronActions": {
       "failed_to_cancel_job": "जॉब रद्द करने में विफल",

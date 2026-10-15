@@ -9906,7 +9906,8 @@
       "no_microphone_found_connect_one_or_pick_a_differ": "マイクが見つかりません。接続するか、設定で別のデバイスを選択してください。"
     },
     "theme": {
-      "high_contrast": "🔆 高コントラスト"
+      "high_contrast": "🔆 高コントラスト",
+      "nu_disco": "🪩 Nu Disco"
     },
     "useCronActions": {
       "failed_to_cancel_job": "ジョブのキャンセルに失敗しました",

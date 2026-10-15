@@ -10332,7 +10332,8 @@
       "no_microphone_found_connect_one_or_pick_a_differ": "Микрофон не найден. Подключи его или выбери другое устройство в настройках."
     },
     "theme": {
-      "high_contrast": "🔆 Высокий контраст"
+      "high_contrast": "🔆 Высокий контраст",
+      "nu_disco": "🪩 Nu Disco"
     },
     "useCronActions": {
       "failed_to_cancel_job": "Не удалось отменить задание",

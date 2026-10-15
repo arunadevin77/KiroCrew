@@ -354,18 +354,25 @@ function applyThemeBranding(theme: CustomThemeData | undefined): ResolvedThemeBr
 }
 
 /**
- * Catalog KEY for each built-in theme whose display name is descriptive COPY
- * rather than a proper noun.
+ * Catalog KEY for each built-in theme whose display name resolves through the
+ * catalog rather than through a literal `label` in `THEMES`.
  *
  * Nearly every built-in is named after an upstream palette project (Monokai,
  * Solarized, Dracula, Nord, Rosé Pine, Catppuccin, Tokyo Night, Gruvbox,
- * Everforest), a product (Kiro, IntelliJ), or the display technology it is tuned
- * for (AMOLED). Those are proper nouns — translating one would sever the name
- * from the upstream project a user is looking for — so they stay verbatim as
- * `label` in `THEMES` below, exactly like the theme names an installed pack or a
- * `registerTheme()` caller supplies. `High Contrast` is the one that names a
- * rendering PROPERTY (the accessibility palette) rather than a palette identity,
- * so it is copy in the same sense as every other settings label.
+ * Everforest, Nu Disco), a product (Kiro, IntelliJ), or the display technology
+ * it is tuned for (AMOLED). Those are proper nouns — translating one would sever
+ * the name from the upstream project a user is looking for — so the older ones
+ * stay verbatim as `label` in `THEMES` below, exactly like the theme names an
+ * installed pack or a `registerTheme()` caller supplies.
+ *
+ * Two kinds of entry live here:
+ * - `High Contrast` names a rendering PROPERTY (the accessibility palette)
+ *   rather than a palette identity, so it is copy in the same sense as every
+ *   other settings label and each locale translates it.
+ * - A proper-noun theme added after the strict i18n gate (Nu Disco). The gate
+ *   refuses a new literal display string, so the name goes through the catalog
+ *   and is pinned verbatim in every locale by its `glossary.json` do-not-translate
+ *   entry, which `glossary.test.ts` enforces.
  *
  * Keys, not strings: `THEMES` is evaluated at module load, so an `i18nT()` call
  * there would freeze whatever language was active at boot. The lookup happens in
@@ -375,6 +382,7 @@ function applyThemeBranding(theme: CustomThemeData | undefined): ResolvedThemeBr
  */
 export const THEME_LABEL_KEY: Record<string, string> = {
   highcontrast: 'hooks.theme.high_contrast',
+  'nu-disco': 'hooks.theme.nu_disco',
 }
 
 export const THEMES: ThemeEntry[] = [
@@ -392,15 +400,18 @@ export const THEMES: ThemeEntry[] = [
   { value: 'amoled', label: '🖤 AMOLED' },
   { value: 'kiro', label: '👻 Kiro' },
   { value: 'intellij', label: '😶‍🌫️ IntelliJ' },
-  // The only descriptive name here, so the only one with a catalog key: `label`
-  // holds the glyph alone as the pre-resolution fallback and the full display
-  // string lives in `hooks.theme.high_contrast` (emoji included, as
+  // A catalog-keyed entry (see `THEME_LABEL_KEY`): `label` holds the glyph alone
+  // as the pre-resolution fallback and the full display string lives in
+  // `hooks.theme.high_contrast` (emoji included, as
   // `components.themeEditor.color_picker` already does). Nothing renders this
   // entry's `label` directly — `allThemes` goes through `builtinThemes()`.
   { value: 'highcontrast', label: '🔆' },
   { value: 'everforest', label: '🌲 Everforest' },
   { value: 'amoled-midnight', label: '🌌 AMOLED Midnight' },
   { value: 'amoled-grey-calm', label: '🌑 AMOLED Grey Calm' },
+  // Catalog-keyed like `highcontrast`: glyph-only fallback, full name in
+  // `hooks.theme.nu_disco`.
+  { value: 'nu-disco', label: '🪩' },
 ]
 
 /**

@@ -10048,7 +10048,8 @@
       "no_microphone_found_connect_one_or_pick_a_differ": "কোনো মাইক্রোফোন পাওয়া যায়নি। একটা কানেক্ট করো, বা সেটিংয়ে অন্য ডিভাইস বেছে নাও।"
     },
     "theme": {
-      "high_contrast": "🔆 উচ্চ কনট্রাস্ট"
+      "high_contrast": "🔆 উচ্চ কনট্রাস্ট",
+      "nu_disco": "🪩 Nu Disco"
     },
     "useCronActions": {
       "failed_to_cancel_job": "জব বাতিল করা যায়নি",

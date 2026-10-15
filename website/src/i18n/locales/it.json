@@ -10190,7 +10190,8 @@
       "no_microphone_found_connect_one_or_pick_a_differ": "Nessun microfono trovato. Collegane uno o scegli un dispositivo diverso in Impostazioni."
     },
     "theme": {
-      "high_contrast": "🔆 Contrasto elevato"
+      "high_contrast": "🔆 Contrasto elevato",
+      "nu_disco": "🪩 Nu Disco"
     },
     "useCronActions": {
       "failed_to_cancel_job": "Impossibile annullare il job",
