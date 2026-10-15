@@ -120,7 +120,7 @@ whether or not the append lands, because the committed version must not be a ver
 its own history does not mention.
 
 `action` is a CLOSED enum, and the vocabulary lives beside the entry type in
-`crew_log/entry_types.py` with the store importing it. One tuple, two readers: a fourth
+`crew_log/entry_types_surfaces.py` with the store importing it. One tuple, two readers: a fourth
 action added in the store alone would be a change the store reports as taken and the log
 drops.
 

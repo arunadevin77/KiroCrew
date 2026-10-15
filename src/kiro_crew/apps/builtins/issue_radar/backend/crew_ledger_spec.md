@@ -22,8 +22,8 @@ migration is required from the first release.
 **The ledger** -- work items, progress lines and the repository-shared skip index
 -- is not a file of its own. It is a **projection of the crew log**: every
 `issue_radar_crew_record` call appends exactly ONE `radar/recorded` entry to the
-crew log of the session the crew runs on (`crew_log/entry_types.py` declares the
-shape; `docs/reference/crew-log/session-types.md` documents it), and every read is
+crew log of the session the crew runs on (`crew_log/entry_types_ledgers.py` declares
+the shape; `docs/reference/crew-log/session-types.md` documents it), and every read is
 the `radar` fold of those entries (`crew_log/projection_radar.py`, registered in the
 fold registry as a SLOT-keyed fold). The store module (`crew_store.py`) keeps the same
 function names its callers had; what they do is fold.

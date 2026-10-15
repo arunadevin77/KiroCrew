@@ -1,6 +1,6 @@
 # Crew log Core
 
-Owners: `kiro_crew.crew_log` (`schema.py`, `store.py`, `errors.py`, `lease.py`, `entry_types.py`)
+Owners: `kiro_crew.crew_log` (`schema.py`, `store.py`, `errors.py`, `lease.py`, `entry_types.py` with the field leaf `entry_types_fields.py` and the family owners `entry_types_lifecycle.py`, `entry_types_exchange.py`, `entry_types_delegated.py`, `entry_types_ledgers.py`, `entry_types_surfaces.py`)
 
 ## 1. Purpose
 
@@ -171,6 +171,26 @@ The **Emitter** column says what exists in this commit. `yes` means the gateway 
 `—` means the type is owned, writable and specified, and nothing writes it yet. A type with no
 emitter is kept only where the site that will write it is identified; the types with no honest
 source were removed (see the emitter spec's "Removed types").
+
+**Where a type is declared.** `crew_log/entry_types.py` is the registry callers import:
+it composes `SESSION_ENTRY_TYPES` from one owner per group of type prefixes, in the order
+below, and keeps the crew kind's `_CREW_TYPES`, `ENTRY_TYPES`, `declaration_for`,
+`validate_data` and `render_markdown`. `Field`, `EntryType` and the JSON field types live in
+`crew_log/entry_types_fields.py`, the one module every owner imports; an owner never imports
+the registry, and the registry re-exports every public name an owner defines other
+than its `TYPES`.
+
+| Owner | Prefixes |
+|---|---|
+| `crew_log/entry_types_lifecycle.py` | `session/`, `turn/`, `write/` |
+| `crew_log/entry_types_exchange.py` | `message/`, `request/`, `context/`, `step/`, `tool/`, `approval/`, `model/`, `compaction/`, `plan/` |
+| `crew_log/entry_types_delegated.py` | `subagent/`, `background/` |
+| `crew_log/entry_types_ledgers.py` | `ledger/`, `object/`, `radar/`, `work/` |
+| `crew_log/entry_types_surfaces.py` | `panel/`, `dashboard/`, `card/`, `guide/` |
+
+A new session type is declared in the owner of its prefix; a new prefix goes to the owner
+whose docstring describes it, or to a new owner listed in `_SESSION_OWNERS` at the position
+its types render.
 
 ### Session, turn
 | Type | `data` | Emitter |
