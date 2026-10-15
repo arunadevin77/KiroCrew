@@ -757,6 +757,10 @@ class AcpClient:
         # clears this flag on entry and only full success re-earns it; the MCP
         # array is withheld after every non-success exit.
         self._permission_surface_share_validated = False
+        # Set True when every write path for settings.local.json declined; means
+        # this session runs without Crew's MCP tools. Read once at session start
+        # to surface the cause in the transcript. Never reset across re-seeds.
+        self._settings_seed_declined: bool = False
         # Identity this client claims its seed under, in the durable record. Two
         # keyless clients share the default work_dir, so a token is what keeps
         # "Crew wrote it" from collapsing into "any Crew client may take it": the

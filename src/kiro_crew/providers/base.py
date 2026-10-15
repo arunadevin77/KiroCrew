@@ -479,6 +479,15 @@ class LLMProvider(ABC):
         """
         return ""
 
+    @property
+    def settings_seed_declined(self) -> bool:
+        """Whether this session's claude settings seed was declined.
+
+        True when every write path for settings.local.json declined, leaving
+        this session without Crew's MCP tools. Default: False (no decline).
+        """
+        return False
+
     def touch_activity(self) -> None:
         """Refresh the RUNTIME's activity timestamp without I/O. Default no-op.
 

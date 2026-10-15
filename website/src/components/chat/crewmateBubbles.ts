@@ -110,10 +110,12 @@ export function isCrewmateSpeech(m: ChatMessage): boolean {
  *  automation arm/revision/stop refusal (`session_directive_apply.ARM_REFUSAL_NOTICE_KIND`),
  *  which is re-routed to the crewmate's next turn as an `inject` row instead;
  *  `spec_hooks` is the session-start notice about an agent spec's hooks that do
- *  not run (`chat_utils.SPEC_HOOKS_NOTICE_KIND`), drawn on the Sessions page.
+ *  not run (`chat_utils.SPEC_HOOKS_NOTICE_KIND`), drawn on the Sessions page;
+ *  `seed_declined` is the session-start notice that a sibling session governs the
+ *  work dir settings (`chat_utils.SEED_DECLINED_NOTICE_KIND`).
  *  Every notice OUTSIDE this set names something the person may have to act on
  *  (a dropped queued message, a model-fallback hint) and keeps drawing. */
-const CREWMATE_HIDDEN_NOTICE_KINDS: ReadonlySet<string> = new Set(['empty_turn', 'arm_refusal', 'spec_hooks'])
+const CREWMATE_HIDDEN_NOTICE_KINDS: ReadonlySet<string> = new Set(['empty_turn', 'arm_refusal', 'spec_hooks', 'seed_declined'])
 function isHiddenCrewmateNotice(m: ChatMessage): boolean {
   const kind = (m.meta as { kind?: unknown } | undefined)?.kind
   return typeof kind === 'string' && CREWMATE_HIDDEN_NOTICE_KINDS.has(kind)

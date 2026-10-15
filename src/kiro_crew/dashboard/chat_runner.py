@@ -684,6 +684,7 @@ from kiro_crew.dashboard.chat_utils import (  # noqa: E402, F401
     FALSE_TOOL_BLOCKER_REPLAY_KIND,
     MCP_APP_MESSAGE_KIND,
     MODEL_UNENTITLED_KIND,
+    SEED_DECLINED_NOTICE_KIND,
     SESSION_START_FAILED_KIND,
     SPEC_HOOKS_NOTICE_KIND,
     SUBAGENT_COMPLETION_KIND,
@@ -1138,6 +1139,28 @@ async def _surface_withheld_project_hooks(
             "msg msg-info",
             meta={"kind": SPEC_HOOKS_NOTICE_KIND},
         )
+
+
+async def _notice_seed_declined(state: "DashboardState", slot: "_ChatSlot", client: Any) -> None:
+    """One notice row when the settings seed was declined on session start.
+
+    A session whose settings.local.json is held by a sibling session with
+    different settings (model or permissions differ) runs without Crew's MCP
+    tools with no visible cause. This row names the cause and the action.
+    Best-effort: a missing or unexpected attribute never fails a turn.
+    """
+    if getattr(client, "settings_seed_declined", None) is not True:
+        return
+    append_and_surface(
+        state,
+        slot,
+        "notice",
+        "ℹ A sibling session governs this folder's tool settings with different settings "
+        "(model or permissions differ). Crew's MCP tools are not available in this session. "
+        "Start a new session here, or close the other session, to restore tools.",
+        "msg msg-info",
+        meta={"kind": SEED_DECLINED_NOTICE_KIND},
+    )
 
 
 def _redacted_hook_block(event: Any, pre_hook_results: Any) -> tuple[str, str]:
@@ -11462,6 +11485,7 @@ async def _run_chat(
         # own session reset produces does not re-emit the row it appended.
         if is_new:
             await _surface_agent_welcome(state, slot, kiro_agent or slot.agent)
+            await _notice_seed_declined(state, slot, client)
         # Member activity pointer — once per SESSION, not per turn: the log
         # answers "which sessions did this member take part in", so a per-turn
         # append would inflate every count taken from it. `slot.agent` is the

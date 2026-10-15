@@ -10,7 +10,8 @@ and a patch of the method on the class or on an instance reaches every caller.
 Instance fields written: ``_claude_inline_settings``,
 ``_claude_local_settings_excluded``, ``_claude_settings_authored``,
 ``_claude_settings_claim_unrevoked``, ``_claude_settings_shared``,
-``_claude_settings_written``, ``_permission_surface_share_validated``.
+``_claude_settings_written``, ``_permission_surface_share_validated``,
+``_settings_seed_declined``.
 
 Instance fields read: ``_agent``, ``_model``, ``_permission_mode``, ``_seed_owner``,
 ``_work_dir``.
@@ -251,6 +252,7 @@ def _log_declined_share(self: AcpClient, local_settings: Path) -> None:
         local_settings,
         self._foreign_settings_owner(local_settings),
     )
+    self._settings_seed_declined = True
 
 
 def _render_claude_settings_payload(self: AcpClient) -> str:

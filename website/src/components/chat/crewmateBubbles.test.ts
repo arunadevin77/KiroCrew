@@ -56,7 +56,7 @@ describe('filterCrewmateChat', () => {
     for (const m of rows) expect(isCrewmateChatRow(m)).toBe(true)
   })
 
-  it('hides only the machinery notice kinds (empty_turn, arm_refusal); every other notice draws', () => {
+  it('hides only the machinery notice kinds (empty_turn, arm_refusal, spec_hooks, seed_declined); every other notice draws', () => {
     // A crewmate's chat drops a `notice` by an ALLOWLIST of machinery kinds,
     // never by role: the empty-turn recovery card and the automation arm
     // refusal are the runtime talking about itself and are hidden, while a
@@ -78,13 +78,19 @@ describe('filterCrewmateChat', () => {
       content: "That model isn't offered right now. Pick another model from the composer.",
       meta: { kind: 'model_fallback' },
     }
+    const seedDeclined: ChatMessage = {
+      role: 'notice', cls: 'msg msg-info', ts: at('2026-09-22T06:00:09Z'),
+      content: "ℹ A sibling session governs this folder's tool settings with different settings.",
+      meta: { kind: 'seed_declined' },
+    }
     const untaggedNotice: ChatMessage = { role: 'notice', content: 'note', cls: '', ts: at('2026-09-22T06:00:08Z') }
     expect(isCrewmateChatRow(emptyTurn)).toBe(false)
     expect(isCrewmateChatRow(armRefusal)).toBe(false)
+    expect(isCrewmateChatRow(seedDeclined)).toBe(false)
     // Person-actionable notices keep drawing — no second route for them.
     expect(isCrewmateChatRow(modelFallback)).toBe(true)
     expect(isCrewmateChatRow(untaggedNotice)).toBe(true)
-    expect(filterCrewmateChat([emptyTurn, armRefusal, modelFallback, untaggedNotice]))
+    expect(filterCrewmateChat([emptyTurn, armRefusal, seedDeclined, modelFallback, untaggedNotice]))
       .toEqual([modelFallback, untaggedNotice])
   })
 

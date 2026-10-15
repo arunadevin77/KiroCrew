@@ -3976,6 +3976,13 @@ EMPTY_TURN_NOTICE_KIND = "empty_turn"
 #: notice of any kind (the "crewmate chat draws messages only" decision record).
 SPEC_HOOKS_NOTICE_KIND = "spec_hooks"
 
+#: ``meta.kind`` of the session-start notice that informs the user their session
+#: runs without Crew's MCP tools because a sibling session governs the
+#: settings.local.json with different settings. Sessions draws it; crewmate
+#: chat drops it (``crewmateBubbles.isCrewmateChatRow``) -- it names session
+#: machinery the person cannot act on from the crewmate DM.
+SEED_DECLINED_NOTICE_KIND = "seed_declined"
+
 #: ``meta["notice"]`` on the three `error` rows the transient-5xx ladder appends
 #: (chat_runner ``acp_error_is_transient`` branches). The row's CONTENT is the
 #: English fallback below, read verbatim by non-dashboard consumers (channel

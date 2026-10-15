@@ -665,6 +665,12 @@ class AcpProvider(LLMProvider):
         return value if isinstance(value, str) else ""
 
     @property
+    def settings_seed_declined(self) -> bool:
+        """Forward the client's seed-declined flag."""
+        flag = getattr(self._client, "_settings_seed_declined", None)
+        return flag is True
+
+    @property
     def served_model(self) -> str:
         """Model id the live session resolved (public — see LLMProvider).
 
