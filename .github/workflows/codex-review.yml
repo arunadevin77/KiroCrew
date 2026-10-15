@@ -83,8 +83,36 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event.pull_request.head.repo.full_name == github.repository
         with:
-          fetch-depth: 0
+          # The merge ref plus its two parents (the base tip and the PR head),
+          # not the whole history: the next step fetches the one other commit
+          # the diffs need.
+          fetch-depth: 2
           persist-credentials: false
+
+      # The checkout is shallow, so a three-dot `base...HEAD` range has no
+      # history to find its merge-base in. GitHub's compare API names the
+      # merge-base; that one commit is fetched at depth 1, and the reviewer is
+      # told to run the two-dot `<merge-base>..HEAD`. A two-dot diff compares
+      # two trees and needs no history, and it is the same diff the three-dot
+      # range gave on a full clone. Runs before every `git show "$BASE_SHA:..."`
+      # below, which would otherwise read a missing base as "no rules".
+      - name: Fetch the merge-base commit (shallow history)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        id: merge_base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # need SHA / merge_base X Y -- see the script's header.
+          . "$GITHUB_WORKSPACE/.github/scripts/review-merge-base.sh"
+          need "$BASE_SHA"
+          tip="$(git rev-parse HEAD)"
+          tree="$(merge_base "$BASE_SHA" "$tip")"
+          need "$tree"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "merge-base of $BASE_SHA and the checkout $tip: $tree"
 
       # Load AUTOSDE rules from the BASE commit, not the PR HEAD, so a PR
       # cannot weaken the rules that govern it.
@@ -263,6 +291,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ steps.merge_base.outputs.tree }}
         run: |
           # Load the shared GPT prompt blocks from the BASE commit, mirroring
           # the Opus lanes: a PR must not edit the contract that judges it.
@@ -311,8 +340,11 @@ jobs:
           # The prompt files are literal text the shell never expands, and this
           # run block must stay free of GitHub template expressions (a run
           # block containing one is capped at 21000 chars). Fill the SHA
-          # placeholders the staged files carry from env instead.
-          sed -i "s/__BASE_SHA__/$BASE_SHA/g; s/__HEAD_SHA__/$HEAD/g" /tmp/codex-prompt.md
+          # placeholders the staged files carry from env instead. The checkout
+          # is shallow, so the reviewer's diff is the two-dot range from the
+          # fetched merge-base. A base whose prompt still spells the old
+          # three-dot `__BASE_SHA__...HEAD` gets the same two-dot rewrite.
+          sed -i "s/__BASE_SHA__\.\.\.HEAD/$MERGE_BASE..HEAD/g; s/__MERGE_BASE__/$MERGE_BASE/g; s/__BASE_SHA__/$BASE_SHA/g; s/__HEAD_SHA__/$HEAD/g" /tmp/codex-prompt.md
 
           # Append the PR's author-supplied title + description so the
           # scope-coherence and "stated purpose" / regression rules above are

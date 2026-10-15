@@ -95,8 +95,36 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event.pull_request.head.repo.full_name == github.repository
         with:
-          fetch-depth: 0
+          # The merge ref plus its two parents (the base tip and the PR head),
+          # not the whole history: the next step fetches the one other commit
+          # the diffs need.
+          fetch-depth: 2
           persist-credentials: false
+
+      # The checkout is shallow, so a three-dot `base...head` range has no
+      # history to find its merge-base in. GitHub's compare API names the
+      # merge-base; that one commit is fetched at depth 1, and every diff below
+      # is the two-dot `<merge-base>..<head>`. A two-dot diff compares two
+      # trees and needs no history, and it is the same diff the three-dot
+      # range gave on a full clone.
+      - name: Fetch the merge-base commit (shallow history)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        id: merge_base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # need SHA / merge_base X Y -- see the script's header.
+          . "$GITHUB_WORKSPACE/.github/scripts/review-merge-base.sh"
+          need "$BASE_SHA"
+          need "$HEAD_SHA"
+          pr="$(merge_base "$BASE_SHA" "$HEAD_SHA")"
+          need "$pr"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "merge-base of $BASE_SHA and $HEAD_SHA: $pr"
 
       # Non-blocking size signal: raise a concern when the REVIEWABLE diff is
       # large enough that a single review pass may not cover it reliably. Only
@@ -104,11 +132,11 @@ jobs:
       - name: Flag oversized reviewable diff (non-blocking)
         if: github.event.pull_request.head.repo.full_name == github.repository
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ steps.merge_base.outputs.pr }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MAX_REVIEWABLE_LINES: "15000"
         run: |
-          changed=$(git diff --numstat "$BASE_SHA...$HEAD_SHA" -- . ':(exclude)src/kiro_crew/_vendor' 2>/dev/null \
+          changed=$(git diff --numstat "$MERGE_BASE..$HEAD_SHA" -- . ':(exclude)src/kiro_crew/_vendor' 2>/dev/null \
             | awk '{ a += $1; d += $2 } END { print a + d + 0 }')
           echo "reviewable changed lines (excluding src/kiro_crew/_vendor): ${changed}"
           if [ "${changed:-0}" -gt "$MAX_REVIEWABLE_LINES" ]; then
@@ -226,11 +254,11 @@ jobs:
       - name: Prefetch the reviewable diff (data only)
         if: github.event.pull_request.head.repo.full_name == github.repository
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ steps.merge_base.outputs.pr }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PATCH: ${{ runner.temp }}/pr.diff
         run: |
-          git diff --no-color "$BASE_SHA...$HEAD_SHA" > "$PATCH"
+          git diff --no-color "$MERGE_BASE..$HEAD_SHA" > "$PATCH"
           if [ ! -s "$PATCH" ]; then
             echo "::error::Prefetched diff for $HEAD_SHA is empty; refusing to review nothing."
             exit 1

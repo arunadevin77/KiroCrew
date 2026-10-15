@@ -324,7 +324,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
-          fetch-depth: 0
+          # Depth 1: the diff step fetches the head and the merge-base it
+          # needs, one commit each.
+          fetch-depth: 1
           persist-credentials: false
 
       # Re-derive the diff AUTHORITATIVELY from the fetched objects, pinned to
@@ -332,6 +334,7 @@ jobs:
       # artifact, so a faked diff cannot mislead the review. It is read as a DATA
       # file only — never applied to or overlaid on the tree; nothing runs it.
       - name: Fetch authentic diff (data only — never applied to the tree)
+        id: authentic
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -342,7 +345,7 @@ jobs:
         run: |
           set -uo pipefail
           # COMPLETE diff via git, NOT the compare API: the compare endpoint
-          # truncates very large diffs. Fetch the PR head history as OBJECTS only
+          # truncates very large diffs. Fetch the PR head as OBJECTS only
           # (never checked out — the working tree stays the trusted base, so no
           # fork file/symlink is materialized) and diff locally, which has no cap.
           # GitHub's git smart-HTTP transport authenticates with BASIC auth
@@ -351,16 +354,38 @@ jobs:
           # dies with "could not read Username" in CI.
           auth_b64="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
           echo "::add-mask::$auth_b64"  # mask the derived header so it can never surface in logs
+          # Pin to the exact CI-reviewed head SHA: fetch that one commit at
+          # depth 1, by SHA, and fail closed if it is missing.
           git -c http.extraheader="AUTHORIZATION: basic $auth_b64" \
-            fetch --no-tags --quiet origin "refs/pull/$PR/head" \
-            || { echo "::error::could not fetch PR head history for #$PR"; exit 1; }
-          # Pin to the exact CI-reviewed head SHA; fail closed if it is missing
-          # (e.g. the fork rewrote history out from under the review).
+            fetch --no-tags --quiet --depth=1 origin "$HEAD_SHA" \
+            || { echo "::error::could not fetch PR head $HEAD_SHA for #$PR"; exit 1; }
           if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
             echo "::error::head SHA $HEAD_SHA not present after fetch; failing closed."
             exit 1
           fi
-          git diff --no-color "$BASE_SHA...$HEAD_SHA" > "$PATCH"
+          # Both commits are shallow, so git cannot find the merge-base a
+          # three-dot range needs. GitHub's compare API names it -- only its
+          # SHA is read; the diff still comes from git, uncapped. That commit
+          # is fetched at depth 1 and the diff is the two-dot
+          # MERGE_BASE..HEAD_SHA: two trees, no history, and the same diff the
+          # three-dot range from BASE_SHA gave on a full clone.
+          compare_base() { gh api "repos/$REPO/compare/$1...$2?per_page=1" --jq '.merge_base_commit.sha'; }
+          merge_base=""
+          for attempt in 1 2 3; do
+            merge_base="$(compare_base "$BASE_SHA" "$HEAD_SHA")" && break
+            sleep "$attempt"
+          done
+          if ! [[ "$merge_base" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::could not read the merge-base of $BASE_SHA and $HEAD_SHA; failing closed."
+            exit 1
+          fi
+          if ! git cat-file -e "${merge_base}^{commit}" 2>/dev/null; then
+            git -c http.extraheader="AUTHORIZATION: basic $auth_b64" \
+              fetch --no-tags --quiet --depth=1 origin "$merge_base" \
+              || { echo "::error::could not fetch merge-base $merge_base for #$PR"; exit 1; }
+          fi
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
+          git diff --no-color "$merge_base..$HEAD_SHA" > "$PATCH"
           # git diff has no API size cap, so an oversized diff is a real signal —
           # fail CLOSED rather than review only a prefix.
           if [ "$(wc -c < "$PATCH" 2>/dev/null || echo 0)" -gt 1000000 ]; then
@@ -368,7 +393,7 @@ jobs:
             exit 1
           fi
           if [ ! -s "$PATCH" ]; then
-            echo "::error::empty diff for $BASE_SHA...$HEAD_SHA; failing closed."
+            echo "::error::empty diff for $merge_base..$HEAD_SHA; failing closed."
             exit 1
           fi
           # The patch is deliberately NOT applied to the working tree. The
@@ -379,15 +404,15 @@ jobs:
 
       # Scope gate, identical in meaning to first-principles-review.yml's but
       # derived from the trusted refs. It needs no fork-controlled input at all:
-      # the changed-path list comes from the pinned base...head range.
+      # the changed-path list comes from the pinned merge-base..head range.
       - name: Detect reviewable surface
         id: scope
         env:
-          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          MERGE_BASE: ${{ steps.authentic.outputs.merge_base }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         run: |
           set -euo pipefail
-          touched="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+          touched="$(git diff --name-only "$MERGE_BASE..$HEAD_SHA")"
           # Product and CI surface this lane can interrogate. Test paths are
           # subtracted because a test ships no capability, so a tests-only diff has
           # no feature to inventory; docs, screenshots and generated files fall out

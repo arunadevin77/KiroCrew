@@ -65,8 +65,12 @@ Follow the conventions in CLAUDE.md and AGENTS.md (root and
 website/) when present.
 
 Start from the changes this branch introduces relative to the base:
-    git diff __BASE_SHA__...HEAD
-The sandbox is READ-ONLY but you have full repo access — USE IT. Pull
+    git diff __MERGE_BASE__..HEAD
+The clone is SHALLOW: it holds HEAD, its parents and that merge-base,
+not the history behind them. `git log` and `git blame` show only those
+commits, so never treat them as evidence of when or why a line was
+written.
+The sandbox is READ-ONLY but you have full repo access to the tree — USE IT. Pull
 the RELATED code needed to judge a change instead of assuming: open the
 full changed files, and read the definition AND call sites of a changed
 symbol, the other side of a changed contract, the guard a changed line

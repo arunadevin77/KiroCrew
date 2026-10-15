@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -442,7 +443,9 @@ class TestNoLaneGrantsALiveDescriptionRead:
             if "authentic.patch" not in workflow:
                 continue
             checked += 1
-            assert 'git diff --no-color "$BASE' in workflow, name
+            assert re.search(
+                r'git diff --no-color "\$(BASE|MERGE_BASE|merge_base)\b', workflow
+            ), name
             assert "failing closed" in workflow, name
             if "exceeds 1 MB" in workflow:
                 capped += 1
@@ -467,11 +470,14 @@ class TestNoLaneGrantsALiveDescriptionRead:
         this case's subject.
         """
         workflow = _workflow(name)
-        assert 'BASE="$BASE_SHA"' in workflow, name
+        # The shallow checkout's merge-base step picks the base: the merge
+        # ref's first parent, else the merge-base of base.sha and the checkout.
         assert "git rev-parse -q --verify HEAD^2" in workflow, name
-        assert 'BASE="$(git rev-parse HEAD^1)"' in workflow, name
-        assert 'git diff --no-color "$BASE...HEAD"' in workflow, name
-        assert 'git diff --no-color "$BASE_SHA...HEAD"' not in workflow, name
+        assert 'patch_base="$(git rev-parse HEAD^1)"' in workflow, name
+        assert 'merge_base "$BASE_SHA" "$' in workflow, name
+        assert "BASE: ${{ steps.merge_base.outputs.patch_base }}" in workflow, name
+        assert 'git diff --no-color "$BASE..HEAD"' in workflow, name
+        assert 'git diff --no-color "$BASE_SHA' not in workflow, name
 
 
 class TestStampFollowsTheSharedCapture:

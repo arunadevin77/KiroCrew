@@ -81,13 +81,40 @@ jobs:
       # persist-credentials:false stops actions/checkout from writing the
       # GITHUB_TOKEN into .git/config, where the agentic reviewer -- which reads
       # untrusted PR diff content -- could otherwise read and leak it. `git diff`
-      # still works (history is fetched via depth 0); the posting step uses its
-      # own scoped GH_TOKEN. Mirrors design-review.yml.
+      # still works (the next step fetches the merge-base it diffs from); the
+      # posting step uses its own scoped GH_TOKEN. Mirrors design-review.yml.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event.pull_request.head.repo.full_name == github.repository
         with:
-          fetch-depth: 0
+          # The merge ref plus its two parents (the base tip and the PR head),
+          # not the whole history.
+          fetch-depth: 2
           persist-credentials: false
+
+      # The checkout is shallow, so a three-dot `base...HEAD` range has no
+      # history to find its merge-base in. GitHub's compare API names the
+      # merge-base; that one commit is fetched at depth 1, and every diff below
+      # is the two-dot `<merge-base>..HEAD`. A two-dot diff compares two trees
+      # and needs no history, and it is the same diff the three-dot range gave
+      # on a full clone. Runs before the base-ref contract read, which would
+      # otherwise read a missing base as "no contract".
+      - name: Fetch the merge-base commit (shallow history)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        id: merge_base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # need SHA / merge_base X Y -- see the script's header.
+          . "$GITHUB_WORKSPACE/.github/scripts/review-merge-base.sh"
+          need "$BASE_SHA"
+          tip="$(git rev-parse HEAD)"
+          tree="$(merge_base "$BASE_SHA" "$tip")"
+          need "$tree"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "merge-base of $BASE_SHA and the checkout $tip: $tree"
 
       # Scope gate. The lane needs at least one capability to inventory, so it
       # runs whenever the diff touches product or CI surface -- INCLUDING a plain
@@ -99,10 +126,10 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         id: scope
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ steps.merge_base.outputs.tree }}
         run: |
           set -euo pipefail
-          touched="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          touched="$(git diff --name-only "$MERGE_BASE"..HEAD)"
           # Product and CI surface this lane can interrogate. Test paths are
           # subtracted because a test ships no capability, so a tests-only diff has
           # no feature to inventory; docs, screenshots and generated files fall out
@@ -190,14 +217,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ steps.merge_base.outputs.tree }}
           PATCH: ${{ runner.temp }}/authentic.patch
           INTENT: ${{ runner.temp }}/pr-intent.txt
         run: |
           set -uo pipefail
-          git diff --no-color "$BASE_SHA"...HEAD > "$PATCH"
+          git diff --no-color "$MERGE_BASE"..HEAD > "$PATCH"
           if [ ! -s "$PATCH" ]; then
-            echo "::error::empty diff for $BASE_SHA...HEAD; failing closed."
+            echo "::error::empty diff for $MERGE_BASE..HEAD; failing closed."
             exit 1
           fi
           # The title and description come from ONE shared capture, sourced by

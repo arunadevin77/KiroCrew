@@ -55,13 +55,52 @@ jobs:
       # persist-credentials:false stops actions/checkout from writing the
       # GITHUB_TOKEN into .git/config, where the agentic reviewer — which reads
       # untrusted PR diff content — could otherwise read and leak it. `git diff`
-      # still works (history is fetched via depth 0); the posting step uses its
-      # own scoped GH_TOKEN. Mirrors codex-review.yml.
+      # still works (the next step fetches the merge-base it diffs from); the
+      # posting step uses its own scoped GH_TOKEN. Mirrors codex-review.yml.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event.pull_request.head.repo.full_name == github.repository
         with:
-          fetch-depth: 0
+          # The merge ref plus its two parents (the base tip and the PR head),
+          # not the whole history.
+          fetch-depth: 2
           persist-credentials: false
+
+      # The checkout is shallow, so a three-dot `base...head` range has no
+      # history to find its merge-base in. GitHub's compare API names the
+      # merge-base; that one commit is fetched at depth 1, and every diff below
+      # is the two-dot `<merge-base>..<tip>`. A two-dot diff compares two trees
+      # and needs no history, and it is the same diff the three-dot range gave
+      # on a full clone.
+      #   pr          merge-base of base.sha and the PR head (committed evidence)
+      #   patch_base  the merge ref's first parent, which is its own merge-base
+      #               with it; where the checkout is not a merge commit, the
+      #               merge-base of base.sha and the checkout
+      - name: Fetch the merge-base commits (shallow history)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        id: merge_base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # need SHA / merge_base X Y -- see the script's header.
+          . "$GITHUB_WORKSPACE/.github/scripts/review-merge-base.sh"
+          need "$HEAD_SHA"
+          pr="$(merge_base "$BASE_SHA" "$HEAD_SHA")"
+          need "$pr"
+          if git rev-parse -q --verify HEAD^2 >/dev/null; then
+            patch_base="$(git rev-parse HEAD^1)"
+          else
+            patch_base="$(merge_base "$BASE_SHA" "$(git rev-parse HEAD)")"
+            need "$patch_base"
+          fi
+          {
+            echo "pr=$pr"
+            echo "patch_base=$patch_base"
+          } >> "$GITHUB_OUTPUT"
+          echo "merge-base of $BASE_SHA and $HEAD_SHA: $pr; patch base: $patch_base"
 
       - name: Resolve human override
         if: github.event.pull_request.head.repo.full_name == github.repository
@@ -147,9 +186,12 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # The listing runs from the merge-base of base.sha and this head,
+          # the commit the three-dot `BASE_SHA...HEAD_SHA` range diffed from.
+          MERGE_BASE: ${{ steps.merge_base.outputs.pr }}
           # The revision the committed media is listed against and read AT.
           # The checkout is the pull request's merge ref, whose second parent
-          # is this head, so `fetch-depth: 0` has every blob of it in the
+          # is this head, so `fetch-depth: 2` has every blob of it in the
           # object store; the committed-evidence script reads them there
           # with `git cat-file`, never off the working tree, so a same-repo
           # pull request and a fork one take the same path through the same
@@ -277,10 +319,6 @@ jobs:
           github.actor != 'dependabot[bot]' && steps.human_override.outputs.active != 'true'
           )
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PATCH: ${{ runner.temp }}/authentic.patch
-        run: |
-          set -uo pipefail
           # The checkout is the pull request's merge ref, whose FIRST parent is
           # the base branch tip it was minted against, so diffing from that
           # parent is exactly what merging this pull request does to the base.
@@ -288,20 +326,20 @@ jobs:
           # does NOT track the base branch, so diffing from it carries every
           # commit the base gained since -- on a busy base that is megabytes of
           # other people's work, which trips the size cap below and hands the
-          # reviewer the base's own history as this change. Falls back to it
-          # only where the checkout is not a merge commit and has no parent to
-          # read the base from.
-          BASE="$BASE_SHA"
-          if git rev-parse -q --verify HEAD^2 >/dev/null; then
-            BASE="$(git rev-parse HEAD^1)"
-          fi
-          git diff --no-color "$BASE...HEAD" > "$PATCH"
+          # reviewer the base's own history as this change. The merge-base step
+          # falls back to it only where the checkout is not a merge commit and
+          # has no parent to read the base from.
+          BASE: ${{ steps.merge_base.outputs.patch_base }}
+          PATCH: ${{ runner.temp }}/authentic.patch
+        run: |
+          set -uo pipefail
+          git diff --no-color "$BASE..HEAD" > "$PATCH"
           if [ "$(wc -c < "$PATCH" 2>/dev/null || echo 0)" -gt 1000000 ]; then
             echo "::error::diff exceeds 1 MB; failing closed (split the PR)."
             exit 1
           fi
           if [ ! -s "$PATCH" ]; then
-            echo "::error::empty diff for $BASE...HEAD; failing closed."
+            echo "::error::empty diff for $BASE..HEAD; failing closed."
             exit 1
           fi
           echo "Prefetched the diff ($(wc -c < "$PATCH") bytes) as a data file."

@@ -93,13 +93,49 @@ jobs:
       # persist-credentials:false stops actions/checkout from writing the
       # GITHUB_TOKEN into .git/config, where the agentic reviewer — which reads
       # untrusted PR diff content — could otherwise read and leak it. `git diff`
-      # still works (history is fetched via depth 0); the posting step uses its
-      # own scoped GH_TOKEN. Mirrors design-review.yml.
+      # still works (the next step fetches the merge-base it diffs from); the
+      # posting step uses its own scoped GH_TOKEN. Mirrors design-review.yml.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event.pull_request.head.repo.full_name == github.repository
         with:
-          fetch-depth: 0
+          # The merge ref plus its two parents (the base tip and the PR head),
+          # not the whole history.
+          fetch-depth: 2
           persist-credentials: false
+
+      # The checkout is shallow, so a three-dot `base...HEAD` range has no
+      # history to find its merge-base in. GitHub's compare API names the
+      # merge-base; that one commit is fetched at depth 1, and every diff below
+      # is the two-dot `<merge-base>..HEAD`. A two-dot diff compares two trees
+      # and needs no history, and it is the same diff the three-dot range gave
+      # on a full clone.
+      #   tree        merge-base of base.sha and the checkout (the UI-scope
+      #               gate and the committed-screenshot listing)
+      #   patch_base  the merge ref's first parent, which is its own merge-base
+      #               with it; where the checkout is not a merge commit, `tree`
+      - name: Fetch the merge-base commits (shallow history)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        id: merge_base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # need SHA / merge_base X Y -- see the script's header.
+          . "$GITHUB_WORKSPACE/.github/scripts/review-merge-base.sh"
+          tip="$(git rev-parse HEAD)"
+          tree="$(merge_base "$BASE_SHA" "$tip")"
+          need "$tree"
+          patch_base="$tree"
+          if git rev-parse -q --verify HEAD^2 >/dev/null; then
+            patch_base="$(git rev-parse HEAD^1)"
+          fi
+          {
+            echo "tree=$tree"
+            echo "patch_base=$patch_base"
+          } >> "$GITHUB_OUTPUT"
+          echo "merge-base of $BASE_SHA and the checkout $tip: $tree; patch base: $patch_base"
 
       # UI-scope gate: this lane only earns its Bedrock spend when the PR
       # touches a user-facing surface. website/** is the dashboard frontend;
@@ -110,10 +146,10 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         id: scope
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ steps.merge_base.outputs.tree }}
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          changed="$(git diff --name-only "$MERGE_BASE"..HEAD)"
           # Here-string, NOT `printf … | grep -q`: under `pipefail` a matching
           # `grep -q` exits as soon as it has its answer, closing the pipe while
           # `printf` is still writing. `printf` then dies on SIGPIPE and the
@@ -205,7 +241,7 @@ jobs:
           )
         id: evidence
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ steps.merge_base.outputs.tree }}
           # The PR description is UNTRUSTED author input. The script reads it
           # from the API at run time -- not from the event payload, which is
           # frozen when the push lands, so evidence attached afterwards is
@@ -228,7 +264,7 @@ jobs:
           MAX_CLIPS: "4"
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD)"
+          changed="$(git diff --name-only --diff-filter=AM "$MERGE_BASE"..HEAD)"
           rm -rf "$BLIND_DIR" "$FETCH_DIR"
           mkdir -p "$BLIND_DIR" "$FETCH_DIR"
           : > "$SHOTS"
@@ -422,10 +458,6 @@ jobs:
           github.actor != 'dependabot[bot]' && steps.scope.outputs.ui == 'true' && steps.human_override.outputs.active != 'true'
           )
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PATCH: ${{ runner.temp }}/authentic.patch
-        run: |
-          set -uo pipefail
           # The checkout is the pull request's merge ref, whose FIRST parent is
           # the base branch tip it was minted against, so diffing from that
           # parent is exactly what merging this pull request does to the base.
@@ -433,20 +465,20 @@ jobs:
           # does NOT track the base branch, so diffing from it carries every
           # commit the base gained since -- on a busy base that is megabytes of
           # other people's work, which trips the size cap below and hands the
-          # reviewer the base's own history as this change. Falls back to it
-          # only where the checkout is not a merge commit and has no parent to
-          # read the base from.
-          BASE="$BASE_SHA"
-          if git rev-parse -q --verify HEAD^2 >/dev/null; then
-            BASE="$(git rev-parse HEAD^1)"
-          fi
-          git diff --no-color "$BASE...HEAD" > "$PATCH"
+          # reviewer the base's own history as this change. The merge-base step
+          # falls back to it only where the checkout is not a merge commit and
+          # has no parent to read the base from.
+          BASE: ${{ steps.merge_base.outputs.patch_base }}
+          PATCH: ${{ runner.temp }}/authentic.patch
+        run: |
+          set -uo pipefail
+          git diff --no-color "$BASE..HEAD" > "$PATCH"
           if [ "$(wc -c < "$PATCH" 2>/dev/null || echo 0)" -gt 1000000 ]; then
             echo "::error::diff exceeds 1 MB; failing closed (split the PR)."
             exit 1
           fi
           if [ ! -s "$PATCH" ]; then
-            echo "::error::empty diff for $BASE...HEAD; failing closed."
+            echo "::error::empty diff for $BASE..HEAD; failing closed."
             exit 1
           fi
           echo "Prefetched the diff ($(wc -c < "$PATCH") bytes) as a data file."

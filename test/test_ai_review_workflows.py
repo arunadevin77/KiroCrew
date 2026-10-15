@@ -2029,13 +2029,14 @@ class TestFirstPrinciplesReview:
         assert '-f name="First Principles Review"' in workflow
 
     def test_fork_scope_gate_takes_no_fork_controlled_input(self) -> None:
-        # The changed-path list comes from the pinned base...head range, so no
-        # fork-authored text (a PR title) reaches this step's shell at all.
+        # The changed-path list comes from the pinned merge-base..head range, so
+        # no fork-authored text (a PR title) reaches this step's shell at all.
         workflow = _workflow("fork-first-principles-review.yml")
         script = _step_script(workflow, "Detect reviewable surface")
 
         assert "gh api" not in script
-        assert "$BASE_SHA...$HEAD_SHA" in script
+        assert "$MERGE_BASE..$HEAD_SHA" in script
+        assert "MERGE_BASE: ${{ steps.authentic.outputs.merge_base }}" in workflow
         assert "BASE_SHA: ${{ steps.pr.outputs.base_sha }}" in workflow
         assert "HEAD_SHA: ${{ steps.pr.outputs.head_sha }}" in workflow
 
@@ -2098,7 +2099,7 @@ class TestFirstPrinciplesReview:
             assert "pr-intent.txt" in workflow
         same = _workflow("first-principles-review.yml")
         prefetch = _step_script(same, "Prefetch the change as data files")
-        assert 'git diff --no-color "$BASE_SHA"...HEAD' in prefetch
+        assert 'git diff --no-color "$MERGE_BASE"..HEAD' in prefetch
         # The intent is bounded, and NOT by piping into `head -c`: that exits as soon
         # as it has its bytes, so the writer takes SIGPIPE and `pipefail` turns the
         # 141 into a step failure -- on exactly the over-cap body the cap exists for.
@@ -3308,6 +3309,10 @@ class TestUxReviewReadsTheScreenshotsBlindFirst:
             env={
                 **env,
                 "BASE_SHA": base,
+                # Each lane's merge-base step hands the evidence step the
+                # merge-base it fetched; HEAD descends from `base` here, so
+                # `base` is that merge-base.
+                "MERGE_BASE": base,
                 # The fork lanes and both design lanes read the media the PR
                 # commits out of the object store at this revision; the
                 # same-repo UX step, which has the files checked out, ignores it.
@@ -5523,7 +5528,7 @@ class TestClaudeReviewCodeOnlyScope:
         assert "Obtain the diff by reading this pre-fetched file" in same
         assert "Obtain the diff by running" not in same
         script = _step_script(same, "Prefetch the reviewable diff (data only)")
-        assert 'git diff --no-color "$BASE_SHA...$HEAD_SHA"' in script
+        assert 'git diff --no-color "$MERGE_BASE..$HEAD_SHA"' in script
         assert "exit 1" in script  # an empty diff is a real signal, not a pass
         assert "${{ runner.temp }}/pr.diff" in same
         # The prefetch must precede the first agentic step.
