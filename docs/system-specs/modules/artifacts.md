@@ -1384,8 +1384,14 @@ to this kind would store content no reader can parse.
   authed `POST /api/sandbox-doc` stashes the html the caller already holds and
   returns the URL; the path credential is client-bound with a short TTL, and the
   response pins `Content-Security-Policy: sandbox` so the document keeps an
-  opaque origin even when opened top-level. Flags match what the embedding frame
-  already grants, so nothing is newly permitted or denied. The same response's
+  opaque origin even when opened top-level. The sandbox flags match what the
+  embedding frame already grants. The header also sets `connect-src 'none'`,
+  `object-src 'none'`, `base-uri 'none'` and `form-action 'none'`, so a document
+  cannot fetch, open a WebSocket or beacon to another host even without its own
+  `<meta>` CSP. Every shipped caller's meta CSP already blocks the same channels,
+  so nothing they render changes. `default-src` stays unset, so script, style,
+  image and font sources stay as the document's meta CSP decides; navigation and
+  `window.open` are not governed by CSP. The same response's
   `frame-ancestors` is **`'self'` plus the ancestors `'self'` cannot express**
   (`origin.frame_ancestors_value`), and both halves are load-bearing. `'self'` is
   resolved by the BROWSER against the frame's real URL, so it stays correct behind

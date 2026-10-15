@@ -229,9 +229,23 @@ async def serve_sandbox_doc(request: web.Request) -> web.Response:
     # those the embedding frames grant — no more. `allow-forms` in particular is
     # NOT granted: neither ArtifactBody nor WidgetFrame allows it, so including it
     # here would let a document opened top-level submit forms that the same
-    # document cannot submit inside the frame. No `default-src` is added on
-    # purpose: these documents can reach the network, and silently cutting that
-    # off would break existing widgets rather than fix them.
+    # document cannot submit inside the frame.
+    #
+    # The fetch directives close the CONNECT-class channels a model-authored
+    # document could use to send what it holds to another host: `connect-src`
+    # (fetch, XHR, WebSocket, EventSource, sendBeacon, <a ping>), plus
+    # `object-src` (plugins), `base-uri` (re-pointing relative URLs) and
+    # `form-action`. Shipped callers already wrap their html in a `<meta>` CSP
+    # that blocks these (lib/widgetSrcdoc.ts, dashboardDocument.ts), so this
+    # header changes nothing they render; it makes the property hold for ANY
+    # document minted here, meta or not. A meta policy can only add restrictions
+    # on top of this header, never lift them.
+    #
+    # This is NOT complete exfiltration protection. `default-src` is deliberately
+    # unset, so script/style/img/font/frame/media requests to another host stay
+    # as the document's own meta CSP decides (widgets load CDN libraries that
+    # way), and CSP does not govern navigation (`location`, `window.open` under
+    # `allow-popups`) or WebRTC.
     #
     # `frame-ancestors` is `'self'` PLUS the ancestors `'self'` cannot express.
     # `'self'` is resolved by the browser against the frame's real URL, so it stays
@@ -247,6 +261,7 @@ async def serve_sandbox_doc(request: web.Request) -> web.Response:
 
     resp.headers["Content-Security-Policy"] = (
         "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; "
+        "connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; "
         f"frame-ancestors {frame_ancestors_value(_extra_frame_ancestors(request, request.app))}"
     )
     resp.headers["X-Content-Type-Options"] = "nosniff"
