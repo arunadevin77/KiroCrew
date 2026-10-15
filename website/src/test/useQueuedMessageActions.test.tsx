@@ -4,7 +4,7 @@ import { render, act, waitFor } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { configureStore } from '@reduxjs/toolkit'
 import chatReducer from '../store/chatSlice'
-import dashboardReducer from '../store/dashboardSlice'
+import dashboardReducer, { sseSlotPatch } from '../store/dashboardSlice'
 import notificationsReducer from '../store/notificationsSlice'
 import type { RootState } from '../store'
 import type { ChatMessage } from '../types'
@@ -50,6 +50,7 @@ function makeStore(slot: string, rows: ChatMessage[]) {
     reducer: { dashboard: dashboardReducer, chat: chatReducer, notifications: notificationsReducer },
     preloadedState: {
       chat: { activeSlot: slot, messages: rows, slotMessages: {} },
+      dashboard: { slots: [{ key: slot, stop_teardown: true }] },
     } as unknown as Partial<RootState>,
   })
 }
@@ -65,7 +66,7 @@ function renderActions(opts: {
   project?: () => string | undefined
 }) {
   const rows = opts.rows ?? [queued('q1', 'run the tests'), queued('q2', 'then deploy')]
-  const slot = opts.slot === undefined ? 'chat-1' : opts.slot
+  let slot = opts.slot === undefined ? 'chat-1' : opts.slot
   const store = makeStore(slot ?? 'chat-1', rows)
   let actions: QueuedMessageActions | null = null
 
@@ -88,6 +89,7 @@ function renderActions(opts: {
     slot,
     /** Re-render as the host would once a server frame changed the queue. */
     setQueue: (next: ChatMessage[]) => view.rerender(wrap(next)),
+    setSlot: (next: string) => { slot = next; view.rerender(wrap(rows)) },
   }
 }
 
@@ -381,6 +383,100 @@ describe('useQueuedMessageActions — in-flight latch (#5891 item 2)', () => {
     // The frame lands and the row disappears.
     await act(async () => { setQueue([rows[0]]) })
     await waitFor(() => expect(get().pendingIds.has('q2')).toBe(false))
+  })
+
+  it('releases a held interrupt, explains the automatic send and blocks retry while stopping', async () => {
+    apiMocks.interruptSlot.mockResolvedValue({ ok: true, queue_held: true })
+    const { get, store } = renderActions({})
+    await act(async () => { get().onInterrupt('q2') })
+    expect(get().pendingIds.has('q2')).toBe(false)
+    expect(get().interruptNotice).toBe('The previous turn is still stopping. Your message is queued and will send once it stops.')
+    expect(get().interruptBlockedTitle).toBe('Still stopping…')
+    act(() => { store.dispatch(sseSlotPatch({ slots: [{ key: 'chat-1', stop_teardown: false }] })) })
+    expect(get().interruptNotice).toBeNull()
+    expect(get().interruptBlockedTitle).toBeNull()
+    expect(apiMocks.interruptSlot).toHaveBeenCalledTimes(1)
+    apiMocks.interruptSlot.mockResolvedValue({ ok: true, outcome: 'started' })
+    await act(async () => { get().onInterrupt('q2') })
+    expect(get().pendingIds.has('q2')).toBe(true)
+    expect(apiMocks.interruptSlot).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores a held response arriving after teardown has settled', async () => {
+    const response = deferred()
+    apiMocks.interruptSlot.mockReturnValue(response.promise)
+    const { get, store } = renderActions({})
+    act(() => { get().onInterrupt('q1') })
+    act(() => { store.dispatch(sseSlotPatch({ slots: [{ key: 'chat-1', stop_teardown: false }] })) })
+    await act(async () => { response.resolve({ ok: true, queue_held: true }) })
+    expect(get().interruptNotice).toBeNull()
+    expect(get().pendingIds.has('q1')).toBe(false)
+    expect(apiMocks.interruptSlot).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the notice when its queued card retires', async () => {
+    apiMocks.interruptSlot.mockResolvedValue({ ok: true, queue_held: true })
+    const { get, setQueue } = renderActions({})
+    await act(async () => { get().onInterrupt('q1') })
+    expect(get().interruptNotice).not.toBeNull()
+    act(() => { setQueue([queued('q2', 'then deploy')]) })
+    expect(get().interruptNotice).toBeNull()
+    expect(apiMocks.interruptSlot).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not revive a notice after leaving and returning to a slot', async () => {
+    apiMocks.interruptSlot.mockResolvedValue({ ok: true, queue_held: true })
+    const { get, setSlot } = renderActions({})
+    await act(async () => { get().onInterrupt('q1') })
+    expect(get().interruptNotice).not.toBeNull()
+    act(() => { setSlot('chat-2') })
+    act(() => { setSlot('chat-1') })
+    expect(get().interruptNotice).toBeNull()
+  })
+
+  it('ignores an old response after leaving and returning to its slot', async () => {
+    const response = deferred()
+    apiMocks.interruptSlot.mockReturnValue(response.promise)
+    const rows = [queued('q1', 'run the tests')]
+    const { get, setSlot, setQueue } = renderActions({ rows })
+    act(() => { get().onInterrupt('q1') })
+    act(() => { setSlot('chat-2'); setQueue([]) })
+    act(() => { setSlot('chat-1'); setQueue(rows) })
+    await act(async () => { response.resolve({ ok: true, queue_held: true }) })
+    expect(get().interruptNotice).toBeNull()
+    expect(get().pendingIds.has('q1')).toBe(false)
+  })
+
+  it.each(['success', 'rejection'])('an old %s cannot release a newer request after returning to its slot', async outcome => {
+    const oldResponse = deferred()
+    const newResponse = deferred()
+    apiMocks.interruptSlot.mockReturnValueOnce(oldResponse.promise).mockReturnValueOnce(newResponse.promise)
+    const rows = [queued('q1', 'run the tests')]
+    const { get, setSlot, setQueue } = renderActions({ rows })
+    act(() => { get().onInterrupt('q1') })
+    act(() => { setSlot('chat-2'); setQueue([]) })
+    expect(get().pendingIds.has('q1')).toBe(false)
+    act(() => { setSlot('chat-1'); setQueue(rows) })
+    act(() => { get().onInterrupt('q1') })
+    await act(async () => {
+      if (outcome === 'success') oldResponse.resolve({ ok: true, queue_held: true })
+      else oldResponse.reject(new Error('old request failed'))
+    })
+    expect(get().pendingIds.has('q1')).toBe(true)
+    expect(get().interruptNotice).toBeNull()
+    expect(apiMocks.interruptSlot).toHaveBeenCalledTimes(2)
+    await act(async () => { newResponse.resolve({ ok: true, queue_held: true }) })
+    expect(get().pendingIds.has('q1')).toBe(false)
+    expect(get().interruptNotice).not.toBeNull()
+  })
+
+  it('releases an in-flight latch when its queued card leaves the current slot', () => {
+    apiMocks.interruptSlot.mockReturnValue(deferred().promise)
+    const { get, setSlot, setQueue } = renderActions({})
+    act(() => { get().onInterrupt('q1') })
+    expect(get().pendingIds.has('q1')).toBe(true)
+    act(() => { setSlot('chat-2'); setQueue([]) })
+    expect(get().pendingIds.has('q1')).toBe(false)
   })
 
   it('releases an interrupt immediately on rejection so the user can retry', async () => {
