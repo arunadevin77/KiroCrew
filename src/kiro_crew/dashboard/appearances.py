@@ -40,6 +40,7 @@ from typing import Literal
 
 from kiro_crew.appearance_packs import pack_id_key, safe_pack_id
 from kiro_crew.appearance_packs.store import AppearanceStore
+from kiro_crew.appearance_packs.transfer import import_bundle
 from kiro_crew.config.paths import data_home
 from kiro_crew.loop_lock import LoopBoundLock
 
@@ -377,12 +378,6 @@ async def import_pack(payload: object) -> dict:
     and running under ``_drained_to_thread`` means a cancelled request cannot
     release the lock with the write still in flight.
     """
-    # boot path: `appearance_packs.transfer` builds a urllib opener at module
-    # scope, and this module is imported by the dashboard's route table before
-    # the socket binds; importing it here means the first import request pays
-    # that, not the launch. The store itself does no such work, so it is a
-    # normal top-level import.
-    from kiro_crew.appearance_packs.transfer import import_bundle
     from kiro_crew.dashboard.handlers.agents import _drained_to_thread
 
     def _check_then_import(store: AppearanceStore) -> dict:
