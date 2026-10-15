@@ -314,7 +314,7 @@ async def release_approval_hold(
             _apply(loop)
             raise
         _apply(loop)
-    logger.warning(
+    logger.info(
         "AutoNudge: loop %s resumed after %.0fs paused for approval (%s)",
         loop.id,
         held,
@@ -557,6 +557,9 @@ def notify_turn_complete(
     reply_text: str | None = None,
     reply_flushed: bool = False,
     nudge_turn: bool | None = None,
+    turn_started_at: float | None = None,
+    successful_tool_completed_at: float | None = None,
+    approval_pending: bool | None = None,
     tool_identities: object = None,
 ) -> None:
     """Called by gateway after HOOK_EVENT_STOP — resume the countdown for this slot.
@@ -579,16 +582,42 @@ def notify_turn_complete(
     the label DISCRIMINATE -- it names each dispatch, so a turn whose only call read
     a file is not counted as having acted, which a bare *tool_calls* count cannot
     express. It is optional, and its absence falls back to the count.
+    *turn_started_at* and *successful_tool_completed_at* are the wall-clock
+    bounds of a turn whose last tool result reached ``status=completed``. When the
+    turn began after the approval hold started and *approval_pending* is explicitly
+    false, the same slot has proved that a later turn can execute tools again, so a
+    legacy loop's hold is released. Requiring the turn itself to be later prevents
+    the turn that timed out from clearing its own hold if another tool then succeeds.
+    A structured monitor keeps the flag because its action completion consumes that
+    evidence as a terminal ``approval_stall`` outcome.
     *nudge_turn* binds those facts to this loop's own delivered turn.
     *reply_flushed* says the visible text is only the final segment of the reply. An
     unknown *nudge_turn* reads as not this loop's turn: declining to label costs one
     row of hit rate, while labelling an unrelated turn writes a wrong row. None of
-    the five is stored: the rule reduces them to one boolean plus two numbers and a
+    the eight is stored: the rules reduce them to one boolean plus two numbers and a
     flag, and that is what the loop's record and the calibration log keep.
     """
     loop = self._find_by_slot(slot_key)
     if not loop or not loop.active:
         return
+    release_after_completed_tool = (
+        loop.approval_stalled
+        and not is_structured_monitor_loop(loop)
+        and approval_pending is False
+        and isinstance(turn_started_at, (int, float))
+        and not isinstance(turn_started_at, bool)
+        and isinstance(successful_tool_completed_at, (int, float))
+        and not isinstance(successful_tool_completed_at, bool)
+        and loop.approval_stalled_at > 0
+        and turn_started_at >= loop.approval_stalled_at
+        and successful_tool_completed_at >= turn_started_at
+    )
+    if release_after_completed_tool:
+        _schedule_release(
+            self,
+            slot_key,
+            why="a tool completed after the stall with no approval pending",
+        )
     # Before the re-arm and before the mid-fire deferral, because this labels the
     # turn that just ENDED. A deferred re-arm postpones the next tick; the verdict
     # that woke this one is already decided and is waiting for exactly this answer.

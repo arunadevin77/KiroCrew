@@ -503,9 +503,10 @@ class NudgeLoop:
     # It holds on proof that it could not act, never on a prediction that it
     # might not be able to. A loop whose turns only touch auto-approved tools
     # never reaches an interactive wait, so it can never be flagged here.
-    # Cleared by ``release_approval_hold`` once a person is back (an approval
-    # answered in the slot, a message typed into it, a manual fire), which
-    # resumes the loop with no re-arm by the user, and on every revival.
+    # Cleared by ``release_approval_hold`` once the slot proves it can act again
+    # (an approval answered, a message typed, a manual fire, or a later turn
+    # that began after the hold completes a tool with no prompt pending), which resumes the loop
+    # with no re-arm by the user, and on every revival.
     # Persisted, because the condition that produced it usually outlives a
     # restart.
     approval_stalled: bool = False
