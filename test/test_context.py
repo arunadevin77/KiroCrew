@@ -1704,7 +1704,7 @@ class TestLoadSteeringResources:
 
     def test_steering_injected_for_cc_but_not_acp(self, tmp_path):
         """kiro-cli loads an agent's ``resources`` natively when spawned with
-        ``--agent`` (acp/client.py ``_spawn``), so build_session_context must
+        ``--agent`` (acp/client_start.py ``_spawn``), so build_session_context must
         NOT re-inject steering on the ACP backend — that would duplicate what
         kiro already loaded. The CC backend (claude-agent-acp) does not read
         agent ``resources``, so it still needs the explicit load.

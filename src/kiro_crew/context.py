@@ -2656,7 +2656,7 @@ class ContextBuilder:
         Beyond the essentials it is consumed for the steering gate only: the
         steering block below is injected solely on the CC backend
         (``is_claude_code(provider_type)``). kiro-cli loads an agent's
-        ``resources`` natively when spawned with ``--agent`` (acp/client.py
+        ``resources`` natively when spawned with ``--agent`` (acp/client_start.py
         ``_spawn``), so re-injecting steering on the ACP/kiro backend would
         duplicate what kiro already loaded; the CC backend (claude-agent-acp)
         does NOT read agent ``resources`` and still needs the explicit load.
@@ -2903,7 +2903,7 @@ class ContextBuilder:
 
         # Steering files from agent config resources.
         # kiro-cli loads an agent's ``resources`` natively when spawned with
-        # ``--agent`` (see acp/client.py ``_spawn``) — the same mechanism that
+        # ``--agent`` (see acp/client_start.py ``_spawn``) — the same mechanism that
         # lets us skip this for custom agents above. The CC backend
         # (claude-agent-acp) does NOT read agent ``resources``, so only it needs
         # the explicit load. Injecting on the ACP/kiro backend would duplicate
@@ -3026,7 +3026,7 @@ class ContextBuilder:
         #
         # 1. The agent template maps skills via ``skill://`` resources. On the
         #    ACP/kiro backend kiro-cli loads those SKILL.md files ITSELF when
-        #    spawned with ``--agent`` (acp/client.py ``_spawn``), so injecting
+        #    spawned with ``--agent`` (acp/client_start.py ``_spawn``), so injecting
         #    them again here would duplicate every mapped skill's content —
         #    exactly the reason the steering block below is CC-only. On the CC
         #    backend (claude-agent-acp) nothing reads agent ``resources``, so

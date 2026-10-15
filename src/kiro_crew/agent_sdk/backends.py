@@ -484,7 +484,7 @@ ACP_BACKENDS_SESSION_MCP_ARRAY: FrozenSet[str] = frozenset(
 #: What the public edition ships.
 #:
 #: ``ACP_BACKEND_CLAUDE`` is included because the public build can genuinely serve a
-#: session with it: ``acp/client.py`` owns the whole spawn path (the ``_is_claude``
+#: session with it: ``acp/client_start.py`` owns the whole spawn path (the ``_is_claude``
 #: branch, ``_resolve_claude_acp_bin``, ``_resolve_claude_code_executable``) and the
 #: adapter it needs is a PUBLIC npm package (``CLAUDE_ACP_NPM_PKG``). Nothing about it
 #: is edition-private. An earlier revision left it out and described it as a "dormant

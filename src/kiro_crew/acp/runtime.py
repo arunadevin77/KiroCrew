@@ -8199,7 +8199,7 @@ class AcpRuntime:
 
         # Re-declare the pooled broker stubs so a resumed session keeps talking
         # to the broker — same injection as create_session() and the AcpClient
-        # resume path (client.py). session/load re-initializes the session's MCP
+        # resume path (client_start.py). session/load re-initializes the session's MCP
         # servers (see the budget note below), so an empty list here is APPLIED,
         # not ignored: the stubs stop shadowing the agent spec's same-named
         # entries and kiro-cli spawns its own copy of every pooled server,

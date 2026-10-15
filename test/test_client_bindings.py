@@ -14,7 +14,10 @@ port see the same object they always did. This file pins the binding contract:
 * no owner imports the facade or the class's module at run time;
 * each owner's docstring names the instance fields its members write and read;
 * a write through ``kiro_crew.acp.client`` reaches every owner that reads the name, for
-  every name the test trees patch there (the facade's mirror, ``_facade_mirror``).
+  every name the test trees patch there (the facade's mirror, ``_facade_mirror``);
+* the class statement lives in ``client_class`` and still names the facade as its module,
+  for reprs, pickles and type hints;
+* the facade fills the session start's ``_resolve_spawn_env``, which stays defined there.
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ pytestmark = pytest.mark.xdist_group(name="tree_scan_client_bindings")
 #: Member -> (kind, coroutine, signature digest, owning module). Frozen at the split: the
 #: kind, coroutine flag and signature are BASE's; the owner is where the member lives now.
 _MEMBERS: dict[str, tuple[str, object, str, str]] = {
-    "__init__": ("function", False, "0da0e673600b", "client"),
+    "__init__": ("function", False, "0da0e673600b", "client_class"),
     "_add_orphan_steers": ("function", False, "b3c41cdccc27", "client_turn_control"),
     "_advertised_model_ids": ("function", False, "6806e867af4e", "client_model_selection"),
     "_agent_env_for_spawn": ("function", False, "8cab7a4db01b", "client_spawn_env"),
@@ -55,7 +58,7 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_begin_session_report": ("function", False, "a9c1df12798e", "client_mcp_array"),
     "_build_permission_event": ("function", False, "e64128661dfa", "client_permissions"),
     "_capture_available_models": ("function", False, "8e047a255b27", "client_model_selection"),
-    "_claim_pathname_if_ours": ("staticmethod", False, "af30c5c7e262", "client"),
+    "_claim_pathname_if_ours": ("staticmethod", False, "af30c5c7e262", "client_class"),
     "_classify_failed_start": ("function", True, "05bb8f207290", "client_lifecycle"),
     "_claude_adapter_below_setting_sources_floor": (
         "function",
@@ -73,7 +76,7 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_cleanup_failed_live_spawn": ("function", True, "b60c5fea256e", "client_lifecycle"),
     "_close_steer_turn": ("function", False, "f604c3478f16", "client_turn_control"),
     "_codex_compaction_event": ("function", False, "e64128661dfa", "client_usage"),
-    "_consult_liveness_model_wait": ("function", True, "0329a680bb66", "client"),
+    "_consult_liveness_model_wait": ("function", True, "0329a680bb66", "client_turn"),
     "_copy_aside_back_without_clobber": (
         "staticmethod",
         False,
@@ -81,20 +84,20 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
         "client_seed_ownership",
     ),
     "_deepseek_session_mcp_servers": ("function", False, "f5423acdeebc", "client_mcp_array"),
-    "_defer_opencode_shell_permission": ("function", True, "7c70a056d5ef", "client"),
+    "_defer_opencode_shell_permission": ("function", True, "7c70a056d5ef", "client_turn"),
     "_deny_spec_disabled_tool": ("function", True, "2dfacffa6279", "client_permissions"),
     "_deny_zero_tools": ("function", True, "2dfacffa6279", "client_permissions"),
     "_discard_bound_workspace": ("function", True, "b60c5fea256e", "client_lifecycle"),
     "_discard_claude_settings_seed": ("function", True, "b60c5fea256e", "client_seed_ownership"),
     "_discard_pi_mcp_handoff": ("function", True, "b60c5fea256e", "client_mcp_array"),
     "_discard_sandbox_cleanup": ("function", False, "b60c5fea256e", "client_lifecycle"),
-    "_dispatch_events": ("function", "agen", "f222467c1516", "client"),
+    "_dispatch_events": ("function", "agen", "f222467c1516", "client_turn"),
     "_dispatch_prompt_events": ("function", "agen", "69109bbc58c2", "client_turn_control"),
     "_drain_notifications": ("function", True, "f217c1b501c0", "client_transport"),
     "_drain_post_compaction_metadata": ("function", True, "65fe4b4d1210", "client_usage"),
     "_drain_stderr": ("function", True, "550410b8da31", "client_lifecycle"),
     "_emit_tool_interrupted_sel": ("function", False, "866fc4f75f7c", "client_tool_events"),
-    "_enforces_zero_tool_ban": ("property", False, "a6632a57e602", "client"),
+    "_enforces_zero_tool_ban": ("property", False, "a6632a57e602", "client_class"),
     "_ensure_served_default": ("function", True, "b60c5fea256e", "client_model_selection"),
     "_entitlement_probe_answer": ("function", True, "1ca8e8c3a438", "client_model_selection"),
     "_entitlement_probe_client": ("function", False, "4d5584e1d14b", "client_model_selection"),
@@ -106,7 +109,7 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_extract_tool_event": ("function", False, "e64128661dfa", "client_tool_events"),
     "_foreign_mcp_identity": ("function", False, "2dfacffa6279", "client_permissions"),
     "_foreign_settings_owner": ("function", False, "0d96e8ab9b17", "client_seed_ownership"),
-    "_fork_session": ("function", True, "bca802976336", "client"),
+    "_fork_session": ("function", True, "bca802976336", "client_start"),
     "_goose_session_mcp_servers": ("function", False, "f5423acdeebc", "client_mcp_array"),
     "_guard_unresolved_mcp_refs": ("function", False, "779b51571c73", "client_mcp_array"),
     "_hand_back_unrevoked_claim": ("function", False, "d12bff1e2bd1", "client_seed_ownership"),
@@ -114,19 +117,19 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_handle_config_option_update": ("function", False, "87459833bc5c", "client_model_selection"),
     "_handle_permission": ("function", True, "87459833bc5c", "client_permissions"),
     "_harness_mcp_server_names": ("function", False, "9d5ab4ea1828", "client_mcp_array"),
-    "_initialize_params": ("function", False, "16d9fe32838b", "client"),
-    "_initialize_session": ("function", True, "b60c5fea256e", "client"),
+    "_initialize_params": ("function", False, "16d9fe32838b", "client_start"),
+    "_initialize_session": ("function", True, "b60c5fea256e", "client_start"),
     "_invalidate_session_mcp_projection": ("function", False, "b60c5fea256e", "client_mcp_array"),
-    "_is_claude": ("property", False, "a6632a57e602", "client"),
-    "_is_deepseek": ("property", False, "a6632a57e602", "client"),
-    "_is_goose": ("property", False, "a6632a57e602", "client"),
-    "_is_kiro": ("property", False, "a6632a57e602", "client"),
-    "_is_opencode": ("property", False, "a6632a57e602", "client"),
-    "_is_pi": ("property", False, "a6632a57e602", "client"),
+    "_is_claude": ("property", False, "a6632a57e602", "client_class"),
+    "_is_deepseek": ("property", False, "a6632a57e602", "client_class"),
+    "_is_goose": ("property", False, "a6632a57e602", "client_class"),
+    "_is_kiro": ("property", False, "a6632a57e602", "client_class"),
+    "_is_opencode": ("property", False, "a6632a57e602", "client_class"),
+    "_is_pi": ("property", False, "a6632a57e602", "client_class"),
     "_is_process_alive": ("function", False, "a6632a57e602", "client_lifecycle"),
     "_jsonl_tool_results": ("staticmethod", False, "db2ae4946f1c", "client_tool_events"),
     "_judge_activated_model": ("function", True, "b60c5fea256e", "client_model_selection"),
-    "_judges_permission_requests": ("property", False, "a6632a57e602", "client"),
+    "_judges_permission_requests": ("property", False, "a6632a57e602", "client_class"),
     "_kill_process": ("function", True, "352add48ee4e", "client_lifecycle"),
     "_last_steer_monotonic": ("data", False, "", ""),
     "_log_claude_adapter_below_floor": ("function", False, "0453b971e505", "client_claude_session"),
@@ -139,8 +142,8 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_mirrorless_member_mounts": ("function", False, "286e411ff644", "client_mcp_array"),
     "_model_config_candidates": ("staticmethod", False, "f9fa998bdaf1", "client_model_selection"),
     "_model_is_unusable": ("function", False, "fa34fb34dc41", "client_model_selection"),
-    "_model_registry_namespace": ("property", False, "bb418bb7ece8", "client"),
-    "_new_session_following_substitution": ("function", True, "44dc9acb7120", "client"),
+    "_model_registry_namespace": ("property", False, "bb418bb7ece8", "client_class"),
+    "_new_session_following_substitution": ("function", True, "44dc9acb7120", "client_start"),
     "_next_req_id": ("function", False, "fa6cfecd5574", "client_transport"),
     "_note_active_run": ("function", False, "87459833bc5c", "client_turn_control"),
     "_note_agent_switched": ("function", False, "d552841f483c", "client_model_selection"),
@@ -151,7 +154,7 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_note_pi_gate_denied": ("function", False, "84bed4474307", "client_permissions"),
     "_opencode_session_mcp_servers": ("function", False, "f5423acdeebc", "client_mcp_array"),
     "_parked_on_permission": ("data", False, "", ""),
-    "_permission_surface_governed": ("property", False, "a6632a57e602", "client"),
+    "_permission_surface_governed": ("property", False, "a6632a57e602", "client_class"),
     "_persist_advertised_models_if_changed": (
         "function",
         True,
@@ -167,15 +170,15 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_prepare_session_mcp": ("function", True, "b60c5fea256e", "client_mcp_array"),
     "_prepare_spawn_workspace": ("function", False, "b60c5fea256e", "client_spawn_env"),
     "_probe_advertised_models": ("function", True, "1ca8e8c3a438", "client_model_selection"),
-    "_process_message": ("function", False, "0a2dbbba4c1b", "client"),
-    "_prompt_loop": ("function", "agen", "f7811e44af15", "client"),
+    "_process_message": ("function", False, "0a2dbbba4c1b", "client_turn"),
+    "_prompt_loop": ("function", "agen", "f7811e44af15", "client_turn"),
     "_prune_unstartable_mcp": ("function", True, "4dfb79f9f73b", "client_mcp_array"),
     "_push_model_config_option": ("function", True, "e60b4fb0cbfc", "client_model_selection"),
     "_read_mcp_ref_spec": ("function", False, "e7ed4605a35e", "client_mcp_array"),
     "_read_message": ("function", True, "4b94f6a71f32", "client_transport"),
     "_read_new_tool_results": ("function", True, "58ee5ea89856", "client_tool_events"),
     "_read_new_tool_results_sync": ("function", False, "58ee5ea89856", "client_tool_events"),
-    "_read_prompt_response": ("function", True, "b9663bcac669", "client"),
+    "_read_prompt_response": ("function", True, "b9663bcac669", "client_turn"),
     "_read_steer_answers": ("function", True, "68f218dcd574", "client_turn_control"),
     "_reassert_adapter_resolved_model": (
         "function",
@@ -194,21 +197,21 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_reset_state": ("function", False, "b60c5fea256e", "client_lifecycle"),
     "_resolve_session_mcp_servers": ("function", False, "7eb96c2fda05", "client_mcp_array"),
     "_resolve_spawn_agent_argv": ("function", False, "bb418bb7ece8", "client_spawn_env"),
-    "_restore_aside_without_clobber": ("staticmethod", False, "276fb30edb8b", "client"),
-    "_retire_liveness_state": ("function", False, "b60c5fea256e", "client"),
+    "_restore_aside_without_clobber": ("staticmethod", False, "276fb30edb8b", "client_class"),
+    "_retire_liveness_state": ("function", False, "b60c5fea256e", "client_lifecycle"),
     "_retract_reseed": ("function", False, "a76c82664804", "client_claude_seed"),
     "_sandbox_init_failure": ("function", True, "cc2578c6512d", "client_lifecycle"),
     "_scrub_observed": ("staticmethod", False, "b1a850b0b873", "client_permissions"),
     "_seed_session_settings": ("function", True, "b60c5fea256e", "client_claude_seed"),
-    "_seeds_local_settings": ("property", False, "a6632a57e602", "client"),
+    "_seeds_local_settings": ("property", False, "a6632a57e602", "client_class"),
     "_send_error": ("function", True, "f8eeeb44db9e", "client_transport"),
-    "_send_prompt": ("function", True, "bed51a75b209", "client"),
+    "_send_prompt": ("function", True, "bed51a75b209", "client_turn"),
     "_send_request": ("function", True, "c05412d4481e", "client_transport"),
     "_send_response": ("function", True, "79c6f4daabf0", "client_transport"),
     "_session_mcp_servers": ("function", False, "7eb96c2fda05", "client_mcp_array"),
     "_session_work_dir": ("function", True, "bb418bb7ece8", "client_lifecycle"),
     "_settings_path_bytes": ("staticmethod", False, "faf5a3c79c9e", "client_seed_ownership"),
-    "_settings_path_holds": ("staticmethod", False, "d9ca34c8f528", "client"),
+    "_settings_path_holds": ("staticmethod", False, "d9ca34c8f528", "client_class"),
     "_settle_claude_compaction": ("function", False, "01ddf3eeedf2", "client_usage"),
     "_settle_claude_settings_seed": ("function", False, "cf5eff128c4c", "client_seed_ownership"),
     "_settle_claude_settings_seed_locked": (
@@ -226,8 +229,8 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_share_settings_seed_if_identical": ("function", False, "0b50a902117a", "client_claude_seed"),
     "_share_sibling_settings_seed": ("function", False, "0b50a902117a", "client_claude_seed"),
     "_snapshot_process_tree": ("function", True, "b60c5fea256e", "client_lifecycle"),
-    "_spawn": ("function", True, "b60c5fea256e", "client"),
-    "_speaks_steering_request": ("property", False, "a6632a57e602", "client"),
+    "_spawn": ("function", True, "b60c5fea256e", "client_start"),
+    "_speaks_steering_request": ("property", False, "a6632a57e602", "client_class"),
     "_stdin_write_lock": ("function", False, "fd738ff11600", "client_transport"),
     "_steer_echo_event": ("function", False, "e64128661dfa", "client_turn_control"),
     "_steer_via_concurrent_prompt": ("function", True, "e2662ac6ac7a", "client_turn_control"),
@@ -249,7 +252,7 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_tripwire_pi_gate": ("function", True, "87459833bc5c", "client_permissions"),
     "_tripwire_spec_disabled_tool": ("function", False, "42c6e584f488", "client_permissions"),
     "_unclassified_tool_call": ("function", False, "2dfacffa6279", "client_permissions"),
-    "_uses_advertised_model_selection": ("property", False, "a6632a57e602", "client"),
+    "_uses_advertised_model_selection": ("property", False, "a6632a57e602", "client_class"),
     "_verify_claude_project_denies_unchanged": (
         "function",
         True,
@@ -264,59 +267,59 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_write_request_bounded": ("function", True, "4ea88874f686", "client_transport"),
     "_write_response_bounded": ("function", True, "1aa0c9bf750c", "client_transport"),
     "_write_steer_cancel": ("function", True, "b60c5fea256e", "client_turn_control"),
-    "acp_config_options": ("property", False, "3b4687b0c546", "client"),
-    "agent_version": ("property", False, "bb418bb7ece8", "client"),
+    "acp_config_options": ("property", False, "3b4687b0c546", "client_class"),
+    "agent_version": ("property", False, "bb418bb7ece8", "client_class"),
     "approve_tool": ("function", True, "d9f85d56922f", "client_permissions"),
     "authored_spec_declares_zero_tools": ("function", False, "a6632a57e602", "client_mcp_array"),
     "available_models": ("function", False, "92d6193dbe19", "client_model_selection"),
-    "backend": ("property", False, "bb418bb7ece8", "client"),
+    "backend": ("property", False, "bb418bb7ece8", "client_class"),
     "background_launch": ("function", False, "d85112f1c4e4", "client_turn_control"),
     "cancel_session": ("function", True, "0e6ce85f9f06", "client_turn_control"),
     "command_result": ("function", True, "ef1b0634d9c5", "client_turn_control"),
     "effective_spec_declares_zero_tools": ("function", False, "b70ef8096bd5", "client_mcp_array"),
-    "ensure_ready": ("function", True, "b60c5fea256e", "client"),
-    "exit_code": ("property", False, "8dc15be1dfda", "client"),
+    "ensure_ready": ("function", True, "b60c5fea256e", "client_start"),
+    "exit_code": ("property", False, "8dc15be1dfda", "client_class"),
     "get_valid_effort_levels": ("function", False, "6806e867af4e", "client_model_selection"),
     "has_active_turn": ("function", False, "a6632a57e602", "client_turn_control"),
     "has_unfinished_turn": ("function", False, "a6632a57e602", "client_turn_control"),
-    "is_process_alive": ("function", False, "a6632a57e602", "client"),
-    "is_ready": ("property", False, "a6632a57e602", "client"),
+    "is_process_alive": ("function", False, "a6632a57e602", "client_class"),
+    "is_ready": ("property", False, "a6632a57e602", "client_class"),
     "is_responsive": ("function", False, "4b2fc7c136b8", "client_lifecycle"),
-    "last_steer_monotonic": ("property", False, "59162e39f6f1", "client"),
+    "last_steer_monotonic": ("property", False, "59162e39f6f1", "client_class"),
     "mcp_session_report": ("function", False, "ac691973b9b4", "client_mcp_array"),
-    "member_dispatch_mounted": ("property", False, "16180c63d5e6", "client"),
+    "member_dispatch_mounted": ("property", False, "16180c63d5e6", "client_class"),
     "pop_pending_oauth_requests": ("function", False, "92d6193dbe19", "client_mcp_array"),
-    "process_instance": ("property", False, "bb418bb7ece8", "client"),
-    "process_tree_confirmed_dead": ("property", False, "a6632a57e602", "client"),
+    "process_instance": ("property", False, "bb418bb7ece8", "client_class"),
+    "process_tree_confirmed_dead": ("property", False, "a6632a57e602", "client_class"),
     "reclaim": ("function", False, "b60c5fea256e", "client_lifecycle"),
     "refresh_available_models": ("function", True, "92d6193dbe19", "client_model_selection"),
     "refresh_process_tree": ("function", True, "b60c5fea256e", "client_lifecycle"),
     "reject_tool": ("function", True, "84bed4474307", "client_permissions"),
     "rekey": ("function", False, "d58f70d0bd6a", "client_lifecycle"),
     "release_settings_seed_claim": ("function", False, "b60c5fea256e", "client_seed_ownership"),
-    "resumed": ("property", False, "a6632a57e602", "client"),
+    "resumed": ("property", False, "a6632a57e602", "client_class"),
     "send_command": ("function", True, "b66667c61d53", "client_turn_control"),
-    "send_message": ("function", True, "c63d2b398c21", "client"),
-    "send_message_stream": ("function", "agen", "dbc2a1962f65", "client"),
-    "session_identity_token": ("property", False, "bb418bb7ece8", "client"),
+    "send_message": ("function", True, "c63d2b398c21", "client_turn"),
+    "send_message_stream": ("function", "agen", "dbc2a1962f65", "client_turn"),
+    "session_identity_token": ("property", False, "bb418bb7ece8", "client_class"),
     "set_config_option": ("function", True, "d17f94a912fd", "client_model_selection"),
     "set_fork_request": ("function", False, "09f226933c39", "client_lifecycle"),
     "set_model": ("function", True, "bcd0cd3aa159", "client_model_selection"),
     "set_resume_session_id": ("function", False, "df97aaea4e38", "client_lifecycle"),
     "shutdown": ("function", True, "b60c5fea256e", "client_lifecycle"),
-    "spec_zero_tools": ("property", False, "a6632a57e602", "client"),
+    "spec_zero_tools": ("property", False, "a6632a57e602", "client_class"),
     "steer": ("function", True, "b0a837a37097", "client_turn_control"),
-    "steer_needs_loss_recovery": ("property", False, "a6632a57e602", "client"),
+    "steer_needs_loss_recovery": ("property", False, "a6632a57e602", "client_class"),
     "stream_command": ("function", "agen", "07d1ae72fdc6", "client_turn_control"),
-    "stream_events": ("function", "agen", "ed7ccfb7b96f", "client"),
+    "stream_events": ("function", "agen", "ed7ccfb7b96f", "client_turn"),
     "supports_config_option": ("function", False, "b86d69c93890", "client_model_selection"),
-    "supports_refusal_steer": ("property", False, "a6632a57e602", "client"),
-    "supports_steer": ("property", False, "a6632a57e602", "client"),
+    "supports_refusal_steer": ("property", False, "a6632a57e602", "client_class"),
+    "supports_steer": ("property", False, "a6632a57e602", "client_class"),
     "touch_activity": ("function", False, "b60c5fea256e", "client_lifecycle"),
     "turn_finished_cleanly": ("function", False, "a6632a57e602", "client_turn_control"),
     "wait_for_compaction": ("function", True, "1d8ef804d52e", "client_usage"),
     "wait_turn_done": ("function", True, "48da118c69ff", "client_turn_control"),
-    "work_scratch_dir": ("property", False, "d921fd8d443d", "client"),
+    "work_scratch_dir": ("property", False, "d921fd8d443d", "client_class"),
 }
 
 #: Class-level annotations the split adds: fields first set by a member an owner defines,
@@ -408,7 +411,7 @@ def test_each_member_keeps_its_kind_shape_and_owner(name: str) -> None:
     assert (shape or False) == coroutine
     assert _signature_digest(fn) == digest, f"{name}{inspect.signature(fn)} changed signature"
     assert fn.__module__ == f"{_PACKAGE}.{owner}"
-    if owner != "client":
+    if fn.__qualname__ != f"AcpClient.{name}":  # bound from an owner, not class-resident
         assert vars(sys.modules[f"{_PACKAGE}.{owner}"])[name] is fn
 
 
@@ -599,7 +602,8 @@ def test_the_bound_function_scans_include_every_static_method() -> None:
     statics = {
         name: f"{_PACKAGE}.{home}"
         for name, (kind, _, _, home) in _MEMBERS.items()
-        if kind == "staticmethod" and home.startswith("client_")
+        if kind == "staticmethod"
+        and _member_function(name).__qualname__ != f"AcpClient.{name}"  # bound, not resident
     }
     assert statics
     scanned = {
@@ -810,3 +814,142 @@ def test_a_patch_through_the_facade_lands_on_the_owner_and_is_undone(
         assert acp_client._READ_TIMEOUT is sentinel
     assert owner._READ_TIMEOUT is before
     assert acp_client._READ_TIMEOUT is before
+
+
+# --------------------------------------------------------------------------- #
+# The class lives in ``client_class``; callers, pickles and reprs still name the facade.
+# --------------------------------------------------------------------------- #
+
+#: ``typing.get_type_hints(AcpClient.__init__)`` before the class left ``client.py``.
+_INIT_HINTS = {
+    "acp_backend": "<class 'str'>",
+    "agent": "<class 'str'>",
+    "audit_source": "str | None",
+    "channel_id": "str | None",
+    "extra_env": "dict[str, str] | None",
+    "mcp_gateway_overlay": "str | pathlib.Path | None",
+    "mcp_gateway_socket": "str | pathlib.Path | None",
+    "model": "str | None",
+    "permission_mode": "str | None",
+    "sandbox_mode": "<class 'str'>",
+    "session_key": "str | None",
+    "shared_scratch": "pathlib.Path | None",
+    "side_read_only": "<class 'bool'>",
+    "work_dir": "str | pathlib.Path | None",
+}
+
+
+def _class_resident() -> dict[str, Any]:
+    """The members whose body is still in the class statement, by name."""
+    found = {}
+    for name in vars(AcpClient):
+        fn = _member_function(name) if name in _MEMBERS else None
+        if inspect.isfunction(fn) and fn.__qualname__ == f"AcpClient.{name}":
+            found[name] = fn
+    return found
+
+
+def test_the_class_keeps_the_facade_as_its_module_name_and_pickle_path() -> None:
+    import importlib
+
+    from kiro_crew.acp import client_class
+
+    assert AcpClient is client_class.AcpClient is acp_client.AcpClient
+    assert (AcpClient.__module__, AcpClient.__qualname__) == (acp_client.__name__, "AcpClient")
+    assert inspect.getdoc(AcpClient)
+    # A pickle stores a class as module + qualname and loads it back by that lookup.
+    assert (
+        getattr(importlib.import_module(AcpClient.__module__), AcpClient.__qualname__) is AcpClient
+    )
+
+
+def test_every_class_resident_member_resolves_its_type_hints() -> None:
+    import typing
+
+    resident = _class_resident()
+    assert {"__init__", "backend", "_restore_aside_without_clobber"} <= set(resident)
+    for fn in resident.values():
+        typing.get_type_hints(fn)
+    init = typing.get_type_hints(AcpClient.__init__)
+    assert {name: repr(hint) for name, hint in init.items()} == _INIT_HINTS
+    assert typing.get_type_hints(vars(AcpClient)["backend"].fget) == {"return": str}
+
+
+def test_a_facade_patch_of_the_class_reaches_its_class_resident_statics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The class's own statics call each other through the ``AcpClient`` global, which a
+    patch of ``kiro_crew.acp.client.AcpClient`` still replaces for them."""
+    calls: list[tuple[Path, Path]] = []
+
+    class StandIn(AcpClient):
+        @staticmethod
+        def _rename_aside_noreplace(aside: Path, path: Path) -> bool:
+            calls.append((aside, path))
+            return True
+
+    monkeypatch.setattr(acp_client, "AcpClient", StandIn)
+    aside, path = tmp_path / "aside", tmp_path / "settings.json"
+    assert AcpClient._restore_aside_without_clobber(aside, path, (0, 0)) is True
+    assert calls == [(aside, path)]
+
+
+# --------------------------------------------------------------------------- #
+# The session start reads ``_resolve_spawn_env``, which the facade defines and fills in.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_facade_fills_the_session_starts_spawn_env_resolver() -> None:
+    from kiro_crew.acp import client_start
+
+    assert client_start._resolve_spawn_env is vars(acp_client)["_resolve_spawn_env"]
+    assert client_start._resolve_spawn_env.__module__ == acp_client.__name__
+    spawn = inspect.unwrap(client_start._spawn)
+    codes, names = [spawn.__code__], set()
+    while codes:  # the read sits in a nested function of the spawn
+        code = codes.pop()
+        names.update(code.co_names)
+        codes.extend(c for c in code.co_consts if inspect.iscode(c))
+    assert "_resolve_spawn_env" in names
+    assert spawn.__globals__ is vars(client_start)
+
+
+def test_a_facade_patch_of_the_spawn_env_resolver_reaches_the_session_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kiro_crew.acp import client_start
+
+    def stand_in(env: dict[str, str], *, kiro_api_key: bool = False) -> dict[str, str]:
+        return env
+
+    before = client_start._resolve_spawn_env
+    with monkeypatch.context() as patch:
+        patch.setattr(acp_client, "_resolve_spawn_env", stand_in)
+        assert client_start._spawn.__globals__["_resolve_spawn_env"] is stand_in
+    assert client_start._resolve_spawn_env is before
+
+
+def _imports_the_session_start(tree: ast.Module) -> bool:
+    return f"{_PACKAGE}.client_start" in _owner_imports(tree)
+
+
+def test_only_the_facade_and_the_class_import_the_session_start() -> None:
+    """Nothing reaches ``client_start`` before the facade has filled it: the package
+    imports the facade first, and the class module is the only other importer."""
+    src = Path(acp_client.__file__ or "").resolve().parents[1]
+    importers = sorted(
+        path.relative_to(src).as_posix()
+        for path in src.rglob("*.py")
+        if "client_start" in path.read_text(encoding="utf-8")
+        and _imports_the_session_start(ast.parse(path.read_text(encoding="utf-8")))
+    )
+    assert importers == ["acp/client.py", "acp/client_class.py"]
+    package = ast.parse((src / "acp" / "__init__.py").read_text(encoding="utf-8"))
+    first = next(n for n in package.body if isinstance(n, (ast.Import, ast.ImportFrom)))
+    assert isinstance(first, ast.ImportFrom) and first.module == acp_client.__name__
+
+
+def test_the_session_start_import_scan_can_fail() -> None:
+    assert _imports_the_session_start(ast.parse("from kiro_crew.acp import client_start\n"))
+    assert _imports_the_session_start(ast.parse("from kiro_crew.acp.client_start import X\n"))
+    assert not _imports_the_session_start(ast.parse("from kiro_crew.acp import client\n"))

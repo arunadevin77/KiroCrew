@@ -63,7 +63,7 @@ Site = tuple[str, str]
 
 # (module path under src/kiro_crew, dotted enclosing function) -> gates referenced.
 ADMISSION_SITES: dict[Site, frozenset[str]] = {
-    ("acp/client.py", "AcpClient._spawn"): frozenset({FORK, FRESH}),
+    ("acp/client_start.py", "_spawn"): frozenset({FORK, FRESH}),
     ("acp/harness/kas.py", "KasHarness.session_extras._build"): frozenset({FORK, FRESH}),
     ("acp/harness/kiro.py", "KiroHarness.resolve_spawn"): frozenset({FORK}),
     ("acp/runtime.py", "AcpRuntime._resolve_spawn_plan"): frozenset({FRESH}),
@@ -100,7 +100,7 @@ KNOWN_GAPS: dict[Site, tuple[frozenset[str], str]] = {
 # (module, function) -> the admission sites that govern the spawn it builds, or a
 # string stating why no admission gate applies.
 AGENT_ARGV_SITES: dict[Site, tuple[Site, ...] | str] = {
-    ("acp/client.py", "AcpClient._spawn"): (("acp/client.py", "AcpClient._spawn"),),
+    ("acp/client_start.py", "_spawn"): (("acp/client_start.py", "_spawn"),),
     ("acp/harness/kiro.py", "KiroHarness.resolve_spawn"): (
         ("acp/harness/kiro.py", "KiroHarness.resolve_spawn"),
         ("acp/runtime.py", "AcpRuntime._resolve_spawn_plan"),
@@ -127,7 +127,7 @@ AGENT_ARGV_SITES: dict[Site, tuple[Site, ...] | str] = {
 # site must name one of them among its governors (see the last test below).
 SHADOW_SITES: frozenset[Site] = frozenset(
     {
-        ("acp/client.py", "AcpClient._spawn"),
+        ("acp/client_start.py", "_spawn"),
         ("acp/harness/kiro.py", "KiroHarness.resolve_spawn"),
     }
 )

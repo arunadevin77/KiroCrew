@@ -47,7 +47,7 @@ versions, not as a standing property.
 
 **What kiro-cli actually does with them differs from the IDE.** Measured against
 **2.19.1** over ACP, driven with `acp --agent <name>` + `session/set_mode` and the
-`initialize` / `session/new` / `session/prompt` shapes `acp/client.py` sends,
+`initialize` / `session/new` / `session/prompt` shapes `acp/client_start.py` and `acp/client_turn.py` send,
 against a workspace holding one document per mode with a unique marker in each:
 
 | Declared | Loaded |

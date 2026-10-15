@@ -38,7 +38,7 @@ This RFC adds an **agent-started turn**: a reader that watches stdout between tu
 
 ### Current frame flow
 
-All readers below are `AcpClient` methods: `_prompt_loop` in `src/kiro_crew/acp/client.py`, the command and init waits in `src/kiro_crew/acp/client_transport.py`, and the compaction readers in `src/kiro_crew/acp/client_usage.py`.
+All readers below are `AcpClient` methods: `_prompt_loop` in `src/kiro_crew/acp/client_turn.py`, the command and init waits in `src/kiro_crew/acp/client_transport.py`, and the compaction readers in `src/kiro_crew/acp/client_usage.py`.
 
 | When | Who reads stdout | What happens to a frame |
 |---|---|---|
