@@ -66,6 +66,7 @@ _OWNER_MODULES = frozenset(
         "steer_queue",
         "tool_approval",
         "turn_context",
+        "turn_locals",
         "turn_marker",
         "turn_stats",
     }
@@ -713,29 +714,44 @@ def test_the_chat_facade_reexports_the_runner_objects() -> None:
     assert [name for name in names if getattr(chat, name) is not getattr(cr, name)] == []
 
 
-#: Functions that stay defined in ``dashboard/chat_runner.py``. The first five are
-#: the coroutines tasks are started with: ``stall_attribution`` names a stalled task
-#: by the outermost frame it can place, and a frame in that file is what reads as a
-#: dashboard chat turn. ``_arm_pending_reset_retry`` and ``_arm_synthesis_recheck``
-#: define the coroutines they start, ``_launch_synthesis`` starts the pending
-#: synthesis, and ``_finish_queue_cycle`` starts it and the title and summary passes,
-#: so each stays beside the tasks it creates.
-_RUNNER_FILE_DEFS = (
-    "_run_chat",
-    "_start_next_queued_turn",
-    "_run_pending_synthesis",
-    "_eager_spawn",
-    "_prefetch_ttl",
-    "_arm_pending_reset_retry",
-    "_arm_synthesis_recheck",
-    "_launch_synthesis",
-    "_finish_queue_cycle",
-)
+#: The file each coroutine a task is started with is defined in, and each function
+#: that starts one. ``stall_attribution`` names a stalled task by the outermost frame
+#: it can place, and it reads a frame in the runner or in a ``chat_turn`` owner as a
+#: dashboard chat turn, so an entry may live in either; the map pins each entry to its
+#: file, and the stall test below proves the reach for each. ``_run_chat``'s row is the
+#: exit guard's ``guarded`` (``_hands_off_queue_on_exit``), the coroutine every turn task
+#: runs; ``_arm_pending_reset_retry`` and ``_arm_synthesis_recheck`` define the coroutines
+#: they start, ``_launch_synthesis`` starts the pending synthesis, and
+#: ``_finish_queue_cycle`` starts it and the title and summary passes.
+_RUNNER_HOME = "dashboard/chat_runner.py"
+_TASK_ENTRY_HOMES: dict[str, str] = {
+    "_run_chat": _RUNNER_HOME,
+    "_start_next_queued_turn": _RUNNER_HOME,
+    "_run_pending_synthesis": _RUNNER_HOME,
+    "_eager_spawn": _RUNNER_HOME,
+    "_prefetch_ttl": _RUNNER_HOME,
+    "_arm_pending_reset_retry": _RUNNER_HOME,
+    "_arm_synthesis_recheck": _RUNNER_HOME,
+    "_launch_synthesis": _RUNNER_HOME,
+    "_finish_queue_cycle": _RUNNER_HOME,
+}
 
 
-@pytest.mark.parametrize("name", _RUNNER_FILE_DEFS)
-def test_a_task_entry_stays_defined_in_the_runner_file(name: str) -> None:
-    assert Path(getattr(cr, name).__code__.co_filename).resolve() == _FACADE_PATH
+@pytest.mark.parametrize(("name", "home"), sorted(_TASK_ENTRY_HOMES.items()))
+def test_a_task_entry_is_defined_in_its_home_file(name: str, home: str) -> None:
+    home_path = (_SRC / "kiro_crew" / home).resolve()
+    assert Path(getattr(cr, name).__code__.co_filename).resolve() == home_path
+
+
+@pytest.mark.parametrize("name", sorted(_TASK_ENTRY_HOMES))
+def test_a_stalled_task_entry_reads_as_a_dashboard_chat_turn(name: str) -> None:
+    """Wherever an entry's home is, a stall whose outermost frame is that entry still
+    names the dashboard chat surface."""
+    from kiro_crew.stall_attribution import Frame, classify_surface
+
+    code = getattr(cr, name).__code__
+    frame = Frame(Path(code.co_filename).as_posix(), code.co_firstlineno, code.co_name)
+    assert classify_surface([frame]) == "dashboard chat"
 
 
 #: Owner phases cut from blocks of ``_run_chat`` and ``_start_next_queued_turn``
@@ -1543,62 +1559,73 @@ def test_no_owner_captures_a_name_tests_rebind_on_the_runner() -> None:
 
 # ── the path-keyed guards keep their reach ────────────────────────────────────
 
-#: Constructs repository guards enumerate in ``dashboard/chat_runner.py`` by path:
+#: Constructs repository guards enumerate by path, each with the files it lives in:
 #: redaction sinks and the redactor census, the deny chokepoints and the approve
 #: sites, the turn-ceiling, allocation, usage-row and turn-metric sites, the
 #: runtime-death attribution, the transcript-derivation plumbing, the hook gate, the
 #: agent-spec read registry, the slot.running reader map, the task entries, the
 #: stop classifier, the crew-log closers, the persona gate, the L1 budget resets, the
 #: memory-store seam's calls, the frame contract, the compaction-continuation and
-#: native question-card wiring, and the start-priority claimer calls. An owner that
+#: native question-card wiring, and the start-priority claimer calls. A file that
 #: grew one would move it out of such a guard's sight without failing it, so each
-#: stays in the runner.
-_STAYS_IN_THE_RUNNER = (
-    r"\b\w*redact\w*\(",
-    r"StreamRedactor",
-    r"\.reject_tool\(",
-    r"_reject_attributed\(",
-    r"\.approve_tool\(",
-    r"begin_turn\(",
-    r"get_or_create\(",
-    r"persist_token_record",
-    r"_emit_turn_metric\(",
-    r"caused_by_this_session",
-    r"note_shared_death",
-    r"clear_shared_deaths",
-    r"_acp_pipe_death_retries",
-    r"except AcpProcessDied",
-    r"\.recent\(",
-    r"warm_project_agent_names\(",
+#: pattern matches exactly the homes listed here, and a construct moves only together
+#: with its row and the guard that reads it.
+_GUARDED_CONSTRUCT_HOMES: dict[str, tuple[str, ...]] = {
+    r"\b\w*redact\w*\(": (_RUNNER_HOME,),
+    r"StreamRedactor": (_RUNNER_HOME,),
+    r"\.reject_tool\(": (_RUNNER_HOME,),
+    r"_reject_attributed\(": (_RUNNER_HOME,),
+    r"\.approve_tool\(": (_RUNNER_HOME,),
+    r"begin_turn\(": (_RUNNER_HOME,),
+    r"get_or_create\(": (_RUNNER_HOME,),
+    r"persist_token_record": (_RUNNER_HOME,),
+    r"_emit_turn_metric\(": (_RUNNER_HOME,),
+    r"caused_by_this_session": (_RUNNER_HOME,),
+    r"note_shared_death": (_RUNNER_HOME,),
+    r"clear_shared_deaths": (_RUNNER_HOME,),
+    r"_acp_pipe_death_retries": (_RUNNER_HOME,),
+    r"except AcpProcessDied": (_RUNNER_HOME,),
+    r"\.recent\(": (_RUNNER_HOME,),
+    r"warm_project_agent_names\(": (_RUNNER_HOME,),
     # The tool-gate consultation: the sync call, or the awaitable form a coroutine uses.
-    r"\.on_tool_call\(|run_in_tool_gate_pool\(\s*[\w.]+\.on_tool_call,",
-    r"spawn_guarded_turn\(",
-    r"create_task\(",
-    r"ensure_future\(",
-    r"\bslot\.task = ",
-    r"\.(?:turn_)?running\b",
-    r"is_claude_code\(",
-    r"capabilities_of\(",
-    r"classify_stop_reason\(",
-    r"notify_turn_complete\(",
-    r"on_tool_completed\(",
-    r"latch_crew_log_previous\(",
-    r"capabilities\.theme_persona",
-    r"(?m)^_CONTEXT_FRAME_CONTRACT\b",
-    r"slot\._infra_retries = 0",
-    r"slot\._transient_5xx_retries = 0",
-    r"\bmemory_store=",
-    r"compaction_settled=_compaction_completed,",
-    r"await _post_native_question_card\(",
-    r"\brun_bg_oneliner\(",
-)
+    r"\.on_tool_call\(|run_in_tool_gate_pool\(\s*[\w.]+\.on_tool_call,": (_RUNNER_HOME,),
+    r"spawn_guarded_turn\(": (_RUNNER_HOME,),
+    r"create_task\(": (_RUNNER_HOME,),
+    r"ensure_future\(": (_RUNNER_HOME,),
+    r"\bslot\.task = ": (_RUNNER_HOME,),
+    r"\.(?:turn_)?running\b": (_RUNNER_HOME,),
+    r"is_claude_code\(": (_RUNNER_HOME,),
+    r"capabilities_of\(": (_RUNNER_HOME,),
+    r"classify_stop_reason\(": (_RUNNER_HOME,),
+    r"notify_turn_complete\(": (_RUNNER_HOME,),
+    r"on_tool_completed\(": (_RUNNER_HOME,),
+    r"latch_crew_log_previous\(": (_RUNNER_HOME,),
+    r"capabilities\.theme_persona": (_RUNNER_HOME,),
+    r"(?m)^_CONTEXT_FRAME_CONTRACT\b": (_RUNNER_HOME,),
+    r"slot\._infra_retries = 0": (_RUNNER_HOME,),
+    r"slot\._transient_5xx_retries = 0": (_RUNNER_HOME,),
+    r"\bmemory_store=": (_RUNNER_HOME,),
+    r"compaction_settled=_compaction_completed,": (_RUNNER_HOME,),
+    r"await _post_native_question_card\(": (_RUNNER_HOME,),
+    r"\brun_bg_oneliner\(": (_RUNNER_HOME,),
+}
 
 
-@pytest.mark.parametrize("pattern", _STAYS_IN_THE_RUNNER)
-def test_a_construct_the_runner_guards_count_stays_in_the_runner(pattern: str) -> None:
-    assert re.search(pattern, _FACADE_PATH.read_text(encoding="utf-8"))
-    holders = [stem for stem, source in _owner_sources().items() if re.search(pattern, source)]
-    assert holders == []
+def _turn_texts() -> dict[str, str]:
+    """The runner's and every owner's source, keyed by path under ``kiro_crew``."""
+    texts = {_RUNNER_HOME: _FACADE_PATH.read_text(encoding="utf-8")}
+    texts.update(
+        {f"dashboard/chat_turn/{stem}.py": source for stem, source in _owner_sources().items()}
+    )
+    return texts
+
+
+@pytest.mark.parametrize(("pattern", "homes"), sorted(_GUARDED_CONSTRUCT_HOMES.items()))
+def test_a_construct_guards_count_lives_only_in_its_homes(
+    pattern: str, homes: tuple[str, ...]
+) -> None:
+    holders = sorted(path for path, text in _turn_texts().items() if re.search(pattern, text))
+    assert holders == sorted(homes)
 
 
 def test_a_stalled_owner_frame_still_reads_as_a_dashboard_chat_turn() -> None:

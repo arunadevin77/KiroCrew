@@ -1241,7 +1241,12 @@ class TestGenerationScopedLatchClear:
 
         import kiro_crew.dashboard.chat_runner as chat_runner_module
 
-        text = _Path(chat_runner_module.__file__).read_text(encoding="utf-8")
+        runner = _Path(chat_runner_module.__file__)
+        text = "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+            if turn_file.name != "__init__.py"
+        )
         assert 'getattr(service, "identity_observation_generation", None)' in text, (
             "the turn gate must capture the observation generation right "
             "after its identity_changed_since_sessions read"

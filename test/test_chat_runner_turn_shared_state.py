@@ -338,6 +338,15 @@ def _reaches(root: Any, target: Any, stops: list[Any]) -> bool:
     return False
 
 
+def _closed_over(fn: Any) -> Iterator[Any]:
+    """The values *fn*'s closure cells hold, skipping a cell nothing has bound yet."""
+    for cell in fn.__closure__ or ():
+        try:
+            yield cell.cell_contents
+        except ValueError:
+            continue
+
+
 class TestNothingOnTheSlotOutlivesTheTurn:
     @pytest.mark.asyncio
     async def test_turn_shared_state_slot_keeps_no_path_to_the_turns_provider(self) -> None:
@@ -384,6 +393,33 @@ class TestNothingOnTheSlotOutlivesTheTurn:
             assert record.stop_reason == STOP_REASON_END_TURN
             [cut] = cuts
             assert cut() is None
+        finally:
+            if was_enabled:
+                gc.enable()
+
+    @pytest.mark.asyncio
+    async def test_turn_shared_state_the_turn_object_dies_without_the_collector(self) -> None:
+        # Every closure that reads the turn's shared state holds the turn object. Were
+        # the turn to hold a closure in turn, the two would form a cycle that keeps every
+        # ended turn, and the client on it, alive until a collection runs.
+        from kiro_crew.dashboard import chat_runner
+
+        turns: list[weakref.ref[Any]] = []
+
+        def _while_running(ctx: TurnContext) -> None:
+            turns.extend(
+                weakref.ref(value)
+                for value in _closed_over(ctx.slot._steer_segment_cut)
+                if isinstance(value, chat_runner._ChatTurn)
+            )
+
+        was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            record = await run_turn(TurnScript(events=[_PARTIAL, Do(_while_running), _DONE]))
+            assert record.stop_reason == STOP_REASON_END_TURN
+            [turn] = turns
+            assert turn() is None
         finally:
             if was_enabled:
                 gc.enable()

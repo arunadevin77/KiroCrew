@@ -1982,7 +1982,9 @@ def test_chat_runner_has_no_private_stop_reason_mapping():
     or a literal retry budget; it reads the classifier and the shared constant."""
     import kiro_crew.dashboard.chat_runner as cr
 
-    src = Path(cr.__file__).read_text(encoding="utf-8")
+    runner = Path(cr.__file__)
+    turn_files = [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+    src = "\n".join(t.read_text(encoding="utf-8") for t in turn_files if t.name != "__init__.py")
     assert 'startswith("error:")' not in src
     assert "classify_stop_reason(" in src
     assert "_tool_stall_retries < 3" not in src and "_tool_stall_retries >= 3" not in src

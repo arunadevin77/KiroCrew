@@ -291,13 +291,18 @@ class TestContextTrace:
         """
         import ast
 
-        source = (
+        runner = (
             Path(__file__).resolve().parents[2]
             / "src"
             / "kiro_crew"
             / "dashboard"
             / "chat_runner.py"
-        ).read_text(encoding="utf-8")
+        )
+        source = "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+            if turn_file.name != "__init__.py"
+        )
         tree = ast.parse(source)
 
         # Parent links, so a node's enclosing branches can be walked upward: ast
@@ -396,13 +401,18 @@ class TestContextTrace:
         """
         import ast
 
-        source = (
+        runner = (
             Path(__file__).resolve().parents[2]
             / "src"
             / "kiro_crew"
             / "dashboard"
             / "chat_runner.py"
-        ).read_text(encoding="utf-8")
+        )
+        source = "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+            if turn_file.name != "__init__.py"
+        )
         tree = ast.parse(source)
 
         lines: dict[str, list[int]] = {}

@@ -262,10 +262,18 @@ class TestSwitchedOffOutsideOwnerView:
         fan one chunk to every connected client besides. An owner-view seam there
         would advertise a raw transcript it cannot deliver."""
         import inspect
+        from pathlib import Path
 
         from kiro_crew.dashboard import chat_runner, chat_utils
 
-        assert "owner_view" not in inspect.getsource(chat_runner)
+        assert "owner_view" not in "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [
+                *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+                Path(chat_runner.__file__),
+            ]
+            if turn_file.name != "__init__.py"
+        )
         assert "owner_view" not in inspect.getsource(chat_utils)
 
     def test_file_viewer_opens_the_scope_only_for_the_owner(self):

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -243,7 +244,16 @@ class TestRunnerBranch:
 
     @pytest.fixture(scope="class")
     def src(self) -> str:
-        return inspect.getsource(chat_runner)
+        from pathlib import Path
+
+        return "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [
+                *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+                Path(chat_runner.__file__),
+            ]
+            if turn_file.name != "__init__.py"
+        )
 
     def test_reads_the_handles_verdict_not_a_regex(self, src):
         assert 'isinstance(getattr(client, "last_infra_error", None), InfraError)' in src
@@ -358,11 +368,16 @@ class TestRunnerBranch:
         # The assembled flag is raised in BOTH the builder and the builder-less
         # fallback context-build arms (a standalone dashboard without a builder
         # must settle too, not re-prepend history every warm turn).
-        branch = src.index("if _context_is_new and not _provider_has_history:")
-        assert "_first_turn_history_assembled = True" in src[branch : branch + 1600]
+        arm = "if _context_is_new and not _provider_has_history:"
+        flagged = [
+            m.start()
+            for m in re.finditer(re.escape(arm), src)
+            if "_first_turn_history_assembled = True" in src[m.start() : m.start() + 1600]
+        ]
+        assert len(flagged) >= 2, flagged
         assert src.count("_first_turn_history_assembled = True") >= 2
         # The suppression arm pays the debt directly (a reset asked to forget).
-        assert "consume_replay_suppression(session_key)" in src
+        assert src.count("consume_replay_suppression(session_key)") >= 2
         # A confirmed native clear retires the debt beside the sibling replay lease
         # — otherwise a fresh /clear leaves it armed and the next prompt rebuilds
         # the history the user dropped.

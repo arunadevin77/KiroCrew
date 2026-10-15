@@ -405,7 +405,14 @@ def _hook_fire_block() -> str:
     """The hook-result loop in chat_runner's ``_fire`` closure, by its anchors."""
     import kiro_crew.dashboard.chat_runner as chat_runner
 
-    text = Path(chat_runner.__file__).read_text(encoding="utf-8")
+    text = "\n".join(
+        turn_file.read_text(encoding="utf-8")
+        for turn_file in [
+            *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+            Path(chat_runner.__file__),
+        ]
+        if turn_file.name != "__init__.py"
+    )
     start = text.index('logger.info("Hook %s stdout: %s", r.hook_name, r.stdout[:200])')
     end = text.index('logger.warning("Hook %s warning: %s", r.hook_name, r.stderr[', start)
     return text[start : text.index("\n", end)]

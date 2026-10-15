@@ -447,9 +447,18 @@ class TestEventOwnershipReachesTheReport:
                 start = src.find(marker, start + 1)
 
     def test_every_runner_call_site_forwards_it_to_the_report(self):
+        from pathlib import Path
+
         from kiro_crew.dashboard import chat_runner
 
-        src = inspect.getsource(chat_runner)
+        src = "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [
+                *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+                Path(chat_runner.__file__),
+            ]
+            if turn_file.name != "__init__.py"
+        )
         calls = src.count("_record_session_mcp_event(\n") - src.count(
             "def _record_session_mcp_event(\n"
         )

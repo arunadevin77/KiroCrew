@@ -268,11 +268,16 @@ def test_no_recovery_handler_persists_a_partial_reply_without_recording_it():
 
     Mutation guard: re-inlining any of those blocks reddens this.
     """
-    import inspect
-
     from kiro_crew.dashboard import chat_runner
 
-    src = inspect.getsource(chat_runner).splitlines()
+    src = "\n".join(
+        turn_file.read_text(encoding="utf-8")
+        for turn_file in [
+            *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+            Path(chat_runner.__file__),
+        ]
+        if turn_file.name != "__init__.py"
+    ).splitlines()
     offenders = []
     for i, line in enumerate(src):
         if "slot.purge_chunks()" not in line:
@@ -434,7 +439,14 @@ def test_a_segment_cut_by_a_steer_is_recorded_as_interrupted():
 
     # The steer cut is the caller that must set it. Read from the source of the
     # enclosing runner because the callback is a closure built per turn.
-    runner_src = inspect.getsource(chat_runner)
+    runner_src = "\n".join(
+        turn_file.read_text(encoding="utf-8")
+        for turn_file in [
+            *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+            Path(chat_runner.__file__),
+        ]
+        if turn_file.name != "__init__.py"
+    )
     cut_at = runner_src.index("def _steer_segment_cut(")
     cut_body = runner_src[cut_at : cut_at + 4000]
     call_at = cut_body.index("_flush_segment(")

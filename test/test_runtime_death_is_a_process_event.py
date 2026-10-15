@@ -395,7 +395,15 @@ def test_the_attribution_predicate_reaches_every_charging_site():
     """
     found = 0
     for rel, marker, _ in _GUARDED_CHARGES:
-        src = (_SRC / rel).read_text(encoding="utf-8")
+        src = "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in (
+                [*sorted((_SRC / "dashboard/chat_turn").glob("*.py")), _SRC / rel]
+                if rel == "dashboard/chat_runner.py"
+                else [_SRC / rel]
+            )
+            if turn_file.name != "__init__.py"
+        )
         assert "caused_by_this_session" in src, f"{rel} never asks whose failure it was"
         found += src.count("caused_by_this_session")
     # Control: a bare count could pass on a file that merely mentions the name in
@@ -755,7 +763,14 @@ def test_every_retry_budget_charge_is_guarded_by_the_predicate_itself():
     arms that catch a pipe death as a plain ``AcpError`` rather than a typed one
     and so fall outside the handler scan above.
     """
-    tree = ast.parse((_SRC / "dashboard" / "chat_runner.py").read_text(encoding="utf-8"))
+    runner = _SRC / "dashboard" / "chat_runner.py"
+    tree = ast.parse(
+        "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+            if turn_file.name != "__init__.py"
+        )
+    )
     backed = _predicate_backed_guards(tree)
     assert backed, "no guard name is bound from caused_by_this_session"
     unguarded: list[int] = []
@@ -883,6 +898,11 @@ def test_an_attribution_flag_is_bound_on_every_path_that_reads_it():
     checked = 0
     unreachable: list[str] = []
     for rel in (
+        *sorted(
+            owner
+            for owner in (_SRC / "dashboard" / "chat_turn").glob("*.py")
+            if owner.name != "__init__.py"
+        ),
         Path("dashboard") / "chat_runner.py",
         Path("task_executor.py"),
         Path("slack") / "handler.py",

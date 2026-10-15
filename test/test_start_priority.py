@@ -904,7 +904,14 @@ def test_an_unattended_stream_claims_nothing():
 
 
 def test_the_dashboard_runner_allocates_at_the_turns_priority():
-    tree = ast.parse((_SRC / "dashboard/chat_runner.py").read_text(encoding="utf-8"))
+    runner = _SRC / "dashboard/chat_runner.py"
+    tree = ast.parse(
+        "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+            if turn_file.name != "__init__.py"
+        )
+    )
     run_chat = next(
         n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_run_chat"
     )

@@ -2879,7 +2879,14 @@ async def test_the_reply_leg_consults_the_fence_before_publishing(tmp_path):
         cr.cross_surface_withheld(state, slot) is True
     ), "a constraint that newly holds since that admission withholds the leg"
 
-    src = Path(cr.__file__).read_text(encoding="utf-8")
+    src = "\n".join(
+        turn_file.read_text(encoding="utf-8")
+        for turn_file in [
+            *sorted(Path(cr.__file__).with_name("chat_turn").glob("*.py")),
+            Path(cr.__file__),
+        ]
+        if turn_file.name != "__init__.py"
+    )
     deliver_calls = [
         line
         for line in src.splitlines()

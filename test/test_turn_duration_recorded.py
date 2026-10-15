@@ -166,6 +166,11 @@ def test_chat_runner_no_longer_builds_the_dead_stats_object():
     It also fed ``inc_duration_ms(usage.duration_ms)`` — the same structurally
     zero field — so it was doubly dead. Guard against it being reintroduced.
     """
-    src = (SRC / "dashboard" / "chat_runner.py").read_text(encoding="utf-8")
+    runner = SRC / "dashboard" / "chat_runner.py"
+    src = "\n".join(
+        turn_file.read_text(encoding="utf-8")
+        for turn_file in [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+        if turn_file.name != "__init__.py"
+    )
     assert "stats = Stats()" not in src
     assert "from kiro_crew.stats import Stats" not in src

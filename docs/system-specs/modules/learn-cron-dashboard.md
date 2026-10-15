@@ -1894,6 +1894,7 @@ names:
 | `acp_recovery` | the post-token transient re-prompt |
 | `turn_marker` | the in-flight turn marker's write, retire and clear |
 | `directives` | not-applied directive wording and the unclaimed-directive backstop |
+| `turn_locals` | the per-turn state `_ChatTurn` that `_run_chat`, its closures and its phases share |
 | `chat_runner.py` | eager spawn and prefetch: the task entries (`_eager_spawn`, `_prefetch_ttl`) and the `get_or_create` allocation |
 | `chat_runner.py` | native card projection: the `_native_subagent_sync` redactor and `_post_native_question_card` |
 | `chat_runner.py` | prompt and skill mention expansion: the `_resolve_prompt_mention` redactor and `_expand_dollar_skills` transcript snapshot |
@@ -1903,17 +1904,48 @@ names:
 | `chat_runner.py` | `/workflow` and `/goal`: the redactor calls in `_handle_workflow_command` and `_handle_goal_command` |
 | `chat_runner.py` | the poisoned-conversation canary: `test_start_priority.py` reads its `run_bg_oneliner` call, with the turn's `start_priority`, in `_run_chat` |
 
-`chat_turn.compose` runs every owner function on `chat_runner`'s globals. A patch
-of `kiro_crew.dashboard.chat_runner.<name>` therefore reaches moved code, log
-records keep the `kiro_crew.dashboard.chat_runner` logger, and module state
-(`_RECIPIENT_LOGGED`, `_eager_spawn_sem`, the prefetch registry) stays a runner
-global. Nothing but `chat_runner.py` imports an owner, and no owner imports
+`chat_turn.compose` composes the package's modules (`chat_turn.owner_modules()`):
+it binds on `chat_runner` every name an owner binds that the runner lacks, so
+`chat_runner.<name>` resolves for each owner function, class and constant without a
+by-name re-export, and it runs every owner function on `chat_runner`'s globals. A
+name the runner and an owner both bind must be the same object, or the runner fails
+to import. A patch of `kiro_crew.dashboard.chat_runner.<name>` therefore reaches
+moved code, log records keep the `kiro_crew.dashboard.chat_runner` logger, and
+module state (`_RECIPIENT_LOGGED`, `_eager_spawn_sem`, the prefetch registry) stays
+a runner global. Nothing but `chat_runner.py` imports an owner, and no owner imports
 `kiro_crew.acp`: an owner names an ACP type only under `TYPE_CHECKING`, through the
 runner. `test/test_chat_runner_composition_contract.py` pins the surface, the
-composition and the patch reach.
+composition and the patch reach; `test/test_chat_runner_compose_binding.py` pins the
+binding, the owner set, and that every name the runner imports is read by something:
+a runner import only an owner reads carries `# noqa: F401`, which pyflakes cannot
+check, so that test reads the owners too.
 
-What stays in `chat_runner.py`, because a repository guard reads it there by path
-or a spec names it there: every redactor-shaped call (the live-stream,
+`_run_chat` keeps its state on one `turn_locals._ChatTurn` per call, built as its
+first statement (`turn`). A value one of its closures writes (`assistant_text`, which
+the steer cut writes from the steer handler's task, the consumption reports, the
+usage-row latch) is spelled `turn.<name>` at every site, so every reader and writer
+shares one cell; a value a closure reads after the turn rebinds it (`message`,
+`client`, the crew-log ids, the per-turn stats) is copied onto the turn right after
+each store (`x = ...` then `turn.x = x`, nothing between) and read off it inside
+the closure. A nested function stays a closure cell: on the turn it would hold a
+closure that holds the turn, and every ended turn would wait for a collection
+instead of being freed when its last reference goes. No closure declares a
+`nonlocal`. Reading an attribute the turn has not set raises `UnboundLocalError`, as
+reading the unbound local did; a closure's read of a cell nothing had bound raised
+`NameError`, of which `UnboundLocalError` is a subclass.
+`test/test_chat_runner_turn_plumbing.py` pins these rules;
+`test/test_chat_runner_turn_shared_state.py` pins that a turn object is freed without
+the collector, and what a whole turn does is pinned through `test/turn_harness.py`
+by `test/test_chat_runner_turn_*.py`.
+
+A repository guard that reads a construct by path reads it in its home.
+`test/test_chat_runner_composition_contract.py` maps each such construct to the files
+that hold it (`_GUARDED_CONSTRUCT_HOMES`) and each task entry to the file that
+defines it (`_TASK_ENTRY_HOMES`, read by `stall_attribution`); a construct moves only
+together with its row and with the guard that reads it. A test that reads the turn's
+code as text reads every `chat_turn/` module and then `chat_runner.py` as one text, so
+a construct it pins may live in either. Today every guarded construct
+lives in `chat_runner.py`: every redactor-shaped call (the live-stream,
 thinking-stream and final-message sinks `security_posture` names, and the gate-side
 log census), the deny chokepoints and approve sites, `begin_turn`, the two
 `get_or_create` allocations, the usage-row persist and the turn metric, the
@@ -1929,11 +1961,13 @@ names `chat_runner.py` for goes in `chat_runner.py`, beside it. Anything else go
 in the owner whose responsibility it is, as a function that takes what it reads and
 returns what it changes, called from the runner. An argument the runner binds inside
 its `try` is passed only from a point every path to the call has bound it. Every
-name an owner function reads must be bound in `chat_runner.py`. A new owner module
-is imported in `chat_runner.py`'s import block (the module alias and its by-name
-re-exports), appended to the `compose(...)` call at the end of the file and to the
-contract test's `_OWNER_MODULES`; an owner with a coroutine also joins
-`test_no_config_dir_in_async._ASYNC_CHECKED_FILES`. `stall_attribution` reads an
+name an owner function reads must be bound in `chat_runner.py`: by the runner's
+own imports, or by an owner, through `compose`. A new owner module is a file in
+`chat_turn/` and a row in the contract test's `_OWNER_MODULES`; `compose` finds it and
+binds its names. A name a new owner defines needs a by-name import in `chat_runner.py`
+only when a production module imports it from the runner or the runner's own code
+reads it, because mypy does not see what `compose` binds. An owner with a coroutine
+also joins `test_no_config_dir_in_async._ASYNC_CHECKED_FILES`. `stall_attribution` reads an
 owner frame as the dashboard chat surface, as it reads the runner's. A phase cut
 from a block that never awaited stays await-free, so a queue drain's or consume
 gate's check-then-mutate still runs without a suspension point; the contract test

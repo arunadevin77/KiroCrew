@@ -607,6 +607,10 @@ class TestApprovalResolvedCarriesSlot:
         ]
         # The handlers facade is scanned with every ``chat_api`` owner it composes.
         roots += sorted((dashboard / "chat_api").glob("*.py"))
+        # The runner is scanned with every ``chat_turn`` owner it composes.
+        roots += sorted(
+            owner for owner in (dashboard / "chat_turn").glob("*.py") if owner.name != "__init__.py"
+        )
         found = 0
         for path in roots:
             src = path.read_text(encoding="utf-8")

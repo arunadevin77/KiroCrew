@@ -518,11 +518,18 @@ class TestRecordsReachTheDisplayPath:
         # Same guard for the recovery path: a stopped or failed turn persists its
         # partial text through this nested helper, and a two-tuple redactor there
         # would store only the placeholder, losing a wrongly blocked link for good.
-        import inspect
+        from pathlib import Path
 
         from kiro_crew.dashboard import chat_runner
 
-        lines = inspect.getsource(chat_runner).splitlines()
+        lines = "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [
+                *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+                Path(chat_runner.__file__),
+            ]
+            if turn_file.name != "__init__.py"
+        ).splitlines()
         start = next(i for i, ln in enumerate(lines) if "def _persist_partial_reply(" in ln)
         indent = len(lines[start]) - len(lines[start].lstrip())
         body = []

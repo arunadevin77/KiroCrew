@@ -317,7 +317,12 @@ class TestWriteSiteStamping:
     _ROOT = Path(__file__).resolve().parents[2]
 
     def test_chat_runner_stamps_the_slots_app(self):
-        src = (self._ROOT / "src/kiro_crew/dashboard/chat_runner.py").read_text(encoding="utf-8")
+        runner = self._ROOT / "src/kiro_crew/dashboard/chat_runner.py"
+        src = "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+            if turn_file.name != "__init__.py"
+        )
         assert 'app=getattr(slot, "_app", "") or ""' in src
 
     def test_subagent_completion_stamps_the_dispatching_app(self):

@@ -37,6 +37,13 @@ _CHAT_API = Path(__file__).resolve().parent.parent / "src" / "kiro_crew" / "dash
 _DISPATCH_FILES = (
     "src/kiro_crew/dashboard/chat_handlers.py",
     *(f"src/kiro_crew/dashboard/chat_api/{path.name}" for path in sorted(_CHAT_API.glob("*.py"))),
+    *sorted(
+        f"src/kiro_crew/dashboard/chat_turn/{_owner.name}"
+        for _owner in (
+            Path(__file__).resolve().parent.parent / "src/kiro_crew/dashboard/chat_turn"
+        ).glob("*.py")
+        if _owner.name != "__init__.py"
+    ),
     "src/kiro_crew/dashboard/chat_runner.py",
     "src/kiro_crew/dashboard/handlers/messaging.py",
     "src/kiro_crew/slack/gateway.py",

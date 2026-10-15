@@ -299,9 +299,20 @@ class TestChokepointWiring:
         is_new test. Mode-keyed rather than name-keyed: the member NAME is
         resolved later, at the context build, and delivery is at stake from
         the moment the session client exists."""
+        from pathlib import Path
+
         import kiro_crew.dashboard.chat_runner as chat_runner_mod
 
-        tree = ast.parse(inspect.getsource(chat_runner_mod))
+        tree = ast.parse(
+            "\n".join(
+                turn_file.read_text(encoding="utf-8")
+                for turn_file in [
+                    *sorted(Path(chat_runner_mod.__file__).with_name("chat_turn").glob("*.py")),
+                    Path(chat_runner_mod.__file__),
+                ]
+                if turn_file.name != "__init__.py"
+            )
+        )
         assigns = [
             node
             for node in ast.walk(tree)

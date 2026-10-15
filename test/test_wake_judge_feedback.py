@@ -2086,7 +2086,16 @@ class TestTurnCompleteLabelling:
             / "dashboard"
             / "chat_runner.py"
         )
-        tree = ast.parse(runner_path.read_text(encoding="utf-8"))
+        tree = ast.parse(
+            "\n".join(
+                turn_file.read_text(encoding="utf-8")
+                for turn_file in [
+                    *sorted(runner_path.with_name("chat_turn").glob("*.py")),
+                    runner_path,
+                ]
+                if turn_file.name != "__init__.py"
+            )
+        )
         # The turn records the facts its tail hands to notify_turn_complete; the
         # helper that makes the call forwards each one under its own name. Each
         # is pinned unique: a second record, or a second notify call (the

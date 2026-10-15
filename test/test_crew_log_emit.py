@@ -820,8 +820,24 @@ def test_chat_runner_records_the_input_and_refusal_on_a_blocked_expansion():
 
     from kiro_crew.dashboard import chat_runner
 
-    tree = ast.parse(inspect.getsource(chat_runner))
-    src = inspect.getsource(chat_runner)
+    tree = ast.parse(
+        "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [
+                *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+                Path(chat_runner.__file__),
+            ]
+            if turn_file.name != "__init__.py"
+        )
+    )
+    src = "\n".join(
+        turn_file.read_text(encoding="utf-8")
+        for turn_file in [
+            *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+            Path(chat_runner.__file__),
+        ]
+        if turn_file.name != "__init__.py"
+    )
     assert "🔒 Prompt blocked" in src
 
     def _emit_attr(node, name):
@@ -2881,11 +2897,19 @@ def test_a_nested_prompt_turn_keeps_the_author_of_the_turn_that_carried_it():
     making, one frame deeper.
     """
     import ast
-    import inspect
 
     from kiro_crew.dashboard import chat_runner
 
-    tree = ast.parse(inspect.getsource(chat_runner))
+    tree = ast.parse(
+        "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [
+                *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+                Path(chat_runner.__file__),
+            ]
+            if turn_file.name != "__init__.py"
+        )
+    )
     reentries = [
         node
         for node in ast.walk(tree)
@@ -3215,7 +3239,16 @@ def test_chat_runner_forwards_the_full_result_measurement_to_the_emitter():
 
     from kiro_crew.dashboard import chat_runner
 
-    tree = ast.parse(inspect.getsource(chat_runner))
+    tree = ast.parse(
+        "\n".join(
+            turn_file.read_text(encoding="utf-8")
+            for turn_file in [
+                *sorted(Path(chat_runner.__file__).with_name("chat_turn").glob("*.py")),
+                Path(chat_runner.__file__),
+            ]
+            if turn_file.name != "__init__.py"
+        )
+    )
     calls = [
         node
         for node in ast.walk(tree)
@@ -6175,7 +6208,11 @@ def test_every_slot_allocation_site_latches_the_predecessor_first():
     reds this.
     """
     runner = Path(__file__).parent.parent / "src" / "kiro_crew" / "dashboard" / "chat_runner.py"
-    lines = runner.read_text(encoding="utf-8").splitlines()
+    lines = "\n".join(
+        turn_file.read_text(encoding="utf-8")
+        for turn_file in [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+        if turn_file.name != "__init__.py"
+    ).splitlines()
     allocations = [i for i, line in enumerate(lines) if "get_or_create(" in line]
     assert len(allocations) == 2, (
         "chat_runner now allocates a slot's session at a different number of sites; "
@@ -6215,7 +6252,11 @@ def test_the_turn_path_reads_the_predecessor_through_the_non_pruning_accessor():
     resolver's own fallback to `resumable_sid`, reds this.
     """
     runner = Path(__file__).parent.parent / "src" / "kiro_crew" / "dashboard" / "chat_runner.py"
-    source = runner.read_text(encoding="utf-8")
+    source = "\n".join(
+        turn_file.read_text(encoding="utf-8")
+        for turn_file in [*sorted(runner.with_name("chat_turn").glob("*.py")), runner]
+        if turn_file.name != "__init__.py"
+    )
     # Joined because the call can be wrapped across lines; the whole expression is
     # what this pins, so a line-at-a-time read could not see it.
     flat = " ".join(source.split())
