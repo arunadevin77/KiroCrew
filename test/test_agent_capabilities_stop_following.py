@@ -147,9 +147,15 @@ def _set_member_backend(home, backend):
         ("", ("docs",), None),
         ("kas", (), None),
         ("kas", ("docs",), "tool_limits_unsupported"),
-        ("codex", (), "harness_unsupported"),
-        ("codex", ("docs",), "harness_unsupported"),
-        ("claude", (), "harness_unsupported"),
+        # Claude, Codex and DeepSeek confirm the consumed projection, so they host a
+        # saved spec; none of them carries single-tool limits.
+        ("codex", (), None),
+        ("codex", ("docs",), "tool_limits_unsupported"),
+        ("claude", (), None),
+        ("deepseek", ("docs",), "tool_limits_unsupported"),
+        ("opencode", (), "harness_unsupported"),
+        ("opencode", ("docs",), "harness_unsupported"),
+        ("goose", (), "harness_unsupported"),
     ],
 )
 def test_member_backend_gap_matches_the_start_gate_sets(backend, limited, expected):
@@ -205,12 +211,12 @@ def test_kiro_backend_applies_single_tool_limits_without_warning(editor):
 
 def test_unsupported_member_backend_warns_on_preview_and_save(editor):
     service, home, specs, parent = editor
-    _set_member_backend(home, "codex")
+    _set_member_backend(home, "opencode")
     body = {"revision": service.get("A")["revision"], "enroll": True}
     preview = service.preview("A", body)
     expected = {
         "code": "harness_unsupported",
-        "backend": "codex",
+        "backend": "opencode",
         "setting": "agent.member_acp_backend",
     }
     assert preview["backend_warning"] == expected
@@ -223,12 +229,12 @@ def test_default_backend_refusal_is_named_when_the_member_backend_is_fine(editor
     # agent.acp_backend and reach the same chat-start gate.
     service, home, specs, parent = editor
     config = json.loads((home / "config.json").read_text())
-    config["agent"] = {"member_acp_backend": "kas", "acp_backend": "codex"}
+    config["agent"] = {"member_acp_backend": "kas", "acp_backend": "opencode"}
     (home / "config.json").write_text(json.dumps(config), encoding="utf-8")
     loader._invalidate_config_cache()
     assert save(service, enroll=True)["backend_warning"] == {
         "code": "harness_unsupported",
-        "backend": "codex",
+        "backend": "opencode",
         "setting": "agent.acp_backend",
     }
 
@@ -236,24 +242,24 @@ def test_default_backend_refusal_is_named_when_the_member_backend_is_fine(editor
 def test_member_backend_refusal_is_named_before_the_default_backend(editor):
     service, home, specs, parent = editor
     config = json.loads((home / "config.json").read_text())
-    config["agent"] = {"member_acp_backend": "claude", "acp_backend": "codex"}
+    config["agent"] = {"member_acp_backend": "goose", "acp_backend": "opencode"}
     (home / "config.json").write_text(json.dumps(config), encoding="utf-8")
     loader._invalidate_config_cache()
     warning = save(service, enroll=True)["backend_warning"]
-    assert (warning["setting"], warning["backend"]) == ("agent.member_acp_backend", "claude")
+    assert (warning["setting"], warning["backend"]) == ("agent.member_acp_backend", "goose")
 
 
 def test_harness_warning_also_names_limited_servers(editor):
     # The switch the page suggests (kas) would refuse these next.
     service, home, specs, parent = editor
-    _set_member_backend(home, "codex")
+    _set_member_backend(home, "opencode")
     warning = save(service, [_LIMITED_DOCS], enroll=True)["backend_warning"]
     assert (warning["code"], warning["servers"]) == ("harness_unsupported", ["docs"])
 
 
 def test_unenrolled_member_gets_no_backend_warning(editor):
     service, home, specs, parent = editor
-    _set_member_backend(home, "codex")
+    _set_member_backend(home, "opencode")
     assert service.get("A")["backend_warning"] is None
 
 

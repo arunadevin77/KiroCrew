@@ -12,7 +12,7 @@ Instance fields written: ``_disposable_work_dir``, ``_effort_per_model``,
 ``_work_dir_claim_probe``.
 
 Instance fields read: ``_client``, ``_configured_model``, ``essential_delivery``,
-``memory_mode``.
+``member_context``, ``memory_mode``.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncContextManager
 
-from kiro_crew.acp.client import DEFAULT_MODEL
+from kiro_crew.acp.client import DEFAULT_MODEL, AcpClient
 from kiro_crew.config.paths import kiro_sessions_dir
 from kiro_crew.providers.cleanup import _is_safe_path
 from kiro_crew.session_work_dir import mark_run_dir, reclaim_session_work_dir
@@ -66,7 +66,8 @@ async def start(self: AcpProvider) -> None:
         if self.is_kiro_backend:
             await self._note_zero_tool_servers()
     else:
-        # ── CC path: legacy AcpClient (unchanged) ──
+        # ── CC path: legacy AcpClient ──
+        self._client.member_context = self.member_context
         await self._client.ensure_ready()
         # Startup records the advertised spelling of the pin, or the backend
         # default when every spelling was refused; the level follows a pin.
@@ -74,6 +75,13 @@ async def start(self: AcpProvider) -> None:
         if running != DEFAULT_MODEL and self._configured_model in self._effort_per_model:
             level = self._effort_per_model.pop(self._configured_model)
             self._effort_per_model.setdefault(running, level)
+        # An enrolled member's saved spec is confirmed against what this session
+        # actually consumed, once the session exists. Called on THIS arm only: the
+        # Kiro and KAS runtimes take the branch above, so their construction paths
+        # gain no call, await or branch for it (harness-parity H13). A no-op for
+        # every session that projects nothing.
+        if isinstance(self._client, AcpClient):
+            await self._client.confirm_member_projection()
 
     await self._bind_unbound_effort()
     await self._apply_initial_effort()

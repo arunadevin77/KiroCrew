@@ -9,16 +9,18 @@ class binds it by name, so it reads and writes the session's own state on the in
 and a patch of the method on the class or on an instance reaches every caller.
 
 Instance fields written: ``_background_launches``, ``_bound_workspace_fd``, ``_buffer``,
-``_cancel_grace_secs``, ``_cancel_ts``, ``_cancelled``, ``_channel_id``,
-``_child_pids``, ``_claude_settings_authored``, ``_claude_settings_claim_unrevoked``,
-``_claude_settings_shared``, ``_claude_settings_written``, ``_fork_request``,
-``_kill_sent``, ``_last_activity``, ``_last_stop_reason``, ``_mcp_ref_spec``,
-``_mcp_report``, ``_mcp_report_frame_floor``, ``_oauth_emitted_servers``,
-``_opencode_denies_in_force``, ``_opencode_denies_unenforced``,
-``_opencode_native_mounts``, ``_pending_oauth_requests``,
-``_permission_surface_share_validated``, ``_pi_mcp_handoff``, ``_pi_mcp_server_names``,
-``_pid``, ``_process``, ``_process_instance``, ``_process_tree_confirmed_dead``,
-``_prompt_or_tool_seen``, ``_resume_session_id``, ``_resumed``, ``_sandbox_cleanup``,
+``_cancel_grace_secs``, ``_cancel_ts``, ``_cancelled``, ``_capability_projection_gaps``,
+``_channel_id``, ``_child_pids``, ``_claude_settings_authored``,
+``_claude_settings_claim_unrevoked``, ``_claude_settings_shared``,
+``_claude_settings_written``, ``_confirmed_capability_session``, ``_fork_request``,
+``_kill_sent``, ``_last_activity``, ``_last_stop_reason``,
+``_loaded_capability_template``, ``_mcp_ref_spec``, ``_mcp_report``,
+``_mcp_report_frame_floor``, ``_oauth_emitted_servers``, ``_opencode_denies_in_force``,
+``_opencode_denies_unenforced``, ``_opencode_native_mounts``,
+``_pending_oauth_requests``, ``_permission_surface_share_validated``,
+``_pi_mcp_handoff``, ``_pi_mcp_server_names``, ``_pid``, ``_process``,
+``_process_instance``, ``_process_tree_confirmed_dead``, ``_prompt_or_tool_seen``,
+``_resume_session_id``, ``_resumed``, ``_sandbox_cleanup``, ``_session_agent_spec``,
 ``_session_harness_deny_rules``, ``_session_id``, ``_session_key``,
 ``_session_mcp_cache``, ``_session_mcp_snapshot``, ``_session_mcp_unhonoured``,
 ``_spawn_start_token``, ``_spawn_work_dir``, ``_spec_denied_tools``,
@@ -654,6 +656,12 @@ def _reset_state(self: AcpClient) -> None:
     # a replacement process must not inherit this one's snapshot.
     self._session_mcp_cache = None
     self._session_mcp_snapshot = None
+    self._session_agent_spec = None
+    self._loaded_capability_template = ""
+    self._capability_projection_gaps = ()
+    # Per SESSION, not per spawn: a replacement process' session is judged on its
+    # own consumed spec, even when it resumes the same id.
+    self._confirmed_capability_session = ""
     # Same per-spawn freshness rule as the array above: an edited spec must be
     # what the next session's guard judges, not this one's.
     self._mcp_ref_spec = None

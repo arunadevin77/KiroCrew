@@ -926,7 +926,7 @@ class AcpSessionProvider(LLMProvider):
 
     @property
     def member_capabilities_supported(self) -> bool:
-        """Full saved member-spec loading is opt-in (harness-parity H6)."""
+        """Saved member-spec loading or projection is opt-in (harness-parity H6)."""
         return self._runtime.acp_backend in ACP_BACKENDS_MEMBER_CAPABILITIES
 
     @property
@@ -936,14 +936,19 @@ class AcpSessionProvider(LLMProvider):
 
     @property
     def loaded_capability_template(self) -> str:
-        if (
-            self.member_capabilities_supported
-            and self._owns_runtime
-            and self._runtime.is_alive()
-            and self._handle.active_agent == self._runtime._agent
-        ):
-            return self._handle.active_agent
-        return ""
+        if not (self._owns_runtime and self._runtime.is_alive()):
+            return ""
+        from kiro_crew.acp.types import ACP_BACKEND_KAS  # noqa: PLC0415
+
+        if self._runtime.acp_backend in (ACP_BACKEND_KIRO, ACP_BACKEND_KAS):
+            if self._handle.active_agent == self._runtime._agent:
+                return self._handle.active_agent
+            return ""
+        return self._handle.confirmed_projection_template
+
+    @property
+    def capability_projection_gaps(self) -> tuple[str, ...]:
+        return self._handle.capability_projection_gaps
 
     @property
     def exit_code(self) -> int | None:

@@ -127,11 +127,11 @@ def _drive(tmp_path, monkeypatch, backend: str, *, rolls_back: bool):
     monkeypatch.setattr(client, "_session_work_dir", _work_dir)
     monkeypatch.setattr(client, "_send_request", _send)
     monkeypatch.setattr(client, "_wait_for_response", _wait)
-    # goose carries the bad element in its spec half; deepseek, with no mirror,
-    # receives it as a pooled broker stub.
-    spec_half = [good, bad] if client._is_goose else []
-    monkeypatch.setattr(client, "_goose_session_mcp_servers", lambda: list(spec_half))
-    monkeypatch.setattr(client, "_pooled_mcp_servers", lambda: [] if spec_half else [good, bad])
+    # Both backends are mirrors: each carries the bad element in its own spec half,
+    # and the pooled broker append is empty for them.
+    monkeypatch.setattr(client, "_goose_session_mcp_servers", lambda: [good, bad])
+    monkeypatch.setattr(client, "_deepseek_session_mcp_servers", lambda: [good, bad])
+    monkeypatch.setattr(client, "_pooled_mcp_servers", lambda: [])
     return client, sent
 
 

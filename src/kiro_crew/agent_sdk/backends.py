@@ -895,21 +895,24 @@ def resolve_selected_backend(value: object) -> str:
 # reach is recorded here rather than claimed.
 ACP_BACKENDS_SESSION_SHARING = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_CODEX})
 
-# Backends that can load an enrolled member's full saved agent spec at spawn.
+# Backends that can verify an enrolled member's saved spec at spawn.
 # Separate from session sharing and per-session dispatch (harness-parity H6):
-# support for either does not establish full-spec loading. The provider still
-# requires a live dedicated runtime and a confirmed active template before
-# reporting that the saved spec is loaded.
-#
-# kiro-cli reads the saved file at spawn (``--agent``). KAS is a member because
-# the spec reaches it whole over the wire: the harness projects the saved file
-# onto ``_meta.kiro.customAgents`` (``acp/kas_agents.py``) and activates it with
-# ``session/set_mode``, and the handle records that mode as its active agent --
-# the same evidence the kiro path gives. It is the default member backend, so
-# a saved spec has to load here for a member chat to start at all.
-# The one restriction a saved spec can write that the KAS wire discards is a
-# per-tool ``disabledTools`` on an MCP server; see the set below.
-ACP_BACKENDS_MEMBER_CAPABILITIES = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS})
+# support for either does not establish saved-spec loading. kiro-cli reads the
+# saved file at spawn (``--agent``). KAS is a member because the spec reaches it
+# whole over the wire (``_meta.kiro.customAgents``, ``session/set_mode``). Claude
+# and DeepSeek (one-process-per-session AcpClient path) and Codex (shared
+# AcpRuntime path) confirm the consumed projection against the saved intent
+# (``agent_capabilities_consumed.consumed_spec_matches``) after session creation.
+# Each requires a live dedicated runtime before reporting a saved template.
+ACP_BACKENDS_MEMBER_CAPABILITIES = frozenset(
+    {
+        ACP_BACKEND_KIRO,
+        ACP_BACKEND_KAS,
+        ACP_BACKEND_CLAUDE,
+        ACP_BACKEND_CODEX,
+        ACP_BACKEND_DEEPSEEK,
+    }
+)
 
 # Backends of the set above that also honour a saved member spec's per-tool
 # ``disabledTools`` on an MCP server. kiro-cli reads the field off the saved file.
@@ -1079,15 +1082,15 @@ ACP_BACKENDS_MEMBER_TOOL_LIMITS = frozenset({ACP_BACKEND_KIRO})
 # THIS harness. The decision is that a member DM thread on deepseek holds the
 # session-control tools.
 #
-# One thing is deepseek's ALONE: it has no mirror. The client's resolver answers a
-# mirror-less backend from ``AcpClient._mirrorless_member_mounts``, so its array is
-# only the member mounts, and the pooled broker stubs ride beside it unchanged.
-# With no mirror there is no per-tool deny channel either, so a narrowed dashboard
-# tool withholds the whole mount and the thread runs as plain chat. ``disabled``
-# binds as it does on every backend. And an element whose command cannot start
-# fails the WHOLE session here (``mcp-stdio-rollback-live.jsonl``), so an entry that
-# does not resolve is never placed (``member_dispatch_session_server`` answers
-# ``None``).
+# deepseek's array is built by its mirror (``providers/mirrors/deepseek.py``),
+# which places the spec's servers and the pooled broker stubs, and the member
+# mounts are appended to it as on every client-composed mirrored backend. No
+# per-tool deny path is verified for dsh, so the mirror withholds a narrowed
+# server whole (``PerToolDeny.WHOLE_SERVER``): a narrowed dashboard tool withholds
+# the whole mount and the thread runs as plain chat. ``disabled`` binds as it does
+# on every backend. And an element whose command cannot start fails the WHOLE
+# session here (``mcp-stdio-rollback-live.jsonl``), so an entry that does not
+# resolve is never placed (``member_dispatch_session_server`` answers ``None``).
 #
 # WHERE the mount happens differs by backend, and opencode's is the client's.
 # ``AcpClient._append_member_dispatch_server`` serves the backends whose array the
@@ -1152,7 +1155,7 @@ ACP_BACKENDS_MEMBER_DISPATCH = frozenset(
 #   silently pre-approved in a file Crew does not write.
 #
 # deepseek is a member on the two preconditions above, held for THIS harness: its
-# array is one this core composes (``AcpClient._mirrorless_member_mounts``), and its
+# array is one this core composes (its mirror, in ``AcpClient``), and its
 # routing (``Routing.VERIFIED_GATE_EXTENSION``) is enforced. The decision is that a
 # member session on deepseek gets a panel.
 #
@@ -2373,8 +2376,10 @@ ACP_BACKENDS_LOCAL_CLEAR = frozenset(
 #   ``AcpRuntime`` -- because the refusal that closes the gap,
 #   ``AcpClient._deny_zero_tools``, lives ONLY on ``AcpClient``.
 #
-# Today that is exactly opencode and goose (``Routing.VERIFIED_SEEDED_SETTINGS``,
-# mirrored, not in ``ACP_BACKENDS_ACP_RUNTIME``).
+# Today that is opencode and goose (``Routing.VERIFIED_SEEDED_SETTINGS``) and
+# deepseek (``Routing.VERIFIED_GATE_EXTENSION``): mirrored, not in
+# ``ACP_BACKENDS_ACP_RUNTIME``. deepseek's mirror reads ``zero_tools`` from
+# the shared session MCP projection.
 #
 # claude is NOT a member: its routing, ``Routing.SEEDED_SETTINGS``, is declared but
 # not enforced by this core (see ``Routing``'s docstring and
@@ -2388,15 +2393,16 @@ ACP_BACKENDS_LOCAL_CLEAR = frozenset(
 # -- the refusal exists only on ``AcpClient``, so nothing refuses on a codex session
 # even though its ``Routing.SESSION_CONFIG`` is itself enforced.
 #
-# pi and deepseek are NOT members: neither has a mirror at all
-# (``providers/mirrors/registry.py``'s ``MIRRORS``), so nothing computes
-# ``zero_tools`` for them and ``AcpClient`` never refuses on their sessions.
+# pi is NOT a member: it has no mirror (``providers/mirrors/registry.py``'s
+# ``MIRRORS``), so nothing computes ``zero_tools`` for it and ``AcpClient`` never
+# refuses on its sessions.
 ACP_BACKENDS_HONOR_ZERO_TOOL_BAN = frozenset(
     {
         ACP_BACKEND_KIRO,
         ACP_BACKEND_KAS,
         ACP_BACKEND_OPENCODE,
         ACP_BACKEND_GOOSE,
+        ACP_BACKEND_DEEPSEEK,
     }
 )
 
