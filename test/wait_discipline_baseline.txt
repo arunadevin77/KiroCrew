@@ -164,7 +164,6 @@
  2 test_denied_commands_security.py
  1 test_dependency_coordinator.py
 11 test_dev_fleet_app.py
- 2 test_dev_fleet_gateway_routes.py
 14 test_dev_fleet_removal_pod_start.py
  7 test_dev_fleet_server_coverage.py
  8 test_devfleet_prune_shutdown_drain.py

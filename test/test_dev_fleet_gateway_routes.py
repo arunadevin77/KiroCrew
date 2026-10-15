@@ -30,6 +30,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from kiro_crew.apps.builtins import BUILTIN_NAMES
 from kiro_crew.apps.builtins.dev_fleet import gateway_routes, live, pointer_broker, server
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 pytestmark = pytest.mark.asyncio
 
@@ -799,6 +800,10 @@ class TestRemovalLeasesInTheGateway:
 
 
 class TestRemovalLeasesFromTheBackend:
+    """The heartbeat is driven by a real 20 ms interval, so these tests wait for the
+    renewals or the loss they assert on, never for a fixed span of wall clock: a loaded
+    runner (or Windows' coarse timer) fits fewer ticks into any span."""
+
     @staticmethod
     def _install(acquire, renew, release):
         live.install_removal_lease_client((acquire, renew, release))
@@ -831,12 +836,15 @@ class TestRemovalLeasesFromTheBackend:
     ) -> None:
         monkeypatch.setattr(live, "_REMOVAL_LEASE_RENEW_SECS", 0.02)
         renewals: list[str] = []
+        third_renewal = asyncio.Event()
 
         async def acquire(path: str) -> str | None:
             return "cap-hb"
 
         async def renew(token: str) -> bool:
             renewals.append(token)
+            if len(renewals) >= 3:
+                third_renewal.set()
             return True
 
         async def release(token: str) -> None:
@@ -846,7 +854,7 @@ class TestRemovalLeasesFromTheBackend:
         try:
             async with live.removal_lease("/wt/a") as granted:
                 assert granted
-                await asyncio.sleep(0.15)
+                await await_until(third_renewal, what="the third lease renewal")
                 assert live.removal_lease_lost("/wt/a") is False
         finally:
             live.install_removal_lease_client(None)
@@ -865,15 +873,14 @@ class TestRemovalLeasesFromTheBackend:
         async def release(token: str) -> None:
             pass
 
+        def lease_lost() -> bool:
+            return live.removal_lease_lost("/wt/a")
+
         self._install(acquire, renew, release)
         try:
             async with live.removal_lease("/wt/a") as granted:
                 assert granted
-                for _ in range(50):
-                    if live.removal_lease_lost("/wt/a"):
-                        break
-                    await asyncio.sleep(0.01)
-                assert live.removal_lease_lost("/wt/a") is True
+                await async_wait_until(lease_lost)
         finally:
             live.install_removal_lease_client(None)
 
@@ -881,12 +888,19 @@ class TestRemovalLeasesFromTheBackend:
         self, clean_leases, monkeypatch
     ) -> None:
         monkeypatch.setattr(live, "_REMOVAL_LEASE_RENEW_SECS", 0.02)
+        failures: list[str] = []
 
         async def acquire(path: str) -> str | None:
             return "cap-flaky"
 
         async def renew(token: str) -> bool:
+            failures.append(token)
             raise live.PointerUnavailable("blip")
+
+        def third_failure_or_loss() -> bool:
+            # Stop at whichever comes first: a regression that loses the lease on the
+            # first failure then fails fast at the assertion below, not at the bound.
+            return len(failures) >= 3 or live.removal_lease_lost("/wt/a")
 
         async def release(token: str) -> None:
             pass
@@ -895,7 +909,9 @@ class TestRemovalLeasesFromTheBackend:
         try:
             async with live.removal_lease("/wt/a") as granted:
                 assert granted
-                await asyncio.sleep(0.1)
+                await async_wait_until(
+                    third_failure_or_loss, describe=lambda: f"{len(failures)} failed renewals"
+                )
                 assert live.removal_lease_lost("/wt/a") is False
         finally:
             live.install_removal_lease_client(None)
@@ -1249,14 +1265,13 @@ class TestThePreSpawnGate:
         async def release(token: str) -> None:
             pass
 
+        def lease_lost() -> bool:
+            return live.removal_lease_lost("/wt/a")
+
         live.install_removal_lease_client((acquire, renew, release))
         try:
             async with live.removal_lease("/wt/a"):
-                for _ in range(60):
-                    if live.removal_lease_lost("/wt/a"):
-                        break
-                    await asyncio.sleep(0.01)
-                assert live.removal_lease_lost("/wt/a") is True
+                await async_wait_until(lease_lost)
         finally:
             live.install_removal_lease_client(None)
 
