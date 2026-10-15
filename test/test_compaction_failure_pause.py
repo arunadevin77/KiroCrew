@@ -26,6 +26,7 @@ from kiro_crew.messaging.queue_drain import (
 )
 from kiro_crew.session import SessionManager
 from kiro_crew.session_compaction import COMPACT_OUTCOME_WAITING_FOR_SUBAGENTS
+from kiro_crew.testing.wait import async_wait_until
 
 
 async def _no_events(_command: str):
@@ -33,8 +34,10 @@ async def _no_events(_command: str):
         yield None
 
 
-def _factory(order: list[str]):
+def _factory(order: list[str], starts: list[dict] | None = None):
     def factory(session_key=None, agent=None, channel_id=None, **kwargs):
+        if starts is not None:
+            starts.append(kwargs)
         if "fail-start" in order:
             raise RuntimeError("successor could not start")
         m = AsyncMock()
@@ -94,10 +97,12 @@ class _Runs:
         return len(agent_ids)
 
 
-async def _setup(wait_secs: float = 30.0, *, shared: bool = True):
+async def _setup(
+    wait_secs: float = 30.0, *, shared: bool = True, starts: list[dict] | None = None, **alloc
+):
     order: list[str] = []
-    mgr = SessionManager(KiroCrewConfig(), provider_factory=_factory(order))
-    await mgr.get_or_create("dashboard:chat-1")
+    mgr = SessionManager(KiroCrewConfig(), provider_factory=_factory(order, starts))
+    await mgr.get_or_create("dashboard:chat-1", **alloc)
     key = mgr._fold_key("dashboard:chat-1")
     mgr.release(key)
     mgr._session_map.set(key, "sid-parent")
@@ -231,6 +236,61 @@ async def test_a_new_message_queues_behind_the_carried_one():
     assert mgr.enqueue(key, "ts-9", "after the restart", force=True)
     assert mgr.dequeue(key)[:2] == ("ts-1", "hello while waiting")
     assert mgr.dequeue(key) == ("ts-9", "after the restart", {})
+    await mgr.close_all()
+
+
+#: Allocation inputs the session cannot resolve again on its own.
+_CALLER_INPUTS = {"extra_env": {"X_ENV": "kept-out-of-repr"}, "reasoning_effort_override": "high"}
+
+
+def _caller_inputs(start: dict) -> dict:
+    return {name: start.get(name) for name in _CALLER_INPUTS}
+
+
+@pytest.mark.asyncio
+async def test_the_restarted_session_keeps_the_callers_env_and_effort():
+    """Started without them, the successor runs on the default env and effort."""
+    starts: list[dict] = []
+    mgr, key, runs, _order, _notices = await _setup(starts=starts, **_CALLER_INPUTS)
+
+    assert await _restart(mgr, key, runs) == "recycled"
+
+    assert [_caller_inputs(s) for s in starts] == [_CALLER_INPUTS, _CALLER_INPUTS]
+    # The env can hold secrets, and a session's repr reaches logs.
+    assert "kept-out-of-repr" not in repr(mgr._sessions[key])
+    await mgr.close_all()
+
+
+@pytest.mark.asyncio
+async def test_a_live_effort_pick_retires_the_recorded_override():
+    """Restarted on the recorded level, the successor overrides the live pick."""
+    starts: list[dict] = []
+    mgr, key, runs, _order, _notices = await _setup(starts=starts, **_CALLER_INPUTS)
+    mgr.retire_effort_override(key)
+    mgr.retire_effort_override("dashboard:no-such-chat")
+
+    assert await _restart(mgr, key, runs) == "recycled"
+
+    assert starts[-1].get("extra_env") == _CALLER_INPUTS["extra_env"]
+    assert starts[-1].get("reasoning_effort_override") is None
+    await mgr.close_all()
+
+
+@pytest.mark.asyncio
+async def test_a_reset_successor_keeps_the_callers_env_and_effort():
+    """The reset's successor is rebuilt from the same identity as the restart's."""
+    starts: list[dict] = []
+    mgr, key, _runs, _order, _notices = await _setup(shared=False, starts=starts, **_CALLER_INPUTS)
+    old = mgr._sessions[key]
+    assert mgr.enqueue(key, "ts-2", "parked for the successor", force=True)
+
+    assert await mgr.reset(key) is True
+    await async_wait_until(
+        lambda: (live := mgr._sessions.get(key)) is not None and live is not old,
+        describe=lambda: f"no successor under the key: {list(mgr._sessions)}",
+    )
+
+    assert [_caller_inputs(s) for s in starts] == [_CALLER_INPUTS, _CALLER_INPUTS]
     await mgr.close_all()
 
 

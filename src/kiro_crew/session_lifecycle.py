@@ -408,10 +408,12 @@ def allocation_identity(owner: Any, key: str, session: Any) -> dict[str, Any]:
     Shared by the reset successor and the compaction restart
     (``session_compaction._restart_held``) so the two cannot drift: agent,
     approval policy, cwd, bound channel, the model the allocation selected, the
-    crew member and the per-spawn backend. A caller's ``extra_env`` is not
-    recorded on a session, so it cannot be carried.
+    crew member, the per-spawn backend, and the ``extra_env`` and
+    ``reasoning_effort_override`` the caller passed.
     """
     backend = getattr(session, "backend_override", None)
+    env = getattr(session, "extra_env", None)
+    effort = getattr(session, "reasoning_effort_override", None)
     return {
         "agent": getattr(session, "agent", "") or None,
         "approval_policy": getattr(session, "approval_policy", ""),
@@ -419,9 +421,11 @@ def allocation_identity(owner: Any, key: str, session: Any) -> dict[str, Any]:
         "channel_id": owner.get_channel(key) or None,
         "model": getattr(session, "requested_model", "") or None,
         "crew_agent": getattr(session, "capability_member", "") or None,
-        # Only when the session was started on one, so a session that never
-        # named a backend rebuilds with exactly the kwargs it always had.
+        # Each only when the session was started with one, so a session that
+        # named none rebuilds with exactly the kwargs it always had.
         **({"backend_override": backend} if isinstance(backend, str) else {}),
+        **({"extra_env": env} if env else {}),
+        **({"reasoning_effort_override": effort} if effort else {}),
     }
 
 

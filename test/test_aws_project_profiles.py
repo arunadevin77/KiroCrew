@@ -32,6 +32,7 @@ import pytest
 from kiro_crew import aws_project_profiles as app
 from kiro_crew.config import KiroCrewConfig
 from kiro_crew.config.sections import AwsConfig
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 
 def _project(root: Path, name: str) -> Path:
@@ -495,6 +496,87 @@ class TestSessionSpawn:
         finally:
             await mgr.close_all()
         assert calls[0]["extra_env"] is caller
+
+    @pytest.mark.asyncio
+    async def test_a_successor_applies_the_binding_again(self, tmp_path: Path) -> None:
+        """The session records the caller's env, not the bound one: rebuilt from the
+        bound one, a successor would read the profile as the caller's own choice."""
+        from kiro_crew.session import SessionManager
+
+        proj = _project(tmp_path, "proj")
+        calls: list[dict] = []
+        mgr = SessionManager(_cfg({str(proj): "dev"}), provider_factory=_recording_factory(calls))
+        try:
+            await mgr.get_or_create("chat-6332", cwd=str(proj), extra_env={"FOO": "bar"})
+            key = mgr._fold_key("chat-6332")
+            first = mgr._sessions[key]
+            mgr.release(key)
+            assert mgr.enqueue(key, "ts-1", "parked for the successor", force=True)
+            assert await mgr.reset(key) is True
+            await async_wait_until(
+                lambda: (live := mgr._sessions.get(key)) is not None and live is not first,
+                describe=lambda: f"no successor under the key: {list(mgr._sessions)}",
+            )
+            successor = mgr._sessions[key]
+        finally:
+            await mgr.close_all()
+        assert calls[-1]["extra_env"] == {
+            "FOO": "bar",
+            "AWS_PROFILE": "dev",
+            "AWS_DEFAULT_PROFILE": "dev",
+        }
+        assert successor.aws_project_profile == "dev"
+
+    @pytest.mark.asyncio
+    async def test_a_won_race_retry_applies_the_binding_again(self, tmp_path: Path) -> None:
+        """A cold start that lost the race to a session gone stale retries with the
+        caller's env, so the session it registers still records the binding."""
+        from kiro_crew.session import SessionManager
+
+        proj = _project(tmp_path, "proj")
+        record = _recording_factory([])
+        started: list[object] = []
+        both_started = asyncio.Event()
+        gate = asyncio.Event()
+
+        def factory(session_key=None, agent=None, channel_id=None, **kwargs):
+            provider = record(session_key=session_key, agent=agent, channel_id=channel_id, **kwargs)
+
+            async def _start() -> None:
+                started.append(provider)
+                if len(started) == 2:
+                    both_started.set()
+                await gate.wait()
+
+            provider.start = _start
+            return provider
+
+        mgr = SessionManager(_cfg({str(proj): "dev"}), provider_factory=factory)
+        key = mgr._fold_key("chat-6332")
+        try:
+            racers = [
+                asyncio.ensure_future(
+                    mgr.get_or_create(key, cwd=str(proj), extra_env={"FOO": "bar"})
+                )
+                for _ in range(2)
+            ]
+            await await_until(both_started, what="both cold starts parked in start()")
+            gate.set()
+            await async_wait_until(
+                lambda: (live := mgr._sessions.get(key)) is not None and live.semaphore._waiters,
+                describe=lambda: "the losing start is not waiting on the winner's lease",
+            )
+            winner = mgr._sessions[key]
+            winner.provider.is_process_alive = lambda: False
+            mgr.release(key)
+            await await_until(asyncio.gather(*racers), what="the losing start's retry")
+            retried = mgr._sessions[key]
+            mgr.release(key)
+        finally:
+            await mgr.close_all()
+        assert retried is not winner
+        assert retried.aws_project_profile == "dev"
+        assert retried.extra_env == {"FOO": "bar"}
 
     @pytest.mark.asyncio
     async def test_a_bound_session_at_the_pool_directory_skips_the_warm_pool(

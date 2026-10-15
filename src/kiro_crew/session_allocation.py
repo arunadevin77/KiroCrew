@@ -2433,6 +2433,9 @@ class SessionAllocationService:
             effective_cwd = preparation.project or effective_cwd
             extra_factory_kwargs["crew_agent"] = preparation.member
 
+        # The caller's own map, recorded on the session and passed to a won-race
+        # retry: a successor's allocation and the retry apply the binding again.
+        caller_env = extra_env
         # A project bound to an AWS profile (aws.project_profiles) starts its
         # agent with AWS_PROFILE set, unless the caller chose a profile itself.
         # Set before the pool decision so a bound session never takes a pooled
@@ -2911,6 +2914,10 @@ class SessionAllocationService:
                     # what keeps the id sent and the id read identical.
                     session.requested_model = model or ""
                     session.backend_override = extra_factory_kwargs.get("backend_override")
+                    session.extra_env = dict(caller_env) if caller_env else None
+                    session.reasoning_effort_override = extra_factory_kwargs.get(
+                        "reasoning_effort_override"
+                    )
                     session.aws_project_profile = bound_profile
                     session.loaded_capabilities = stamp
                     self.state.capability_failures.pop(key, None)
@@ -3060,7 +3067,7 @@ class SessionAllocationService:
                 approval_policy=approval_policy,
                 model=model,
                 cwd=cwd,
-                extra_env=extra_env,
+                extra_env=caller_env,
                 speculative=speculative,
                 speculative_resume=speculative_resume,
                 wait_if_busy=wait_if_busy,
