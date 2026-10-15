@@ -286,6 +286,12 @@ class AcpError(Exception):
         # formatter rewrites a dispatch failure into the generic 5xx prose.
         # ``None`` means unclassified: readers fall back to the message text.
         self.connection_failure: bool | None = None
+        # Set by :func:`_raise_acp_error` when the frame's ``data`` names
+        # ``errorKind: cloud_credential_error``: the process cached credentials
+        # it cannot reload, so the remedy is a fresh process, not a retry.
+        # ``llm_helpers.acp_error_is_session_not_found`` routes it down the
+        # reset-and-reload-once path a dropped session takes.
+        self.credential_reload: bool = False
 
 
 class AcpTimeoutError(AcpError):
@@ -1853,6 +1859,27 @@ def _rejected_model_from_error(error: object) -> str | None:
     return m.group(1) if m else None
 
 
+def _error_kind_from_frame(error: object) -> str:
+    """Return the structured ``errorKind`` a raw ACP frame's ``data`` carries.
+
+    claude-agent-acp names some provider answers with a machine-readable kind
+    alongside the prose (``{"code": -32603, "message": "Internal error",
+    "data": {"errorKind": "cloud_credential_error"}}`` -- the same field the
+    ``{'errorKind': 'unknown'}`` wrapper note at ``_RE_5XX_HINT`` describes).
+    Only a ``data`` that IS a mapping is read: the formatter pastes a
+    non-mapping ``data`` verbatim into the user-visible message, so matching
+    the kind out of that string would be the prose path structured readers
+    exist to avoid. Returns "" when the frame names no kind.
+    """
+    if not isinstance(error, dict):
+        return ""
+    data_field = error.get("data")
+    if isinstance(data_field, dict):
+        kind = data_field.get("errorKind")
+        return kind if isinstance(kind, str) else ""
+    return ""
+
+
 def _raise_acp_error(
     error: object,
     available_models: Sequence[str] | None = None,
@@ -1961,4 +1988,12 @@ def _raise_acp_error(
         raw_data_field, available_models
     ):
         err.usage_limit = True
+    # A stale-credential answer, read from the structured field (not the prose),
+    # recycles the process instead of retrying it. Pinned non-transient: the
+    # prose ends in "try again", and a retry would re-ask the one process that
+    # cannot reload. Not ``auth_required``: that card signs in the wrong identity
+    # for a harness that loads its own credentials (harness parity H6).
+    if _error_kind_from_frame(error) == "cloud_credential_error":
+        err.credential_reload = True
+        err.transient = False
     raise err

@@ -34,6 +34,34 @@ def _lost() -> AcpError:
     return AcpError("Session not found: 3f2a-backend-sid")
 
 
+def _credential_dead() -> AcpError:
+    """The answer a stale-credential backend gives, raised through the real path.
+
+    The Claude-on-Bedrock process answered, but the AWS credentials it cached
+    cannot be loaded any more -- so a retry on THIS process draws the answer
+    again and the remedy is the same fresh process a lost session gets. Built
+    through ``_raise_acp_error`` because that is the path ``AcpClient`` raises
+    the real frame through; the fakes here stand in for that client.
+    """
+    from kiro_crew.acp.transport_errors import _raise_acp_error
+
+    try:
+        _raise_acp_error(
+            {
+                "code": -32603,
+                "message": (
+                    "Internal error: API Error: Could not load AWS credentials · "
+                    "Could not load credentials from any providers. Check or "
+                    "refresh your AWS credentials and try again."
+                ),
+                "data": {"errorKind": "cloud_credential_error"},
+            }
+        )
+    except AcpError as exc:
+        return exc
+    raise AssertionError("_raise_acp_error did not raise")
+
+
 # ── Slack thread ────────────────────────────────────────────────────────────
 
 
@@ -120,6 +148,53 @@ async def test_slack_lost_after_output_is_not_replayed():
 
     assert provider.turns == 1
     assert "reset:thread1" in sessions.removed, "the lost binding is still dropped"
+
+
+@pytest.mark.asyncio
+async def test_slack_stale_credential_error_recycles_and_replays_once():
+    """``cloud_credential_error`` rides the same replace-the-process seam.
+
+    The process is alive but its credential cache is stale: the tag
+    (``AcpError.credential_reload``, set from the structured frame field)
+    routes through ``acp_error_is_session_not_found``, so the binding is
+    dropped once and the replay's claim spawns a fresh process, which loads
+    fresh credentials and answers. One replay, never a loop -- a second
+    failure ends the turn on the give-up text.
+    """
+    from test_slack_handler import FakeSessionManager, MockSlackClient, _visible_texts
+
+    from kiro_crew.slack.handler import handle_message
+
+    slack = MockSlackClient()
+    provider = _ScriptedSlackProvider([[_credential_dead()], _answer()])
+    sessions = FakeSessionManager(provider)
+
+    await handle_message(slack, sessions, "C1", "hello", "thread1", "msg1", "U1")
+
+    assert provider.turns == 2
+    assert "reset:thread1" in sessions.removed, "the stuck process's binding is dropped"
+    texts = _visible_texts(slack)
+    assert any(SESSION_NOT_FOUND_RETRY_NOTICE in t for t in texts), texts
+    assert any("The answer is 42" in t for t in texts), texts
+    assert sessions.replay_gaps == [("open", "thread1"), ("close", "thread1")]
+
+
+@pytest.mark.asyncio
+async def test_slack_stale_credential_error_second_failure_is_not_a_loop():
+    """A fresh process that fails its own credential load ends the turn."""
+    from test_slack_handler import FakeSessionManager, MockSlackClient, _visible_texts
+
+    from kiro_crew.slack.handler import handle_message
+
+    slack = MockSlackClient()
+    provider = _ScriptedSlackProvider([[_credential_dead()]])
+    sessions = FakeSessionManager(provider)
+
+    await handle_message(slack, sessions, "C1", "hello", "thread1", "msg1", "U1")
+
+    assert provider.turns == 2, "one replay, never a loop"
+    texts = _visible_texts(slack)
+    assert any(SESSION_NOT_FOUND_GIVE_UP_TEXT in t for t in texts), texts
 
 
 # ── channel agent ───────────────────────────────────────────────────────────

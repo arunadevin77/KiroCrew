@@ -176,7 +176,16 @@ never drift. Notable terminal (non-retryable) classes:
   with a reconnect notice, armed as `ReplayFamily.SESSION_NOT_FOUND`. A Stop that
   already resolved suppresses it; the drain and consume seams veto it on a later
   Stop, a queued follow-up or steer, or a rebind (with a cancel notice), refunding
-  the one-shot. A second loss on the same turn ends with the give-up text.
+  the one-shot. A second loss on the same turn ends with the give-up text. The
+  predicate matches a second raw answer with the same fresh-process remedy: a
+  frame whose `data` names `errorKind: cloud_credential_error` —
+  `_raise_acp_error` reads it structurally, tags the `AcpError`
+  `credential_reload`, and pins it non-transient, because the process's cached
+  credentials cannot be re-loaded and a retry on THAT process only draws the
+  failure again. It rides the reset-and-retry-once path unchanged, under the
+  same one-retry budget and tool-activity gates, and is deliberately not
+  `auth_required`: that tag offers the Kiro sign-in card, which signs in the
+  wrong identity for a harness that loads its own credentials.
 - **Preserved-thinking binding mismatch**: `AcpConversationBindingMismatch`
   (non-transient) means the stored native conversation carries thinking bound to
   another conversation prefix. A dashboard outer turn with no reply, thought or

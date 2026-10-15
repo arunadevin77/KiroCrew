@@ -2809,11 +2809,11 @@ attempts logs a single grep-able WARNING before migrating to Phase 2.
 
 ### Lost backend session ("Session not found")
 
-A live backend can answer every prompt with `Session not found` for the backend session id a conversation is bound to. The process is up, so the dead-provider eviction never runs. `llm_helpers.acp_error_is_session_not_found` names this answer, scoped to `AcpError`.
+A live backend can answer every prompt with `Session not found` for the backend session id a conversation is bound to. The process is up, so the dead-provider eviction never runs. A second answer takes the same road: a frame whose `data` names `errorKind: cloud_credential_error` (`_raise_acp_error` reads it structurally and tags the `AcpError` `credential_reload`) reports a process whose cached credentials cannot be re-loaded — every retry on that same process draws the failure again, while a chat started fresh in the same window works, so the remedy is a fresh process, not a retry. `llm_helpers.acp_error_is_session_not_found` names both answers, scoped to `AcpError`.
 
-The remedy is the same on every surface: `SessionManager.reset(key)` drops the live binding and keeps the session-map entry, so the next claim spawns a fresh runtime that `session/load`s the SAME id; Load Recovery above falls back to a new session plus history replay only when that load fails. The turn is re-run once. A second loss ends on a clear error.
+The remedy is the same on every surface: `SessionManager.reset(key)` drops the live binding and keeps the session-map entry, so the next claim spawns a fresh runtime that `session/load`s the SAME id; Load Recovery above falls back to a new session plus history replay only when that load fails. The turn is re-run once. A second loss ends on a clear error. Both answers above ride this one path under the same budget: one reload per turn, and the tool-activity invariant below applies to a credential-stale process exactly as it does to a dropped session.
 
-The reset needs the surface's own session manager and the re-run needs its own output path, so each surface routes the answer into the one replace-and-run-again seam it already owns:
+The reset needs the surface's own session manager and the re-run needs its own output path, so each surface routes the answer into the one replace-and-run-again seam it already owns (the seams below serve `credential_reload` identically — nothing in them reads which of the two answers routed in):
 
 | Surface | Seam |
 |---|---|

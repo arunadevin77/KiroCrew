@@ -330,19 +330,35 @@ def acp_error_is_transient(exc: BaseException) -> bool:
 
 
 def acp_error_is_session_not_found(exc: BaseException) -> bool:
-    """True when a live backend says it holds no session under the id it was sent.
+    """True when the live backend cannot serve this chat and only a fresh process can.
 
-    The process answered, so nothing marks it dead and the dead-provider
-    eviction never fires; the binding keeps naming a session the backend has
-    dropped, and every later prompt draws the same answer. The backend
-    session's transcript is usually intact, so the remedy is a fresh process
-    that re-loads the SAME id -- not a retry on this one.
+    Two raw answers share that remedy, so both read True here:
+
+    - A live backend holds no session under the id it was sent (the phrase is
+      the adapter's own answer to a prompt). The process answered, so nothing
+      marks it dead and the dead-provider eviction never fires; the binding
+      keeps naming a session the backend has dropped, and every later prompt
+      draws the same answer. The backend session's transcript is usually
+      intact, so the remedy is a fresh process that re-loads the SAME id --
+      not a retry on this one.
+    - The frame names ``cloud_credential_error`` (``AcpError.credential_reload``,
+      set from the structured ``data.errorKind`` in
+      ``acp.transport_errors._raise_acp_error``): the process cached
+      credentials it cannot re-load, so a retry on THIS process
+      re-draws the answer while a chat started fresh in the same window works.
+      The remedy is the same fresh process, so the tag rides this same
+      reset-and-reload-once path with its one-retry budget and the
+      no-replay-after-tool-activity rule intact.
 
     Scoped to ``AcpError``: the phrase is the adapter's own answer to a prompt,
     and an unrelated exception that mentions a missing session elsewhere (an
     HTTP 404 body, a dashboard lookup) must never reset a chat.
     """
-    return isinstance(exc, AcpError) and "session not found" in str(exc).lower()
+    if not isinstance(exc, AcpError):
+        return False
+    if "session not found" in str(exc).lower():
+        return True
+    return getattr(exc, "credential_reload", False) is True
 
 
 #: Set by :func:`stream_and_collect` on an ``AcpError`` it propagates: True when a
