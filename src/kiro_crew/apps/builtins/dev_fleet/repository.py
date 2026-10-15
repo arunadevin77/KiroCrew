@@ -1383,20 +1383,6 @@ async def _own_commits_count(path: str) -> int | None:
     return int(out) if out and out.isdigit() else None
 
 
-def _is_directory_at(name: str, dir_fd: int) -> bool:
-    """Whether *name*, resolved relative to the pinned *dir_fd*, is a directory.
-
-    ``lstat`` through the descriptor and without following links, so the answer is
-    about the entry the failed ``unlink`` addressed and not about whatever a link
-    at that name points to. Any error reads as "not a directory": the caller then
-    reports the original failure instead of a guess.
-    """
-    try:
-        return stat.S_ISDIR(os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode)
-    except OSError:
-        return False
-
-
 def _discard_untracked_files(worktree: str, rel_paths: list[str]) -> str | None:
     """Delete exactly the approved untracked files. None on success, else a reason.
 
@@ -1499,7 +1485,7 @@ def _discard_untracked_files(worktree: str, rel_paths: list[str]) -> str | None:
                 )
             except PermissionError as exc:
                 # Same type change, different errno. Linux answers EISDIR from
-                # unlink(2) on a directory; darwin answers EPERM, so the branch
+                # unlink(2) on a directory; darwin and the BSDs answer EPERM, so the branch
                 # above never sees it and the user reads a bare "operation not
                 # permitted" that names nothing. Confirmed with a stat before it is
                 # reported, so a genuine permission refusal keeps its own message,
@@ -1513,14 +1499,6 @@ def _discard_untracked_files(worktree: str, rel_paths: list[str]) -> str | None:
                     )
                 return f"could not discard {rel!r}: {exc.strerror or exc}"
             except OSError as exc:
-                if exc.errno == errno.EPERM and _is_directory_at(parts[-1], dir_fds[-1]):
-                    # macOS and the BSDs answer unlink() on a directory with EPERM,
-                    # not Linux's EISDIR, so the type change arrives here instead of
-                    # in the clause above. Same refusal: nothing recurses into it.
-                    return (
-                        f"refusing to discard {rel!r}: it is now a directory, not the "
-                        "file that was confirmed"
-                    )
                 if walked < len(root_parts) - 1 and exc.errno in (errno.ELOOP, errno.ENOTDIR):
                     # A component of the worktree path is a symlink. Could be a
                     # host whose home directory is linked, could be an ancestor
@@ -1559,8 +1537,11 @@ def _count_missing(worktree: str, rel_paths: list[str]) -> int:
 def _is_dir_at(name: str, dir_fd: int) -> bool:
     """Whether *name* under *dir_fd* is a real directory right now.
 
-    Never raises: the caller is already handling a refusal and only needs to know
-    which refusal to report.
+    ``lstat`` through the descriptor and without following links, so the answer is
+    about the entry the failed ``unlink`` addressed and not about whatever a link
+    at that name points to. Never raises: the caller is already handling a refusal
+    and only needs to know which refusal to report, so any error reads as "not a
+    directory" and the caller reports the original failure instead of a guess.
     """
     try:
         return stat.S_ISDIR(os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode)
