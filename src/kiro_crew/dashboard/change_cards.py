@@ -95,7 +95,6 @@ FINISHED_STATUSES = frozenset(
 )
 #: Outcomes the proposing agent hears about on its next turn.
 REPORTED_STATUSES = FINISHED_STATUSES
-_CLOSED_STATUSES = frozenset({STATUS_CANCELLED, STATUS_EXPIRED, STATUS_UNDONE})
 _ALL_STATUSES = FINISHED_STATUSES | {STATUS_PENDING, STATUS_APPLYING}
 #: Statuses whose ``undo_unavailable_reason`` is still the preview's own.
 _PRE_APPLY_STATUSES = frozenset(

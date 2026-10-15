@@ -693,7 +693,6 @@ _queued_chars = 0
 _queued_guard = threading.Lock()
 _worker: threading.Thread | None = None
 _worker_guard = threading.Lock()
-_project_fn = None
 
 
 def submit_committed(workspace: str | None) -> None:
