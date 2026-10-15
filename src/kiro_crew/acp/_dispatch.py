@@ -3099,6 +3099,27 @@ def tool_call_content_text(entry: Any) -> str | None:
     return str(text) if text else None
 
 
+def tool_call_content_is_image(entry: Any) -> bool:
+    """Whether one ACP tool-call ``content`` entry is an image block.
+
+    Reads the SAME two shapes :func:`tool_call_content_text` reads -- the
+    canonical wrapper ``{"type": "content", "content": {"type": "image", ...}}``
+    and the bare ``{"type": "image", ...}`` block -- so an image counts however
+    the backend framed it. The text parsers render nothing for an image (it is a
+    known block that legitimately carries no text), so a tool result that holds
+    one is NOT whole: its pixels, and any number they depict, are absent from
+    ``tool_output``. The caller sets its omitted-field flag from this so
+    ``tool_output_truncated`` is true even for an image-only result, where there
+    is no text part to carry the mark otherwise.
+    """
+    if not isinstance(entry, dict):
+        return False
+    inner = entry.get("content")
+    if not isinstance(inner, dict) and entry.get("type") == "image":
+        inner = entry
+    return isinstance(inner, dict) and inner.get("type") == "image"
+
+
 def _rendered_shape_type(value: Any) -> str:
     """A frame-supplied ``type`` made safe to put in the shape diagnostic.
 
@@ -3316,6 +3337,12 @@ def _build_tool_result_event(update: dict[str, Any], cache_scope: str = "") -> A
             text = tool_call_content_text(block)
             if text:
                 output_parts.append(text)
+            elif tool_call_content_is_image(block):
+                # An image block renders no text, so the result the model saw is
+                # not whole: its pixels (and any figure they depict) never reach
+                # ``tool_output``. Mark it omitted so the flag below is true even
+                # when the result is image-only.
+                fields_omitted = True
     # Path 2: rawOutput (status=completed) fallback.
     if not output_parts:
         raw_output = update.get("rawOutput")
@@ -3383,6 +3410,9 @@ def _build_tool_result_event(update: dict[str, Any], cache_scope: str = "") -> A
             tool_call_id=tool_use_id,
             tool_final=tool_status == "completed",
             tool_status=tool_status,
+            # An image-only result has no text part to carry the mark, so the
+            # omission would otherwise read as a whole (empty) result.
+            tool_output_truncated=fields_omitted,
         )
     joined = "\n".join(output_parts)
     _redacted = _redact(joined)

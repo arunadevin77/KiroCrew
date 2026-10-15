@@ -90,7 +90,7 @@ def test_client_streaming_parser_records_the_cut(tmp_path, length: int, truncate
     assert event.tool_output_truncated is truncated
 
 
-def _read_back(tmp_path, monkeypatch, parts: list[dict]) -> AcpEvent:
+def _read_back_list(tmp_path, monkeypatch, parts: list[dict]) -> list[AcpEvent]:
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     session_dir = tmp_path / ".kiro" / "sessions" / "cli"
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -106,7 +106,11 @@ def _read_back(tmp_path, monkeypatch, parts: list[dict]) -> AcpEvent:
     client = AcpClient(work_dir=tmp_path)
     client._session_id = "s1"
     client._jsonl_pos = 0
-    [event] = client._read_new_tool_results_sync()
+    return client._read_new_tool_results_sync()
+
+
+def _read_back(tmp_path, monkeypatch, parts: list[dict]) -> AcpEvent:
+    [event] = _read_back_list(tmp_path, monkeypatch, parts)
     return event
 
 
@@ -216,3 +220,78 @@ def test_a_status_only_envelope_is_whole() -> None:
     )
     assert acp_dispatch._json_result_omits_text({"stdout": "x", "stderr": "   "}) is False
     assert acp_dispatch._json_result_omits_text({"stdout": "x", "stderr": "warning"}) is True
+
+
+# An image content block renders no text, so a tool result that carries one is
+# not whole: its pixels (and any figure they depict) are absent from
+# ``tool_output``. The same flag says so, and an image-only result -- which has
+# no text part to shorten -- is marked incomplete on that signal alone, so the
+# echo check never reads "the phrase is not there" from a result it could not see.
+_IMG_WRAPPED = {
+    "type": "content",
+    "content": {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"},
+}
+_IMG_BARE = {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}
+_TEXT_BLOCK = {"type": "content", "content": {"type": "text", "text": "see screenshot"}}
+
+
+def _content_update(blocks: list[dict]) -> dict:
+    return {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "screenshot",
+        "status": "completed",
+        "content": blocks,
+    }
+
+
+def test_tool_call_content_is_image_reads_the_wrapped_and_bare_shapes() -> None:
+    assert acp_dispatch.tool_call_content_is_image(_IMG_WRAPPED) is True
+    assert acp_dispatch.tool_call_content_is_image(_IMG_BARE) is True
+    assert acp_dispatch.tool_call_content_is_image(_TEXT_BLOCK) is False
+    assert acp_dispatch.tool_call_content_is_image({"type": "text", "text": "x"}) is False
+    assert acp_dispatch.tool_call_content_is_image("not a dict") is False
+
+
+def test_dispatch_builder_marks_a_dropped_image_part() -> None:
+    event = acp_dispatch._build_tool_result_event(_content_update([_TEXT_BLOCK, _IMG_WRAPPED]))
+    assert event is not None
+    assert event.tool_output == "see screenshot"
+    assert event.tool_output_truncated is True
+
+
+def test_dispatch_builder_marks_an_image_only_result() -> None:
+    event = acp_dispatch._build_tool_result_event(_content_update([_IMG_BARE]))
+    assert event is not None
+    assert event.tool_output_truncated is True
+
+
+def test_client_streaming_parser_marks_a_dropped_image_part(tmp_path) -> None:
+    client = AcpClient(work_dir=tmp_path)
+    both = client._extract_tool_call_update(
+        JsonRpcMessage(
+            method="session/update",
+            params={"update": _content_update([_TEXT_BLOCK, _IMG_WRAPPED])},
+        )
+    )
+    assert both is not None and both.tool_output_truncated is True
+    image_only = client._extract_tool_call_update(
+        JsonRpcMessage(method="session/update", params={"update": _content_update([_IMG_BARE])})
+    )
+    assert image_only is not None and image_only.tool_output_truncated is True
+
+
+def test_read_back_parser_marks_a_dropped_image_part(tmp_path, monkeypatch) -> None:
+    both = _read_back(
+        tmp_path,
+        monkeypatch,
+        [{"kind": "text", "data": "see shot"}, {"kind": "image", "data": "iVBORw0KGgo="}],
+    )
+    assert both.tool_output == "see shot"
+    assert both.tool_output_truncated is True
+
+
+def test_read_back_parser_marks_an_image_only_result(tmp_path, monkeypatch) -> None:
+    events = _read_back_list(tmp_path, monkeypatch, [{"kind": "image", "data": "iVBORw0KGgo="}])
+    assert len(events) == 1
+    assert events[0].tool_output == ""
+    assert events[0].tool_output_truncated is True

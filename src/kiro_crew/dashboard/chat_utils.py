@@ -14,6 +14,7 @@ import logging
 import re
 import secrets
 import time
+import unicodedata
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
@@ -4225,20 +4226,41 @@ _DIGIT_GROUPING_RE = re.compile(r"(?<=\d)[,\u202f\u00a0 ](?=\d{3}\b)")
 _COUNT_RE = re.compile(r"\d+")
 
 
+def _fold_unicode_digits(text: str) -> str:
+    """Map every Unicode decimal digit to its ASCII equivalent, nothing else.
+
+    A count the reply echoes can be written in another script's decimal digits
+    -- Arabic-Indic ``٨١٥٤``, Devanagari, fullwidth -- and still name the same
+    whole number as the banner's ASCII ``8154``. Each decimal digit (Unicode
+    category Nd) becomes its value ``0``-``9``; every other character is left
+    exactly as it is, so this is a per-digit map, never a broad substring
+    rewrite. Run before the count is read or searched for so both sides compare
+    on one digit alphabet. ASCII text (the common case) is returned untouched.
+    """
+    if not text or text.isascii():
+        return text
+    return "".join(
+        str(unicodedata.decimal(ch)) if (not ch.isascii() and ch.isdecimal()) else ch for ch in text
+    )
+
+
 def _banner_count(banner: str) -> str:
-    """The count a matched banner carries, with digit grouping folded away."""
-    match = _COUNT_RE.search(_DIGIT_GROUPING_RE.sub("", banner or ""))
+    """The count a matched banner carries, with Unicode digits and grouping folded away."""
+    match = _COUNT_RE.search(_DIGIT_GROUPING_RE.sub("", _fold_unicode_digits(banner or "")))
     return match.group(0) if match else ""
 
 
 def _carries_count(text: str, count: str) -> bool:
-    """Whether ``text`` names ``count`` as a whole number, however its digits are grouped.
+    """Whether ``text`` names ``count`` as a whole number, however its digits are grouped or scripted.
 
     ``You have 8,154 weighted tokens left``, ``you have 8154 weighted tokens
-    left`` and ``{"remaining": 8154}`` all carry ``8154``; ``18154`` and
-    ``8154.2`` do not name the same whole number.
+    left``, a translation carrying Arabic-Indic ``٨١٥٤`` and ``{"remaining":
+    8154}`` all carry ``8154``; ``18154`` and ``8154.2`` do not name the same
+    whole number. Unicode decimal digits are folded to ASCII first so a figure
+    the reply echoes in another script still protects it, then digit grouping is
+    folded, so both ends of the comparison read one digit alphabet.
     """
-    folded = _DIGIT_GROUPING_RE.sub("", text or "")
+    folded = _DIGIT_GROUPING_RE.sub("", _fold_unicode_digits(text or ""))
     return re.search(rf"(?<![\d.]){re.escape(count)}(?!\d|\.\d)", folded) is not None
 
 
@@ -4250,7 +4272,7 @@ def classify_provider_budget_banner(
     is_transient_recovery: bool,
     prior_visible_output: bool,
     tool_results: Iterable[str] = (),
-    tool_results_complete: bool = True,
+    echo_evidence_complete: bool = True,
     transcript_texts: Iterable[str] = (),
 ) -> tuple[str, bool]:
     """Classify one exact leading banner using artifact-specific provenance.
@@ -4276,11 +4298,11 @@ def classify_provider_budget_banner(
     prove authorship: a leading prefix before semantic answer text remains
     byte-for-byte visible, and a banner-only tail is an artifact only after the
     turn already delivered visible model output AND the echo evidence is whole.
-    ``tool_results_complete`` is False when a result this turn, or a tool row of
-    an earlier turn, was cut by the transport's display bound or shown without
-    one of its output fields, so the number may sit in text the check never
-    saw; the tail then stays visible as an echo the evidence cannot rule out,
-    and the typed-recovery strip stands down for the same reason. A
+    ``echo_evidence_complete`` is False when a prompt image could hold the
+    count, an earlier transcript prefix is outside the live window, or a tool
+    result's recorded text is not known to be whole. The tail then stays visible
+    as an echo the available evidence cannot rule out, and the typed-recovery
+    strip stands down for the same reason. A
     banner-only turn with no such evidence is ambiguous and therefore stays
     visible, including regenerated answers and echoes whose prompt uses wording
     this classifier has never seen.
@@ -4304,10 +4326,10 @@ def classify_provider_budget_banner(
         or any(_carries_count(earlier, count) for earlier in transcript_texts)
     ):
         return text, False
-    # Evidence the turn could not read cannot rule an echo out, for either strip:
-    # a count may sit in the cut part of a result or in a field the row never
-    # showed, this turn or in an earlier one.
-    if not tool_results_complete:
+    # Evidence the classifier could not read cannot rule an echo out for
+    # either strip. A count may sit in prompt-image pixels, an omitted transcript
+    # prefix, a cut result, or an output field the recorded row never showed.
+    if not echo_evidence_complete:
         return text, False
     if is_provider_recovery:
         return stripped, True

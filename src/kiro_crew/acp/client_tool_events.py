@@ -39,6 +39,7 @@ from kiro_crew.acp._dispatch import (
 )
 from kiro_crew.acp._dispatch import select_tool_title as _select_tool_title
 from kiro_crew.acp._dispatch import (
+    tool_call_content_is_image,
     tool_call_content_text,
 )
 from kiro_crew.acp.client_timeouts import _SEL_AUDIT_TIMEOUT_SECONDS
@@ -573,6 +574,12 @@ def _extract_tool_call_update(self: AcpClient, msg: JsonRpcMessage) -> AcpEvent 
             text = tool_call_content_text(block)
             if text:
                 output_parts.append(text)
+            elif tool_call_content_is_image(block):
+                # An image block renders no text, so the result is not whole:
+                # its pixels (and any figure they depict) never reach
+                # ``tool_output``. Mark it omitted so the flag is true even
+                # when the result is image-only (the terminal return below).
+                fields_omitted = True
 
     # Path 2: `rawOutput` (arrives with status=completed) — fallback when
     # there were no content blocks (e.g. some tools only emit rawOutput).
@@ -625,6 +632,9 @@ def _extract_tool_call_update(self: AcpClient, msg: JsonRpcMessage) -> AcpEvent 
             tool_call_id=tool_use_id,
             tool_final=tool_status == "completed",
             tool_status=tool_status,
+            # An image-only result has no text part to carry the mark, so the
+            # omission would otherwise read as a whole (empty) result.
+            tool_output_truncated=fields_omitted,
         )
 
     final_joined = "\n".join(output_parts)
@@ -859,8 +869,14 @@ def _jsonl_tool_results(line: bytes) -> list[AcpEvent]:
         output_parts: list[str] = []
         # A per-part bound removes text before the join, so the joined
         # length alone cannot say whether anything was cut; a stdout-only
-        # display of a result that also carried stderr is not whole either.
+        # display of a result that also carried stderr is not whole either,
+        # and an image part renders no text at all.
         part_cut = False
+        # An image part renders no text, so a result that carried one is not
+        # whole even when it has no text part to shorten. Tracked separately
+        # from ``output_parts`` so an image-only result still emits a row,
+        # marked incomplete, rather than vanishing.
+        saw_image = False
         for rc in tr_content:
             if not isinstance(rc, dict):
                 continue
@@ -880,14 +896,16 @@ def _jsonl_tool_results(line: bytes) -> list[AcpEvent]:
                 text = str(rc.get("data", ""))
                 part_cut = part_cut or len(text) > 4000
                 output_parts.append(text[:4000])
-        if output_parts:
+            elif rc.get("kind") == "image":
+                saw_image = True
+        if output_parts or saw_image:
             joined = "\n".join(output_parts)
             results.append(
                 AcpEvent(
                     kind=EVENT_TOOL_RESULT,
                     tool_call_id=tool_use_id,
                     tool_output=joined[:8000],
-                    tool_output_truncated=part_cut or len(joined) > 8000,
+                    tool_output_truncated=part_cut or saw_image or len(joined) > 8000,
                     # A kiro-cli result read back from its session
                     # file traces credentials like a streamed one.
                     tool_output_credentials=tool_output_fingerprints(joined),
