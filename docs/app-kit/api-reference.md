@@ -510,8 +510,14 @@ Import `defaultMessageRenderers` if you need to read what the built-ins do, and 
 | `renderTool` | the host's tool row, if it passed one |
 | `handOff` | whether a row's error notice may offer "Ask the agent"; absent means yes |
 
-Two rules the registry relies on:
+Three rules the registry relies on:
 
+- **Look ahead at roles, not at streaming text.** A renderer may read any neighbour off `messages`,
+  but not the text of a `streaming` row other than its own. When the list owns its scroller (the
+  `transcript` mount `ChatEmbed` uses), a row is drawn again when its own messages, the host's props
+  or any other row change, except one change: a streaming row's text growing, which redraws that row
+  alone. Every built-in rule that looks ahead (the reply footer, the steer chip, a retry notice's
+  tense) reads a streaming row by its role.
 - **Shape beats role.** Resolution is first-match, and your entries sit between the two built-ins
   recognised by message *shape* — a stop event and a sub-agent completion, which claim `'*'` and gate
   on a `match` predicate — and the role-keyed ones. This matters because a stop event reaches the

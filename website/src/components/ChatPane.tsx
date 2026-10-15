@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import ChatMessageList from '../app-sdk/ChatMessageList'
 import type { VirtualTranscriptHandle } from '../app-sdk/ChatMessageList'
 import { EdgeFade, JumpToBottomButton } from '../app-sdk/ChatScrollChrome'
+import { createTranscriptVersioner } from '../chat-core/transcript/transcriptVersion'
 import { DOCK_CLEARANCE_PX, useComposerDockMetrics } from '../pages/chat/composerDockMetrics'
 import ChatInput from './ChatInput'
 import { busySteerFlag } from './chat-input/busySend'
@@ -267,7 +268,24 @@ export default function ChatPane({
   // what the filter dropped (the steer-chip decision reads the policy-block
   // inject row). `undefined` for an ordinary chat, so its renderer set does not
   // rebuild on every appended message.
-  const crewmateTranscript = crewmate ? paneMessages : undefined
+  //
+  // Handed as a GETTER, not the array: every streaming flush replaces
+  // `paneMessages`, and a new array here would rebuild the renderer set -- and
+  // with it every row ChatMessageList has mounted -- once per streamed token.
+  // The getter reads the newest rows whenever a row renders. The set itself
+  // moves with the transcript version (chat-core/transcript/transcriptVersion):
+  // on every change to these rows except a streaming row's text growing, which
+  // `crewmateRunPosition` never reads (a streaming row continues a run by its
+  // role alone).
+  const crewmateTranscriptRef = useRef<typeof paneMessages | undefined>(undefined)
+  crewmateTranscriptRef.current = crewmate ? paneMessages : undefined
+  const transcriptVersionOf = useMemo(() => createTranscriptVersioner(), [])
+  const transcriptVersion = crewmate ? transcriptVersionOf(paneMessages) : 0
+  const crewmateTranscript = useMemo(
+    () => (crewmate ? () => crewmateTranscriptRef.current : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the transcript version is the dependency, see above
+    [crewmate, transcriptVersion],
+  )
   // EVERY queued row, cards and hidden system deliveries alike. A reorder
   // submits the full sequence — see useQueuedMessageActions — so the
   // non-interactive rows `splitPaneMessages` strips out are still needed here.

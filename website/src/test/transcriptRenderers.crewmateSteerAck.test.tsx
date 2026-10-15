@@ -49,7 +49,7 @@ function draw(opts: Parameters<typeof createTranscriptRenderers>[0]) {
 
 describe("the Steered chip on a crewmate's reply", () => {
   it('is never drawn, and the raw marker is still stripped', () => {
-    draw({ slot: 'member-radar', crewmate: { name: 'Radar' }, crewmateTranscript: [ACKED] })
+    draw({ slot: 'member-radar', crewmate: { name: 'Radar' }, crewmateTranscript: () => [ACKED] })
     expect(screen.queryByText('Steered')).toBeNull()
     expect(screen.queryByText(/switched to the new issue/)).toBeNull()
     const md = screen.getByTestId('md')

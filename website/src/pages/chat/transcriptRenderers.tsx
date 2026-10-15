@@ -182,12 +182,13 @@ export interface TranscriptRendererOptions {
    *  with `filterCrewmateChat` — this option only changes how what remains is
    *  drawn. */
   crewmate?: CrewmateIdentity
-  /** The UNFILTERED transcript behind a crewmate's chat. The rows the pane
-   *  draws are `ctx.messages`; the turn boundaries the pane dropped (a patrol
-   *  wake, a cron or sub-agent envelope between two replies) are only here.
-   *  Read for the run position, never for layout. Meaningless without
-   *  `crewmate`. */
-  crewmateTranscript?: ChatMessage[]
+  /** Reads the UNFILTERED transcript behind a crewmate's chat. The rows the
+   *  pane draws are `ctx.messages`; the turn boundaries the pane dropped (a
+   *  patrol wake, a cron or sub-agent envelope between two replies) are only
+   *  here. Read for the run position, never for layout. Meaningless without
+   *  `crewmate`. A getter, called on every row render, so the host can keep
+   *  this renderer set's identity while the transcript streams. */
+  crewmateTranscript?: () => ChatMessage[] | undefined
 }
 
 /** True when the error row at `index` is the seeded feature-request turn's own
@@ -324,7 +325,9 @@ export function createTranscriptRenderers(
   // Narrowed once here so the crewmate entry below can close over a definite
   // identity instead of re-asserting `o.crewmate` inside its render.
   const crewmate = o.crewmate
-  const crewmateTranscript = o.crewmateTranscript
+  // Read at render time, so this renderer set (and every settled row drawn by
+  // it) stays stable across streaming flushes.
+  const crewmateTranscriptOf = (): ChatMessage[] | undefined => o.crewmateTranscript?.()
 
   return [
     // ── Shape-matched rows, ahead of anything keyed only by role ──
@@ -450,7 +453,7 @@ export function createTranscriptRenderers(
       // as wide as a reply.
       render: (m, ctx) => {
         if (!crewmate) return ctx.row(<ConversationCard message={m} slot={o.slot} />)
-        const pos = crewmateRunPosition(ctx.messages, ctx.index, crewmateTranscript)
+        const pos = crewmateRunPosition(ctx.messages, ctx.index, crewmateTranscriptOf())
         return ctx.row(
           <CrewmateMessage pos={pos}>
             {/* Same cap as a crewmate bubble (72ch at the message font size). */}
@@ -563,7 +566,7 @@ export function createTranscriptRenderers(
           render: (m: ChatMessage, ctx: MessageRenderContext) => {
             // Run position reads turn boundaries off the UNFILTERED transcript
             // (a patrol wake between two replies is filtered from `ctx.messages`).
-            const pos = crewmateRunPosition(ctx.messages, ctx.index, crewmateTranscript)
+            const pos = crewmateRunPosition(ctx.messages, ctx.index, crewmateTranscriptOf())
             // The run ends here (single / end): the row after it is a boundary
             // the user sees or the turn ended, so this bubble is the one that
             // carries the hover actions. No "Steered" chip on any bubble: in a

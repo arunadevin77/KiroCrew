@@ -91,7 +91,7 @@ describe("the crewmate chat's user entry", () => {
     // Built the way ChatPane builds it for the Members page: `crewmate` set,
     // `hideSteerBadge` NOT set (the page runs the split busy mode since
     // #16684). The fill must not depend on the badge flag (#18361).
-    const withCrewmate = mergeRenderers(createTranscriptRenderers({ slot: 's1', crewmate, crewmateTranscript: [userRow] }))
+    const withCrewmate = mergeRenderers(createTranscriptRenderers({ slot: 's1', crewmate, crewmateTranscript: () => [userRow] }))
     const entry = resolveRenderer(userRow, withCrewmate)!
     expect(entry.id).toBe('user')
     const { container } = render(<>{entry.render(userRow, ctx({ messages: [userRow] }))}</>)

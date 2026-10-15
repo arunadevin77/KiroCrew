@@ -68,7 +68,10 @@ export interface ThreadHooks {
 export interface MessageRenderContext {
   /** Index of this message in `messages`. Needed by rows that look ahead. */
   index: number
-  /** The whole transcript. The assistant footer rule depends on what follows. */
+  /** The whole transcript. The assistant footer rule depends on what follows.
+   *  Read a `streaming` neighbour by its role, never its text: the list
+   *  redraws a row when any other row changes EXCEPT a streaming row's text
+   *  growing (chat-core/transcript/transcriptVersion). */
   messages: ChatMessage[]
   /** Whether the session is currently producing output. */
   running: boolean

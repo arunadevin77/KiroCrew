@@ -2766,7 +2766,8 @@ ONE TURN's bubbles (RFC screen 05): it breaks on a user message, on any row the
 user sees between two messages (an error, a pending approval), and at a turn
 boundary the unfiltered transcript still carries — a patrol wake, a cron or
 sub-agent envelope between two replies — which `crewmateRunPosition` reads off
-the `crewmateTranscript` the pane hands its renderer; there is no time rule. A
+the unfiltered rows the `crewmateTranscript` getter the pane hands its renderer
+returns; there is no time rule. A
 turn's own machinery (tool rows, thinking, the wire-only `done`), a resolved
 approval or a state-only row between two messages does not split the run, and a
 streaming row continues it. A change card (`role: 'card'`) is the crewmate's own
@@ -2784,8 +2785,10 @@ so the run end IS the turn end — and the "Steered" chip never draws
 works is a steer, so the `[STEERING …]` ack kiro-cli emits would close nearly
 every reply with the mechanics this surface hides (#17838); the marker is still
 stripped from the prose, and the main chat keeps its chip with the SDK's own
-policy-block rule. The UNFILTERED transcript the pane passes as
-`crewmateTranscript` is read for the run position only. User messages keep
+policy-block rule. The UNFILTERED transcript the pane hands over as the
+`crewmateTranscript` getter is read for the run position only; the getter is
+called on every row render, so the renderer set keeps its identity while a
+reply streams. User messages keep
 their existing rendering apart from the accent fill above. The run position is exported
 (`crewmateRunPosition`) for a reply-thread footer to reuse; no DOM attribute is
 stamped until that reader exists. The reply thread's own panel

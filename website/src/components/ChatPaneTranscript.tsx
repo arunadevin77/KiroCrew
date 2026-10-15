@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react'
-import { createTranscriptRenderers } from '../pages/chat/transcriptRenderers'
+import { createTranscriptRenderers, type TranscriptRendererOptions } from '../pages/chat/transcriptRenderers'
 import type { ComposerBusyMode } from './ChatInput'
 import type { CrewmateIdentity } from '../pages/chat/CrewmateMessage'
 import ErrorNotice from './ErrorNotice'
@@ -24,7 +24,7 @@ export function useChatPaneRenderers({ slotKey, busyMode, onFileOpen, crewmate, 
   busyMode: ComposerBusyMode
   onFileOpen?: ChatPaneProps['onFileOpen']
   crewmate?: CrewmateIdentity
-  crewmateTranscript: Messages | undefined
+  crewmateTranscript: TranscriptRendererOptions['crewmateTranscript']
   onSessionOpen?: (key: string) => void
   sessions?: ReadonlyMap<string, string>
   activeSession?: string
