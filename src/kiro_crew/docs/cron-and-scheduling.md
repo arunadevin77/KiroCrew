@@ -118,7 +118,7 @@ A command cron runs under `sh -c` and is vetted when it is added and again each 
 - command substitution: `$(...)`, backticks, `$((...))`;
 - any `${...}` other than a plain `${NAME}` (no `${X:-default}`, `${X#prefix}`, `${#X}`);
 - `$'...'` ANSI-C quoting;
-- brace expansion such as `{a,b}` or `{1..9}`, including a quoted regex interval like `'[0-9]{1,3}'`. For a basic-regex tool, escape the braces inside double quotes (`grep "[0-9]\{1,3\}"`);
+- brace expansion such as `{a,b}` or `{1..9}`, including a quoted regex interval like `'[0-9]{1,3}'`. A spaceless jq object such as `jq '{id,name}'` is accepted once a plain space follows the comma inside the same quotes (`jq '{id, name}'`). For a basic-regex tool, escape the braces inside double quotes (`grep "[0-9]\{1,3\}"`);
 - positional and special parameters: `$1`, `$@`, `$*`, `$#`;
 - loops and compound commands: `for`, `while`, `until`, `case`;
 - a variable reference (`A=x; cmd $A`, `A=x cmd $A`, `A=x && cmd $A`): the check does not model how the shell scopes or rewrites a value, so any `$NAME` or `${NAME}` read anywhere in the text is refused, comments, quoted values and nested shells included, assigned or not. Only `$HOME` may be read, and `HOME` may appear only as `$HOME` or `${HOME}` (so `read HOME`, `HOME=x` and `export HOME` are refused);

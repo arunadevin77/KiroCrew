@@ -2343,6 +2343,19 @@ def test_escaped_bre_interval_in_double_quotes_is_stored(command):
     assert _vet_shell_command(command) is None
 
 
+def test_brace_refusal_names_the_bare_space_rewrite_and_the_rewrite_is_stored():
+    """The refusal for a spaceless jq group names the space rewrite, and that rewrite passes.
+
+    A plain space after the comma, in the same quotes as the braces, leaves the group
+    literal for bash at every level, and jq reads `{id, name}` as `{id,name}`.
+    """
+
+    verdict = _vet_shell_command("jq '{id,name}' /tmp/rows.json")
+    assert verdict is not None and "brace expansion" in verdict
+    assert "`jq '{id, name}'`" in verdict
+    assert _vet_shell_command("jq '{id, name}' /tmp/rows.json") is None
+
+
 def test_a_long_value_repeated_by_references_is_refused_without_expansion():
     """A short command whose references would multiply its length is refused as a read.
 
