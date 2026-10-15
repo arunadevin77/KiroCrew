@@ -17995,7 +17995,7 @@
       "resume_failed": "{{name}} のタスクの状況を読み込めませんでした。",
       "welcome_title": "これまで取り組んでいた作業です",
       "welcome_paused": "一時停止中: {{goal}}",
-      "welcome_paused_next": "一時停止中: {{goal}}(次: {{next}})",
+      "welcome_paused_next": "一時停止中: {{goal}}（次の手順: {{next}}）",
       "welcome_recent": "最近のセッション(完了済みの可能性あり): {{title}}",
       "welcome_ask": "再開するものを返信するか、新しい作業を頼んでください。",
       "welcome_dismiss": "まとめを隠す",

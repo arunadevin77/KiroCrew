@@ -18263,7 +18263,7 @@
       "resume_failed": "Der Stand von {{name}}s Aufgabe konnte nicht gelesen werden.",
       "welcome_title": "Daran habe ich gearbeitet",
       "welcome_paused": "Pausiert: {{goal}}",
-      "welcome_paused_next": "Pausiert: {{goal}} (als Nächstes: {{next}})",
+      "welcome_paused_next": "Pausiert: {{goal}} (nächster Schritt: {{next}})",
       "welcome_recent": "Letzte Sitzung, evtl. abgeschlossen: {{title}}",
       "welcome_ask": "Antworte mit dem, was ich fortsetzen soll, oder bitte um etwas Neues.",
       "welcome_dismiss": "Rückblick ausblenden",

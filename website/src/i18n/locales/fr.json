@@ -18531,7 +18531,7 @@
       "resume_failed": "Impossible de lire où en est la tâche de {{name}}.",
       "welcome_title": "Voici ce sur quoi je travaillais",
       "welcome_paused": "En pause : {{goal}}",
-      "welcome_paused_next": "En pause : {{goal}} (ensuite : {{next}})",
+      "welcome_paused_next": "En pause : {{goal}} (prochaine étape : {{next}})",
       "welcome_recent": "Session récente, peut-être terminée : {{title}}",
       "welcome_ask": "Réponds avec celui à reprendre, ou demande quelque chose de nouveau.",
       "welcome_dismiss": "Masquer le récapitulatif",

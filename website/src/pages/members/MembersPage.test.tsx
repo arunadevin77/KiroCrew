@@ -6462,7 +6462,7 @@ describe('MembersPage cold welcome (a new or long-idle thread)', () => {
     // A message from the crewmate in its chat, not a card above it.
     expectCrewmateMessage(card)
     expect(api.memberRecap).toHaveBeenCalledExactlyOnceWith('oncall', 'oncall')
-    expect(within(card).getByTestId('member-welcome-items')).toHaveTextContent('Paused: Rotate the pager keys (next: confirm with Sam)')
+    expect(within(card).getByTestId('member-welcome-items')).toHaveTextContent('Paused: Rotate the pager keys (its next step: confirm with Sam)')
     expect(within(card).getByTestId('member-welcome-items')).toHaveTextContent("Recent session, may be finished: Triage last night's alarms")
     expect(screen.queryByTestId('member-resume-card')).toBeNull()
     expect(api.sendChat).not.toHaveBeenCalled()

@@ -18799,7 +18799,7 @@
       "resume_failed": "Не удалось прочитать, как продвигается задача {{name}}.",
       "welcome_title": "Вот над чем я работал",
       "welcome_paused": "На паузе: {{goal}}",
-      "welcome_paused_next": "На паузе: {{goal}} (дальше: {{next}})",
+      "welcome_paused_next": "На паузе: {{goal}} (следующий шаг: {{next}})",
       "welcome_recent": "Недавняя сессия, возможно, завершена: {{title}}",
       "welcome_ask": "Ответь, что продолжить, или попроси новое.",
       "welcome_dismiss": "Скрыть сводку",

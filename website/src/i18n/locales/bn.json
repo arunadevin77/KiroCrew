@@ -18263,7 +18263,7 @@
       "resume_failed": "{{name}}-এর কাজের অবস্থা পড়া যায়নি।",
       "welcome_title": "আমি এগুলো নিয়ে কাজ করছিলাম",
       "welcome_paused": "বিরতিতে: {{goal}}",
-      "welcome_paused_next": "বিরতিতে: {{goal}} (পরবর্তী: {{next}})",
+      "welcome_paused_next": "বিরতিতে: {{goal}} (পরবর্তী ধাপ: {{next}})",
       "welcome_recent": "সাম্প্রতিক সেশন, হয়তো শেষ হয়েছে: {{title}}",
       "welcome_ask": "কোনটি আবার শুরু করব তা উত্তরে বলুন, বা নতুন কিছু চান।",
       "welcome_dismiss": "সারসংক্ষেপ লুকান",

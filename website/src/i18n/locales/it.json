@@ -18531,7 +18531,7 @@
       "resume_failed": "Impossibile leggere a che punto è l’attività di {{name}}.",
       "welcome_title": "Ecco su cosa stavo lavorando",
       "welcome_paused": "In pausa: {{goal}}",
-      "welcome_paused_next": "In pausa: {{goal}} (prossimo: {{next}})",
+      "welcome_paused_next": "In pausa: {{goal}} (prossimo passo: {{next}})",
       "welcome_recent": "Sessione recente, forse conclusa: {{title}}",
       "welcome_ask": "Rispondi con quello da riprendere o chiedi qualcosa di nuovo.",
       "welcome_dismiss": "Nascondi riepilogo",

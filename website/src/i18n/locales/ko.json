@@ -17995,7 +17995,7 @@
       "resume_failed": "{{name}}의 작업 진행 상황을 읽지 못했습니다.",
       "welcome_title": "제가 하던 작업입니다",
       "welcome_paused": "일시 중지됨: {{goal}}",
-      "welcome_paused_next": "일시 중지됨: {{goal}} (다음: {{next}})",
+      "welcome_paused_next": "일시 중지됨: {{goal}} (다음 단계: {{next}})",
       "welcome_recent": "최근 세션, 완료되었을 수 있음: {{title}}",
       "welcome_ask": "이어갈 작업을 답장하거나 새 작업을 요청하세요.",
       "welcome_dismiss": "요약 숨기기",

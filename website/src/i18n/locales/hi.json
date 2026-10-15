@@ -18263,7 +18263,7 @@
       "resume_failed": "{{name}} के काम की स्थिति पढ़ी नहीं जा सकी।",
       "welcome_title": "मैं इन पर काम कर रहा था",
       "welcome_paused": "रुका हुआ: {{goal}}",
-      "welcome_paused_next": "रुका हुआ: {{goal}} (अगला: {{next}})",
+      "welcome_paused_next": "रुका हुआ: {{goal}} (अगला कदम: {{next}})",
       "welcome_recent": "हाल का सत्र, शायद पूरा हो चुका: {{title}}",
       "welcome_ask": "जिसे फिर शुरू करना है उसका जवाब दो, या कुछ नया माँगो।",
       "welcome_dismiss": "सारांश छिपाएँ",
