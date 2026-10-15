@@ -515,6 +515,18 @@ def recapture_cron_template(job: CronJob, agent_id: str) -> dict[str, Any] | Non
     a member schedule, else the ``kirocrew`` floor that dispatch maps to the
     configured default. Store, member, mode and app are left as captured.
 
+    An owner update that names a crew member in ``agent_id`` is REFUSED rather
+    than silently recorded as a non-resolving template. Re-pointing an existing
+    schedule at a member is not supported: it would change the capture's store
+    and identity under the schedule's stable ``cron:<id>`` session key, which the
+    first run binds and the next fire's rebind cannot reconcile. The member split
+    is run here only to DETECT that case and refuse it clearly; the create paths
+    are the supported way to run a schedule as a member. An app-owned job is not
+    classified -- the App Kit SDK (:meth:`AppCronSDK.update_job`) forwards
+    ``agent_id`` after only an ownership check, and an app must not even name a
+    member here -- so for an app, and for a real provider template name,
+    ``agent_id`` is re-pointed verbatim.
+
     Returns ``None`` when nothing moves: no capture yet (an uncaptured record
     dispatches from ``agent_id`` already), an ``agent_id`` equal to the stored
     one (the job form resubmits the field on every edit, and a schedule made
@@ -528,9 +540,24 @@ def recapture_cron_template(job: CronJob, agent_id: str) -> dict[str, Any] | Non
     if job.execution_context is None or agent_id == job.agent_id:
         return None
     execution = execution_from_record({"execution_context": job.execution_context})
+    app_owned = (job.created_by or "").startswith("app:")
+    already_member = execution.member_id is not None or execution.selection_kind == "member"
+    if agent_id and not app_owned and not already_member:
+        # Classify the name the same way create does, but only to REFUSE a member
+        # name: re-pointing an existing schedule at a member is unsupported (it
+        # cannot be done without changing the stable session's identity, which
+        # the next fire refuses). Refusing beats recording a member name as a
+        # non-resolving template -- which the create-path fix removed -- so the
+        # name is never silently mis-recorded. A provider template falls through.
+        _resolved_agent, member_name = split_cron_agent_member(agent_id, "")
+        if member_name:
+            raise ValueError(
+                "re-pointing an existing schedule to a crew member isn't "
+                f"supported; create a new schedule to run as {agent_id}"
+            )
     if agent_id:
         template_id = agent_id
-    elif execution.member_id is not None or execution.selection_kind == "member":
+    elif already_member:
         member = job.member_id or execution.member_id or execution.selection_name
         template_id = derive_execution(execution, target_member=member).template_id
     else:
