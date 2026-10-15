@@ -79,6 +79,7 @@ from kiro_crew.security import (
     redact_exfiltration_urls,
     sensitive_path_refusal,
 )
+from kiro_crew.security.readonly_bash import command_invokes_git, is_read_only_bash
 from kiro_crew.sel import sel as _sel
 from kiro_crew.start_priority import StartPriority
 from kiro_crew.tool_gate_busy import hook_gate_busy
@@ -3679,6 +3680,26 @@ async def _resolve_permission(
         )
         await provider.reject_tool(event.request_id)
         return False
+
+    # A git read the gate's read-only tier declined (git reads `.git/config`,
+    # whose `core.fsmonitor` / `core.hooksPath` name a program no text
+    # classifier sees) falls through to the surface's approver. With no
+    # approver on a hook-based surface (a Meetings dispatch), the default
+    # below would run it unchecked -- not even the name-grant check the
+    # read-only approve ran -- so it is refused instead.
+    if policy == ToolApprovalPolicy.HOOK_BASED and hooks and on_tool_approval is None:
+        _git_command = name_grant.shell_command_for_event(event)
+        if _git_command and command_invokes_git(_git_command) and is_read_only_bash(_git_command):
+            _log("rejected", metadata={"reason": "git_read_headless_reject"})
+            await _steer_host_deny(
+                provider,
+                event,
+                "a git command is never auto-approved as a read (git runs programs "
+                "its repository config names) and this surface has no approver",
+                cause=DENY_CAUSE_SURFACE_POLICY,
+            )
+            await provider.reject_tool(event.request_id)
+            return False
 
     # Interactive approval if callback provided
     if on_tool_approval:

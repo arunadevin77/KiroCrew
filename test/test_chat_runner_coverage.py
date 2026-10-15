@@ -5464,6 +5464,42 @@ class TestRunChatAutoApproveRungs:
         client.approve_tool.assert_awaited_once_with("req-cov-1")
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command", ["git status", "git log --oneline -5", "ls && git diff", "/usr/bin/GIT status"]
+    )
+    async def test_trust_reads_never_auto_approves_git(self, tmp_path, command):
+        """git reads ``.git/config`` on every run, and ``core.fsmonitor`` /
+        ``core.hooksPath`` name a program there that no text classifier sees, so a
+        read-only git command still goes to the card under trust-reads."""
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot._trust_reads = True
+        _set_stream(
+            client,
+            [_permission(tool_input=json.dumps({"command": command})), _complete()],
+        )
+        slot._empty_response_retries = 2
+        with (
+            patch.object(chat_runner, "sel") as mock_sel,
+            patch.object(chat_runner, "tool_approval_timeout_secs", return_value=0.0),
+        ):
+            audit = MagicMock()
+            mock_sel.return_value = audit
+            await chat_runner._run_chat(state, slot, "hello")
+        await _settle(slot)
+
+        client.approve_tool.assert_not_awaited()
+        # The card does not offer a trust-reads grant that would not cover git.
+        cards = [json.loads(m["cls"]) for m in slot.messages if m.get("role") == "permission"]
+        assert cards and all(not card.get("is_read_only") for card in cards), cards
+        assert not [
+            c.kwargs
+            for c in audit.log_tool_invocation.call_args_list
+            if c.kwargs.get("metadata", {}).get("reason") == "trust_reads"
+            and c.kwargs.get("outcome") == "auto_approved"
+        ]
+
+    @pytest.mark.asyncio
     async def test_trust_reads_rejects_an_invalid_tool_name(self, tmp_path):
         state, client = _runner_state(tmp_path)
         slot = _slot()

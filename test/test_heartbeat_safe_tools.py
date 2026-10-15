@@ -812,10 +812,10 @@ class TestHeartbeatHooks:
         # A read-shaped title with no kind.
         assert user.on_tool_call("read_all_credentials").action == TOOL_AUTO_APPROVE
         assert hb.on_tool_call("read_all_credentials").action == TOOL_ALLOW
-        # A read-only shell command: heartbeat judges it itself, git excluded.
-        shell = dict(tool_kind="execute", is_shell=True, command="git status")
-        assert user.on_tool_call("Running: git status", **shell).action == TOOL_AUTO_APPROVE
-        assert hb.on_tool_call("Running: git status", **shell).action == TOOL_ALLOW
+        # A read-only shell command: heartbeat judges it itself.
+        shell = dict(tool_kind="execute", is_shell=True, command="ls -la")
+        assert user.on_tool_call("Running: ls -la", **shell).action == TOOL_AUTO_APPROVE
+        assert hb.on_tool_call("Running: ls -la", **shell).action == TOOL_ALLOW
 
     def test_deferring_reads_never_widens_a_deny(self) -> None:
         from kiro_crew.hooks import TOOL_DENY

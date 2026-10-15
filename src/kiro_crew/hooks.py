@@ -233,7 +233,10 @@ from kiro_crew.security import (  # noqa: F401 - the path owners read these
     is_unverifiable_path_refusal,
     sensitive_path_refusal,
 )
-from kiro_crew.security.readonly_bash import is_read_only_bash  # noqa: F401 - the owners read it
+from kiro_crew.security.readonly_bash import (  # noqa: F401 - the owners read them
+    command_invokes_git,
+    is_read_only_bash,
+)
 from kiro_crew.sel import sel
 from kiro_crew.session_directive import CORE_MCP_SERVER  # noqa: F401
 from kiro_crew.validation import _bounded_pattern_search  # noqa: F401

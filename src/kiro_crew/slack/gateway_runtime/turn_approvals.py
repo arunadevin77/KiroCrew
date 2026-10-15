@@ -32,7 +32,9 @@ if TYPE_CHECKING:
         _is_heartbeat_safe_tool,
         _is_read_only_tool,
         _slot_is_trusted,
+        command_invokes_git,
         dashboard_slot_key,
+        is_read_only_bash,
         logger,
         name_grant,
         redact,
@@ -199,9 +201,20 @@ def _interactive_approval(
         # verified-identity child qualifies; 'reads' classifies the
         # agent-authored TITLE, so it requires the composite fidelity.
         if self._approval_mode in ("yolo", "reads") and _child_grant_eligible:
+            # A shell command is a 'reads' grant only when the read-only
+            # classifier accepts its own text and it runs no git, whatever its
+            # title says: the title is agent-authored, and git reads
+            # `.git/config`, whose `core.fsmonitor` / `core.hooksPath` name a
+            # program no text classifier sees.
+            _shell_command = getattr(event, "shell_command", None) or ""
+            _reads_git = bool(
+                getattr(event, "is_shell", False)
+                and (not is_read_only_bash(_shell_command) or command_invokes_git(_shell_command))
+            )
             approve = self._approval_mode == "yolo" or (
                 self._approval_mode == "reads"
                 and not _child_lf
+                and not _reads_git
                 and _is_read_only_tool(event.title or "")
             )
             if approve and self._approval_mode == "reads":

@@ -3449,7 +3449,7 @@ server would refuse.
 ### Which tool-approval modes a deployment may select — `approval_modes`
 
 The dashboard approval-mode picker offers four modes: `normal` (interactive —
-ask for every tool), `trust_reads` (auto-approve read-only shell commands; every other tool call, MCP included, still asks), `trust` (auto-approve
+ask for every tool), `trust_reads` (auto-approve read-only shell commands except any that runs `git`; every other tool call, MCP included, still asks), `trust` (auto-approve
 the active slot), and `yolo` (auto-approve every tool everywhere). The
 `approval_modes` `SCOPE_CATALOG` row (a `ScopedRuleset` on the `identifier`
 matcher — data-only shape, no evaluator change, mirroring `agent_backend`

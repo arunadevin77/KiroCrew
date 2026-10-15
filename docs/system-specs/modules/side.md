@@ -663,18 +663,15 @@ main chat has always run with that exposure. It is therefore not a new class
 this surface opens, and it is accepted as a same-UID residual rather than
 closed with a lock the base agent does not have either.
 
-**Residual: `git` under `READ_ONLY` runs repository-configured programs.**
-`is_read_only_bash` approves `git status`, `log`, `diff`, `show`, `branch`,
-`tag`, `remote`, `rev-parse`, `describe`, `ls-files`, `ls-tree`, `cat-file`
-and `blame` (and refuses their output-file, `--ext-diff`/`--textconv` and
-`--filters` spellings). Git itself may run a program named in the repository's
-own `.git/config` — `core.fsmonitor`, a diff or textconv driver — and a hostile
-value there would execute under a "read". A side turn runs git as the same user,
-against the same `.git/config`, that the main chat's Reads mode runs it under;
-`.git/config` is not versioned, so a checkout cannot ship the value — only
-someone already writing as this account can plant it, at which point the
-account is compromised without any help from the side chat. Accepted as a
-same-UID residual, not a gate defect.
+**Decision: `git` never runs under `READ_ONLY`.**
+`is_read_only_bash` classifies `git status`, `log`, `diff`, `show`, `branch`,
+`tag`, `remote`, `rev-parse`, `describe`, `ls-files`, `ls-tree`, `cat-file` and
+`blame` as reads, but git itself may run a program named in the repository's own
+`.git/config` (`core.fsmonitor`, `core.hooksPath`, a diff or textconv driver), which
+no text classifier sees. So the gate's `read-only` tier asks
+`readonly_bash.command_invokes_git` first and gives a command that runs git no
+read-only verdict; under `READ_ONLY` that call is refused like any other unproven
+one. A side turn that needs git output asks for it in the main chat.
 
 **Decision: `web_fetch` and `web_search` stay in the side-chat read-only set.**
 `_HOST_READ_ONLY_BUILTIN_TOOLS` includes both, so a side turn can fetch a page

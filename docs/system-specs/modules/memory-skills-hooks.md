@@ -5648,7 +5648,7 @@ deny blocked:
 | `governance` | deny_policy | the ceiling ∩ active profile (`_governance_denial`) |
 | `app-own-server` | grant | a builtin app agent calling its own declared MCP server |
 | `operator-grants` | grant | the operator's `auto_approve_tools` patterns, unless a `confirm_tools` pattern names the call or the list is unknown |
-| `read-only` | classify | the read-only classifier, except for an MCP call `confirm_tools` names (or any MCP call while the list is unknown); the only auto-approve under `classifier_only` |
+| `read-only` | classify | the read-only classifier, except for an MCP call `confirm_tools` names (or any MCP call while the list is unknown) and a shell command that runs `git` at any command position (`readonly_bash.command_invokes_git`), which falls through to the surface's own approval; the only auto-approve under `classifier_only` |
 
 `classifier_only` skips both grant rows (each grant body steps aside, after resolving the owner app as before). `gate_tier_problems` checks the table when
 the module loads; an unsound table is not raised at import (that would fail every

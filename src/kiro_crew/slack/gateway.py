@@ -400,7 +400,7 @@ from kiro_crew.security import (
     redact_credentials,
     redact_exfiltration_urls,
 )
-from kiro_crew.security.readonly_bash import is_read_only_bash
+from kiro_crew.security.readonly_bash import command_invokes_git, is_read_only_bash
 from kiro_crew.sel import flush_audit_queue_before_hard_exit, sel
 from kiro_crew.service.common import restart_command_hint
 from kiro_crew.session import (

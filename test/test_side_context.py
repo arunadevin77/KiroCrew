@@ -44,7 +44,10 @@ def test_side_prompt_states_the_tool_boundary_without_fake_remediation():
     assert "lookups work here, but changes don't" in prompt
     # The live pod run showed a model refusing `pwd` as a "command" until the
     # prompt named read-only shell commands as allowed.
-    assert "read-only shell commands such as ls, cat, pwd and git status run here without asking" in prompt
+    assert "read-only shell commands such as ls, cat and pwd run here without asking" in prompt
+    # git is refused under READ_ONLY, so the prompt sends git requests to the main chat.
+    assert "git is refused here; for git output, tell the user to ask in the main chat" in prompt
+    assert "git status" not in prompt
     assert "MCP tools are refused here" in prompt
     assert "even when the user explicitly requests them" in prompt
     assert "use the main chat to take action" in prompt
@@ -60,9 +63,7 @@ def test_short_session_includes_all_turns_in_order():
         _msg("assistant", "Deployed alpha stack."),
         _msg("user", "now run the integ tests"),
     ]
-    out = sc.build_side_message(
-        _slot(messages), "what did we just deploy?", is_first_turn=True
-    )
+    out = sc.build_side_message(_slot(messages), "what did we just deploy?", is_first_turn=True)
     assert sc._PARENT_SNAPSHOT_HEADER in out
     assert "User: deploy the alpha stack" in out
     assert "Assistant: Deployed alpha stack." in out
@@ -85,9 +86,7 @@ def test_long_session_retains_most_recent_turns():
     messages.append(_msg("user", "the prod role ARN is arn:aws:iam::123:role/CriticalRole"))
     messages.append(_msg("assistant", "Noted, pinned CriticalRole as the prod principal."))
 
-    out = sc.build_side_message(
-        _slot(messages), "what was the prod role ARN?", is_first_turn=True
-    )
+    out = sc.build_side_message(_slot(messages), "what was the prod role ARN?", is_first_turn=True)
 
     # the decisive recent turns survive; the oldest are dropped under the cap.
     assert "CriticalRole" in out

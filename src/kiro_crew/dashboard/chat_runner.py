@@ -597,7 +597,11 @@ from kiro_crew.security import (
 )
 from kiro_crew.security.credential_sources import credential_records
 from kiro_crew.security.exfil import MAX_BLOCKED_LINKS_PER_MESSAGE
-from kiro_crew.security.readonly_bash import is_read_only_bash, unsafe_bash_reason
+from kiro_crew.security.readonly_bash import (
+    command_invokes_git,
+    is_read_only_bash,
+    unsafe_bash_reason,
+)
 from kiro_crew.security.redaction import redact_credentials_with_records
 from kiro_crew.sel import SecurityEvent, sel, sel_is_warm
 from kiro_crew.session import process_shutdown_requested  # noqa: F401
@@ -15154,9 +15158,12 @@ async def _run_chat(
                     and cmd
                     and not _child_low_fidelity
                 ):
-                    _tr_shim = (
-                        await _name_grant_refusal_off_loop(cmd) if is_read_only_bash(cmd) else None
-                    )
+                    # Trust-reads never auto-approves git: git reads
+                    # ``.git/config`` on every invocation and ``core.fsmonitor``
+                    # / ``core.hooksPath`` name a program there that no text
+                    # classifier sees. A git command falls through to the card.
+                    _tr_read_only = is_read_only_bash(cmd) and not command_invokes_git(cmd)
+                    _tr_shim = await _name_grant_refusal_off_loop(cmd) if _tr_read_only else None
                     if _tr_shim is not None:
                         logger.warning("trust-reads not applied: %s", _tr_shim.log_text)
                         _audit_name_grant_refusal(
@@ -15166,7 +15173,7 @@ async def _run_chat(
                             refusal=_tr_shim,
                             tier="trust_reads",
                         )
-                    if is_read_only_bash(cmd) and _tr_shim is None:
+                    if _tr_read_only and _tr_shim is None:
                         try:
                             validated_tool = _validate_tool_name(
                                 event.title,
@@ -15428,7 +15435,11 @@ async def _run_chat(
                 # Flag read-only bash commands for context-aware buttons
                 cmd = _extract_bash_command(event.tool_input) if event.tool_input else ""
                 if cmd:
-                    perm_meta["is_read_only"] = "1" if is_read_only_bash(cmd) else ""
+                    # Same rule as the trust-reads branch, so the card never
+                    # offers a trust-reads grant that would not cover git.
+                    perm_meta["is_read_only"] = (
+                        "1" if is_read_only_bash(cmd) and not command_invokes_git(cmd) else ""
+                    )
                 # Pre-compute consent fields for the TrustDropdown.  The title
                 # is presentation text and can be model-authored; shell grant
                 # scope therefore comes only from the canonical command in

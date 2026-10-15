@@ -731,6 +731,19 @@ class TestGatewayReadsModeSurface:
         gateway.dashboard_state.request_approval.assert_not_awaited()
         stub.assert_not_awaited()
 
+    @pytest.mark.parametrize(
+        "command",
+        ["git status", "ls && git log", "2>/dev/null git status", "python3 -c 'print(1)'"],
+    )
+    def test_a_git_command_is_never_a_reads_grant(self, monkeypatch, command):
+        """A read-shaped title cannot auto-approve a shell command the classifier
+        does not accept, or one that runs git (git reads `.git/config`, whose
+        fsmonitor / hooksPath name a program); it goes to the prompt."""
+        gateway, approve_fn = self._approve_fn(monkeypatch, None)
+        ev = _shell_permission_event(title="read repo status", raw_tool_params={"command": command})
+        assert asyncio.run(approve_fn(ev)) is True  # answered by the prompt stub
+        gateway.dashboard_state.request_approval.assert_awaited_once()
+
 
 # ── stream_and_collect helper (cron / autonudge turns) ──────────────
 

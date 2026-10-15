@@ -323,7 +323,15 @@ def _url_payload_command(n: int) -> str:
 #: start with a literal ``re`` searches at memchr speed, which takes a second
 #: Authorization half and the comments that say why each spelling accepts
 #: exactly what the old one did. No credential branch, gate verdict or pass moved.
-_PACKAGE_LINE_BUDGET = 29_205
+#:
+#: Raised again, from 29,205, for ``readonly_bash.command_invokes_git``: the one
+#: pure check every read-only shell auto-approve asks so it never approves a
+#: command that runs git, which reads ``.git/config`` and so runs whatever
+#: ``core.fsmonitor`` / ``core.hooksPath`` name. About 89 lines, most of them the
+#: docstring, the runner and opener tables and the redirection and hidden-command
+#: patterns. It only narrows what auto-approves; no deny rule, threshold or pass
+#: moved.
+_PACKAGE_LINE_BUDGET = 29_293
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

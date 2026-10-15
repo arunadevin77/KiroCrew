@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         _search_deny_target,
         _tool_matches,
         audit_bash_exfiltration,
+        command_invokes_git,
         current_context,
         edit_target_candidates,
         is_edit_call,
@@ -1115,7 +1116,13 @@ def _tier_read_only(facts: GateFacts, tier: GateTier) -> ToolHookResult | None:
         # classifier (rejects redirects/substitution/backgrounding). A command that
         # could not be recovered was already denied by the first tier; a present
         # command that is not read-only falls through to interactive approval.
-        if call.command and is_read_only_bash(call.command):
+        # A command that runs git anywhere is never read-only here: git reads
+        # ``.git/config`` on every invocation and ``core.fsmonitor`` /
+        # ``core.hooksPath`` name a program there that no text classifier sees.
+        # This tier serves cron, subagent and app sessions, where nobody may be
+        # watching, so git falls through to the surface's own approval instead.
+        command = call.command
+        if command and not command_invokes_git(command) and is_read_only_bash(command):
             return ToolHookResult.auto_approve(read_only=True)
         return None
     from kiro_crew.slack.gateway import _is_read_only_tool
