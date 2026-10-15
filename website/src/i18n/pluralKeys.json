@@ -263,6 +263,7 @@
   "pages.overview.memoryTab.skipped_incognito_count",
   "pages.chat.crewLog.subagents_unmatched",
   "pages.chat.toolCallLine.ask_answered",
+  "pages.chat.toolCallLine.edit_count",
   "components.questionCard.chars_left",
   "components.questionCard.answer_at_limit",
   "apps.commandBar.attention_more",

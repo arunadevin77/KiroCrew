@@ -11760,6 +11760,10 @@
       },
       "toolCallLine": {
         "diff_truncated": "diff truncado",
+        "edit_count_many": "{{count}} edições",
+        "edit_count_one": "{{count}} edição",
+        "edit_count_other": "{{count}} edições",
+        "edit_n_of_m": "Edição {{n}} de {{total}}",
         "aria_awaiting_approval": "Aguardando aprovação da ferramenta: {{label}}",
         "aria_hide_details": "Ocultar detalhes da ferramenta: {{label}}",
         "aria_show_details": "Mostrar detalhes da ferramenta: {{label}}",

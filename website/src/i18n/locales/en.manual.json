@@ -5129,6 +5129,9 @@
       },
       "toolCallLine": {
         "diff_truncated": "diff truncated",
+        "edit_count_one": "{{count}} edit",
+        "edit_count_other": "{{count}} edits",
+        "edit_n_of_m": "Edit {{n}} of {{total}}",
         "aria_awaiting_approval": "Awaiting approval for tool: {{label}}",
         "aria_hide_details": "Hide details for tool: {{label}}",
         "aria_show_details": "Show details for tool: {{label}}",

@@ -226,7 +226,9 @@ describe('narrow-first layout baseline', () => {
         .map(f => join(pagesDir, f)),
     ]
     const chat = (await Promise.all(chatFiles.map(f => readFile(f, 'utf8')))).join('\n')
-    const row = chat.match(/className=\{`px-(\d+(?:\.\d+)?) mx-auto w-full py-1`\}/)
+    // `empty:hidden` lets a row whose content draws nothing (a merged edit run's
+    // follower) leave no spacer; the gutter is the px-N this test pins.
+    const row = chat.match(/className=\{`px-(\d+(?:\.\d+)?) mx-auto w-full py-1(?: empty:hidden)?`\}/)
     expect(row, 'ChatPage should render its message rows with an explicit gutter').toBeTruthy()
 
     const input = await readFile(join(SRC, 'components', 'ChatInput.tsx'), 'utf8')

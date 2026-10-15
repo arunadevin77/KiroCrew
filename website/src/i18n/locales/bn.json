@@ -11585,6 +11585,9 @@
       },
       "toolCallLine": {
         "diff_truncated": "diff কাটা হয়েছে",
+        "edit_count_one": "{{count}}টি সম্পাদনা",
+        "edit_count_other": "{{count}}টি সম্পাদনা",
+        "edit_n_of_m": "{{total}}টির মধ্যে {{n}} নং সম্পাদনা",
         "aria_awaiting_approval": "টুলের অনুমোদনের অপেক্ষায়: {{label}}",
         "aria_hide_details": "টুলের বিস্তারিত লুকাও: {{label}}",
         "aria_show_details": "টুলের বিস্তারিত দেখাও: {{label}}",

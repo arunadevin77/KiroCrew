@@ -459,7 +459,10 @@ export function useTranscriptRendering({
     // nothing for them, and the bare wrapper would still stack py-1 spacers,
     // one per quiet monitor cycle.
     if (it.kind === 'single' && isHiddenInvisibleAssistantRow(it.msg)) return null
-    return <div key={turnLeadKey(it, stableMsgKey)} data-content-column="" className={`px-4 mx-auto w-full py-1`} style={{ maxWidth: 'var(--mc-content-width, 900px)' }}>
+    // `empty:hidden`: a row whose content decides at render time that it draws
+    // nothing (an edit folded into the run above it, see editRuns.ts) must not
+    // leave its padding behind either.
+    return <div key={turnLeadKey(it, stableMsgKey)} data-content-column="" className={`px-4 mx-auto w-full py-1 empty:hidden`} style={{ maxWidth: 'var(--mc-content-width, 900px)' }}>
       {it.kind === 'group' ? (() => {
         const unresolvedPerms = it.msgs.filter(m => m.role === 'permission' && !m.meta?.resolved)
         // Skip group entirely if it only contains unresolved permissions (handled by ApprovalBar)
@@ -497,7 +500,7 @@ export function useTranscriptRendering({
       return <TurnBlock turn={item} renderItem={renderTurnItem} collapseAll={chatConfig.collapseAllSteps} appToolCallIds={appToolCallIds} disclosure={undefined} disclosureKey={`farm-${i}`} onDisclosureChange={() => {}} />
     }
     return (
-      <div data-content-column="" className={`px-4 mx-auto w-full py-1`} style={{ maxWidth: 'var(--mc-content-width, 900px)' }}>
+      <div data-content-column="" className={`px-4 mx-auto w-full py-1 empty:hidden`} style={{ maxWidth: 'var(--mc-content-width, 900px)' }}>
         {item.kind === 'group' ? (() => {
           if (item.msgs.every(m => m.role === 'permission')) return null
           return (

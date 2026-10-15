@@ -11410,6 +11410,8 @@
       },
       "toolCallLine": {
         "diff_truncated": "diff 已截断",
+        "edit_count_other": "{{count}} 处编辑",
+        "edit_n_of_m": "第 {{n}} 处编辑，共 {{total}} 处",
         "aria_awaiting_approval": "等待批准工具：{{label}}",
         "aria_hide_details": "隐藏工具详情：{{label}}",
         "aria_show_details": "展开工具详情：{{label}}",

@@ -76,7 +76,7 @@ describe('renderTurnItem', () => {
   it('wraps a drawn row in the content column, keyed by the turn lead', () => {
     const { result } = render()
     const row = el(result.current.renderTurnItem({ kind: 'single', msg: msg('user', 'hello', 't3'), idx: 2 }, 0))
-    expect(row.props.className).toBe('px-4 mx-auto w-full py-1')
+    expect(row.props.className).toBe('px-4 mx-auto w-full py-1 empty:hidden')
     expect(row.props.style?.maxWidth).toBe('var(--mc-content-width, 900px)')
     expect(row.props['data-content-column']).toBe('')
     expect(row.key).toContain('t3')
@@ -134,7 +134,7 @@ describe('renderFarmItem', () => {
     expect(group.props.activityOpen).toBe(false)
 
     const single = el(result.current.renderFarmItem(3))
-    expect(single.props.className).toBe('px-4 mx-auto w-full py-1')
+    expect(single.props.className).toBe('px-4 mx-auto w-full py-1 empty:hidden')
     expect(farmPassRef.current).toBe(false)
   })
 })

@@ -77,6 +77,7 @@
 import { i18nT } from '../i18n/t'
 
 import { classifyShellCommand, hostOf } from './shellCommandParse'
+import { decodePathForDisplay } from './pathBasename'
 import type { ToolAction } from './toolAction'
 import declaredMcpToolTitles from '../../../src/kiro_crew/data/mcp_tool_titles.json'
 
@@ -243,7 +244,8 @@ function classifyNative(inp: ToolCallTitleInput): ClassifiedToolCall | null {
   const kind = inp.kind || ''
   const tool = inp.toolName || ''
   const args = parseToolArgs(inp.rawInput)
-  const rel = (p: string) => relDisplayPath(p, inp.cwd)
+  // Decoded for the title only; the raw spelling stays in `rawTitle`.
+  const rel = (p: string) => relDisplayPath(decodePathForDisplay(p), inp.cwd)
   const title = inp.title || ''
 
   // -- read ---------------------------------------------------------------

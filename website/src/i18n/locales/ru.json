@@ -11935,6 +11935,11 @@
       },
       "toolCallLine": {
         "diff_truncated": "diff усечён",
+        "edit_count_few": "{{count}} правки",
+        "edit_count_many": "{{count}} правок",
+        "edit_count_one": "{{count}} правка",
+        "edit_count_other": "{{count}} правки",
+        "edit_n_of_m": "Правка {{n}} из {{total}}",
         "aria_awaiting_approval": "Ожидание одобрения инструмента: {{label}}",
         "aria_hide_details": "Скрыть подробности инструмента: {{label}}",
         "aria_show_details": "Показать подробности инструмента: {{label}}",

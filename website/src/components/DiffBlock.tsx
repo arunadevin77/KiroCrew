@@ -13,7 +13,7 @@ import { usePlainDiff } from '../hooks/usePlainDiff'
 
 import { i18nT } from '../i18n/t'
 import { useLanguageGeneration } from '../i18n/useLanguageGeneration'
-import { pathBasename } from '../utils/pathBasename'
+import { pathBasename, decodePathForDisplay } from '../utils/pathBasename'
 
 /** Extract the target file path from unified-diff header lines.
  *
@@ -101,8 +101,13 @@ const basename = pathBasename
  *  the Open button's target; the row only has to tell the files of one patch
  *  apart. A rename that keeps its basename — a move between directories —
  *  reads as the full paths, `src/a.ts → test/a.ts`: the basenames would say
- *  `a.ts → a.ts`, which says nothing. */
+ *  `a.ts → a.ts`, which says nothing. Percent-escapes are decoded for the
+ *  title only (decodePathForDisplay); the Open target keeps the raw path. */
 function sectionTitle(section: PatchSection, fallbackPath: string | null): string {
+  return decodePathForDisplay(rawSectionTitle(section, fallbackPath))
+}
+
+function rawSectionTitle(section: PatchSection, fallbackPath: string | null): string {
   const name = section.name ?? fallbackPath
   if (name == null) return ''
   const prev = section.prevName

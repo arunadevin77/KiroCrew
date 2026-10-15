@@ -11267,6 +11267,9 @@
       },
       "toolCallLine": {
         "diff_truncated": "[ðìƒƒ ţŕùñçàţèð ·············]",
+        "edit_count_one": "[{{count}} èðìţ ········]",
+        "edit_count_other": "[{{count}} èðìţş ·········]",
+        "edit_n_of_m": "[Èðìţ {{n}} øƒ {{total}} ··············]",
         "aria_awaiting_approval": "[Àẁàìţìñğ àþþŕøṽàĺ ƒøŕ ţøøĺ: {{label}} ····················]",
         "aria_hide_details": "[Ĥìðè ðèţàìĺş ƒøŕ ţøøĺ: {{label}} ················]",
         "aria_show_details": "[Şĥøẁ ðèţàìĺş ƒøŕ ţøøĺ: {{label}} ················]",

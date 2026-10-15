@@ -11410,6 +11410,8 @@
       },
       "toolCallLine": {
         "diff_truncated": "diff가 잘렸습니다",
+        "edit_count_other": "편집 {{count}}개",
+        "edit_n_of_m": "편집 {{n}}/{{total}}",
         "aria_awaiting_approval": "도구 승인 대기 중: {{label}}",
         "aria_hide_details": "도구 세부 정보 숨기기: {{label}}",
         "aria_show_details": "도구 세부 정보 표시: {{label}}",
