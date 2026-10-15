@@ -445,7 +445,9 @@
       "session_ready_type_a_message_to_start": "Session prête. Saisissez un message pour commencer.",
       "streaming": "diffusion en cours",
       "attachments_not_allowed": "Cette app n'accepte pas de fichiers. Joins-les plutôt dans « {{page}} ».",
-      "uploading_files": "Envoi des fichiers…"
+      "uploading_files": "Envoi des fichiers…",
+      "stop_restarts_session": "Arrêter redémarrera cette session : l’historique du chat reste, mais le travail en cours et les messages en file d’attente sont abandonnés.",
+      "stop_did_not_go_through": "Cet arrêt n’a pas abouti."
     },
     "chatMessageList": {
       "copied": "Copié !",

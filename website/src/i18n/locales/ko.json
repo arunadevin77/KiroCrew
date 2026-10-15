@@ -417,7 +417,9 @@
       "session_ready_type_a_message_to_start": "세션이 준비되었습니다. 메시지를 입력해 시작하세요.",
       "streaming": "스트리밍 중",
       "attachments_not_allowed": "이 앱은 파일을 받지 않습니다. 대신 '{{page}}'에서 첨부하세요.",
-      "uploading_files": "파일 업로드 중…"
+      "uploading_files": "파일 업로드 중…",
+      "stop_restarts_session": "중지를 누르면 이 세션이 재시작됩니다. 채팅 기록은 남지만 진행 중인 작업과 대기 중인 메시지는 삭제됩니다.",
+      "stop_did_not_go_through": "그 중지는 처리되지 않았습니다."
     },
     "chatMessageList": {
       "copied": "복사했습니다!",

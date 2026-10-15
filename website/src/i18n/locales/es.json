@@ -445,7 +445,9 @@
       "session_ready_type_a_message_to_start": "Sesión lista. Escribe un mensaje para empezar.",
       "streaming": "en streaming",
       "attachments_not_allowed": "Esta app no acepta archivos. Adjúntalos en «{{page}}».",
-      "uploading_files": "Subiendo archivos…"
+      "uploading_files": "Subiendo archivos…",
+      "stop_restarts_session": "Detener reiniciará esta sesión: el historial del chat se queda, pero el trabajo en curso y los mensajes en cola se descartan.",
+      "stop_did_not_go_through": "Esa detención no se completó."
     },
     "chatMessageList": {
       "copied": "¡Copiado!",

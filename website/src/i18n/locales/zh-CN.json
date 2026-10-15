@@ -417,7 +417,9 @@
       "session_ready_type_a_message_to_start": "会话已就绪。输入消息即可开始。",
       "streaming": "流式输出中",
       "attachments_not_allowed": "此应用不接受文件。请改在“{{page}}”中附加。",
-      "uploading_files": "正在上传文件…"
+      "uploading_files": "正在上传文件…",
+      "stop_restarts_session": "点“停止”会重启会话：聊天记录会保留，但进行中的工作和排队的消息会被丢弃。",
+      "stop_did_not_go_through": "刚才的停止没有成功。"
     },
     "chatMessageList": {
       "copied": "已复制！",

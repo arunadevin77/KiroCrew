@@ -431,7 +431,9 @@
       "session_ready_type_a_message_to_start": "Sitzung bereit. Geben Sie eine Nachricht ein, um zu beginnen.",
       "streaming": "Streaming",
       "attachments_not_allowed": "Diese App nimmt keine Dateien an. Hänge sie stattdessen unter „{{page}}“ an.",
-      "uploading_files": "Dateien werden hochgeladen…"
+      "uploading_files": "Dateien werden hochgeladen…",
+      "stop_restarts_session": "Stopp startet diese Sitzung neu: Der Chatverlauf bleibt, laufende Arbeit und Nachrichten in der Warteschlange werden verworfen.",
+      "stop_did_not_go_through": "Dieser Stopp ist nicht durchgegangen."
     },
     "chatMessageList": {
       "copied": "Kopiert!",

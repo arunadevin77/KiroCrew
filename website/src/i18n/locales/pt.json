@@ -445,7 +445,9 @@
       "session_ready_type_a_message_to_start": "Sessão pronta. Digite uma mensagem para começar.",
       "streaming": "em streaming",
       "attachments_not_allowed": "Este app não aceita arquivos. Anexe-os em \"{{page}}\".",
-      "uploading_files": "Enviando arquivos…"
+      "uploading_files": "Enviando arquivos…",
+      "stop_restarts_session": "Parar vai reiniciar esta sessão: o histórico do chat fica, mas o trabalho em andamento e as mensagens na fila são descartados.",
+      "stop_did_not_go_through": "Essa parada não foi concluída."
     },
     "chatMessageList": {
       "copied": "Copiado!",

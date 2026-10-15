@@ -368,7 +368,9 @@
       "agent_is_working": "Agent is working...",
       "app_not_allowed_to_send_named": "{{app}} isn't allowed to send chat messages — it doesn't declare chat access in its permissions.",
       "server_refused_with_status": "The server rejected it (HTTP {{status}}) — try again in a moment.",
-      "message": "Message..."
+      "message": "Message...",
+      "stop_restarts_session": "Stop will restart this session: the chat history stays, but work in progress and queued messages are dropped.",
+      "stop_did_not_go_through": "That Stop didn't go through."
     },
     "chatMessageList": {
       "copied": "Copied!",

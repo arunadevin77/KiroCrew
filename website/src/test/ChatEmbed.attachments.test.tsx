@@ -108,6 +108,18 @@ describe('ChatEmbed attachments without the upload grant', () => {
 })
 
 describe('ChatEmbed attachments with the upload grant', () => {
+  it('keeps the send control while a turn runs and a file is staged', async () => {
+    // Staged files are a draft, as in the main composer: Stop must not take
+    // the only control that sends them.
+    mockGet.mockResolvedValue({ messages: [{ role: 'user', content: 'hi', ts: 1 }], running: true, title: '' })
+    uploadReturns(['/up/spec.pdf'])
+    await act(async () => { mount(GRANTED) })
+    expect(await screen.findByTestId('stop-button-armed')).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('chat-embed-file-input'), { target: { files: [pdf()] } })
+    await waitFor(() => expect(screen.queryByTestId('stop-button-armed')).toBeNull())
+    expect(screen.getByRole('button', { name: 'Queue message' })).toBeInTheDocument()
+  })
+
   it('leaves a plain-text paste to the textarea', async () => {
     await act(async () => { mount(GRANTED) })
     const box = screen.getByLabelText('Chat message')

@@ -445,7 +445,9 @@
       "session_ready_type_a_message_to_start": "Sessione pronta. Digita un messaggio per iniziare.",
       "streaming": "streaming",
       "attachments_not_allowed": "Questa app non accetta file. Allegali invece in «{{page}}».",
-      "uploading_files": "Caricamento dei file…"
+      "uploading_files": "Caricamento dei file…",
+      "stop_restarts_session": "Interrompi riavvierà questa sessione: la cronologia della chat resta, ma il lavoro in corso e i messaggi in coda vengono scartati.",
+      "stop_did_not_go_through": "Quell’interruzione non è andata a buon fine."
     },
     "chatMessageList": {
       "copied": "Copiato!",
