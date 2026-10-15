@@ -335,7 +335,15 @@ def _url_payload_command(n: int) -> str:
 #: Raised again, from 29,293, for the ``engines`` leaf in ``paths.py``: the KAS
 #: engine bundle the gateway installs and later executes joins the file-tool floor
 #: beside ``playwright-cli`` -- one entry and its reason. No matcher moved.
-_PACKAGE_LINE_BUDGET = 29_296
+#:
+#: Raised again, from 29,296, for the discovery-verified OAuth consent endpoints in
+#: ``exfil.py``: the in-memory ``(host, path) -> expiry`` set with its TTL and cap,
+#: ``record_discovered_oauth_endpoint`` (which reuses the operator file's host and
+#: path validators), its ``oauth_endpoint_discovered`` SEL emitter, one lookup in
+#: ``_approved_oauth_authorization_endpoint`` and the facade export. The rationale
+#: lives in the security spec, not the package. An approved endpoint gets exactly
+#: the builtin set's exemption; no pattern, threshold or pass moved.
+_PACKAGE_LINE_BUDGET = 29_377
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
