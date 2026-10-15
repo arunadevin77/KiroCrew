@@ -2549,6 +2549,43 @@
           "source_native": "native",
           "source_inferred": "inferred",
           "open_here": "Abrir {{sigil}}{{number}} aquí"
+        },
+        "timelineComposer": {
+          "title": "Añadir un comentario",
+          "placeholder": "Deja un comentario",
+          "replying_in_thread": "Respondiendo en el hilo iniciado por {{author}}",
+          "cancel_reply": "Cancelar la respuesta en el hilo",
+          "comment_now": "Comentar",
+          "reply_now": "Responder",
+          "add_to_batch": "Añadir al lote",
+          "add_to_batch_hint": "Guardar este comentario y enviarlo más tarde con los demás",
+          "batch_full": "Un lote admite como máximo {{max}} comentarios",
+          "pending_heading": "Comentarios pendientes",
+          "new_comment": "Comentario",
+          "edit": "Editar",
+          "remove": "Quitar",
+          "discard_all": "Descartar todo",
+          "confirm_discard": "Haz clic de nuevo para descartar",
+          "submit_batch": "Enviar lote",
+          "native_hint": "Publicado como una sola revisión",
+          "sequential_hint": "Se publican en orden; se detiene en el primer fallo",
+          "batch_partial": "{{posted}} de {{total}} publicados. El resto sigue pendiente: {{error}}",
+          "shortcut_hint": "Ctrl/⌘+Intro para comentar",
+          "shortcut_hint_batch": "Ctrl/⌘+Intro para añadir al lote",
+          "reply": "Responder",
+          "reply_in_thread_hint": "Responder en este hilo",
+          "quote_reply_hint": "Citar este comentario en uno nuevo",
+          "cancel": "Cancelar",
+          "reply_placeholder": "Responder a {{author}}…",
+          "reply_label": "Responder a {{author}}",
+          "pending_badge": "Respuesta pendiente"
+        },
+        "threads": {
+          "show_earlier_one": "Mostrar {{count}} respuesta anterior",
+          "show_earlier_many": "Mostrar {{count}} respuestas anteriores",
+          "show_earlier_other": "Mostrar {{count}} respuestas anteriores",
+          "replied_in_thread": "{{author}} respondió en el hilo de {{root}}",
+          "jump_to_reply": "Ver esta respuesta en su hilo"
         }
       },
       "connectPanel": {

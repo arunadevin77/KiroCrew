@@ -27,7 +27,7 @@ from urllib.parse import quote
 
 from kiro_crew import github_runner
 
-from . import github_normalization, github_queries, github_transport
+from . import comment_batch, github_normalization, github_queries, github_transport
 from .errors import (
     ProviderCliError,
     ProviderInvalidInputError,
@@ -712,7 +712,11 @@ def list_issue_timeline(
 _PR_REVIEW_COMMENT_JQ = (
     # The endpoint answers a top-level ARRAY, so the projection is per element —
     # without the `.[] |` gh fails with "expected an object but got: array".
-    '.[] | {kind: "review_comment", actor: (.user.login // null), '
+    '.[] | {kind: "review_comment", id: (.id // null), actor: (.user.login // null), '
+    # The reply handle: GitHub threads replies under the thread's FIRST comment, and
+    # every reply carries that root's id in ``in_reply_to_id``, so the root is the
+    # one id a reply can be posted against.
+    "thread_id: ((.in_reply_to_id // .id // null) | if . == null then null else tostring end), "
     'created_at: .created_at, body: (.body // ""), '
     "author_association: (.author_association // null), "
     "path: (.path // null), line: (.line // .original_line // null), "
@@ -2138,6 +2142,79 @@ def add_pr_comment(
     function for a PR on both providers; here the two coincide.
     """
     return add_issue_comment(owner, repo, number, body, timeout=timeout)
+
+
+_THREAD_ID_RE = re.compile(r"^[0-9]{1,20}$")
+
+
+def reply_to_comment_thread(
+    owner: str,
+    repo: str,
+    number: int,
+    target: str,
+    thread_id: str,
+    body: str,
+    *,
+    timeout: float = GH_TIMEOUT_SEC,
+) -> dict:
+    """Reply inside an inline review-comment thread on a PULL REQUEST.
+
+    ``thread_id`` is the thread's root comment id (the timeline reader's
+    ``thread_id``). GitHub threads only inline review comments: issue and PR
+    conversation comments are a flat list, so an issue ``target`` is refused rather
+    than turned into a top-level comment the caller did not ask for.
+
+    Returns ``{id, url, created_at}``.
+    """
+    if target != comment_batch.TARGET_PULL:
+        raise GhCliError("GitHub only threads replies on pull request review comments")
+    root = comment_batch.require_thread_id(thread_id, _THREAD_ID_RE, "GitHub")
+    text = (body or "").strip()
+    if not text:
+        raise GhCliError("a comment needs a body")
+    data = _run_gh_write(
+        "POST",
+        f"repos/{owner}/{repo}/pulls/{int(number)}/comments/{root}/replies",
+        {"body": text},
+        timeout=timeout,
+    )
+    if isinstance(data, dict):
+        return {
+            "id": data.get("id"),
+            "url": data.get("html_url"),
+            "created_at": data.get("created_at"),
+        }
+    return {"id": None, "url": None, "created_at": None}
+
+
+def post_comment_batch(
+    owner: str,
+    repo: str,
+    number: int,
+    target: str,
+    items: list[dict],
+    *,
+    timeout: float = GH_TIMEOUT_SEC,
+) -> dict:
+    """Post a batch of timeline comments and replies, in order.
+
+    Sequential, because GitHub has no pending batch this app can fill with both
+    conversation comments and thread replies: a pending review holds only inline
+    comments, and conversation comments cannot join one. See
+    :func:`comment_batch.post_sequentially` for the stop-at-first-failure rule.
+    """
+
+    def post_one(item: dict) -> dict:
+        thread = item.get("thread_id")
+        if thread:
+            return reply_to_comment_thread(
+                owner, repo, number, target, thread, item["body"], timeout=timeout
+            )
+        if target == comment_batch.TARGET_PULL:
+            return add_pr_comment(owner, repo, number, item["body"], timeout=timeout)
+        return add_issue_comment(owner, repo, number, item["body"], timeout=timeout)
+
+    return comment_batch.post_sequentially(items, post_one)
 
 
 def update_issue_comment(

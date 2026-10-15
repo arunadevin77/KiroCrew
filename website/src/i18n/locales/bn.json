@@ -2489,6 +2489,42 @@
           "source_native": "native",
           "source_inferred": "inferred",
           "open_here": "{{sigil}}{{number}} এখানে খুলুন"
+        },
+        "timelineComposer": {
+          "title": "মন্তব্য যোগ করো",
+          "placeholder": "একটি মন্তব্য লেখো",
+          "replying_in_thread": "{{author}}-এর শুরু করা থ্রেডে উত্তর",
+          "cancel_reply": "থ্রেডে উত্তর বাতিল করো",
+          "comment_now": "মন্তব্য করো",
+          "reply_now": "উত্তর দাও",
+          "add_to_batch": "ব্যাচে যোগ করো",
+          "add_to_batch_hint": "এই মন্তব্যটি রেখে দাও এবং পরে বাকিগুলোর সঙ্গে পাঠাও",
+          "batch_full": "একটি ব্যাচে সর্বোচ্চ {{max}}টি মন্তব্য থাকতে পারে",
+          "pending_heading": "অপেক্ষমাণ মন্তব্য",
+          "new_comment": "মন্তব্য",
+          "edit": "সম্পাদনা",
+          "remove": "সরাও",
+          "discard_all": "সব বাদ দাও",
+          "confirm_discard": "বাদ দিতে আবার ক্লিক করো",
+          "submit_batch": "ব্যাচ পাঠাও",
+          "native_hint": "একটি রিভিউ হিসেবে প্রকাশিত",
+          "sequential_hint": "ক্রমানুসারে পোস্ট; প্রথম ব্যর্থতায় থামে",
+          "batch_partial": "{{total}}টির মধ্যে {{posted}}টি পোস্ট হয়েছে। বাকিগুলো এখনও অপেক্ষমাণ: {{error}}",
+          "shortcut_hint": "মন্তব্যের জন্য Ctrl/⌘+Enter",
+          "shortcut_hint_batch": "ব্যাচে যোগ করতে Ctrl/⌘+Enter",
+          "reply": "উত্তর দাও",
+          "reply_in_thread_hint": "এই থ্রেডে উত্তর দাও",
+          "quote_reply_hint": "এই মন্তব্যটি নতুন মন্তব্যে উদ্ধৃত করো",
+          "cancel": "বাতিল",
+          "reply_placeholder": "{{author}}-কে উত্তর দাও…",
+          "reply_label": "{{author}}-কে উত্তর দাও",
+          "pending_badge": "অপেক্ষমাণ উত্তর"
+        },
+        "threads": {
+          "show_earlier_one": "আগের {{count}}টি উত্তর দেখাও",
+          "show_earlier_other": "আগের {{count}}টি উত্তর দেখাও",
+          "replied_in_thread": "{{author}} {{root}}-এর থ্রেডে উত্তর দিয়েছেন",
+          "jump_to_reply": "এই উত্তরটি থ্রেডে দেখাও"
         }
       },
       "connectPanel": {

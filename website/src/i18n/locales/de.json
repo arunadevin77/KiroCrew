@@ -2578,6 +2578,42 @@
           "source_native": "native",
           "source_inferred": "inferred",
           "open_here": "{{sigil}}{{number}} hier öffnen"
+        },
+        "timelineComposer": {
+          "title": "Kommentar hinzufügen",
+          "placeholder": "Kommentar schreiben",
+          "replying_in_thread": "Antwort im Thread von {{author}}",
+          "cancel_reply": "Antwort im Thread abbrechen",
+          "comment_now": "Kommentieren",
+          "reply_now": "Antworten",
+          "add_to_batch": "Zum Stapel hinzufügen",
+          "add_to_batch_hint": "Diesen Kommentar zurückhalten und später mit den anderen senden",
+          "batch_full": "Ein Stapel fasst höchstens {{max}} Kommentare",
+          "pending_heading": "Ausstehende Kommentare",
+          "new_comment": "Kommentar",
+          "edit": "Bearbeiten",
+          "remove": "Entfernen",
+          "discard_all": "Alle verwerfen",
+          "confirm_discard": "Zum Verwerfen erneut klicken",
+          "submit_batch": "Stapel senden",
+          "native_hint": "Als ein einziges Review veröffentlicht",
+          "sequential_hint": "Der Reihe nach gepostet; stoppt beim ersten Fehler",
+          "batch_partial": "{{posted}} von {{total}} gepostet. Der Rest ist noch ausstehend: {{error}}",
+          "shortcut_hint": "Strg/⌘+Enter zum Kommentieren",
+          "shortcut_hint_batch": "Strg/⌘+Enter zum Hinzufügen zum Stapel",
+          "reply": "Antworten",
+          "reply_in_thread_hint": "In diesem Thread antworten",
+          "quote_reply_hint": "Diesen Kommentar in einem neuen Kommentar zitieren",
+          "cancel": "Abbrechen",
+          "reply_placeholder": "{{author}} antworten…",
+          "reply_label": "{{author}} antworten",
+          "pending_badge": "Ausstehende Antwort"
+        },
+        "threads": {
+          "show_earlier_one": "{{count}} frühere Antwort anzeigen",
+          "show_earlier_other": "{{count}} frühere Antworten anzeigen",
+          "replied_in_thread": "{{author}} hat im Thread von {{root}} geantwortet",
+          "jump_to_reply": "Diese Antwort im Thread anzeigen"
         }
       },
       "connectPanel": {

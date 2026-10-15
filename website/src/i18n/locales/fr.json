@@ -2639,6 +2639,43 @@
           "source_native": "native",
           "source_inferred": "inferred",
           "open_here": "Ouvrir {{sigil}}{{number}} ici"
+        },
+        "timelineComposer": {
+          "title": "Ajouter un commentaire",
+          "placeholder": "Laisser un commentaire",
+          "replying_in_thread": "Réponse dans le fil lancé par {{author}}",
+          "cancel_reply": "Annuler la réponse dans le fil",
+          "comment_now": "Commenter",
+          "reply_now": "Répondre",
+          "add_to_batch": "Ajouter au lot",
+          "add_to_batch_hint": "Garder ce commentaire et l’envoyer plus tard avec les autres",
+          "batch_full": "Un lot contient au plus {{max}} commentaires",
+          "pending_heading": "Commentaires en attente",
+          "new_comment": "Commentaire",
+          "edit": "Modifier",
+          "remove": "Retirer",
+          "discard_all": "Tout abandonner",
+          "confirm_discard": "Cliquer à nouveau pour abandonner",
+          "submit_batch": "Envoyer le lot",
+          "native_hint": "Publié comme une seule revue",
+          "sequential_hint": "Publiés dans l’ordre ; arrêt au premier échec",
+          "batch_partial": "{{posted}} sur {{total}} publiés. Les autres restent en attente : {{error}}",
+          "shortcut_hint": "Ctrl/⌘+Entrée pour commenter",
+          "shortcut_hint_batch": "Ctrl/⌘+Entrée pour ajouter au lot",
+          "reply": "Répondre",
+          "reply_in_thread_hint": "Répondre dans ce fil",
+          "quote_reply_hint": "Citer ce commentaire dans un nouveau commentaire",
+          "cancel": "Annuler",
+          "reply_placeholder": "Répondre à {{author}}…",
+          "reply_label": "Répondre à {{author}}",
+          "pending_badge": "Réponse en attente"
+        },
+        "threads": {
+          "show_earlier_one": "Afficher {{count}} réponse précédente",
+          "show_earlier_many": "Afficher {{count}} réponses précédentes",
+          "show_earlier_other": "Afficher {{count}} réponses précédentes",
+          "replied_in_thread": "{{author}} a répondu dans le fil de {{root}}",
+          "jump_to_reply": "Voir cette réponse dans son fil"
         }
       },
       "connectPanel": {

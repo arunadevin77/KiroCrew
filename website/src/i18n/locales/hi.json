@@ -2489,6 +2489,42 @@
           "source_native": "native",
           "source_inferred": "inferred",
           "open_here": "{{sigil}}{{number}} यहाँ खोलें"
+        },
+        "timelineComposer": {
+          "title": "टिप्पणी जोड़ो",
+          "placeholder": "टिप्पणी लिखो",
+          "replying_in_thread": "{{author}} के शुरू किए थ्रेड में जवाब",
+          "cancel_reply": "थ्रेड में जवाब रद्द करो",
+          "comment_now": "टिप्पणी करो",
+          "reply_now": "जवाब दो",
+          "add_to_batch": "बैच में जोड़ो",
+          "add_to_batch_hint": "यह टिप्पणी रोककर बाद में बाकी के साथ भेजो",
+          "batch_full": "एक बैच में अधिकतम {{max}} टिप्पणियाँ हो सकती हैं",
+          "pending_heading": "लंबित टिप्पणियाँ",
+          "new_comment": "टिप्पणी",
+          "edit": "संपादित करो",
+          "remove": "हटाओ",
+          "discard_all": "सब हटा दो",
+          "confirm_discard": "हटाने के लिए फिर क्लिक करो",
+          "submit_batch": "बैच भेजो",
+          "native_hint": "एक ही समीक्षा के रूप में प्रकाशित",
+          "sequential_hint": "क्रम से पोस्ट; पहली विफलता पर रुकता है",
+          "batch_partial": "{{total}} में से {{posted}} पोस्ट हुईं। बाकी अभी लंबित हैं: {{error}}",
+          "shortcut_hint": "टिप्पणी के लिए Ctrl/⌘+Enter",
+          "shortcut_hint_batch": "बैच में जोड़ने के लिए Ctrl/⌘+Enter",
+          "reply": "जवाब दो",
+          "reply_in_thread_hint": "इस थ्रेड में जवाब दो",
+          "quote_reply_hint": "इस टिप्पणी को नई टिप्पणी में उद्धृत करो",
+          "cancel": "रद्द करो",
+          "reply_placeholder": "{{author}} को जवाब दो…",
+          "reply_label": "{{author}} को जवाब दो",
+          "pending_badge": "लंबित जवाब"
+        },
+        "threads": {
+          "show_earlier_one": "{{count}} पुराना जवाब दिखाओ",
+          "show_earlier_other": "{{count}} पुराने जवाब दिखाओ",
+          "replied_in_thread": "{{author}} ने {{root}} के थ्रेड में जवाब दिया",
+          "jump_to_reply": "यह जवाब उसके थ्रेड में दिखाओ"
         }
       },
       "connectPanel": {
