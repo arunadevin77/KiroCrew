@@ -789,12 +789,12 @@ it would let a planted `~/Applications/Anything.app` be launched by name.
 Then **every directory on the path to the code that will run is probed for writability**
 (`_writable_component`): the bundle's parent, the bundle itself, `Contents`, and
 `Contents/MacOS`. The parent alone was not enough, and the gap it left is the common case
-rather than a corner. `/Applications` is root-owned and unwritable, but a bundle installed
-there by any user-space installer — every drag-install, every Homebrew cask — is owned by
-the installing user, so `Foo.app/Contents/MacOS/Foo` can be replaced without
-`/Applications` ever being writable. A parent-only probe passed that bundle and launched
-agent-authored native code. The parent probe still runs, which also catches an
-`/Applications` that is group-writable on a machine whose admin group has been widened.
+rather than a corner. On a stock macOS install `/Applications` is `drwxrwxr-x root admin`, so the parent probe
+fires for every admin user and every bundle dropped there is indistinguishable from one the
+operator installed. The parent probe and the bundle probes are independent: an unwritable
+parent is not evidence of an unwritable bundle. A bundle installed by any user-space
+installer — every drag-install, every Homebrew cask — is owned by the installing user, so
+`Foo.app/Contents/MacOS/Foo` can be replaced without the parent ever being writable.
 
 **Every level, not just the endpoints.** Write access to any single directory on that path
 is enough to control what executes, and `Contents` is the one an endpoints-only check
@@ -874,9 +874,9 @@ judged. `Contents/MacOS` is the location the OS itself requires, and any deeper 
 sits under a directory already being probed.
 
 The cost is real and is the right trade: an application installed only for the current
-user cannot be launched by name. The refusal says so and names the remedy (move the
-bundle under `/Applications`, or open it by hand), which is recoverable — where a launch
-verb that runs whatever the agent wrote is not.
+user cannot be launched by name. The refusal names the reason and tells the user to open
+the application themselves, which is recoverable — where a launch verb that runs whatever
+the agent wrote is not.
 
 A **command interpreter is refused by name** on both platforms (`cmd`, `powershell`,
 `wt`, `Terminal.app`, …). That list is explicitly *not* a security boundary and does

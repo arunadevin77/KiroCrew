@@ -1100,6 +1100,29 @@ class TestMacOSCatalogAndResolution:
         with pytest.raises(ComputerUseError, match="this user can write"):
             launch_macos.resolve_target("Paintbrush")
 
+    def test_a_bundle_under_an_admin_writable_root_gets_no_move_hint(self, monkeypatch, tmp_path):
+        """A bundle under /Applications must not be told to "Move it under /Applications".
+
+        The refusal still fires (writable component found), but the message names the real
+        reason ("this user can write…") and omits the unsatisfiable move hint — the bundle
+        is already in the catalog root.
+        """
+        from kiro_crew.computer_use import launch_macos
+
+        root = tmp_path / "Applications"
+        root.mkdir()
+        self._bundle(root, "WeChat")
+        monkeypatch.setattr(launch_macos, "_APP_ROOTS", (str(root),))
+        monkeypatch.setattr(launch_macos, "_writable_component", lambda _app: True)
+        with pytest.raises(ComputerUseError) as exc_info:
+            launch_macos.resolve_target("WeChat")
+        msg = str(exc_info.value)
+        # Still refused — the refusal is unchanged.
+        assert "WeChat" in msg
+        # No impossible move hint.
+        assert "move" not in msg.lower()
+        assert "this user can write" in msg
+
     def test_the_write_probe_is_removed_and_reports_writable(self, tmp_path):
         # A leftover probe in a system directory would be litter with our name on it.
         from kiro_crew.computer_use import launch_macos
