@@ -1321,10 +1321,13 @@ agent type out of that message. When the record carries a `description`, or
 failing that the crewmate's goal record already holds goals (what a
 `crewmate.create` card writes), the kickoff appends it as a first draft of the
 goal, which the crewmate restates and asks the user to confirm or change. An
-unreadable goal record only means the kickoff asks for the goal. Once the goal
-is clear, a crewmate whose
-work should run on its own may offer a schedule in plain words, and sets one up
-with its schedule tool only after the user says yes.
+unreadable goal record only means the kickoff asks for the goal. Once the user
+states or confirms the goal, the crewmate proposes it with `set_goal` (a
+`crewmate.goal` card) rather than offering a schedule: follow-up on a goal is
+the check-ins, which the goal-setup nudge (`dashboard/goal_setup.py`) leads to
+with `set_check_ins` after the goal is saved. The member identity sentence
+(`context_assembly/member.py`) carries the same principle on every DM turn: a
+long-term aim the user describes is proposed as a goal, not only remembered.
 
 The primary New crewmate action (the header **+** menu's one row, the empty
 roster's hero and the switcher's New crewmate) opens the

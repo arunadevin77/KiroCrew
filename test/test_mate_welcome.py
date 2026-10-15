@@ -243,7 +243,8 @@ class TestGoalWelcome:
         assert "rather than technical terms" in kickoff
         assert "own and look after" not in kickoff
         assert "Leave out your template, role or agent type" in kickoff
-        assert "once they say yes" in kickoff
+        # The goal is proposed through the goal tool, not left in conversation.
+        assert "set_goal" in kickoff
         assert "described as" not in kickoff
         # An unlabelled crewmate is named by its key.
         unlabelled = cg.goal_kickoff(SimpleNamespace(display_name="", description=""), "scout")

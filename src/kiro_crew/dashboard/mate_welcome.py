@@ -113,9 +113,10 @@ FIRST_WELCOME_WITH_CREW = _KICKOFF_PREAMBLE + _WELCOME_INTRO + _ONE_MORE_OF_CREW
 
 #: A created crewmate's first message: a hello with its name, then one plain
 #: question about its goal. The user just picked its name and look on the
-#: card, so the hello stays short and the question carries the message. When
-#: it runs is settled in the same conversation: it offers a schedule once the
-#: goal is clear, and sets one up only on a yes.
+#: card, so the hello stays short and the question carries the message. The
+#: answer becomes a ``set_goal`` card, and the goal's follow-up comes from the
+#: check-ins proposed once it is saved (``dashboard/goal_setup.py``,
+#: ``set_check_ins``), so the kickoff offers no schedule of its own.
 GOAL_WELCOME = _KICKOFF_PREAMBLE + (
     "You are {name}, and the user just created you. Your first message is two "
     "short sentences, simple and direct: a hello that gives your name, then a "
@@ -123,11 +124,11 @@ GOAL_WELCOME = _KICKOFF_PREAMBLE + (
     "and framed so it is clearly your goal for them, not theirs. Use "
     "the plainest words you can, everyday speech rather than technical terms. "
     "Leave out your template, role or agent type and any plan; work starts once "
-    "they answer. Once the goal is "
-    "clear, if the work should run on its own (every morning, every hour, "
-    "whenever something changes), offer a schedule: say in plain words when you "
-    "would run and ask whether they want it. Set it up with your schedule tool, "
-    "or as a change card they confirm, once they say yes."
+    "they answer. When the user states the goal or agrees to one, propose it with "
+    "set_goal in that reply, in their words: it puts a card in this chat for them "
+    "to press, and the goal is yours once they do. Following up on the goal is "
+    "what your check-ins are for, and you suggest those after the goal is saved, "
+    "so a separate schedule for it adds nothing."
 )
 
 #: Appended to :data:`GOAL_WELCOME` when the create carried a description, so
@@ -136,7 +137,8 @@ _GOAL_KNOWN = (
     " When you were created you were described as: {description!r}. Treat that as "
     "a first draft of your goal, so your second sentence restates it in your own "
     "plain words and asks whether that is the goal, in place of asking what your "
-    "goal should be."
+    "goal should be. Once they confirm it, or reword it, propose that wording with "
+    "set_goal."
 )
 
 

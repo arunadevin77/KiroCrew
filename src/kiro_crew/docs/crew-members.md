@@ -111,9 +111,9 @@ with the suggested name and goal already filled in; nothing is created until
 you press **Create**. Creating opens the new crewmate's chat, and the crewmate
 starts it by introducing itself and asking what you would like it to do (or
 confirming the job you wrote); that opening question comes from Kiro Crew, so no
-message appears as if you had typed it. Once the goal is clear, a crewmate whose
-work should run on its own may offer a schedule, and sets one up only after you
-say yes. The name is
+message appears as if you had typed it. Once you tell it the goal (or confirm
+the one you wrote), it puts the goal on a card for you to press, and after the
+goal is saved it suggests its check-ins. The name is
 free-form display text — spaces, punctuation, any script, emoji (`Dr. Eggbot 🥚`
 is a name) — and the dialog only refuses a blank name or one already on the
 roster before the request leaves the browser; the server owns every other rule
