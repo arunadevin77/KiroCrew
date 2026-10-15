@@ -1549,6 +1549,12 @@ _MAX_PANEL_TABS_PER_APP = 8
 #: a cap only the manifest enforces truncates silently in the menu instead.
 _MAX_FILE_MENU_ITEMS_PER_APP = 10
 
+#: Bounds for top-level config ownership declarations. These mirror the generic
+#: foreign-manifest container and key bounds in ``apps.plugin_import`` so every
+#: manifest-facing parser retains the same maximum amount of untrusted input.
+_MAX_CONFIG_KEYS = 200
+_MAX_CONFIG_KEY_CHARS = 200
+
 #: The file-menu surfaces a contributed row may attach to. Data rather than a branch, so
 #: adding a surface is this line plus a render site, never an evaluator edit.
 FILE_MENU_SURFACES = frozenset({"file-overflow", "tree-context", "folder-row"})
@@ -2576,6 +2582,7 @@ _KNOWN_FIELDS = frozenset(
         "skills",
         "sops",
         "mcpServers",
+        "config_keys",
         "crons",
         "ui",
         "backend",
@@ -2619,6 +2626,10 @@ class AppManifest:
     skills: list[str] = field(default_factory=list)  # paths to skill directories
     sops: list[str] = field(default_factory=list)  # paths to SOP files
     mcpServers: dict[str, Any] = field(default_factory=dict)  # MCP server configs  # noqa: N815
+
+    # --- Config ownership ---
+    config_keys: list[str] = field(default_factory=list)
+    config_keys_error: str = field(default="", repr=False)
 
     # --- Scheduling ---
     crons: list[CronEntry] = field(default_factory=list)
@@ -2696,6 +2707,9 @@ class AppManifest:
 
         if not self.description:
             errors.append("missing required field: description")
+
+        if self.config_keys_error:
+            errors.append(self.config_keys_error)
 
         # Path containment check on all app-root-relative resource paths.
         # Canonical (resolve + is_relative_to) when app_root is known; lexical
@@ -2911,6 +2925,8 @@ class AppManifest:
             "signer": self.signer,
             "permissions": self.permissions.to_dict(),
         }
+        if self.config_keys:
+            body["config_keys"] = sorted(self.config_keys)
         if self.notifications.channels:
             # Channel declarations gate what an app may push and at which
             # default priority -- tampering must invalidate the signature.
@@ -3100,6 +3116,8 @@ class AppManifest:
             d["sops"] = self.sops
         if self.mcpServers:
             d["mcpServers"] = self.mcpServers
+        if self.config_keys:
+            d["config_keys"] = self.config_keys
         if self.crons:
             d["crons"] = [c.to_dict() for c in self.crons]
         ui_d = self.ui.to_dict()
@@ -3149,6 +3167,25 @@ class AppManifest:
     def from_dict(cls, data: dict[str, Any]) -> AppManifest:
         """Parse from dict, preserving unknown fields in ``extra``."""
         extra = {k: v for k, v in data.items() if k not in _KNOWN_FIELDS}
+
+        config_keys_raw = data.get("config_keys", [])
+        if not isinstance(config_keys_raw, list):
+            config_keys: list[str] = []
+            config_keys_error = "config_keys must be an array"
+        elif len(config_keys_raw) > _MAX_CONFIG_KEYS:
+            config_keys = []
+            config_keys_error = f"config_keys must contain at most {_MAX_CONFIG_KEYS} entries"
+        elif not all(isinstance(key, str) and key for key in config_keys_raw):
+            config_keys = []
+            config_keys_error = "config_keys entries must be non-empty strings"
+        elif any(len(key) > _MAX_CONFIG_KEY_CHARS for key in config_keys_raw):
+            config_keys = []
+            config_keys_error = (
+                f"config_keys entries must be at most {_MAX_CONFIG_KEY_CHARS} characters"
+            )
+        else:
+            config_keys = list(config_keys_raw)
+            config_keys_error = ""
 
         crons_raw = data.get("crons", [])
         crons = [CronEntry.from_dict(c) for c in crons_raw if isinstance(c, dict)]
@@ -3224,6 +3261,8 @@ class AppManifest:
             ],
             sops=[str(s) for s in data.get("sops", []) if s],
             mcpServers=dict(data.get("mcpServers", {})),  # noqa: N815
+            config_keys=config_keys,
+            config_keys_error=config_keys_error,
             crons=crons,
             ui=ui,
             backend=backend,

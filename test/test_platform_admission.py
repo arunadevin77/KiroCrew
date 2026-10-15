@@ -10,6 +10,8 @@ import pytest
 
 from kiro_crew.platform import discovery as discovery_mod
 from kiro_crew.platform.admission import (
+    _MAX_CONFIG_KEY_CHARS,
+    _MAX_CONFIG_KEYS,
     MODE_ENFORCE,
     MODE_OPEN,
     AdmissionPolicy,
@@ -142,6 +144,55 @@ class TestKillSwitch:
 
 
 class TestManifestParsing:
+    def test_config_keys_are_parsed_and_signed(self):
+        manifest = PluginManifest.from_dict(
+            {"name": "p", "config_keys": ["aim_update"], "signature": "ignored"}
+        )
+        assert manifest.config_keys == ["aim_update"]
+        assert b'"config_keys":["aim_update"]' in manifest.signing_payload()
+
+    def test_non_list_config_keys_are_ignored(self):
+        manifest = PluginManifest.from_dict({"name": "p", "config_keys": "aim_update"})
+        assert manifest.config_keys == []
+
+    def test_invalid_config_key_entry_fails_closed(self):
+        manifest = PluginManifest.from_dict(
+            {"name": "p", "config_keys": ["aim_update", ""]}
+        )
+        assert manifest.config_keys == []
+        assert b'"config_keys"' not in manifest.signing_payload()
+
+    def test_absent_config_keys_preserve_legacy_signing_payload(self):
+        manifest = PluginManifest.from_dict({"name": "p"})
+        assert manifest.config_keys == []
+        assert (
+            manifest.signing_payload()
+            == b'{"capabilities":{},"name":"p","publisher":"","version":""}'
+        )
+
+    def test_config_keys_accept_exact_count_bound(self):
+        keys = [f"key-{index}" for index in range(_MAX_CONFIG_KEYS)]
+        manifest = PluginManifest.from_dict({"name": "p", "config_keys": keys})
+        assert manifest.config_keys == keys
+
+    def test_config_keys_over_count_bound_fail_closed(self):
+        keys = [f"key-{index}" for index in range(_MAX_CONFIG_KEYS + 1)]
+        manifest = PluginManifest.from_dict({"name": "p", "config_keys": keys})
+        assert manifest.config_keys == []
+        assert b'"config_keys"' not in manifest.signing_payload()
+
+    def test_config_key_accepts_exact_length_bound(self):
+        key = "k" * _MAX_CONFIG_KEY_CHARS
+        manifest = PluginManifest.from_dict({"name": "p", "config_keys": [key]})
+        assert manifest.config_keys == [key]
+
+    def test_config_key_over_length_bound_fails_closed(self):
+        manifest = PluginManifest.from_dict(
+            {"name": "p", "config_keys": ["k" * (_MAX_CONFIG_KEY_CHARS + 1)]}
+        )
+        assert manifest.config_keys == []
+        assert b'"config_keys"' not in manifest.signing_payload()
+
     def test_string_capability_value_is_not_exploded(self):
         # A capability value given as a string (not a list) must become a
         # single-element list, NOT be exploded into per-character entries by

@@ -11,6 +11,8 @@ from hypothesis import strategies as st
 
 from conftest import make_escaping_link
 from kiro_crew.apps.manifest import (
+    _MAX_CONFIG_KEY_CHARS,
+    _MAX_CONFIG_KEYS,
     ARGUMENT_TOKEN,
     AppManifest,
     CapabilityDependencies,
@@ -80,6 +82,50 @@ class TestValidation:
     def test_valid_minimal(self):
         m = AppManifest.from_dict(_valid_manifest())
         assert m.validate() == []
+
+    def test_config_keys_round_trip(self):
+        m = AppManifest.from_dict(_valid_manifest(config_keys=["secretary"]))
+        assert m.validate() == []
+        assert m.to_dict()["config_keys"] == ["secretary"]
+        assert b'"config_keys":["secretary"]' in m.signing_payload()
+        assert "config_keys" not in m.extra
+
+    @pytest.mark.parametrize("invalid", ["secretary", {"secretary": True}, 1, None])
+    def test_config_keys_rejects_non_list(self, invalid):
+        m = AppManifest.from_dict(_valid_manifest(config_keys=invalid))
+        assert "config_keys must be an array" in m.validate()
+
+    def test_config_keys_rejects_invalid_entries(self):
+        m = AppManifest.from_dict(_valid_manifest(config_keys=["secretary", ""]))
+        assert "config_keys entries must be non-empty strings" in m.validate()
+
+    def test_config_keys_accepts_exact_count_bound(self):
+        keys = [f"key-{index}" for index in range(_MAX_CONFIG_KEYS)]
+        m = AppManifest.from_dict(_valid_manifest(config_keys=keys))
+        assert m.validate() == []
+        assert m.config_keys == keys
+
+    def test_config_keys_rejects_over_count_bound(self):
+        keys = [f"key-{index}" for index in range(_MAX_CONFIG_KEYS + 1)]
+        m = AppManifest.from_dict(_valid_manifest(config_keys=keys))
+        assert m.config_keys == []
+        assert f"config_keys must contain at most {_MAX_CONFIG_KEYS} entries" in m.validate()
+
+    def test_config_keys_accepts_exact_length_bound(self):
+        key = "k" * _MAX_CONFIG_KEY_CHARS
+        m = AppManifest.from_dict(_valid_manifest(config_keys=[key]))
+        assert m.validate() == []
+        assert m.config_keys == [key]
+
+    def test_config_keys_rejects_over_length_bound(self):
+        m = AppManifest.from_dict(
+            _valid_manifest(config_keys=["k" * (_MAX_CONFIG_KEY_CHARS + 1)])
+        )
+        assert m.config_keys == []
+        assert (
+            f"config_keys entries must be at most {_MAX_CONFIG_KEY_CHARS} characters"
+            in m.validate()
+        )
 
     def test_missing_name(self):
         m = AppManifest.from_dict(_valid_manifest(name=""))
