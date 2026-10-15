@@ -68,12 +68,20 @@ async def _spawned() -> AsyncIterator[list[asyncio.subprocess.Process]]:
 
 
 async def _group_gone(pgid: int, timeout: float = 10.0) -> bool:
+    """True once no process, zombie included, is left in group *pgid*.
+
+    A killed leader is this test's own child and stays a zombie until asyncio's
+    child watcher collects it. macOS answers signal 0 to a group holding only
+    zombies with EPERM rather than ESRCH, so EPERM means "not gone yet" and
+    only ESRCH proves the group is empty."""
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:
             return True
+        except PermissionError:
+            pass
         await asyncio.sleep(0.05)
     return False
 
@@ -226,6 +234,29 @@ async def test_reap_kills_a_real_term_ignoring_group_and_spares_a_recycled_one(
         assert await _group_gone(ours.pid), "the recorded group, child included, is reaped"
         os.killpg(stranger.pid, 0)  # raises if the stranger's group was signalled
         assert stranger.returncode is None
+
+
+@posix_only
+@pytest.mark.asyncio
+async def test_group_gone_polls_past_the_eperm_macos_gives_a_zombie_only_group() -> None:
+    """macOS answers signal 0 to a group whose members are all zombies with EPERM.
+    The helper must keep polling through it and still demand ESRCH."""
+    real_killpg = os.killpg
+    probes: list[int] = []
+
+    def killpg(pgid: int, sig: int) -> None:
+        if sig == 0:
+            probes.append(pgid)
+            if len(probes) <= 3:
+                raise PermissionError(1, "Operation not permitted")
+        real_killpg(pgid, sig)
+
+    async with _spawned() as spawned:
+        leader = await _session_leader_with_child(spawned)
+        real_killpg(leader.pid, signal.SIGKILL)
+        with patch.object(os, "killpg", killpg):
+            assert await _group_gone(leader.pid)
+        assert len(probes) > 3, "the EPERM answers were polled past, not skipped"
 
 
 # ── who reaps ────────────────────────────────────────────────────────────
