@@ -355,7 +355,13 @@ class TestLeafOnlyPopulationIsRecorded:
     #: lock. Sealed read-only so a sandboxed shell cannot forge that mapping (the
     #: agents tree it moved out of was already sealed). A data-home root leaf,
     #: three entries per tier, leaf-only for the same reason as the root leaves above.
-    EXPECTED: dict[str, int] = {"standard": 278, "cc": 285, "strict": 286}
+    #:
+    #: ``goal-drafts`` holds the canonical cross-device goal drafts the dashboard
+    #: serves back into the goal editor, where Start turns them into agent
+    #: instructions. Masked whole so an agent cannot forge that next prompt through
+    #: the JSON file, its lock or an atomic-write temp. A data-home root leaf, three
+    #: entries per tier, leaf-only for the same reason as the root leaves above.
+    EXPECTED: dict[str, int] = {"standard": 281, "cc": 288, "strict": 289}
 
     @pytest.mark.parametrize("tier", TIERS)
     def test_leaf_only_count_has_not_grown(self, tier: str) -> None:
