@@ -1511,13 +1511,22 @@ class TestOnlyOneSurfaceWritesGrantDerivedTrust:
         runtime = src / "dashboard" / "server_runtime"
         owners = sorted(runtime.glob("[!_]*.py"))
         assert owners, "expected the server_runtime owners beside server.py"
+        # taskrunner.py binds TaskRunner's members from its taskrunner_parts owners, so
+        # those are read as one file with it too.
+        runner_parts = src / "taskrunner_parts"
+        runner_owners = sorted(runner_parts.glob("[!_]*.py"))
+        assert runner_owners, "expected the taskrunner_parts owners beside taskrunner.py"
         found: set[str] = set()
         for path in src.rglob("*.py"):
-            if "_vendor" in path.parts or path.parent == runtime:
+            if "_vendor" in path.parts or path.parent in (runtime, runner_parts):
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
             if path == src / "dashboard" / "server.py":
                 text += "".join(o.read_text(encoding="utf-8", errors="replace") for o in owners)
+            if path == src / "taskrunner.py":
+                text += "".join(
+                    o.read_text(encoding="utf-8", errors="replace") for o in runner_owners
+                )
             arms = "safety_override().activate" in text
             grants = "set_approval_policy(" in text and '"auto"' in text
             if arms and grants:
@@ -1683,7 +1692,13 @@ class TestArmingIsStillOffloadedByItsAsyncCallers:
         # case either fails for the wrong reason or, worse, silently inspects a
         # different file and passes without checking anything.
         repo_root = _pl.Path(__file__).resolve().parents[1]
-        src = (repo_root / "src" / "kiro_crew" / "taskrunner.py").read_text(encoding="utf-8")
+        src = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [
+                repo_root / "src" / "kiro_crew" / "taskrunner.py",
+                *sorted((repo_root / "src" / "kiro_crew" / "taskrunner_parts").glob("*.py")),
+            ]
+        )
         bare = [
             line.strip()
             for line in src.splitlines()

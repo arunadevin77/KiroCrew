@@ -9608,7 +9608,7 @@ class TestParentEndCancelsItsChildren:
             # A cancelled cron job's conversation is over.
             "cron_service/service/run_kill.py",
             # Cancel cleanup ends every step conversation of the run.
-            "taskrunner.py",
+            "taskrunner_parts/run_scope.py",
             # The pool starts a NEW conversation on a pooled key.
             "workflows/agent_pool.py",
             # ``clear_conversation`` throws the conversation away: sid cleared, replay

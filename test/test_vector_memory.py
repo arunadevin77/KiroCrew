@@ -4248,15 +4248,37 @@ class TestAsyncInitOffloadGuard:
     def _find_inline_async_inits(cls, tree, where: str = "") -> list[str]:
         return cls._find_inline_async_lifecycle_calls(tree, {"init"}, where)
 
+    @staticmethod
+    def _candidates() -> list[tuple[Path, str, object]]:
+        """The corpus files holding both needles, with taskrunner.py read as one file
+        with its taskrunner_parts owners: ``TaskRunner``'s ``__init__`` stays in
+        taskrunner.py while its coroutines live in the owners, so a store bound in one
+        and closed in another is one module's binding."""
+        import ast
+
+        needles = ("VectorMemoryStore", "async")
+        pkg = source_corpus.src_root()
+        facade = pkg / "taskrunner.py"
+        runner_parts = pkg / "taskrunner_parts"
+        runner_owners = sorted(runner_parts.glob("[!_]*.py"))
+        assert runner_owners, "expected the taskrunner_parts owners beside taskrunner.py"
+        found: list[tuple[Path, str, object]] = [
+            (path, text, tree)
+            for path, text, tree in source_corpus.parsed_candidates(require_all=needles)
+            if path != facade and path.parent != runner_parts
+        ]
+        joined = "".join(p.read_text(encoding="utf-8") for p in [facade, *runner_owners])
+        if all(needle in joined for needle in needles):
+            found.append((facade, joined, ast.parse(joined)))
+        return found
+
     def test_no_async_function_calls_init_inline(self) -> None:
         # A violation needs a constructor binding (``VectorMemoryStore``) AND an
         # ``async`` def in the SAME module, so a file whose text lacks either can
         # never match: parse only the ones that hold both, off the shared corpus.
         pkg_root = source_corpus.src_root()
         violations: list = []
-        for py, _text, tree in source_corpus.parsed_candidates(
-            require_all=("VectorMemoryStore", "async")
-        ):
+        for py, _text, tree in self._candidates():
             rel = py.relative_to(pkg_root.parent)
             violations.extend(self._find_inline_async_inits(tree, where=f"{rel}:"))
         assert not violations, "inline async VectorMemoryStore.init() call(s):\n" + "\n".join(
@@ -4304,9 +4326,7 @@ class TestAsyncInitOffloadGuard:
         # ``VectorMemoryStore(...)`` in the same module as the ``async`` def.
         root = TestHandlerOffload1947._package_root()
         violations: list[str] = []
-        for path, _text, tree in source_corpus.parsed_candidates(
-            require_all=("VectorMemoryStore", "async")
-        ):
+        for path, _text, tree in self._candidates():
             violations.extend(
                 self._find_inline_async_lifecycle_calls(
                     tree, {"close"}, where=f"{path.relative_to(root)}:"
