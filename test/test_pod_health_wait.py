@@ -14,11 +14,10 @@ from __future__ import annotations
 
 import argparse
 import subprocess
-import threading
-import time
 from pathlib import Path
 
 import pytest
+from _clock_isolation import assert_clock_is_private
 
 from kiro_crew.instances import run_marker
 from kiro_crew.pod import cli as pod_cli
@@ -208,22 +207,7 @@ class TestTheWaitsClockIsItsOwn:
     def test_another_thread_keeps_the_real_sleep_and_clock(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        real_sleep = time.sleep
-        clock = _pin_clock(monkeypatch)
-        clock.advance(10_000.0)
-        seen: dict[str, object] = {}
-
-        def _neighbour() -> None:
-            seen["sleep"] = time.sleep
-            seen["monotonic"] = time.monotonic()
-
-        thread = threading.Thread(target=_neighbour, daemon=True)
-        thread.start()
-        thread.join(30.0)
-        assert not thread.is_alive()
-        assert seen["sleep"] is real_sleep, "another thread's sleep would move the wait's clock"
-        assert seen["monotonic"] != clock.monotonic(), "another thread read the wait's clock"
-        assert pod_cli.time.monotonic() == clock.monotonic()
+        assert_clock_is_private(_pin_clock(monkeypatch), pod_cli)
 
 
 class TestWaitHealthyBudget:
@@ -244,6 +228,27 @@ class TestWaitHealthyBudget:
         assert pod_cli._wait_healthy(cfg, "x", 7999, tries=7) == 0
         assert len(calls) == 8
         assert clock.monotonic() == 7.0
+
+    def test_the_last_sleep_never_overshoots_the_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A probe latency that leaves part of a second: the last sleep is cut to it.
+
+        Each probe costs 0.75 s, so after the first 1 s sleep only 0.5 s of the
+        3 s budget is left. Sleeping a full second there would poll past the
+        deadline instead of at it.
+        """
+        clock = self._pin_clock(monkeypatch)
+
+        def _slow_health(cfg: object, n: object, p: object) -> int:
+            clock.advance(0.75)
+            return 0
+
+        monkeypatch.setattr(rt, "health", _slow_health)
+        monkeypatch.setattr(rt, "unit_state", lambda cfg, n: ("activating", 0))
+        cfg = PodConfig.load()
+        assert pod_cli._wait_healthy(cfg, "x", 7999, tries=3) == 0
+        assert clock.sleeps == (1.0, 0.5)
 
     def test_slow_probes_shrink_the_sleeps_instead_of_stretching_the_budget(
         self, monkeypatch: pytest.MonkeyPatch

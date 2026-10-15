@@ -8,6 +8,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from _clock_isolation import assert_clock_is_private
 
 from kiro_crew import platform_compat as pc
 from kiro_crew.pod import _windows_job as jobs
@@ -173,10 +174,25 @@ def test_invalid_process_handle_is_rejected(kernel, handle):
     assert not any(call[0] == "assign" for call in kernel.calls)
 
 
-def test_drain_waits_for_kernel_zero_not_termination_return(kernel, monkeypatch):
-    # On the module's own `time` binding, so no other thread's sleep moves it.
+def _pin_clock(monkeypatch):
+    """A clock only the drain reads, starting at 0.
+
+    Installed on the module's own ``time`` binding. That binding IS the stdlib
+    module, so patching ``jobs.time.sleep`` would replace ``time.sleep`` for every
+    thread in the worker, and another thread's sleep would move the drain's
+    deadline.
+    """
     clock = ManualClock(monotonic_start=0.0)
     clock.install(monkeypatch, jobs)
+    return clock
+
+
+def test_another_thread_keeps_the_real_sleep_and_clock(monkeypatch):
+    assert_clock_is_private(_pin_clock(monkeypatch), jobs)
+
+
+def test_drain_waits_for_kernel_zero_not_termination_return(kernel, monkeypatch):
+    clock = _pin_clock(monkeypatch)
     with jobs.PodJob.create() as job:
         kernel.counts = [2, 1, 0]
         job.terminate_and_wait(timeout=1)
@@ -185,6 +201,20 @@ def test_drain_waits_for_kernel_zero_not_termination_return(kernel, monkeypatch)
         with pytest.raises(TimeoutError):
             job.terminate_and_wait(timeout=0.1)
         assert clock.monotonic() == pytest.approx(0.2)
+
+
+def test_drain_never_sleeps_past_its_deadline(kernel, monkeypatch):
+    # A budget that is not a whole number of polls: the last sleep is cut to what
+    # is left, so the drain gives up at its deadline and not one poll after it.
+    clock = _pin_clock(monkeypatch)
+    with jobs.PodJob.create() as job:
+        kernel.counts = [1]
+        with pytest.raises(TimeoutError):
+            job.terminate_and_wait(timeout=2.5 * jobs._POLL_SECONDS)
+    assert clock.sleeps == pytest.approx(
+        (jobs._POLL_SECONDS, jobs._POLL_SECONDS, 0.5 * jobs._POLL_SECONDS)
+    )
+    assert clock.monotonic() == pytest.approx(2.5 * jobs._POLL_SECONDS)
 
 
 @pytest.mark.parametrize("failure", ["terminate", "query", "short"])
