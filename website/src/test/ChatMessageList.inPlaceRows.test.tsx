@@ -138,13 +138,13 @@ describe('a tool row', () => {
     // The result lands on the 🔧 row itself.
     const done = { ...tests, meta: { ...tests.meta, output: '12 passed' } }
     view.rerender(list([q1, done, lint, a1, q2, streaming('Checking')], { running: true }))
-    expect(pillOf(/npm test/)).toHaveClass('text-ok')
+    expect(pillOf(/npm test/)).toHaveClass('text-ok-text')
     // A policy blocks the second call: its hidden 🚫 sibling turns that pill amber.
     const denied = { role: 'tool', content: '🚫 Blocked by policy', cls: '', ts: at(3), meta: { tool_call_id: 'tc-2' } }
     view.rerender(list([q1, done, lint, denied, a1, q2, streaming('Checking the')], { running: true }))
     expect(pillOf(/npm run lint/)).toHaveClass('text-warn-text')
     view.rerender(list([q1, done, lint, denied, a1, q2, streaming('Checking the logs')], { running: true }))
-    expect(pillOf(/npm test/)).toHaveClass('text-ok')
+    expect(pillOf(/npm test/)).toHaveClass('text-ok-text')
     expect(pillOf(/npm run lint/)).toHaveClass('text-warn-text')
   })
 })
