@@ -456,6 +456,7 @@ _OWNED_NAMES: dict[str, tuple[str, ...]] = {
         "enable_pull_request_auto_merge",
         "_GITHUB_AUTO_MERGE_MUTATION",
         "_GITHUB_MERGE_METHODS",
+        "_GITHUB_MERGE_MUTATION",
         "_GITHUB_NODE_ID_RE",
         "_github_pull_request_node",
         "_GITHUB_PULL_REQUEST_NODE_QUERY",

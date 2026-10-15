@@ -5765,6 +5765,150 @@ async def test_auto_merge_github_refuses_when_no_method_allowed(monkeypatch) -> 
     run.assert_awaited_once()
 
 
+def _github_already_mergeable_node(merge_state: str) -> dict:
+    """A GitHub node response for an open PR GitHub would refuse to arm.
+
+    ``CLEAN``/``UNSTABLE`` mean every required check is settled, so nothing is
+    left for ``enablePullRequestAutoMerge`` to wait on and GitHub refuses it with
+    ``Pull request is in clean/unstable status``.
+    """
+    return {
+        "data": {
+            "repository": {
+                "squashMergeAllowed": True,
+                "mergeCommitAllowed": True,
+                "rebaseMergeAllowed": True,
+                "pullRequest": {
+                    "id": "PR_node1",
+                    "headRefOid": "deadbeef00",
+                    "isDraft": False,
+                    "state": "OPEN",
+                    "mergeStateStatus": merge_state,
+                },
+            }
+        }
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("merge_state", ["CLEAN", "UNSTABLE", "HAS_HOOKS"])
+async def test_auto_merge_github_already_mergeable_refusal_is_answerable(
+    monkeypatch, merge_state: str
+) -> None:
+    """An already-mergeable GitHub PR raises an ANSWERABLE refusal, not a 503.
+
+    GitHub refuses ``enablePullRequestAutoMerge`` once a PR is already mergeable
+    (``CLEAN``/``UNSTABLE``). Dispatching the arming mutation blind would turn that
+    normal, user-actionable state into ``gh: Pull request ... is in unstable
+    status`` surfaced as an HTTP 503 ``provider_error``. Instead the GitHub branch
+    mirrors the GitLab immediate-merge handshake: it raises ``ConfirmationRequired``
+    (HTTP 400, answerable), and merges NOTHING until the caller confirms.
+    """
+    run = AsyncMock(return_value=_github_already_mergeable_node(merge_state))
+    monkeypatch.setattr(source, "_run_json", run)
+
+    with pytest.raises(source.ConfirmationRequired, match="merged now"):
+        await source.enable_pull_request_auto_merge("https://github.com/acme/repo/pull/12")
+
+    # Only the precondition read happened: the blind arming mutation that 503s
+    # must never be dispatched for this state.
+    run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("merge_state", ["CLEAN", "UNSTABLE", "HAS_HOOKS"])
+async def test_auto_merge_github_merges_already_mergeable_only_when_confirmed(
+    monkeypatch, merge_state: str
+) -> None:
+    """With consent, an already-mergeable GitHub PR is merged NOW, not armed.
+
+    The confirm answer dispatches ``mergePullRequest`` (immediate merge), never
+    ``enablePullRequestAutoMerge`` -- which GitHub would reject for this state.
+    """
+    node = _github_already_mergeable_node(merge_state)
+    run = AsyncMock(side_effect=[node, {}])
+    monkeypatch.setattr(source, "_run_json", run)
+    url = "https://github.com/acme/repo/pull/12"
+    source._CACHE[url] = (0.0, 21, {"provider": "github"})
+
+    try:
+        result = await source.enable_pull_request_auto_merge(
+            url, confirm_immediate_merge=True
+        )
+        assert result == "squash"
+    finally:
+        source._CACHE.clear()
+
+    mutation_argv = run.await_args_list[1].args
+    assert any("mergePullRequest" in part for part in mutation_argv)
+    assert not any("enablePullRequestAutoMerge" in part for part in mutation_argv)
+    assert "pullRequestId=PR_node1" in mutation_argv
+    assert "mergeMethod=SQUASH" in mutation_argv
+    # The merge is pinned to the exact head the read returned, so a push landing
+    # between the read and this dispatch makes GitHub reject it rather than
+    # merging a head the operator never saw.
+    assert any("expectedHeadOid" in part for part in mutation_argv)
+    assert "head=deadbeef00" in mutation_argv
+    assert url not in source._CACHE
+
+
+@pytest.mark.asyncio
+async def test_auto_merge_github_refuses_immediate_merge_without_a_head_oid(
+    monkeypatch,
+) -> None:
+    """A confirmed immediate merge needs the read head to pin to; absent it, refuse.
+
+    ``expectedHeadOid`` is required for the pin, so a node response that carries no
+    ``headRefOid`` must raise rather than dispatch an unpinned merge.
+    """
+    node = _github_already_mergeable_node("CLEAN")
+    node["data"]["repository"]["pullRequest"].pop("headRefOid")
+    run = AsyncMock(side_effect=[node, {}])
+    monkeypatch.setattr(source, "_run_json", run)
+
+    with pytest.raises(source.SourceProviderError, match="head commit"):
+        await source.enable_pull_request_auto_merge(
+            "https://github.com/acme/repo/pull/12", confirm_immediate_merge=True
+        )
+
+    # Only the precondition read happened; no unpinned merge was dispatched.
+    run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("merge_state", ["BLOCKED", "BEHIND", "UNKNOWN", ""])
+async def test_auto_merge_github_still_arms_when_something_is_pending(
+    monkeypatch, merge_state: str
+) -> None:
+    """A PR with work left to wait for still ARMS auto-merge, unchanged.
+
+    The already-mergeable handshake must not swallow the ordinary case: a state
+    other than ``CLEAN``/``UNSTABLE`` dispatches ``enablePullRequestAutoMerge``
+    with no confirmation required.
+    """
+    node = _github_already_mergeable_node(merge_state)
+    run = AsyncMock(side_effect=[node, {}])
+    monkeypatch.setattr(source, "_run_json", run)
+
+    result = await source.enable_pull_request_auto_merge(
+        "https://github.com/acme/repo/pull/12"
+    )
+    assert result == "squash"
+
+    mutation_argv = run.await_args_list[1].args
+    assert any("enablePullRequestAutoMerge" in part for part in mutation_argv)
+
+
+@pytest.mark.asyncio
+async def test_github_pull_request_node_query_requests_merge_state_status() -> None:
+    """The node query must fetch ``mergeStateStatus`` or the handshake is blind.
+
+    Without this field the GitHub branch cannot tell "already mergeable" from
+    "still pending" and falls back to dispatching the arming mutation blind.
+    """
+    assert "mergeStateStatus" in source._GITHUB_PULL_REQUEST_NODE_QUERY
+
+
 @pytest.mark.asyncio
 async def test_auto_merge_gitlab_dispatches_merge_when_pipeline_succeeds(monkeypatch) -> None:
     run = AsyncMock(side_effect=[{"head_pipeline": {"status": "running"}}, {}])
