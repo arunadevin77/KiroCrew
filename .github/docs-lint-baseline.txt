@@ -282,15 +282,8 @@ line-ref	docs/request-for-change/rfc-perpetual-agent.md	apps/builtins/mochi/back
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	ask_question.py:203
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	autonudge.py:457
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	autonudge.py:822
-line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:111
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:114
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:193
-line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:201
-line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:2332
-line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:2351
-line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:2407
-line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:321
-line-ref	docs/request-for-change/rfc-perpetual-agent.md	cron.py:345
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	dashboard/handlers/ask_question.py:127
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	heartbeat.py:39
 line-ref	docs/request-for-change/rfc-perpetual-agent.md	mcp_core.py:758

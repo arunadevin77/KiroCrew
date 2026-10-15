@@ -248,7 +248,9 @@ def test_the_spawn_gate_does_not_read_the_posture_tier() -> None:
     }
     assert not {"cached_admission_check", "admission_check"} & names
     assert not hasattr(subagent_mod, "cached_admission_check")
-    cron = pathlib.Path(subagent_mod.__file__).with_name("cron.py").read_text(encoding="utf-8")
+    cron = (
+        pathlib.Path(subagent_mod.__file__).parent / "cron_service/service" / "wake_timer.py"
+    ).read_text(encoding="utf-8")
     assert "admission_check" in cron
 
 

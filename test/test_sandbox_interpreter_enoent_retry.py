@@ -666,8 +666,9 @@ class TestARefusedOverlapIsNotPersistedAsASuccessfulRun:
 
         If this ever stops holding, the assertions above are guarding nothing.
         """
-        cron_src = pathlib.Path(importlib.import_module("kiro_crew.cron").__file__).read_text(
-            encoding="utf-8"
+        cron_src = "".join(
+            pathlib.Path(importlib.import_module(name).__file__).read_text(encoding="utf-8")
+            for name in ("kiro_crew.cron", "kiro_crew.cron_service.service.run_execution")
         )
         assert 'if job.last_status != "error":' in cron_src
         assert "job.record_success()" in cron_src
@@ -1183,8 +1184,16 @@ class TestSpawnOnlyCancellationIsReportedHonestly:
 
     @staticmethod
     def _cron_source() -> str:
-        return pathlib.Path(importlib.import_module("kiro_crew.cron").__file__).read_text(
-            encoding="utf-8"
+        import pkgutil
+
+        service = importlib.import_module("kiro_crew.cron_service.service")
+        names = (
+            "kiro_crew.cron",
+            *(f"{service.__name__}.{info.name}" for info in pkgutil.iter_modules(service.__path__)),
+        )
+        return "".join(
+            pathlib.Path(importlib.import_module(name).__file__).read_text(encoding="utf-8")
+            for name in names
         )
 
     def test_the_control_flow_reader_is_gated_on_the_job_being_an_agent_job(self):

@@ -1108,7 +1108,7 @@ class TestClaimBackstopRetainsAnUnstartedOneShot:
 
     Only the first is a never-started run. ``abandon()`` is the sole thing that
     separates them -- it reports whether the payload had started -- and
-    ``cron.py``'s delete site reads ``run_never_started`` to decide whether a
+    the cron service's delete site reads ``run_never_started`` to decide whether a
     ``delete_after_run`` job is retained or consumed.
 
     Both directions are asserted, plus the deny path, because each of the three
@@ -1302,7 +1302,7 @@ class TestACancellationAtTheClaimAwaitKeepsItsOneShot:
     ``asyncio.TimeoutError``, and not the trailing ``except Exception``. The
     shared ``finally`` did call ``handoff.abandon()``, but DISCARDED its return,
     which is the one bit separating "the payload never started" from "the payload
-    ran". So a shutdown or wake deadline landing mid-vet reached ``cron.py``'s
+    ran". So a shutdown or wake deadline landing mid-vet reached the cron service's
     delete site with neither ``run_never_started`` nor ``fire_time_denied`` set,
     and a ``delete_after_run`` job was consumed having never executed.
 

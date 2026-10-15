@@ -477,7 +477,7 @@ and use the phase offset for anything longer.
 ### Bounded concurrency
 
 The scheduler will not overlap a job with itself: the due-scan skips any job
-that holds a run claim (`is_running`, `src/kiro_crew/cron.py`), so a slow run
+that holds a run claim (`is_running`, `src/kiro_crew/cron_service/service/run_registry.py`), so a slow run
 delays its own next tick rather than doubling up. What is not bounded is what
 you do inside one run. There is no per-app cap on sessions or subagents today;
 per-app quotas are still a draft phase in

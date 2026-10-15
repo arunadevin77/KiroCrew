@@ -47,6 +47,12 @@ def _artifact_store_modules():
     return sorted(p.name for p in pkg.glob("artifacts*.py"))
 
 
+def _cron_service_modules():
+    """Every module ``CronService`` binds its members from, relative to the package root."""
+    pkg = Path(ev.__file__).resolve().parent.parent / "cron_service" / "service"
+    return sorted(f"cron_service/service/{p.name}" for p in pkg.glob("*.py"))
+
+
 def _named(rec, name):
     return [c for c in rec.counters if c["name"] == name]
 
@@ -250,7 +256,7 @@ class TestCallSitesAreWired:
 
     OWNERS = {
         "SUBAGENTS_SPAWNED": "subagent_manager/admission/pump.py",
-        "CRON_FIRES": "cron.py",
+        "CRON_FIRES": "cron_service/service/run_execution.py",
         "ARTIFACTS_CREATED": "artifacts_writes.py",
         "WORKFLOW_RUNS": "workflows/runner.py",
         "CONTEXT_COMPACTIONS": "session_compaction.py",
@@ -305,6 +311,7 @@ class TestAttributeValuesAreBounded:
             # leave a sibling's future emit unscanned.
             *_admission_modules(),
             "cron.py",
+            *_cron_service_modules(),
             *_artifact_store_modules(),
             "workflows/runner.py",
             "session_compaction.py",

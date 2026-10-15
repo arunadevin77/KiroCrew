@@ -158,7 +158,7 @@ class TestSlackRemoveAllAudit:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# One-shot auto-removal: deferred drain + delete_after_run consume (cron.py)
+# One-shot auto-removal: deferred drain + delete_after_run consume (``CronService``)
 # ──────────────────────────────────────────────────────────────────────
 class _SelRecorder:
     def __init__(self) -> None:

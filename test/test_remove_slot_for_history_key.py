@@ -903,8 +903,23 @@ class TestALiveCronPrincipalKeepsItsJobs:
         assert cron_job_id_from_session_key("slack:1785370133.085469") == ""
 
     def test_the_release_path_shares_the_stores_one_key_parser(self):
-        """A second parser in cron.py could drift from the MCP surface's reading."""
-        source = inspect.getsource(cron_module)
+        """A second parser in cron.py or its service owners could drift from the MCP
+        surface's reading."""
+        import importlib
+        import pkgutil
+
+        from kiro_crew.cron_service import service
+
+        source = "".join(
+            inspect.getsource(module)
+            for module in (
+                cron_module,
+                *(
+                    importlib.import_module(f"{service.__name__}.{info.name}")
+                    for info in pkgutil.iter_modules(service.__path__)
+                ),
+            )
+        )
         assert source.count("def cron_job_id_from_session_key") == 1
         assert "def _cron_job_id_from_session_key" not in source
 

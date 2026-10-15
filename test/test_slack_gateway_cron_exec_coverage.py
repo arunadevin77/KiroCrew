@@ -1063,7 +1063,7 @@ class TestTheVetIsAnAccountedBudgetTerm:
     def test_every_term_spent_inside_the_run_budget_is_accounted_for(self):
         """Every deadline bounding a run must carry a term for each thing spent inside it.
 
-        ``cron.py``'s own accounting names three: the subprocess bound, the pool
+        The cron service's own accounting names three: the subprocess bound, the pool
         queue wait, and the fire-time gate.  The claim-time vet is a fourth --
         it runs inside the worker, inside the same deadline -- and asserting on
         the helper alone would pass with the term missing from the deadline, so
@@ -1077,36 +1077,54 @@ class TestTheVetIsAnAccountedBudgetTerm:
         exactly that drift.  Parsed with ``ast`` so the assertion survives the
         expression being wrapped across lines.
         """
-        from kiro_crew import cron as cron_mod
+        import importlib
+        import pkgutil
 
-        tree = ast.parse(Path(cron_mod.__file__).read_text(encoding="utf-8"))
+        from kiro_crew.cron_service import service
+
+        # Every module the class binds members from is read: the two sums live in
+        # service owners and read the helpers through the facade (``seams.<name>``),
+        # where tests patch them.
         owed = {"_pool_queue_allowance", "_gate_budget_allowance", "_vet_allowance"}
-        run_deadlines: list[tuple[int, set[str]]] = []
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
-                continue
-            if not any(isinstance(t, ast.Name) and t.id == "deadline" for t in node.targets):
-                continue
-            called = {
-                child.func.id
-                for child in ast.walk(node.value)
-                if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
-            }
-            # A RUN deadline is one that already accounts for at least one term.
-            # That excludes the file-lock spin deadline (``time.monotonic() +
-            # timeout``), which bounds a lock acquisition rather than a run, and
-            # it needs no magic count that would rot as the file changes.
-            if called & owed:
-                run_deadlines.append((node.lineno, called & owed))
+        run_deadlines: list[tuple[str, int, set[str]]] = []
+        for module in (
+            "kiro_crew.cron",
+            *(f"{service.__name__}.{info.name}" for info in pkgutil.iter_modules(service.__path__)),
+        ):
+            path = Path(importlib.import_module(module).__file__)
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not isinstance(node, ast.Assign):
+                    continue
+                if not any(isinstance(t, ast.Name) and t.id == "deadline" for t in node.targets):
+                    continue
+                called = {
+                    child.func.id if isinstance(child.func, ast.Name) else child.func.attr
+                    for child in ast.walk(node.value)
+                    if isinstance(child, ast.Call)
+                    and (
+                        isinstance(child.func, ast.Name)
+                        or (
+                            isinstance(child.func, ast.Attribute)
+                            and isinstance(child.func.value, ast.Name)
+                            and child.func.value.id == "seams"
+                        )
+                    )
+                }
+                # A RUN deadline is one that already accounts for at least one term.
+                # That excludes the file-lock spin deadline (``time.monotonic() +
+                # timeout``), which bounds a lock acquisition rather than a run, and
+                # it needs no magic count that would rot as the file changes.
+                if called & owed:
+                    run_deadlines.append((path.name, node.lineno, called & owed))
 
         assert len(run_deadlines) >= 2, (
             "expected at least the execution guard and the reaper sweep to bound "
             f"a run; found {len(run_deadlines)} -- this check may have gone vacuous"
         )
-        for lineno, terms in run_deadlines:
+        for filename, lineno, terms in run_deadlines:
             missing = owed - terms
             assert not missing, (
-                f"the run deadline at cron.py:{lineno} does not account for "
+                f"the run deadline at {filename}:{lineno} does not account for "
                 f"{sorted(missing)}; a term spent inside it but absent from it means "
                 "this deadline pre-empts the one that does carry it"
             )

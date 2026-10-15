@@ -92,7 +92,7 @@ async def _await_cron_fire_time_gate(
     Bounding the wait below the wake budget makes starvation surface as
     ``CronQueueTimeout`` BEFORE the deadline can fire.  That is what makes the
     retention marker reachable: ``starved`` is reported to the caller and
-    ``run_never_started`` is set here, which ``cron.py``'s delete site honours.
+    ``run_never_started`` is set here, which the cron service's delete site honours.
     The marker is deliberately not
     ``fire_time_denied`` -- that flag also parks an at-job disabled and records
     the event as a policy denial, and pool capacity is neither.
@@ -239,7 +239,7 @@ async def _pre_create_cron_slot(dashboard_state: "DashboardState", job: CronJob)
     window would let any failure there kill the run the tab was meant to serve —
     and worse than killing it: ``_execute`` clears ``run_never_started``
     before invoking this callback and its ``except`` arm never re-arms it, so
-    an error propagating from here would reach ``cron.py``'s delete site with
+    an error propagating from here would reach the cron service's delete site with
     the retention marker down, and a ``delete_after_run`` one-shot — the DEFAULT
     shape of an at-scheduled job — would be consumed by a run that never
     dispatched.

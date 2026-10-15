@@ -9606,7 +9606,7 @@ class TestParentEndCancelsItsChildren:
             # The user asked the agent to forget the conversation.
             "dashboard/handlers_channel.py",
             # A cancelled cron job's conversation is over.
-            "cron.py",
+            "cron_service/service/run_kill.py",
             # Cancel cleanup ends every step conversation of the run.
             "taskrunner.py",
             # The pool starts a NEW conversation on a pooled key.

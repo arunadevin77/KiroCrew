@@ -74,7 +74,6 @@
 2798 src/kiro_crew/crew_log/entry_types.py
 2260 src/kiro_crew/crew_log/session_tree_projection.py
 5054 src/kiro_crew/crew_log/store.py
-5580 src/kiro_crew/cron.py
 3161 src/kiro_crew/cron_script.py
 2643 src/kiro_crew/dashboard/change_cards.py
 3398 src/kiro_crew/dashboard/chat_folders.py

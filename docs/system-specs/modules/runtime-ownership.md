@@ -207,7 +207,7 @@ than blurred:
 |---|---|
 | `session_pid._sync_kill_provider` — the funnel the session layer's hard-kill sites reach | `test_kill_chokepoint_ratchet.py`'s `ATTRIBUTED_KILL_PATHS`: must call the gate, must pass `reason` and `caller`, must act on the verdict |
 | `acp.runtime.AcpRuntime.kill` | same |
-| `cron._sigkill_session` | convention |
+| `cron_service.service.run_kill._sigkill_session` (bound as `CronService._sigkill_session`; it passes `caller="cron._sigkill_session"`) | convention |
 | `session_cleanup._kill_authorized` | convention |
 | `session_scope_reap._stop_and_signal_members` | convention |
 | `subagent_manager.monitoring._reconcile_orphans_impl` | convention |

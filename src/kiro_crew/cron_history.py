@@ -559,7 +559,7 @@ class CronHistoryStore:
     async def append(self, record: CronRunRecord) -> None:
         """Write record to job file and index."""
         # Cap fields
-        # The ONE truncation site for a summary: cron.py's run, timeout and
+        # The ONE truncation site for a summary: the cron service's run, timeout and
         # cancel recorders all hand the whole text over uncut, so the
         # configured cap and the keep-the-facts rule apply once, here. A
         # caller that pre-slices defeats both.
