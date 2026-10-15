@@ -687,22 +687,40 @@ Writer: `apps/bridges.py::_app_resource_root`.
 ### 5.1 Resource-path containment is host-independent and flavour-explicit
 
 Every manifest resource path (`agents`/`skills`/`sops`, `ui.entry`,
-`ui.pages[].entryPoint`, `backend.entryPoint`) is joined onto the app root, so
-`manifest._path_escapes_app_root` refuses any path that could relocate that join.
+`ui.pages[].entryPoint`, `backend.entryPoint`, `contributes.panelTabs[].entry`,
+session-control `entryPoint`) is joined onto the app root, so
+`manifest._app_path_refusal` refuses any path that could relocate that join.
 It applies three checks, and the two lexical ones run **first and unconditionally**
 — before, and independent of, whether `app_root` is known:
 
 1. `_is_rooted_path` — `PureWindowsPath(p).drive or .root`.
 2. `_has_dotdot_segment` — a `..` segment under **either** path flavour.
-3. Canonical containment (only when `app_root` is given) — `resolve()` +
-   `is_relative_to`, which catches what no lexical check can see: a symlink or
-   reparse point inside the root whose target leaves it.
+3. Canonical containment (only when `app_root` is given) — `hooks.screen_file_path`
+   on the resource and on the root, then `is_relative_to`, which catches what no
+   lexical check can see: a symlink or reparse point inside the root whose target
+   leaves it. The screen reads each link's own target before anything follows it.
 
+Each declared path gets one `Containment` answer: inside the root, outside it,
+refused by the screen (lasting), or unchecked (one of the screen's checks did not
+complete). The callers act on it as follows:
+
+| Caller | Refused | Unchecked |
+|---|---|---|
+| `AppManifest.validate` (install) | error `is refused by the path screen` | error `could not be checked against the app root`, or the `unchecked` list when the caller passes one |
+| `discovery.discover_builtin_apps` | builtin skipped | builtin stays listed, so it is not read as orphaned |
+| `bridges._register_agents` / `_register_skills` | skipped, not retried | skipped and recorded for retry |
+| `bridges._prune_stale_app_resources` (agents) | not a current link; the prune goes on | prune aborted, existing configs kept |
+| `file_entry_point_refusal` (backend spawn) | `refused by the path screen` | `path resolution failed` |
+| `_declared_agent_names` / `manager._app_agent_names` | no name | no name on this pass; the next pass asks again |
+
+A `contributes.commands[].agent` that no checked agent path declares is an install
+error. When an agent path was unchecked, that miss is reported as unchecked too, so
+builtin discovery keeps the app listed. An app root the screen refuses links no
+agent, so the agent prune removes every `<app>--*.json` config it had registered.
+
+The root is screened once per pass, so each declared path costs one screen call.
 The app listing's command-agent containment (`contain_command_agents`, which runs on
-every `GET /api/apps`) uses `_path_escapes_app_root_screened`: the same lexical
-checks, then `hooks.validate_file_path` on both the resource and the root before
-anything is followed, so a manifest-controlled link to an untrusted UNC share is
-rejected without opening an outbound connection. The command-agent home-directory
+every `GET /api/apps`) uses the same `_app_path_refusal`. The command-agent home-directory
 exemption compares only canonical paths returned by the same screen; a refused
 directory has no identity key and cannot qualify, and project scanning then
 supplies its link-refusal reason. Ordinary local aliases of the installed agents

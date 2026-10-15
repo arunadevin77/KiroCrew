@@ -659,6 +659,94 @@ class TestValidateFilePath:
         )
         assert validate_file_path(str(alias)) is not None
 
+    @pytest.mark.parametrize("where", ["ancestor", "leaf"])
+    def test_a_link_whose_target_cannot_be_read_is_unchecked(self, tmp_path, monkeypatch, where):
+        """A Windows link whose own target ``os.readlink`` cannot read is declined
+        as UNCHECKED: the screen did not finish, so a caller that keeps state per
+        path retries it. ``validate_file_path`` still answers ``None``."""
+        from kiro_crew import hooks as hooks_mod
+        from kiro_crew import platform_compat
+
+        def _boom(_p):  # pragma: no cover
+            raise AssertionError("realpath ran past a link the screen could not read")
+
+        def _unreadable(_p):
+            raise PermissionError("reparse data unreadable")
+
+        raw = str(tmp_path / "doc.txt")
+        self._windows(monkeypatch, realpath=_boom)
+        monkeypatch.setattr(
+            platform_compat,
+            "first_linked_ancestor",
+            (lambda _p: str(tmp_path)) if where == "ancestor" else (lambda _p: None),
+        )
+        monkeypatch.setattr(platform_compat, "is_link_or_junction", lambda _p: where == "leaf")
+        monkeypatch.setattr(hooks_mod.os, "readlink", _unreadable, raising=False)
+
+        assert hooks_mod.screen_file_path(raw) is hooks_mod.PathDecline.UNCHECKED
+        assert validate_file_path(raw) is None
+
+    def test_a_link_target_the_screen_does_not_accept_is_refused(self, tmp_path, monkeypatch):
+        """A link target the screen does not accept is a lasting decline."""
+        from kiro_crew import hooks as hooks_mod
+        from kiro_crew import platform_compat
+
+        self._windows(monkeypatch)
+        monkeypatch.setattr(platform_compat, "first_linked_ancestor", lambda _p: None)
+        monkeypatch.setattr(platform_compat, "is_link_or_junction", lambda _p: True)
+        monkeypatch.setattr(
+            hooks_mod.os, "readlink", lambda _p: r"\\other-host\share\doc.txt", raising=False
+        )
+
+        raw = str(tmp_path / "doc.txt")
+        assert hooks_mod.screen_file_path(raw) is hooks_mod.PathDecline.REFUSED
+
+    @pytest.mark.parametrize(
+        ("second_reading", "expected"),
+        [
+            ("Blocked: access to sensitive path: {p}", "REFUSED"),
+            ("{stall}. Path: {p!r}", "UNCHECKED"),
+            (None, "UNCHECKED"),
+        ],
+        ids=["match", "stall", "clean-on-second-reading"],
+    )
+    def test_the_decline_kind_follows_the_refusal_wording(
+        self, tmp_path, monkeypatch, second_reading, expected
+    ):
+        from kiro_crew import hooks as hooks_mod
+        from kiro_crew.security import UNVERIFIABLE_PATH_PREFIX
+
+        def refusal(p, base_dir=None):
+            if second_reading is None:
+                return None
+            return second_reading.format(p=p, stall=UNVERIFIABLE_PATH_PREFIX)
+
+        target = _write(tmp_path / "doc.txt", "x")
+        monkeypatch.setattr(hooks_mod, "is_sensitive_path", lambda _p: True)
+        monkeypatch.setattr(hooks_mod, "sensitive_path_refusal", refusal)
+
+        assert hooks_mod.screen_file_path(str(target)) is getattr(hooks_mod.PathDecline, expected)
+
+    def test_validate_file_path_reads_the_sensitive_list_once(self, tmp_path, monkeypatch):
+        from kiro_crew import hooks as hooks_mod
+
+        asked: list[str] = []
+        target = _write(tmp_path / "doc.txt", "x")
+        monkeypatch.setattr(hooks_mod, "is_sensitive_path", lambda _p: True)
+        monkeypatch.setattr(
+            hooks_mod, "sensitive_path_refusal", lambda p, base_dir=None: asked.append(p)
+        )
+
+        assert validate_file_path(str(target)) is None
+        assert asked == []
+
+    def test_an_accepted_path_is_the_validated_path(self, tmp_path):
+        from kiro_crew import hooks as hooks_mod
+
+        target = _write(tmp_path / "doc.txt", "x")
+
+        assert hooks_mod.screen_file_path(str(target)) == validate_file_path(str(target))
+
     def test_a_multi_hop_chain_landing_on_unc_is_refused(self, tmp_path, monkeypatch):
         r"""A leaf link -> LOCAL link -> UNC chain must be refused hop by hop:
         screening only the first target would launder the probe through the

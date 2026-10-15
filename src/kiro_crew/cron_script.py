@@ -1885,7 +1885,7 @@ def _bundle_relative_spec(module_part: str, app_root: Path) -> str:
     judged by containment rather than silently re-rooted.
 
     A ``..`` segment is refused LEXICALLY, before any join, in the same order and
-    for the same reason as ``apps.manifest._path_escapes_app_root``: the verdict
+    for the same reason as ``apps.manifest._app_path_refusal``: the verdict
     is then identical on every host, where deferring to ``resolve()`` would make
     it host-dependent (on POSIX ``..\\evil.py`` is one odd filename that stays
     inside the root; on Windows it escapes). Canonical containment in the caller

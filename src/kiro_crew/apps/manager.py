@@ -2960,12 +2960,13 @@ def _app_agent_names(app_name: str, manifest: AppManifest, app_root: Path) -> se
     screened read refuses (:func:`_owner_json`), contribute nothing.
     """
     from kiro_crew.apps import bridges  # bridges imports this module
-    from kiro_crew.apps.manifest import _path_escapes_app_root_screened
+    from kiro_crew.apps.manifest import _app_path_refusal, screen_app_path
 
     names: set[str] = set()
+    screened_root = screen_app_path(app_root) if manifest.agents else None
     for rel in manifest.agents:
         rel = str(rel)
-        if not rel or _path_escapes_app_root_screened(rel, app_root):
+        if not rel or _app_path_refusal(rel, app_root, screened_root):
             continue
         data = _owner_json(app_root / rel)
         if data is None:

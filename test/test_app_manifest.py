@@ -49,19 +49,19 @@ def _valid_manifest(**overrides) -> dict:
 @pytest.mark.parametrize("refuse_root", [False, True])
 def test_resource_containment_does_not_resolve_refused_path(tmp_path, monkeypatch, refuse_root):
     from kiro_crew import hooks
-    from kiro_crew.apps.manifest import _path_escapes_app_root_screened
+    from kiro_crew.apps.manifest import PATH_SCREEN_REFUSAL, _app_path_refusal
 
     root = tmp_path / "app"
     root.mkdir()
     candidate = root / "agent.json"
     candidate.write_text("{}")
     refused = root if refuse_root else candidate
-    validate = hooks.validate_file_path
+    validate = hooks.screen_file_path
     resolve = Path.resolve
     resolved = []
 
-    def screen(raw):
-        return None if Path(raw) == refused else validate(raw)
+    def screen(raw, **kwargs):
+        return hooks.PathDecline.REFUSED if Path(raw) == refused else validate(raw, **kwargs)
 
     def record(path, *args, **kwargs):
         if path == refused:
@@ -69,11 +69,11 @@ def test_resource_containment_does_not_resolve_refused_path(tmp_path, monkeypatc
         return resolve(path, *args, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(hooks, "validate_file_path", screen)
+        patch.setattr(hooks, "screen_file_path", screen)
         patch.setattr(Path, "resolve", record)
-        escapes = _path_escapes_app_root_screened("agent.json", root)
+        refusal = _app_path_refusal("agent.json", root)
     assert resolved == []
-    assert escapes is True
+    assert refusal == PATH_SCREEN_REFUSAL
 
 
 class TestValidation:

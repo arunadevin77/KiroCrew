@@ -5591,7 +5591,7 @@ wedged owner frame still reads as a gate stall.
 | `search_targets` | The file-search deny target: the scope-only grammar, its percent encoding, the home-variable substitution and the lexical root normalization |
 | `windows_paths` | UNC shape, the extended-length fold, the trusted-root probe gate, OS-layer representability and one link target's normalization |
 | `descriptor_identity` | Whether the descriptor a reader holds is still the regular file its validated name admitted: the pinned witness walk, the macOS case alias, the hardlink sibling and kernel-pathname containment |
-| `safe_reads` | `validate_file_path` and the guarded readers — the text and byte reads, the identity samples, the no-hardlink bounded read, the prefix sniff and the private copy |
+| `safe_reads` | `screen_file_path` (the path screen, which says whether a decline is lasting, `PathDecline.REFUSED`, or a check that did not complete, `PathDecline.UNCHECKED`), `validate_file_path` (the same screen with every decline as `None`) and the guarded readers — the text and byte reads, the identity samples, the no-hardlink bounded read, the prefix sniff and the private copy |
 | `pinned_writes` | The descriptor-pinned replace and its two entry points, including the compare-and-swap hash and the directory-fd-relative staged rename |
 | `internal_reads` | The edition registration seam, the fixed-path sensitive read and the two SEL audit entry points |
 | `script_validation` | The fail-soft timeout normalization and the raising field validator both store write paths share |

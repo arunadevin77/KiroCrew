@@ -97,7 +97,7 @@ Verified on origin/main at the commit named in `audited-at`.
 }
 ```
 
-- `id` matches `TEMPLATE_ID_RE`. `path` is relative to the app root and validated by the same helpers every other manifest path uses (`_is_rooted_path`, `_has_dotdot_segment`, `_path_escapes_app_root`). It must end in `.html`, stay under a per-file byte cap (proposed 512 KiB, well under the 4 MiB the sandbox document channel accepts), and contain `DATA_MARKER`. All three are install-time validation errors, so the author sees them before a crew does.
+- `id` matches `TEMPLATE_ID_RE`. `path` is relative to the app root and validated by the same helpers every other manifest path uses (`_is_rooted_path`, `_has_dotdot_segment`, `_app_path_refusal`). It must end in `.html`, stay under a per-file byte cap (proposed 512 KiB, well under the 4 MiB the sandbox document channel accepts), and contain `DATA_MARKER`. All three are install-time validation errors, so the author sees them before a crew does.
 - `title` is display text for the template picker. `lifecycle` opts the template into capability 3's frame messages and defaults to `false`.
 - At most 8 entries per app, unique ids, with the same malformed-input flags `Contributes` already carries for `commands` (`bad_*`, `dropped_*`) so a typo is an error rather than a silent drop.
 - The field is named `crewWebviewTemplates`, not `panelTemplates`, because `contributes.panelTabs` already names a different surface.

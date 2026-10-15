@@ -11,6 +11,7 @@ app-specific fields.
 
 from __future__ import annotations
 
+import enum
 import json
 import os
 import posixpath
@@ -192,13 +193,87 @@ def _has_dotdot_segment(rel_path: str) -> bool:
     return ".." in PurePosixPath(rel_path).parts or ".." in PureWindowsPath(rel_path).parts
 
 
-def _path_escapes_app_root(rel_path: str, app_root: Path | None) -> bool:
-    """Return True if ``rel_path`` is an unsafe app-resource path.
+class Containment(enum.Enum):
+    """Where a declared app-resource path lands, as the shared path screen sees it.
 
-    Unsafe = rooted (drive-qualified, POSIX-absolute, or UNC), or containing a
-    ``..`` segment, or — resolved against ``app_root`` — escaping ``app_root``
-    (canonical containment, matching the runtime checks in ``module_loader`` /
-    ``bridges``).
+    ``REFUSED`` is a lasting answer from the screen (the path or its link target
+    is one it never accepts); ``UNCHECKED`` is a screen check that did not
+    complete, which a later attempt may resolve.
+    """
+
+    INSIDE = "inside"
+    OUTSIDE = "outside"
+    REFUSED = "refused"
+    UNCHECKED = "unchecked"
+
+
+def screen_app_path(path: Path) -> str | Containment:
+    """``path`` canonicalised by :func:`kiro_crew.hooks.screen_file_path`.
+
+    The screen reads a link's own target before anything follows the link. A path
+    it declines comes back as :attr:`Containment.REFUSED` when the decline is
+    lasting and as :attr:`Containment.UNCHECKED` when one of its checks did not
+    complete. An ``OSError`` or ``ValueError`` from the screen is also
+    :attr:`Containment.UNCHECKED`: the path was not judged.
+    """
+    from kiro_crew import hooks
+
+    try:
+        screened = hooks.screen_file_path(str(path))
+    except (OSError, ValueError):
+        return Containment.UNCHECKED
+    if isinstance(screened, str):
+        return screened
+    if screened is hooks.PathDecline.UNCHECKED:
+        return Containment.UNCHECKED
+    return Containment.REFUSED
+
+
+def contained_in_screened_root(candidate: Path, screened_root: str | Containment) -> Containment:
+    """Whether ``candidate`` stays inside ``screened_root``, :func:`screen_app_path`'s root answer.
+
+    A caller checking several paths against one root screens the root once and
+    passes the answer here, so each path costs one screen call. A root the screen
+    declined gives every candidate that same answer.
+    """
+    if isinstance(screened_root, Containment):
+        return screened_root
+    resolved = screen_app_path(candidate)
+    if isinstance(resolved, Containment):
+        return resolved
+    if Path(resolved).is_relative_to(screened_root):
+        return Containment.INSIDE
+    return Containment.OUTSIDE
+
+
+def app_root_containment(candidate: Path, app_root: Path) -> Containment:
+    """:func:`contained_in_screened_root` for a single path, screening ``app_root`` too."""
+    return contained_in_screened_root(candidate, screen_app_path(app_root))
+
+
+#: Refusal wording for an app-resource path that leaves the app root.
+PATH_TRAVERSAL_REFUSAL = "contains path traversal"
+#: Refusal wording for an app-resource path the shared screen does not accept.
+PATH_SCREEN_REFUSAL = "is refused by the path screen"
+#: Refusal wording for an app-resource path the shared screen could not finish
+#: checking (a slow disk, a busy resolver, a link it could not read). Kept apart
+#: from the two refusals above because the manifest may be fine and a later
+#: attempt may pass.
+PATH_UNVERIFIED_REFUSAL = "could not be checked against the app root"
+
+
+def _app_path_refusal(
+    rel_path: str, app_root: Path | None, screened_root: str | Containment | None = None
+) -> str:
+    """Why ``rel_path`` is not an acceptable app-resource path, or ``""`` when it is.
+
+    Refused as :data:`PATH_TRAVERSAL_REFUSAL` when it is rooted (drive-qualified,
+    POSIX-absolute, or UNC), contains a ``..`` segment, or — canonicalised against
+    ``app_root`` — leaves ``app_root`` (canonical containment, matching the runtime
+    checks in ``module_loader`` / ``bridges``). Refused as
+    :data:`PATH_SCREEN_REFUSAL` when the shared screen does not accept it, and as
+    :data:`PATH_UNVERIFIED_REFUSAL` when the screen could not finish checking it.
+    ``screened_root`` is :func:`screen_app_path`'s answer for ``app_root``.
 
     The lexical checks run BEFORE the canonical one and regardless of whether
     ``app_root`` is known, so a manifest is judged identically on every host.
@@ -209,56 +284,39 @@ def _path_escapes_app_root(rel_path: str, app_root: Path | None) -> bool:
     symlink or reparse point inside the root whose target leaves it.
     """
     if not rel_path:
-        return False
+        return ""
     if _is_rooted_path(rel_path) or _has_dotdot_segment(rel_path):
-        return True
+        return PATH_TRAVERSAL_REFUSAL
     if app_root is not None:
-        try:
-            resolved = (app_root / rel_path).resolve()
-            return not resolved.is_relative_to(app_root.resolve())
-        except (OSError, ValueError):
-            return True
-    return False
-
-
-def _path_escapes_app_root_screened(rel_path: str, app_root: Path | None) -> bool:
-    """:func:`_path_escapes_app_root`, with every link screened before it is followed.
-
-    The lexical checks are the same. The canonical check asks
-    :func:`kiro_crew.hooks.validate_file_path` for both the candidate and the root:
-    it reads a Windows link's own target and refuses an untrusted UNC share before
-    anything follows the link, so no outbound SMB connection is opened for a path an
-    app manifest controls. A refused screen counts as escaping. Used on the path that
-    runs on every app listing (``contain_command_agents``); install-time containment
-    keeps :func:`_path_escapes_app_root`.
-    """
-    if not rel_path:
-        return False
-    if _is_rooted_path(rel_path) or _has_dotdot_segment(rel_path):
-        return True
-    if app_root is not None:
-        from kiro_crew import hooks
-
-        try:
-            resolved = hooks.validate_file_path(str(app_root / rel_path))
-            if resolved is None:
-                return True
-            root = hooks.validate_file_path(str(app_root))
-            return root is None or not Path(resolved).is_relative_to(root)
-        except (OSError, ValueError):
-            return True
-    return False
+        if screened_root is None:
+            screened_root = screen_app_path(app_root)
+        contained = contained_in_screened_root(app_root / rel_path, screened_root)
+        if contained is Containment.UNCHECKED:
+            return PATH_UNVERIFIED_REFUSAL
+        if contained is Containment.REFUSED:
+            return PATH_SCREEN_REFUSAL
+        if contained is Containment.OUTSIDE:
+            return PATH_TRAVERSAL_REFUSAL
+    return ""
 
 
 #: ``bridges._TEMPLATE_PLACEHOLDER_RE``, duplicated because bridges imports this module.
 _AGENT_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{[A-Z][A-Z0-9_]*\}")
 
 
-def _declared_agent_names(agent_paths: list[str], app_root: Path | None) -> set[str]:
+def _declared_agent_names(
+    agent_paths: list[str],
+    app_root: Path | None,
+    unchecked: list[str] | None = None,
+    *,
+    known_refusals: dict[str, str] | None = None,
+) -> set[str]:
     """Names the app's own ``agents`` register under, for containing ``commands[].agent``.
 
-    The name a command can select: the agent JSON's explicit ``name``. A path that
-    escapes the app root contributes nothing -- registration skips it.
+    The name a command can select: the agent JSON's explicit ``name``. A path
+    :func:`_app_path_refusal` does not accept contributes nothing: registration
+    skips it. That includes a path the screen could not check yet, which vouches
+    for no name on this listing; the next listing asks the screen again.
 
     With ``app_root`` known, a spec that registration would also skip -- missing,
     unreadable, malformed, or not a JSON object -- contributes nothing either. Its
@@ -266,11 +324,27 @@ def _declared_agent_names(agent_paths: list[str], app_root: Path | None) -> set[
     resolves to whatever HOST agent carries it. Without ``app_root`` only the stem is
     known (a lexical, host-independent verdict); the app-root pass at listing time
     re-checks it against the files.
+
+    ``unchecked``, when given, collects the paths the screen could not finish
+    checking, so a caller can tell "names no agent" from "not checked yet".
+    ``known_refusals`` maps each path to the :func:`_app_path_refusal` answer the
+    caller already has for it in this pass, so no path is screened twice.
     """
     names: set[str] = set()
+    known = known_refusals if known_refusals is not None else {}
+    screened_root: str | Containment | None = None
+    if app_root is not None and any(str(rel) not in known for rel in agent_paths):
+        screened_root = screen_app_path(app_root)
     for rel in agent_paths:
         rel = str(rel)
-        if not rel or _path_escapes_app_root_screened(rel, app_root):
+        if not rel:
+            continue
+        refusal = known.get(rel)
+        if refusal is None:
+            refusal = _app_path_refusal(rel, app_root, screened_root)
+        if refusal:
+            if refusal == PATH_UNVERIFIED_REFUSAL and unchecked is not None:
+                unchecked.append(rel)
             continue
         name: Any = PurePosixPath(rel.replace("\\", "/")).stem
         if app_root is not None:
@@ -2167,7 +2241,7 @@ class PanelTabConfig:
                 got = _mirrored_len(value)
                 errors.append(f"{where}: {name} exceeds {_MAX_TITLE} characters ({got})")
         # `entry` traversal is checked in `AppManifest.validate`, which is the only
-        # scope that knows the app root -- see `_path_escapes_app_root` there.
+        # scope that knows the app root -- see `_app_path_refusal` there.
         return errors
 
 
@@ -2669,14 +2743,33 @@ class AppManifest:
     # Validation
     # -----------------------------------------------------------------
 
-    def validate(self, app_root: Path | None = None) -> list[str]:
+    def validate(
+        self, app_root: Path | None = None, *, unchecked: list[str] | None = None
+    ) -> list[str]:
         """Return list of validation errors (empty list means valid).
 
         When ``app_root`` is provided, resource paths are checked for canonical
-        containment (resolve + is_relative_to) against it; otherwise a lexical
-        check (reject absolute paths and ``..`` segments) is applied.
+        containment (screened canonicalisation + is_relative_to) against it;
+        otherwise a lexical check (reject absolute paths and ``..`` segments) is
+        applied.
+
+        When ``unchecked`` is a list, a resource path the shared screen did not
+        answer for (:data:`PATH_UNVERIFIED_REFUSAL`) is appended there instead of
+        to the returned errors, so a caller can tell "not checked" from "invalid"
+        without parsing messages.
         """
         errors: list[str] = []
+
+        screened_root = screen_app_path(app_root) if app_root is not None else None
+
+        def path_refusal(rel_path: str) -> str:
+            return _app_path_refusal(rel_path, app_root, screened_root)
+
+        def report_path(refusal: str, message: str) -> None:
+            if refusal == PATH_UNVERIFIED_REFUSAL and unchecked is not None:
+                unchecked.append(message)
+            else:
+                errors.append(message)
 
         # Required fields
         if not self.name:
@@ -2698,30 +2791,35 @@ class AppManifest:
             errors.append("missing required field: description")
 
         # Path containment check on all app-root-relative resource paths.
-        # Canonical (resolve + is_relative_to) when app_root is known; lexical
+        # Canonical (screened canonicalisation + is_relative_to) when app_root is known; lexical
         # (reject absolute + '..' segments) otherwise. Applied uniformly to
         # agents/skills/sops, ui.entry, ui.pages[].entryPoint AND
         # backend.entryPoint. (A module-style dotted backend.entryPoint such as
         # 'kiro_crew.apps.builtins.x.server' has no '..' and is not absolute, so
         # the helper never false-positives on it.)
+        agent_refusals: dict[str, str] = {}
         for path_list_name in ("agents", "skills", "sops"):
             for p in getattr(self, path_list_name):
-                if _path_escapes_app_root(str(p), app_root):
-                    errors.append(f"{path_list_name} path contains path traversal: {p!r}")
+                refusal = path_refusal(str(p))
+                if path_list_name == "agents":
+                    agent_refusals[str(p)] = refusal
+                if refusal:
+                    report_path(refusal, f"{path_list_name} path {refusal}: {p!r}")
 
-        if self.ui.entry and _path_escapes_app_root(self.ui.entry, app_root):
-            errors.append(f"ui.entry contains path traversal: {self.ui.entry!r}")
+        refusal = path_refusal(self.ui.entry)
+        if refusal:
+            report_path(refusal, f"ui.entry {refusal}: {self.ui.entry!r}")
 
-        if self.backend.entryPoint and _path_escapes_app_root(self.backend.entryPoint, app_root):
-            errors.append(
-                f"backend.entryPoint contains path traversal: {self.backend.entryPoint!r}"
-            )
+        refusal = path_refusal(self.backend.entryPoint)
+        if refusal:
+            report_path(refusal, f"backend.entryPoint {refusal}: {self.backend.entryPoint!r}")
 
         # A panel-tab entry is mounted by the same ESM host as ui.pages, so it is
         # subject to the same path-containment check.
         for tab in self.contributes.panelTabs:
-            if tab.entry and _path_escapes_app_root(tab.entry, app_root):
-                errors.append(f"contributes.panelTabs entry contains path traversal: {tab.entry!r}")
+            refusal = path_refusal(tab.entry)
+            if refusal:
+                report_path(refusal, f"contributes.panelTabs entry {refusal}: {tab.entry!r}")
 
         # UI page validation
         for page in self.ui.pages:
@@ -2729,8 +2827,9 @@ class AppManifest:
                 errors.append("ui page missing required field: route")
             if not page.label:
                 errors.append("ui page missing required field: label")
-            if page.entryPoint and _path_escapes_app_root(page.entryPoint, app_root):
-                errors.append(f"ui page entryPoint contains path traversal: {page.entryPoint!r}")
+            refusal = path_refusal(page.entryPoint)
+            if refusal:
+                report_path(refusal, f"ui page entryPoint {refusal}: {page.entryPoint!r}")
 
         # UI overlay validation
         seen_overlay_ids: set[str] = set()
@@ -2777,9 +2876,10 @@ class AppManifest:
                 errors.append(
                     f"session control contribution {ctl.id or '<unnamed>'} missing required field: entryPoint"
                 )
-            elif _path_escapes_app_root(ctl.entryPoint, app_root):
-                errors.append(
-                    f"session control contribution entryPoint contains path traversal: {ctl.entryPoint!r}"
+            elif refusal := path_refusal(ctl.entryPoint):
+                report_path(
+                    refusal,
+                    f"session control contribution entryPoint {refusal}: {ctl.entryPoint!r}",
                 )
             if ctl.statusPath and not _SESSION_CONTROL_STATUS_PATH_RE.fullmatch(
                 ctl.statusPath
@@ -2874,13 +2974,26 @@ class AppManifest:
         # `agents` are known, rather than clamped later where nobody sees it.
         commands_with_agent = [c for c in self.contributes.commands if c.agent]
         if commands_with_agent:
-            own = _declared_agent_names(self.agents, app_root)
+            unchecked_agents: list[str] = []
+            own = _declared_agent_names(
+                self.agents, app_root, unchecked_agents, known_refusals=agent_refusals
+            )
             for cmd in commands_with_agent:
-                if cmd.agent not in own:
-                    errors.append(
-                        f"contributes.commands[{cmd.id or '?'}]: agent {cmd.agent!r} is "
-                        "not one of this app's own agents (declared in `agents`)"
+                if cmd.agent in own:
+                    continue
+                if unchecked_agents:
+                    # An agent path the screen could not check may be the one that
+                    # declares this name, so the miss is not a verdict yet.
+                    report_path(
+                        PATH_UNVERIFIED_REFUSAL,
+                        f"contributes.commands[{cmd.id or '?'}]: agent {cmd.agent!r} "
+                        f"{PATH_UNVERIFIED_REFUSAL}: {', '.join(unchecked_agents)}",
                     )
+                    continue
+                errors.append(
+                    f"contributes.commands[{cmd.id or '?'}]: agent {cmd.agent!r} is "
+                    "not one of this app's own agents (declared in `agents`)"
+                )
 
         # A contributed row's endpoint is checked against the app's OWN namespace here,
         # where the name is known -- refusing it at install is what keeps a declaration
@@ -3354,19 +3467,23 @@ def file_entry_point_refusal(entry_point: str, app_root: Path) -> str:
     The spawn's own precondition (``backend.py::_start_app_backend_body``),
     spelled once: the entry must be a regular file under *app_root* whose
     resolution stays inside the root. Returns the spawn's reason -- ``"not
-    found"``, ``"escapes app root"``, ``"path resolution failed"`` -- so the
+    found"``, ``"escapes app root"``, ``"refused by the path screen"``, ``"path
+    resolution failed"`` (the screen could not finish checking it) -- so the
     spawn can log it and :func:`runtime_provisions_requirements` can treat any
     reason as "the backend provisioner never runs for this entry".
     """
     entry = app_root / entry_point
+    # Containment is asked of the shared screen before anything follows the
+    # entry's links, ``is_file`` included.
+    contained = app_root_containment(entry, app_root)
+    if contained is Containment.UNCHECKED:
+        return "path resolution failed"
+    if contained is Containment.REFUSED:
+        return "refused by the path screen"
+    if contained is Containment.OUTSIDE:
+        return "escapes app root"
     if not entry.is_file():
         return "not found"
-    try:
-        if not entry.resolve().is_relative_to(app_root.resolve()):
-            return "escapes app root"
-    except (OSError, ValueError, RuntimeError):
-        # RuntimeError: a symlink loop under Python 3.12 (ELOOP from 3.13 on).
-        return "path resolution failed"
     return ""
 
 

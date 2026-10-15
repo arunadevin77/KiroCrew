@@ -1070,16 +1070,21 @@ class TestRunAppBuild:
         `file_entry_point_refusal` of the install's preview copy), so on every
         host the two agree: what the runtime accepts the final pass waives, what
         it refuses the final pass refuses. WHICH way a 60-link path goes belongs
-        to the kernel -- the POSIX symlink budget refuses it (pinned by the
-        sibling below), while Windows reparse-point resolution has no per-walk
-        budget and answers from one host image to the next by the absolute path
-        length instead -- so no single verdict is asserted here."""
+        to the host -- the POSIX symlink budget refuses it (pinned by the
+        sibling below), and on Windows the shared path screen, which reads the
+        link chain hop by hop before anything follows it, refuses a chain past
+        its own hop budget -- so no single verdict is asserted here."""
         runtime_refusal, result, final, elapsed = await self._judge_a_deep_self_link(
             tmp_path, monkeypatch, depth
         )
         # Each judge answers with a verdict it owns -- never an escape, since the
         # link points at its own directory, and never an ordinary install error.
-        assert runtime_refusal in ("", "not found", "path resolution failed"), runtime_refusal
+        assert runtime_refusal in (
+            "",
+            "not found",
+            "path resolution failed",
+            "refused by the path screen",
+        ), runtime_refusal
         assert result["ok"] or result["code"] == registry.DESKTOP_BUILD_STEP_UNSUPPORTED, result
         assert final in ("", registry._DESKTOP_BUILD_REFUSAL)
         # The final pass says exactly what the runtime's own file check says: the
