@@ -739,8 +739,9 @@ Action labels lead with what is kept or taken.
 This replaces the generic acceptance label and duplicated selection/outcome prose.
 Parent change-kind badges say "Parent added/removed/changed this", separately from
 the impact list's Added/Removed/Changed labels and the conflict badge. The shared
-and legacy modes both say "Not following parent", with an independent-legacy-
-snapshot qualifier for the latter. The visible `local` state label is
+mode says the member runs the parent template as-is with no overrides, since it
+runs the Parent's own file and has no intent; the legacy mode says "Not following
+parent" with an own-copy qualifier. The visible `local` state label is
 Override; its API value remains `local`. The receipt then
 names each kept row under the current member, derived only from the reviewed
 selection, the server view's conflict flag and the sanitized preview projection
@@ -751,9 +752,11 @@ details for a peer member, whose rows the response does not project. An
 Inherited row that follows a Parent removal is never labelled as a kept local
 choice; it is an impact entry when its effective presence changes.
 The Follow checkbox places the unchanged-until-save and value/empty-field
-preservation guarantee beside the control; one state-carrying helper explains
-checked means overrides are editable and unchecked means read-only, replacing
-the duplicate enrollment callout. Both are accessible descriptions while the
+preservation guarantee beside the control; one helper names checking the box as
+the way to follow the parent and add the member's own overrides on top, and says
+the fields below stay read-only while it is unchecked, replacing the duplicate
+enrollment callout.
+Both are accessible descriptions while the
 checkbox's accessible name stays stable. The label explicitly targets the native
 checkbox id, so clicking its text toggles enrollment. Conflict and receipt prose wraps at
 word boundaries; long code references can break anywhere. The transport option

@@ -261,13 +261,13 @@ describe('crew capability draft editor with mocked HTTP', () => {
     view.mode = 'legacy_snapshot'
     mount(); await ready()
     expect(screen.getByRole('combobox', { name: 'Source for Search' })).toBeDisabled()
-    expect(screen.getByTestId('capability-enroll-to-edit')).toHaveTextContent('Checked: edit overrides below. Unchecked: read-only.')
+    expect(screen.getByTestId('capability-enroll-to-edit')).toHaveTextContent("Check this box to follow the parent and add this member's own overrides on top. While it is unchecked, the fields below are read-only.")
     expect(screen.queryByText('Tick “Follow the parent template” above to edit.')).toBeNull()
     expect(screen.getByText('Not following parent (own copy)')).toBeInTheDocument()
     const enroll = screen.getByRole('checkbox', { name: 'Follow the parent template' })
     // The guarantee is next to the checkbox, not buried in a long helper.
     expect(enroll.closest('label')).toHaveTextContent('Nothing changes until you save. Following keeps your values and empty fields.')
-    expect(enroll).toHaveAccessibleDescription('Nothing changes until you save. Following keeps your values and empty fields. Checked: edit overrides below. Unchecked: read-only.')
+    expect(enroll).toHaveAccessibleDescription("Nothing changes until you save. Following keeps your values and empty fields. Check this box to follow the parent and add this member's own overrides on top. While it is unchecked, the fields below are read-only.")
     expect(enroll.closest('label')).toHaveAttribute('for', enroll.id)
     expect(enroll.id).toBe('crew-capabilities-enroll')
     fireEvent.click(screen.getByText('Follow the parent template', { selector: 'span' }))
@@ -284,6 +284,23 @@ describe('crew capability draft editor with mocked HTTP', () => {
     await review()
     expect(previewBodies[0].enroll).toBe(true)
     expect(previewBodies[0].operations).toEqual([])
+  })
+
+  it('says a shared member runs the parent template as-is and names checking the box as the way to add overrides', async () => {
+    view.mode = 'shared'
+    mount(); await ready()
+    // A shared member runs the parent template's own file with no overrides of
+    // its own, so the badge says that rather than "Not following parent", and
+    // it must not read as the following badge beside the unchecked Follow box.
+    expect(screen.getByText('Parent template as-is (no overrides)')).toBeInTheDocument()
+    expect(screen.queryByText('Not following parent')).toBeNull()
+    expect(screen.queryByText('Following parent')).toBeNull()
+    const enroll = screen.getByRole('checkbox', { name: 'Follow the parent template' })
+    expect(enroll).not.toBeChecked()
+    expect(screen.getByTestId('capability-enroll-to-edit')).toHaveTextContent("Check this box to follow the parent and add this member's own overrides on top. While it is unchecked, the fields below are read-only.")
+    expect(screen.getByRole('combobox', { name: 'Source for Search' })).toBeDisabled()
+    fireEvent.click(enroll)
+    expect(screen.getByRole('combobox', { name: 'Source for Search' })).not.toBeDisabled()
   })
 
   it('lets a following member stop following the parent after a confirm', async () => {
