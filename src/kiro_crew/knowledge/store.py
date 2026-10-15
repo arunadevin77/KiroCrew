@@ -311,6 +311,8 @@ _ON_LOOP_DB_GUARD = OnLoopDBGuard(
 # the text handed to the index differs. Version 1 segments CJK characters
 # (fts5_segment_for_index) so a word inside a spaceless run is addressable.
 FTS_INDEX_VERSION = 1
+MAX_ENTITY_ALIASES = 10
+MAX_ENTITY_ALIAS_LEN = 200
 
 
 class KnowledgeBundleError(ValueError):
@@ -3170,6 +3172,133 @@ Called by ``FolderWatcher.scan_source`` when it refuses such a row, which is
             self._graph.add_node(eid, name=name, entity_type=entity_type)
         return eid
 
+    def add_entity_aliases(self, entity_id: str, new_aliases: list[str]) -> None:
+        """Atomically enrich an entity with additional alias spellings.
+
+        Contract
+        --------
+        Transaction:
+            BEGIN IMMEDIATE -> always COMMIT on success (even without UPDATE).
+            Exception -> ROLLBACK.
+
+        Validation:
+            entity must exist; NOT FOUND -> raise (concurrency/invariant violation,
+            not a no-op: the caller just resolved this id and its disappearance is
+            unexpected).
+            persisted aliases must be list[str] with all-string elements;
+            anything else -> raise (invariant violation, not silent repair).
+
+        Caller contract:
+            Callers (ingestion._coerce_aliases / _store_entities) MUST redact,
+            strip, truncate and coarse-dedupe the list before passing it here.
+            add_entity_aliases only enforces the structural invariants the
+            store alone can check (because they require a DB read):
+
+            1. reject if casefold-equivalent to entity's canonical name
+            2. casefold-dedupe against already-accepted aliases in THIS call
+               plus existing persisted aliases (caller cannot know these)
+
+        Cap policy (total = existing + new, NOT raw input position):
+            remaining_capacity = MAX_ENTITY_ALIASES - len(existing_aliases)
+            if existing_aliases already >= MAX -> COMMIT and return silently
+            (normal saturation, not an invariant violation; the entity is
+            already maximally enriched and no new aliases can be stored)
+            valid aliases accepted up to remaining_capacity; further valid aliases
+            are counted as overflow.
+            overflow > 0 -> logger.warning once per call.
+
+        Mutation:
+            UPDATE only when aliases actually changed (set difference).
+            Persists original surviving spelling (first occurrence wins).
+            Alias-only mutation does NOT require a graph reload.
+        """
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.db.execute(
+                "SELECT name, aliases FROM entities WHERE id = ?", (entity_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    f"add_entity_aliases: entity {entity_id!r} not found "
+                    "(concurrency or invariant violation)"
+                )
+
+            canonical = row["name"]
+
+            # Validate persisted aliases through the same helper that guards
+            # every other aliases write, plus its all-strings element check.
+            raw_persisted = row["aliases"]
+            _, persisted = _validated_json_column(
+                raw_persisted if raw_persisted else None,
+                field="entities.aliases",
+                default="[]",
+                shape=list,
+                shape_name="array",
+            )
+            if not all(isinstance(a, str) for a in persisted):
+                raise ValueError(
+                    f"add_entity_aliases: entity {entity_id!r} aliases contains "
+                    f"non-string elements (invariant violation): {persisted!r}"
+                )
+
+            # remaining_capacity may be zero when the entity is already saturated.
+            # Do NOT early-return: let new_aliases flow through the loop so every
+            # discarded alias is counted and the overflow warning fires exactly once
+            # (AUTOSDE rule a-bound-bounds-every-field-it-retains).
+            remaining_capacity = max(0, MAX_ENTITY_ALIASES - len(persisted))
+
+            # Build casefold lookup for existing aliases (for dedupe)
+            existing_casefolded = {a.casefold() for a in persisted}
+            canonical_cf = canonical.casefold()
+
+            accepted: list[str] = []
+            accepted_cf: set[str] = set()
+            overflow = 0
+
+            for alias in new_aliases:
+                # Callers (ingestion._coerce_aliases / _store_entities) are
+                # responsible for redacting, stripping, truncating and deduping the
+                # incoming list before this call.  The store only enforces the
+                # structural invariants it alone can check (because they need a DB read):
+                # canonical-name exclusion, and dedupe against *persisted* aliases.
+                cf = alias.casefold()
+                # Reject if casefold-equivalent to entity's canonical name.
+                if cf == canonical_cf:
+                    continue
+                # Reject if already in persisted aliases (casefold).
+                if cf in existing_casefolded:
+                    continue
+                # Reject if already accepted in this call (casefold).
+                if cf in accepted_cf:
+                    continue
+                # Apply remaining-capacity cap.
+                if len(accepted) >= remaining_capacity:
+                    overflow += 1
+                    continue
+                accepted.append(alias)
+                accepted_cf.add(cf)
+
+            if overflow > 0:
+                logger.warning(
+                    "add_entity_aliases: %d alias(es) discarded for entity %r "
+                    "(MAX_ENTITY_ALIASES=%d reached)",
+                    overflow,
+                    canonical,
+                    MAX_ENTITY_ALIASES,
+                )
+
+            if accepted:
+                merged = persisted + accepted
+                self.db.execute(
+                    "UPDATE entities SET aliases = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(merged), datetime.now().isoformat(), entity_id),
+                )
+
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+
     def find_entity(self, name):
         row = self.db.execute("SELECT * FROM entities WHERE name = ?", (name,)).fetchone()
         if row:
@@ -3181,11 +3310,12 @@ Called by ``FolderWatcher.scan_source`` when it refuses such a row, which is
         # parse to no aliases, so filtering them in SQL returns the same row
         # while sparing a json.loads per entity: on a 59k-entity library that
         # scan was ~half of every knowledge search, and it holds the GIL.
+        name_cf = name.casefold()
         for row in self.db.execute(
             "SELECT * FROM entities WHERE aliases IS NOT NULL AND aliases NOT IN ('', '[]')"
         ):
             aliases = json.loads(row["aliases"]) if row["aliases"] else []
-            if any(a.lower() == name.lower() for a in aliases):
+            if any(isinstance(a, str) and a.casefold() == name_cf for a in aliases):
                 return dict(row)
         return None
 
