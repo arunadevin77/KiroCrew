@@ -65,7 +65,7 @@ jobs:
   #              repairs a red nightly, and the one to reach for when a change
   #              to a shared helper might have a darwin edge the path list does
   #              not know about.
-  #   sample  -- one pull request in twenty, chosen by the HEAD SHA. What it
+  #   sample  -- one pull request in fifty, chosen by the HEAD SHA. What it
   #              buys over the nightly is ATTRIBUTION, not speed: it runs the
   #              suite against one pull request's own head, so a darwin break in
   #              a file outside the path list is pinned to ONE PR where the
@@ -91,6 +91,12 @@ jobs:
   # `sample` and `content` are refused while this lane already holds
   # `LANE_MAX_LIVE_RUNS` live runs of the hosted macOS pool. `label` is never refused, and neither is a
   # re-run. See the env block on the verdict step for the measurement behind it.
+  #
+  # A FORK pull request gets only the `label` switch. `paths`, `sample` and
+  # `content` are off for it: about half the suites these three started were
+  # fork heads, each holding four hosted macOS runners for over an hour, and
+  # the nightly still runs the suite on every merge. A maintainer who wants a
+  # fork's darwin verdict before merge adds `ci:macos`.
   decide:
     name: Decide whether the macOS suite runs
     runs-on: ${{ github.repository == 'kirodotdev/KiroCrew' && contains(fromJSON(vars.CODEBUILD_ACTOR_IDS || '[]'), github.actor_id) && (github.event_name == 'push' || (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize') && github.event.pull_request.head.repo.full_name == github.repository)) && format('codebuild-kirocrew-gha-linux-{0}-{1}', github.run_id, github.run_attempt) || 'ubuntu-latest' }}
@@ -195,7 +201,9 @@ jobs:
           # those passes on Linux and fails on macOS, and without this switch the
           # first macOS run to see it is the nightly, after the merge.
           LINUX_ONLY_PRIMITIVES: '/proc/|\bstat -c\b|\bO_PATH\b|RLIMIT_AS|surrogateescape'
-          SAMPLE_ONE_IN: "20"
+          SAMPLE_ONE_IN: "50"
+          # 'true' on a fork head; the verdict step then keeps only `label`.
+          FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
           # The lane's ceiling on the hosted macOS pool, in LIVE runs of this
           # workflow. What the pool actually feels is JOBS, and a run holds one
           # per shard, so this number has to move whenever the shard count in
@@ -249,6 +257,17 @@ jobs:
             fi
           else
             echo "::warning::could not read ${BASE_SHA:-<no base>}...${HEAD_SHA}; the content switch is off for this run"
+          fi
+
+          # A fork head keeps only the label switch (see the job comment). Unset
+          # FORK reads as same-repository, so the switches stay on by default.
+          if [ "${FORK:-false}" = "true" ] && [ -n "$reason" ]; then
+            if [ "$LABELLED" = "true" ]; then
+              reason="label"
+            else
+              echo "macOS suite not started on fork head ${HEAD_SHA:0:12} despite $reason: a fork runs it only with the ci:macos label. The nightly still covers this change."
+              reason=""
+            fi
           fi
 
           # The ceiling, applied to every switch nobody asked for by hand

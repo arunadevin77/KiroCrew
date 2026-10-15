@@ -347,7 +347,10 @@ class TestTheOnDemandLaneCannotBecomeAGate:
         assert "$RANDOM" not in run and "shuf" not in run
         assert "github.event.pull_request.head.sha" in env
         assert "16#${HEAD_SHA:0:8}" in run
-        assert "'SAMPLE_ONE_IN': '20'" in env
+        assert "'SAMPLE_ONE_IN': '50'" in env
+        # A fork head keeps only the label switch; the flag must come from the
+        # PR's head repository, not from anything the fork can write.
+        assert "github.event.pull_request.head.repo.full_name != github.repository" in env
         # And the mac job runs only on decide's say-so.
         mac = canary["jobs"]["platform-tests"]
         assert mac["needs"] == ["decide"]
