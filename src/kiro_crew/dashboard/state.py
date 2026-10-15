@@ -1568,7 +1568,7 @@ _AUTO_COMPACT_CANCELLED_NOTICE = (
     + _RESTART_MEMORY_TAIL
 )
 _AUTO_COMPACT_WAITING_NOTICE = (
-    "⏸ Auto-compact failed at {pct:.0f}%. The session is waiting for its sub-agents "
+    "⏸ Context reached {pct:.0f}%. The session is waiting for its sub-agents "
     "to finish before it restarts. Your messages are kept."
 )
 _AUTO_COMPACT_FAILED_NOTICE = (

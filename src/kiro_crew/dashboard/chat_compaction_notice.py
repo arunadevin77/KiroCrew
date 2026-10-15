@@ -55,8 +55,8 @@ CHANNEL_COMPACT_NOTICE = (
     "summary; this conversation continues where it left off."
 )
 CHANNEL_COMPACT_WAITING_NOTICE = (
-    "Context reached {pct:.0f}% but auto-compact failed. The session is waiting for "
-    "its sub-agents to finish before it restarts; your messages are kept."
+    "Context reached {pct:.0f}%. The session is waiting for its sub-agents to "
+    "finish before it restarts; your messages are kept."
 )
 CHANNEL_COMPACT_FAILED_NOTICE = (
     "Context reached {pct:.0f}% but auto-compact failed. It retries after a "

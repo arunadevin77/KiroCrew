@@ -1227,7 +1227,10 @@ against sweep completeness, and are torn down at `close_all`.
     carries no compaction of any kind, so declining bounded nothing and the
     context grew toward the harness's own window. `_recycle_unmanaged` reaches
     the same destination a failed compaction already reaches, on the reason
-    rather than after spending the timeout that proves it. The arm falls THROUGH
+    rather than after spending the timeout that proves it. Like that restart, it
+    is first held by `_await_cotenants` while session-sharing sub-agents run on
+    the parent's process; the hold's waiting notices and stop reason do not call
+    it a failed compaction, since this arm attempts none. The arm falls THROUGH
     the gate rung rather than returning from it, so `unconfirmed`, `in_progress`
     and `cooldown` still run first — an ambiguous reading must not spend a
     recycle.

@@ -451,6 +451,46 @@ async def test_an_uncompactable_restart_also_waits_for_a_shared_sub_agent():
 
 
 @pytest.mark.asyncio
+async def test_an_uncompactable_hold_does_not_say_a_compaction_failed(monkeypatch, tmp_path):
+    """A backend with no compaction has none to fail, so neither surface may say so.
+
+    The dashboard leg runs its own callback, so its text is the one the outcome picks.
+    """
+    from kiro_crew.dashboard.state import DashboardState
+    from kiro_crew.testing.wait import await_until
+
+    monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+    state = DashboardState(
+        sessions=MagicMock(count=0), crons=MagicMock(), lessons=MagicMock(), start_time=0.0
+    )
+    state.wire_session_compact_callback()
+    dashboard = state.sessions.set_compact_callback.call_args.args[0]
+    slot = state.get_or_create_slot("chat-1")
+    mgr, key, runs, _order, _notices = await _setup()
+    channel: list[str] = []
+    posted = asyncio.Event()
+
+    async def _both_surfaces(k, pct, *, success, outcome="compacted"):
+        await dashboard(k, pct, success=success, outcome=outcome)
+        channel.append(notice_text("slack", pct, success=success, outcome=outcome))
+        posted.set()
+
+    mgr.set_compact_callback(_both_surfaces)
+    task = asyncio.ensure_future(mgr._compaction._recycle_unmanaged(key, mgr._sessions[key], 95.0))
+    await await_until(posted, what="the hold's waiting notice")
+
+    rows = [m["content"] for m in slot.messages if m.get("meta", {}).get("kind") == "compaction"]
+    assert len(rows) == 1 and len(channel) == 1, (rows, channel)
+    for text in (*rows, *channel):
+        assert "95%" in text and "waiting for its sub-agents" in text, text
+        assert "fail" not in text.lower(), text
+
+    runs.finish()
+    assert await await_until(task, what="the uncompactable restart") == "recycled"
+    await mgr.close_all()
+
+
+@pytest.mark.asyncio
 async def test_a_report_waiting_on_the_parent_lands_on_the_fresh_session():
     """A finished child's report queues for the parent turn the hold is keeping.
 
@@ -481,18 +521,22 @@ async def test_a_report_waiting_on_the_parent_lands_on_the_fresh_session():
     await mgr.close_all()
 
 
+@pytest.mark.parametrize("uncompactable", [False, True])
 @pytest.mark.asyncio
-async def test_restart_stops_the_sub_agent_with_a_stopped_report_at_the_timeout():
+async def test_restart_stops_the_sub_agent_with_a_stopped_report_at_the_timeout(uncompactable):
     """The chat lives on after the restart, so the stop must report home.
 
-    The parent-end teardown would mark the run out of delivery instead.
+    The parent-end teardown would mark the run out of delivery instead. Both arms
+    share the hold, so the reason names neither: a backend with no compaction has
+    no failed one to blame.
     """
     mgr, key, runs, order, _notices = await _setup(wait_secs=0.05)
     session = mgr._sessions[key]
+    restart = mgr._compaction._recycle_unmanaged if uncompactable else mgr._compact_in_place
 
-    assert await asyncio.wait_for(mgr._compact_in_place(key, session, 95.0), 5) == "recycled"
+    assert await asyncio.wait_for(restart(key, session, 95.0), 5) == "recycled"
 
-    assert runs.stopped_reports == [("a1", "stopped at a failed compaction's restart")]
+    assert runs.stopped_reports == [("a1", "stopped at a context restart")]
     assert runs.cancelled == [], "the parent-end teardown drops the report"
     assert order == ["stop", "shutdown"], "sub-agents stop before the process goes"
     await mgr.close_all()

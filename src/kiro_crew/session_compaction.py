@@ -58,8 +58,10 @@ COMPACT_OUTCOME_RECYCLED = "recycled"
 #: missing capability there would be false about a harness that has it and merely
 #: failed once.
 COMPACT_OUTCOME_RESTARTED_UNCOMPACTABLE = "restarted_uncompactable"
-#: A compaction failed and the restart is held: sub-agents still run on this session's
-#: process, and restarting it now would end them. Sent with ``success=False``.
+#: A context restart is held -- after a failed compaction, or on a backend that has
+#: none: sub-agents still run on this session's process, and restarting it now would
+#: end them. Sent with ``success=False``. Both arms send it, so a notice for it names
+#: neither cause.
 COMPACT_OUTCOME_WAITING_FOR_SUBAGENTS = "waiting_for_subagents"
 #: The in-flight compaction was ended by a user Stop, not by the harness. Sent with
 #: ``success=False``. A separate value because the failure arm's other destination is
@@ -990,7 +992,7 @@ class CompactionCoordinator:
                 self._deps.logger.warning("Session %s: stopping sub-agents %s", key, ids)
                 for info in runs.running:
                     if info.id in ids and not info._stop_origin:
-                        info._stop_origin = "stopped at a failed compaction's restart"
+                        info._stop_origin = "stopped at a context restart"
                 task = asyncio.ensure_future(asyncio.gather(*(runs.cancel(i) for i in ids)))
                 self._owner._background_tasks.add(task)
                 task.add_done_callback(self._owner._background_tasks.discard)
