@@ -6807,6 +6807,8 @@
       "html_preview": "HTML プレビュー",
       "invalid_json": "無効な JSON：",
       "items": "項目",
+      "json_string_show_all_other": "すべてを表示（{{count}} 文字）",
+      "json_string_show_less": "表示を減らす",
       "lines": "行",
       "media_preview_failed": "再生に失敗しました。ブラウザーはこのファイルをデコードできません。",
       "more": "その他",

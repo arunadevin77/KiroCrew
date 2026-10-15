@@ -271,5 +271,6 @@
   "commandCenter.crewMain.subagent",
   "commandCenter.crewMain.subagent_tiny",
   "commandCenter.crewMain.tokens",
-  "commandCenter.crewMain.approvals_open"
+  "commandCenter.crewMain.approvals_open",
+  "components.fileRenderers.json_string_show_all"
 ]

@@ -6807,6 +6807,8 @@
       "html_preview": "HTML 미리보기",
       "invalid_json": "잘못된 JSON:",
       "items": "항목",
+      "json_string_show_all_other": "전체 보기({{count}}자)",
+      "json_string_show_less": "간략히 보기",
       "lines": "줄",
       "media_preview_failed": "재생에 실패했습니다. 브라우저가 이 파일을 디코딩할 수 없습니다.",
       "more": "더 보기",
