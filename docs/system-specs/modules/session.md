@@ -4415,7 +4415,10 @@ a trust root on its own; publication therefore also writes a
   a `.txt` has reappeared by then, or while any pass holds that `.txt`
   privately. One pass per process runs this arm at a
   time; with that lock held, a private name no running pass owns (this
-  process's own, or a dead sweep's) is settled at the start of the pass: a
+  process's own, a dead sweep's, or one filed by this gateway's previous image
+  and still held by the supervisor an in-app restart left as this process's
+  ancestor, per `platform_compat.is_exec_supervisor_of_this_process`) is
+  settled at the start of the pass: a
   `.txt` that still proves the recycle is deleted, anything else is linked
   back, then a `.sig` goes back beside a `.txt` and is deleted only when no
   `.txt`, public or private, remains for its pid. Only a regular file is ever
@@ -4618,7 +4621,12 @@ allow and a committed teardown barrier before it is signalled (see
 [Orphan Sweep Active Set](#orphan-sweep-active-set)). `cleanup_orphaned_session_roots` and
 `cleanup_orphaned_sessions` do not ask the ownership gate: they reclaim entries whose
 owning gateway is dead, and the identity test and arm conditions here are the whole of
-their authority.
+their authority. `cleanup_orphaned_sessions` also reclaims entries whose owning pid is
+the supervisor an in-app restart through a supervising launcher left as this process's
+ancestor (`platform_compat.is_exec_supervisor_of_this_process`): those rows were filed
+by this gateway's own previous image, and the same identity test and arm conditions
+decide each of them. `cleanup_orphaned_session_roots` still skips them while the
+supervisor lives.
 
 That gate is per-TOKEN and exact wherever a command line can be read (Linux `/proc`,
 macOS `ps`), never a substring of the whole line: the projected names include

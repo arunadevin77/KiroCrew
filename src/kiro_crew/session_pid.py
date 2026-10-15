@@ -2930,11 +2930,32 @@ def cleanup_orphaned_sessions(*, narrow_with_leaders: bool = True) -> None:
         lines: list[str] = _read_pid_file_text(path).splitlines() if path.exists() else []
 
     # Step 2: Process outside lock (slow: os.kill, _get_child_pids, SIGKILL)
+    supervisor_verdicts: dict[int, bool] = {}
+
     def _skip_tagged(gw_pid: int, _pid: int) -> bool:
-        """Skip if owning gateway is still alive."""
+        """Skip if owning gateway is still alive.
+
+        One live owner is NOT a gateway: the supervisor an in-app restart
+        through a supervising launcher (``toolbox-exec``) leaves behind. The
+        restart ``os.execv``s the launcher, which runs this gateway as its
+        child, so the old pid stays alive with its start identity unchanged and
+        never reads dead while this gateway runs. Its rows were filed by this
+        gateway's own previous image, whose sessions the exec left unmanaged,
+        so they are swept here as the previous run's. Sweeping them signals no
+        foreign process: each row's child is still checked against its
+        recorded start token and the managed-agent argv before any kill, and a
+        live gateway ancestor still runs Python
+        (:func:`platform_compat.is_exec_supervisor_of_this_process`) and keeps
+        its rows.
+        """
         # pid_exists() returns True on a live PID or one we can't signal
         # (can't tell — preserve), and False only when confirmed dead.
-        return platform_compat.pid_exists(gw_pid)
+        if not platform_compat.pid_exists(gw_pid):
+            return False
+        # One ancestry walk per owner, not per row.
+        if gw_pid not in supervisor_verdicts:
+            supervisor_verdicts[gw_pid] = platform_compat.is_exec_supervisor_of_this_process(gw_pid)
+        return not supervisor_verdicts[gw_pid]
 
     killed, killed_or_dead, _ = _sweep_pid_entries(
         lines,
@@ -3211,12 +3232,25 @@ def _retraction_leftover_is_orphaned(name: str) -> bool:
     The name ends ``.retract-<pid>-<hex>``. Called with :data:`_RETRACT_LOCK`
     held, so this process has no retraction in flight and its own leftovers are
     settled too; another live process's may be in flight and are left alone.
+
+    One live owner has no pass in flight: the supervisor an in-app restart
+    through a supervising launcher leaves behind. The restart ``os.execv``s the
+    launcher, so the old pid stays alive as this gateway's ancestor while the
+    image that ran the retraction is gone, and a leftover it had in flight at
+    the exec would otherwise stay unsettled for as long as the supervisor lives.
+    A live gateway ancestor still runs Python
+    (:func:`platform_compat.is_exec_supervisor_of_this_process`) and keeps its
+    leftovers.
     """
     try:
         owner = int(name.rsplit(_RETRACT_SUFFIX, 1)[1].split("-", 1)[0])
     except (IndexError, ValueError):
         return False
-    return owner == os.getpid() or not platform_compat.pid_exists(owner)
+    return (
+        owner == os.getpid()
+        or not platform_compat.pid_exists(owner)
+        or platform_compat.is_exec_supervisor_of_this_process(owner)
+    )
 
 
 def _settle_retraction_leftover(leftover: Path) -> None:
