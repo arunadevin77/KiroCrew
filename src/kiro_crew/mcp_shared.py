@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from typing import Any, Callable, Literal, NamedTuple, Optional, overload
 
 from kiro_crew import platform_compat
+from kiro_crew.artifact_source import _contains as _path_contains
 from kiro_crew.config.loader import KiroCrewConfig, config_dir, read_local_secret  # noqa: F401
 from kiro_crew.dashboard.origin import parse_dashboard_url  # noqa: F401
 from kiro_crew.install_liveness import (
@@ -1507,8 +1508,8 @@ def serves_managed_tools(call_tool_fn: Callable[..., Any]) -> bool:
         return True
     try:
         real = os.path.realpath(filename)
-        return os.path.commonpath([real, _PACKAGE_DIR]) == _PACKAGE_DIR
-    except (OSError, ValueError):
+        return _path_contains(_PACKAGE_DIR, real)
+    except OSError:
         return True
 
 

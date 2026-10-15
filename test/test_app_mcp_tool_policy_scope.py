@@ -14,6 +14,7 @@ from __future__ import annotations
 import functools
 import importlib.util
 import json
+import os
 import sys
 
 from test_mcp_shared import _LoopHarness, _tools_call
@@ -56,6 +57,16 @@ class TestServesManagedTools:
         app = _app_module(tmp_path, monkeypatch)
         assert mcp_shared.serves_managed_tools(app.call_tool) is False
         assert mcp_shared.serves_managed_tools(functools.partial(app.call_tool, "x")) is False
+
+    def test_a_cross_drive_handler_is_not_managed(self, tmp_path, monkeypatch):
+        """A ValueError from commonpath (different Windows drives) does not count as managed."""
+        app = _app_module(tmp_path, monkeypatch)
+
+        def _raises_value_error(paths):
+            raise ValueError("Paths don't have the same drive")
+
+        monkeypatch.setattr(os.path, "commonpath", _raises_value_error)
+        assert mcp_shared.serves_managed_tools(app.call_tool) is False
 
     def test_a_handler_with_no_code_location_keeps_the_policy(self):
         assert mcp_shared.serves_managed_tools(len) is True
