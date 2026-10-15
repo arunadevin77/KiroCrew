@@ -1546,14 +1546,25 @@ def _parse_and_cache_for_key(
     parsed or cached here.
 
     Returns the table, or a status string when nothing was cached:
-    ``"changed"`` when the key moved mid-parse (the enrichment worker can
-    publish the address table or grow the own set, and a table built across
-    that change could mark an alias for the new address remote),
+    ``"changed"`` when the FILE moved mid-parse (stat identity or digest),
     ``"too-large"`` when the file holds more than *limit*, and ``"failed"``
     when it could not be read or decoded.  A failed parse is never cached,
     so the next gate call reads again; the gate answers it pending (fail
     closed), since a hosts-file alias for this machine cannot be ruled out
     while the file cannot be read.  May raise OSError from the second stat.
+
+    When only the own-address half of the key moved mid-parse (the
+    enrichment worker publishes the address table or grows the own set --
+    on a cold worker that happens within the first ssh vet, because that
+    vet is what starts the worker), the table is returned but NOT cached:
+    it was judged against the older own set, so a remote entry could be an
+    alias for the newly learned address, and the gate's own-state re-check
+    holds exactly those entries pending.  The file itself is the one the
+    key names, so the table's NAME SET is exact: a local entry stays local
+    under a grown own set, and a name absent from the file is absent under
+    any own set.  Answering those two from the uncached table is what keeps
+    an everyday ``ssh user@dev-dsk`` from being refused by a worker thread
+    this same call started.
 
     When *key* carries a digest (Windows), the bytes are read once, hashed,
     and parsed from that same buffer, so the digest names exactly the
@@ -1574,10 +1585,15 @@ def _parse_and_cache_for_key(
     except (OSError, ValueError):
         return "failed"
     try:
-        if _hosts_file_key(path) != key:
-            return "changed"
+        current = _hosts_file_key(path)
     except _HostsFileUnreadable:
         return "changed"
+    if current[:4] != key[:4]:
+        return "changed"
+    if current != key:
+        # Only the publication flag or the own set moved: hand the table
+        # back for the local/absent answers, cache nothing.
+        return table
     _HOSTS_FILE_CACHE[path] = (key, table)
     return table
 
@@ -1673,8 +1689,11 @@ def _hosts_file_verdict(host: str) -> "bool | None":
     A Windows file over one chunk cannot be verified without reading past
     that bound, so every dotless name is pending there (True), with no
     stale window; the refusal note tells the agent to use the full
-    hostname or an IP address.  An in-call parse whose key changed
-    while it ran is also pending.  A remote answer is given
+    hostname or an IP address.  An in-call parse whose FILE changed
+    while it ran is also pending; one whose own-address state moved (the
+    enrichment worker publishing mid-parse) still answers a local or an
+    absent name from the table it built, and holds a remote entry pending
+    through the own-state check below.  A remote answer is given
     only if publication and the own set still match the table's key at the
     moment of return.  A name on several lines is local if ANY of them maps
     local (deny-floor direction).
