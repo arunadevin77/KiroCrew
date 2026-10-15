@@ -80,7 +80,7 @@ pull_request
   |                     "Security Scope Review"  which legit ops a tightening refuses, blocking
   |-- sensitive-change-review.yml
   |                     "Sensitive Change Review"  reasoned review record on sensitive paths, advisory
-  |-- CodeQL                                GitHub default setup, not a checked-in file
+  |-- codeql.yml        "CodeQL"  Analyze (<language>); replaces GitHub default setup
   |
   '-> pr-readiness.yml  "PR Readiness"  one commit status + one readiness: label
 ```
@@ -3104,13 +3104,19 @@ status plus one `readiness:` label**.
   errored fold, a missing head marker, or a platform leg that never reported.
   It is deliberately not relabelled `(BLOCK)` the way Design Review is, because
   a `failure` here does not always mean a verdict was reached.
-- **CodeQL is not a checked-in workflow.** It runs via GitHub default setup. The
-  aggregator first resolves the analysis run by
-  `path == "dynamic/github-code-scanning/codeql"`, then reads the exact head SHA's
-  `CodeQL` check from the `github-advanced-security` app. A successful analysis
-  run does not mask a failed security result. An absent, running, or interim
-  neutral result remains `checking`; `skipped` still counts as passed for the
-  managed workflow.
+- **CodeQL runs from `.github/workflows/codeql.yml`** (advanced setup), which
+  replaces GitHub default setup with the same languages, query suite, schedule
+  and `/language:<language>` categories. A new push to a PR cancels the scan of
+  its previous head, and a draft PR is not scanned until it is ready for review.
+  GitHub rejects its uploads while default setup is on, so its jobs are
+  skipped until an admin has turned default setup off and set the repository
+  variable `CODEQL_ADVANCED_SETUP` to `true`. The aggregator still resolves the
+  analysis run by `path == "dynamic/github-code-scanning/codeql"` (default
+  setup), then reads the exact head SHA's `CodeQL` check from the
+  `github-advanced-security` app. A successful analysis run does not mask a
+  failed security result. An absent, running, or interim neutral result
+  remains `checking`; `skipped` still counts as passed for the managed
+  workflow.
 - **Labels:** `readiness: checking` (pending), `readiness: action required` (a
   blocker), `readiness: passed`. Exactly one is ever present.
 - **A changes-requested review of the head blocks.** When a reviewer with

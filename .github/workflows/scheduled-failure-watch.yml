@@ -75,6 +75,7 @@ on:
   workflow_run:
     workflows:
       - "CI Runner Watchdog"
+      - "CodeQL"
       - "Connections L0 Static Metadata Probe"
       - "Connections L1 Authorized-Grant Smoke"
       - "Crew Image Build"
