@@ -278,5 +278,9 @@
   "commandCenter.crewMain.subagent_tiny",
   "commandCenter.crewMain.tokens",
   "commandCenter.crewMain.approvals_open",
-  "components.fileRenderers.json_string_show_all"
+  "components.fileRenderers.json_string_show_all",
+  "components.mergeBackDialog.covers",
+  "components.mergeBackDialog.covers_partial",
+  "components.mergeBackDialog.remaining",
+  "pages.chat.mergedFromLabel.messages"
 ]
