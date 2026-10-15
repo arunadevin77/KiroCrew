@@ -153,7 +153,7 @@ class TestSessionDecider:
             False,
             DENY_CAUSE_APPROVAL_TIMEOUT,
         )
-        assert await pending.decide("webex:a@b.com", _event(3)) is False
+        assert (await pending.decide_with_cause("webex:a@b.com", _event(3)))[0] is False
 
     @pytest.mark.asyncio
     async def test_a_click_records_no_cause(self):

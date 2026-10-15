@@ -1287,12 +1287,12 @@ class TestApprovals:
         key = d._session_key(_EMAIL)
 
         task = asyncio.create_task(
-            webex_dispatch._APPROVALS.decide(key, SimpleNamespace(request_id=1))
+            webex_dispatch._APPROVALS.decide_with_cause(key, SimpleNamespace(request_id=1))
         )
         await _spin(lambda: webex_dispatch._APPROVALS.has_pending(key))
         await d.handle_message(_inbound("1"))
 
-        assert await task is True
+        assert (await task)[0] is True
         assert provider.steered == []
         assert "Approved" in client.sent[-1][1]
 
@@ -1306,12 +1306,12 @@ class TestApprovals:
         key = d._session_key(_EMAIL)
 
         task = asyncio.create_task(
-            webex_dispatch._APPROVALS.decide(key, SimpleNamespace(request_id=1))
+            webex_dispatch._APPROVALS.decide_with_cause(key, SimpleNamespace(request_id=1))
         )
         await _spin(lambda: webex_dispatch._APPROVALS.has_pending(key))
         await d.handle_message(_inbound("2"))
 
-        assert await task is False
+        assert (await task)[0] is False
         assert "Denied" in client.sent[-1][1]
 
     @pytest.mark.asyncio
@@ -1330,7 +1330,7 @@ class TestApprovals:
         key = d._session_key(_EMAIL)
 
         task = asyncio.create_task(
-            webex_dispatch._APPROVALS.decide(key, SimpleNamespace(request_id=1))
+            webex_dispatch._APPROVALS.decide_with_cause(key, SimpleNamespace(request_id=1))
         )
         await _spin(lambda: webex_dispatch._APPROVALS.has_pending(key))
         await d.handle_message(_inbound("actually use ripgrep"))
@@ -1400,14 +1400,14 @@ class TestApprovals:
             new=mock.AsyncMock(return_value=False),
         ):
             approve_task = asyncio.create_task(
-                webex_dispatch._APPROVALS.decide(key, SimpleNamespace(request_id=1))
+                webex_dispatch._APPROVALS.decide_with_cause(key, SimpleNamespace(request_id=1))
             )
             await _spin(lambda: webex_dispatch._APPROVALS.has_pending(key))
             await d.handle_message(_inbound("1"))
             assert approve_task.done() is False  # approve dropped
 
             await d.handle_message(_inbound("2"))
-            assert await approve_task is False  # deny got through
+            assert (await approve_task)[0] is False  # deny got through
 
     @pytest.mark.asyncio
     async def test_unified_scope_does_not_let_one_user_answer_anothers_prompt(self) -> None:
@@ -1430,7 +1430,7 @@ class TestApprovals:
         assert d._approval_key(email_b) != key_a
 
         task = asyncio.create_task(
-            webex_dispatch._APPROVALS.decide(key_a, SimpleNamespace(request_id=1))
+            webex_dispatch._APPROVALS.decide_with_cause(key_a, SimpleNamespace(request_id=1))
         )
         await _spin(lambda: webex_dispatch._APPROVALS.has_pending(key_a))
 
@@ -1440,7 +1440,7 @@ class TestApprovals:
 
         # User A's own "1" resolves it.
         await d.handle_message(_inbound("1", email=email_a))
-        assert await task is True
+        assert (await task)[0] is True
 
 
 # ------------------------------------------------------------------
@@ -2306,7 +2306,7 @@ class TestApprovalCardPress:
     @staticmethod
     async def _pending(d: WebexDispatcher, key: str, request_id: int = 1):
         task = asyncio.create_task(
-            webex_dispatch._APPROVALS.decide(key, SimpleNamespace(request_id=request_id))
+            webex_dispatch._APPROVALS.decide_with_cause(key, SimpleNamespace(request_id=request_id))
         )
         await _spin(lambda: webex_dispatch._APPROVALS.has_pending(key))
         return task
@@ -2321,7 +2321,7 @@ class TestApprovalCardPress:
 
         await d.handle_message(_approval_press("approve", nonce))
 
-        assert await task is True
+        assert (await task)[0] is True
         assert "Approved" in client.sent[-1][1]
 
     @pytest.mark.asyncio
@@ -2343,7 +2343,7 @@ class TestApprovalCardPress:
         assert webex_dispatch._APPROVALS.has_pending(key)
         assert "no longer current" in client.sent[-1][1]
         assert webex_dispatch._APPROVALS.resolve(key, False) is True
-        assert await task is False
+        assert (await task)[0] is False
 
     @pytest.mark.asyncio
     async def test_a_press_carrying_no_nonce_fails_closed(self) -> None:
@@ -2360,7 +2360,7 @@ class TestApprovalCardPress:
 
         assert webex_dispatch._APPROVALS.has_pending(key)
         webex_dispatch._APPROVALS.resolve(key, False)
-        assert await task is False
+        assert (await task)[0] is False
 
     @pytest.mark.asyncio
     async def test_a_second_press_reports_neutrally_rather_than_denied(self) -> None:
@@ -2376,7 +2376,7 @@ class TestApprovalCardPress:
         nonce = webex_dispatch._APPROVALS.reserve(key, "1")
 
         await d.handle_message(_approval_press("approve", nonce))
-        assert await task is True
+        assert (await task)[0] is True
         await d.handle_message(_approval_press("approve", nonce))
 
         assert "already answered or timed out" in client.sent[-1][1]
@@ -2395,7 +2395,7 @@ class TestApprovalCardPress:
             await d.handle_message(_approval_press("deny", "FORGED"))
             await d.handle_message(_approval_press("deny", nonce))
 
-        assert await task is False
+        assert (await task)[0] is False
         operations = [
             c.kwargs["operation"] for c in fake_sel.return_value.log_api_access.mock_calls
         ]
@@ -2422,7 +2422,7 @@ class TestApprovalCardPress:
             assert webex_dispatch._APPROVALS.has_pending(key)
             await d.handle_message(_approval_press("approve", nonce))
 
-        assert await task is True
+        assert (await task)[0] is True
         outcomes = [
             c.kwargs["outcome"]
             for c in fake_sel.return_value.log_api_access.mock_calls
@@ -2448,7 +2448,7 @@ class TestApprovalCardPress:
             assert webex_dispatch._APPROVALS.has_pending(key)
             await d.handle_message(_approval_press("deny", nonce))
 
-        assert await task is False
+        assert (await task)[0] is False
 
 
 # ------------------------------------------------------------------
@@ -2553,12 +2553,12 @@ class TestGroupSpaceRouting:
         with mock.patch.object(type(d), "_bot_name", lambda self: "Kiro"):
             key = d._session_key(webex_dispatch._route_of(_space()))
             task = asyncio.create_task(
-                webex_dispatch._APPROVALS.decide(key, SimpleNamespace(request_id=1))
+                webex_dispatch._APPROVALS.decide_with_cause(key, SimpleNamespace(request_id=1))
             )
             await _spin(lambda: webex_dispatch._APPROVALS.has_pending(key))
             await d.handle_message(_space("Kiro 1"))
 
-        assert await task is True
+        assert (await task)[0] is True
         assert provider.steered == []
 
     @pytest.mark.asyncio

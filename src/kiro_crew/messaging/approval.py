@@ -627,18 +627,8 @@ class PendingApprovals:
                 self._pending.pop(k, None)
                 self._nonces.pop(k, None)
 
-    async def decide(self, session_key: str, event: Any) -> bool:
-        """Await the user's decision for *event*; deny on timeout.
-
-        The channel's renderer has already presented the prompt by the time
-        this is awaited (``TurnDriver`` dispatches ``PROMPT_CHOICE`` before
-        calling the decider), so this only waits.
-        """
-        approved, _cause = await self.decide_with_cause(session_key, event)
-        return approved
-
     async def decide_with_cause(self, session_key: str, event: Any) -> tuple[bool, str]:
-        """:meth:`decide`, plus WHY a denial happened.
+        """Await the user's decision for *event*; return ``(approved, cause)``.
 
         The cause is ``""`` for a human's answer and
         :data:`DENY_CAUSE_APPROVAL_TIMEOUT` when the window closed unanswered.
