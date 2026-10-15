@@ -159,10 +159,12 @@ ratchet number out of a comment.
 ## A test gate runs the RELATED set; the full suite is CI's
 
 The two test gates are the most expensive entries on the floor by orders of
-magnitude: 62,108 collected backend tests — collection alone takes ~100s before a
-single test executes — and ~1,444 frontend spec files. CI shards that across eight
-backend runners plus several frontend shards and runs it on `refs/pull/<N>/merge`
-regardless, so paying for it serially on a workstation, once per iteration of a
+magnitude: a full run is the whole backend suite and the whole frontend suite. CI
+shards both — the backend suite in the `backend-test` and `backend-test-windows`
+matrices, the frontend suite in `frontend-test`, each split by its job's own
+`SHARD_COUNT` in `.github/workflows/ci.yml` (read the file for the current split;
+a count copied here goes stale) — and runs them on `refs/pull/<N>/merge`
+regardless, so paying for them serially on a workstation, once per iteration of a
 ten-round inner loop, buys a signal CI produces anyway — and with `-n auto` it did
 so with one xdist worker per core, starving every other session on a shared box.
 
@@ -171,8 +173,8 @@ own. For the surface it is asked about it runs the union of: test files in the
 diff; `test_<module>.py` / `test_<module>_*.py` (vitest: `<Stem>.*.test.ts`) for
 each changed module; test files that textually reference a changed file; and,
 when the OTHER surface changed, the cross-surface set `ci-surface-tests.py`
-computes for CI (**350** backend files / **146** frontend specs, measured). Two
-outcomes, and neither is "everything":
+computes for CI (its `--summary` flag prints the current size). Two outcomes, and
+neither is "everything":
 
 | condition | verdict |
 |---|---|

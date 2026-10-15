@@ -372,12 +372,9 @@ be named exempt with a reason, and every gate must name a target that exists. CI
 gaining a blocking scan therefore fails that test instead of surfacing as a review
 round on a later PR.
 
-Narrowing **within** a surface needs a real import graph, not a text scan, so
-`run_scoped_tests.py` deliberately does not attempt it. It only replaces the *other*
-surface's full suite with the cross-surface set `ci.yml` runs for a single-surface
-diff — measured at 350 backend files or 146 frontend specs, against 62k collected
-backend tests and ~1.4k frontend specs that are not worth re-running serially on ten
-inner-loop iterations for a signal CI produces on the merge ref anyway.
+Which tests the two test gates run, and why the full suites stay CI's job, is
+explained once, in `references/gate-floor.md` under "A test gate runs the RELATED
+set; the full suite is CI's".
 
 ## Why the extraction fallback must announce itself
 
