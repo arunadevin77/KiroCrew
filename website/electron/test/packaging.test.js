@@ -404,7 +404,7 @@ describe("first-download installer design contract", () => {
       "installer copy must change if a fresh configuration stops defaulting to a Kiro CLI-hosted agent",
     );
     const configSections = fs.readFileSync(
-      path.join(REPO_ROOT, "src", "kiro_crew", "config", "sections.py"),
+      path.join(REPO_ROOT, "src", "kiro_crew", "config", "sections_agent.py"),
       "utf8",
     );
     assert.match(

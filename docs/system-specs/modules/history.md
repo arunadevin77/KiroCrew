@@ -2182,7 +2182,7 @@ message's durable `meta.mid`. "Thread" is only ever this reply thread; the main
 conversation is the chat. Any message, the user's or the crewmate's, can carry
 one.
 
-**Flag.** The feature ships behind `dashboard.crewmate_threads` (`config/sections.py`,
+**Flag.** The feature ships behind `dashboard.crewmate_threads` (`config/sections_dashboard.py`,
 default `False`; editable from the dashboard, `handlers/core.py` `_EDITABLE_CONFIG`,
 and read live -- the config watcher's snapshot, else a load off the loop -- so a
 toggle takes effect on the next request without a restart). Off, the three routes

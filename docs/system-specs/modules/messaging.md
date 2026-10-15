@@ -1057,7 +1057,7 @@ host-managed. See [slack-gateway](slack-gateway.md) § Live configuration.
 **`restart_required` is answered from schema metadata.** A channel save's
 response no longer guesses: `dashboard/channel_folders.py::channel_restart_required`
 asks `kiro_crew.config.schema.requires_restart(path)`, which reads the `restart`
-flag on that field's `_meta(...)` in `config/sections.py`. A field nothing marks
+flag on that field's `_meta(...)` in its `config/sections_*.py` owner. A field nothing marks
 is live, so the settings page tells the truth instead of promising a restart the
 user does not need — which is how a panel trains people to restart for
 everything. A `.env` write always reports `True`, because the credential file is

@@ -6378,7 +6378,7 @@ An id none of them lists is unknown, and unknown keeps the 1,000,000-token refer
 nothing shrinks an undeclared model. A fresh session has no live window, so a
 declared one is what budgets its first prompt. The declaration is the operator's
 statement and is never probed or measured. `coerce_model_context_tokens`
-(`config/sections.py`) bounds it: a real integer from 1,024 to 10,000,000 per key, a
+(`config/sections_agent_fields.py`) bounds it: a real integer from 1,024 to 10,000,000 per key, a
 non-empty id of at most 256 characters with no surrounding whitespace as the key, the
 first 64 entries read, a warning per dropped entry. The dashboard server's config
 watcher installs it through `model_registry.apply_operator_windows` at boot and on each

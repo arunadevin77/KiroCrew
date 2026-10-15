@@ -233,7 +233,7 @@ _BASE_NAMES: dict[str, str] = {
     "newest_dump_with_stacks": "func:kiro_crew.dashboard.crash_dump_store",
     "node_too_old_message": "func:kiro_crew.constants",
     "node_version_meets_floor": "func:kiro_crew.constants",
-    "normalize_agent_model": "func:kiro_crew.config.sections",
+    "normalize_agent_model": "func:kiro_crew.config.sections_agent_fields",
     "os": "module:os",
     "parse_dashboard_url": "func:kiro_crew.dashboard.urls",
     "parse_node_version": "func:kiro_crew.constants",

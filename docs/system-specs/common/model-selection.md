@@ -498,7 +498,7 @@ its own once the cache refreshes with a list that carries it.
   that level before the setting write completes.
 - **Pin a cheaper model** for the worker roles only through
   `agent.role_models.<role>` (`background`, `subagent`), read by
-  `AgentConfig.resolve_model(role)` in `config/sections.py`. Roles default to
+  `AgentConfig.resolve_model(role)` in `config/sections_agent.py`. Roles default to
   `"auto"` and deliberately do NOT inherit `agent.model`, so a user's chat model
   does not silently become the price of every background task. The sessions a
   crewmate dispatches with `session_create` are the one decided exception
@@ -509,7 +509,7 @@ its own once the cache refreshes with a list that carries it.
   or the global default decides. The per-crewmate cost cap is that
   profile's `worker_model` / `worker_reasoning_effort`, where
   `"auto"` is a real pin on the backend default. `worker_session_defaults` in
-  `config/sections.py` resolves the pair, and an explicit argument on the call
+  `config/sections_agent_fields.py` resolves the pair, and an explicit argument on the call
   wins. An inherited model the picker guard refuses, or one the worker's harness
   does not serve, is dropped and the session starts on the default; the full
   rule is in [session-control](../modules/session-control.md).

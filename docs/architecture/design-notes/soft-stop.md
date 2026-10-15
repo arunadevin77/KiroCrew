@@ -28,7 +28,7 @@ second press escalates immediately for a user who is not willing to wait it out.
 
 ## The budget
 
-`agent.soft_stop_budget_secs` (`AgentConfig` in `config/sections.py`), default `10.0`, clamped to
+`agent.soft_stop_budget_secs` (`AgentConfig` in `config/sections_agent.py`), default `10.0`, clamped to
 `[0.5, 60.0]`. `AgentConfig.__post_init__` clamps rather than raises, matching
 what the dashboard PATCH path and the loader already do; an out-of-range value
 logs a WARNING. `config/schema.py` picks the field up automatically by dataclass

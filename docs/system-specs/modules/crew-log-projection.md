@@ -1347,7 +1347,7 @@ terminal run:"),
 and what to do (the `kirocrew config set` command for the retention setting,
 named as the one switch that also expires the transcripts the Archive page
 lists, since `store.sweep_expired` runs off the same value), stating no default,
-since the default lives in `config/sections.py` and prose restating it would go
+since the default lives in `config/sections_session.py` and prose restating it would go
 stale silently. Because the live logs go first, what the cap leaves unread is
 closed sessions' logs, and a live row nests on one of those in exactly one
 case: a slot that outlived a gateway restart, whose current log was opened

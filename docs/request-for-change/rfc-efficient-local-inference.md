@@ -410,7 +410,7 @@ What this layer adds:
   `kirocrew doctor` show the reason. Both builds are installed side by side;
   nothing is selected by a key.
 - **The OS speech engine.** On macOS it already exists as the `apple` STT
-  provider (`_VALID_STT_PROVIDERS` in `config/sections.py`). Whether the battery
+  provider (`_VALID_STT_PROVIDERS` in `config/sections_stt.py`). Whether the battery
   policy should suggest it is open question 4.
 - **Embeddings.** The same pattern extends to Linux and Windows: a Vulkan entry
   beside today's per-platform library table in `embeddings.py`.
