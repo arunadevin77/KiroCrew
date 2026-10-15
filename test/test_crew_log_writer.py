@@ -41,6 +41,11 @@ from kiro_crew.crew_log.writer import (
 UNIT = "acp-writer-0001"
 OTHER = "acp-writer-0002"
 LOGGER = "kiro_crew.crew_log.writer"
+# Entries a real-thread test queues per unit. Every append opens the log and fsyncs it,
+# and a Windows runner's fsync can take hundreds of milliseconds, so the count is what
+# sets these tests' wall time against their flush ceiling. Order and a held backlog
+# need several entries, not many.
+_BACKLOG = 8
 
 
 # --------------------------------------------------------------------------- #
@@ -995,17 +1000,18 @@ def test_a_hung_write_holds_the_backlog_and_a_bounded_shutdown_says_so(units, po
     try:
         _on_loop(lambda: writer.submit(UNIT, WriteJob.append(_hangs, "a write that hangs")))
         assert entered.wait(20.0), "the writer never picked up the hanging job"
-        _on_loop(lambda: [writer.submit(UNIT, _step(units, UNIT, n)) for n in range(64)])
+        _on_loop(lambda: [writer.submit(UNIT, _step(units, UNIT, n)) for n in range(_BACKLOG)])
         stats = writer.stats()
-        assert stats.buffered == 64 and stats.dropped == 0 and stats.peak_buffered == 64
+        assert stats.buffered == _BACKLOG and stats.dropped == 0
+        assert stats.peak_buffered == _BACKLOG
         with caplog.at_level(logging.WARNING, logger=LOGGER):
             report = writer.drain_for_shutdown(0.2)
-        assert report == DrainReport(False, 64, 0, True)
+        assert report == DrainReport(False, _BACKLOG, 0, True)
         assert _messages(caplog, "did not finish writing")
     finally:
         release.set()
-    assert writer.flush(timeout=20.0)
-    assert units.steps(UNIT) == list(range(64))
+    assert writer.flush(timeout=20.0), writer.stats()
+    assert units.steps(UNIT) == list(range(_BACKLOG))
 
 
 def test_a_hung_write_delays_another_unit_without_reordering_or_losing_it(units, pool):
@@ -1094,11 +1100,13 @@ def test_entries_from_a_loop_land_in_order_on_the_writer_thread(units, pool):
         return WriteJob.append(run, f"step {n}")
 
     _on_loop(
-        lambda: [writer.submit(unit, _job(unit, n)) for n in range(40) for unit in (UNIT, OTHER)]
+        lambda: [
+            writer.submit(unit, _job(unit, n)) for n in range(_BACKLOG) for unit in (UNIT, OTHER)
+        ]
     )
-    assert writer.flush(timeout=20.0)
-    assert units.steps(UNIT) == list(range(40))
-    assert units.steps(OTHER) == list(range(40))
+    assert writer.flush(timeout=20.0), writer.stats()
+    assert units.steps(UNIT) == list(range(_BACKLOG))
+    assert units.steps(OTHER) == list(range(_BACKLOG))
     assert all(name.startswith("test-crewlog") for name in threads), threads
 
 
