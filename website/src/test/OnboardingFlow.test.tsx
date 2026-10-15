@@ -34,6 +34,12 @@ vi.mock('../api/client', async importOriginal => {
 const patchConfig = vi.mocked(api.patchConfig)
 const kirocrewConfig = vi.mocked(api.kirocrewConfig)
 
+// The flow saves its first-run step in localStorage so a reload resumes it;
+// the store outlives a test, so start each one from step 1.
+beforeEach(() => {
+  localStorage.removeItem('mc-onboarding-step')
+})
+
 const advanceToStep2 = () => {
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
   expect(screen.getByText('Tell Kiro about you')).toBeInTheDocument()
@@ -86,17 +92,61 @@ describe('OnboardingFlow — About You step', () => {
     expect(patchConfig).not.toHaveBeenCalled()
   })
 
-  it('deselecting an answer before Next results in no write', async () => {
+  it('a second click on the selected answer keeps it selected', async () => {
     renderWithProviders(<OnboardingFlow initialOpen onComplete={vi.fn()} />)
     advanceToStep2()
     const chip = screen.getByRole('button', { name: 'Developer' })
     fireEvent.click(chip)
+    fireEvent.click(chip)
     expect(chip).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(chip) // toggle off — back to the initial ''
-    expect(chip).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByText('Work that runs on time')).toBeInTheDocument()
+    expect(patchConfig).toHaveBeenCalledWith('dashboard.user_role', 'developer')
+  })
+
+  it('on a replay, clicking the preselected answer again does not clear it', async () => {
+    kirocrewConfig.mockResolvedValue({
+      dashboard: { user_role: 'developer', user_technical_level: 'codes' },
+    })
+    renderWithProviders(<OnboardingFlow initialOpen onComplete={vi.fn()} />)
+    advanceToStep2()
+    const chip = await screen.findByRole('button', { name: 'Developer', pressed: true })
+    fireEvent.click(chip)
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     expect(await screen.findByText('Work that runs on time')).toBeInTheDocument()
     expect(patchConfig).not.toHaveBeenCalled()
+  })
+
+  it('a reload during the tour resumes the same step instead of step 1', async () => {
+    const first = renderWithProviders(<OnboardingFlow initialOpen onComplete={vi.fn()} />)
+    advanceToStep2()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByText('Work that runs on time')).toBeInTheDocument()
+    first.unmount()
+    renderWithProviders(<OnboardingFlow initialOpen onComplete={vi.fn()} />)
+    expect(await screen.findByText('Work that runs on time')).toBeInTheDocument()
+    expect(screen.queryByText('Pick your look')).not.toBeInTheDocument()
+  })
+
+  it('finishing the flow forgets the saved step', async () => {
+    const onComplete = vi.fn()
+    renderWithProviders(<OnboardingFlow initialOpen onComplete={onComplete} />)
+    advanceToStep2()
+    fireEvent.click(screen.getByRole('button', { name: /Skip/ }))
+    await waitFor(() => expect(onComplete).toHaveBeenCalled())
+    expect(localStorage.getItem('mc-onboarding-step')).toBeNull()
+  })
+
+  it('ignores a saved step once the user is onboarded (a /onboarding replay starts at step 1)', () => {
+    localStorage.setItem('mc-onboarding-step', '4')
+    localStorage.setItem('mc-onboarded', '1')
+    try {
+      renderWithProviders(<OnboardingFlow initialOpen onComplete={vi.fn()} />)
+      expect(screen.getByText('Pick your look')).toBeInTheDocument()
+    } finally {
+      localStorage.removeItem('mc-onboarded')
+    }
   })
 
   it('Skip on the About You step still persists answers already selected', async () => {
@@ -402,7 +452,7 @@ describe('OnboardingFlow — About You step', () => {
     expect(screen.getByRole('button', { name: /Skip/ })).toHaveFocus()
   })
 
-  it('keeps typed text when Other is toggled off and back on', () => {
+  it('keeps typed text when the user picks another role and comes back to Other', () => {
     renderWithProviders(<OnboardingFlow initialOpen onComplete={vi.fn()} />)
     advanceToStep2()
     const other = screen.getByRole('button', { name: 'Other' })
@@ -410,7 +460,7 @@ describe('OnboardingFlow — About You step', () => {
     fireEvent.change(screen.getByLabelText('Describe your role'), {
       target: { value: 'founder' },
     })
-    fireEvent.click(other) // toggle off — field hides
+    fireEvent.click(screen.getByRole('button', { name: 'Developer' })) // field hides
     expect(screen.queryByLabelText('Describe your role')).not.toBeInTheDocument()
     fireEvent.click(other) // back on — the answer is still there
     expect(screen.getByLabelText('Describe your role')).toHaveValue('founder')
