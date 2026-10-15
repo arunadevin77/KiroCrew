@@ -553,8 +553,8 @@ describe('InfoTip', () => {
     fireEvent.click(btn)
     const tip = screen.getByRole('tooltip')
     expect(tip.style.top).toBe('')
-    expect(parseFloat(tip.style.bottom)).toBe(900 - 300 + 6)
-    expect(parseFloat(tip.style.maxHeight)).toBe(300 - 6 - 8)
+    expect(parseFloat(tip.style.bottom)).toBe(900 - 300 + 10)
+    expect(parseFloat(tip.style.maxHeight)).toBe(300 - 10 - 8)
   })
 
   it('falls below for a placement="top" glyph with no readable room above', () => {
@@ -565,7 +565,7 @@ describe('InfoTip', () => {
     fireEvent.click(btn)
     const tip = screen.getByRole('tooltip')
     expect(tip.style.bottom).toBe('')
-    expect(parseFloat(tip.style.top)).toBe(56 + 6)
+    expect(parseFloat(tip.style.top)).toBe(56 + 10)
   })
 
   it('anchors a tip for a glyph low in the viewport to its bottom edge and caps its height', () => {
