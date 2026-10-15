@@ -139,13 +139,22 @@ def _authored_agent(home: Path, argv: str) -> str:
     (``kirocrew-skill-view-<hash>``), not the authored name, and the same
     authored agent yields the same alias, so the alias alone cannot say whether
     a process is the background agent. The projection writes a sidecar per
-    alias into the agents directory the harness pins (``KIRO_HOME`` is
-    ``<home>/kiro`` -- ``harness_environment``), and that sidecar names the
-    authored agent. An un-aliased ``--agent`` is returned as written; a runtime
-    with no ``--agent`` at all, or an alias with no sidecar, answers ``""`` so
-    the caller classifies it as foreign rather than guessing.
+    alias that names the authored agent. It lives in the data home's side
+    directory (``<home>/skill-projection/metadata``, ``KIROCREW_HOME`` is
+    ``<home>``); a build before that layout wrote it into the agents directory
+    the harness pins (``KIRO_HOME`` is ``<home>/kiro`` --
+    ``harness_environment``). Both are read, the side directory first, the
+    same order the product reads them in (``skill_projection._metadata_dirs``).
+    An un-aliased ``--agent`` is returned as written; a runtime with no
+    ``--agent`` at all, or an alias with no sidecar, answers ``""`` so the
+    caller classifies it as foreign rather than guessing.
     """
-    from kiro_crew.acp.skill_projection import _MANAGED_AGENT, _PROJECTION_METADATA_DIR_NAME
+    from kiro_crew.acp.skill_projection import (
+        _MANAGED_AGENT,
+        _PROJECTION_METADATA_DIR_NAME,
+        _PROJECTION_SIDE_DIR_NAME,
+        _PROJECTION_SIDE_METADATA_DIR_NAME,
+    )
     from kiro_crew.agent_spec_format import NATIVE_SKILL_ALIAS_PREFIX
 
     words = argv.split()
@@ -155,13 +164,18 @@ def _authored_agent(home: Path, argv: str) -> str:
         return ""
     if not agent.startswith(NATIVE_SKILL_ALIAS_PREFIX):
         return agent
-    sidecar = home / "kiro" / "agents" / _PROJECTION_METADATA_DIR_NAME / f"{agent}.json"
-    try:
-        record = json.loads(sidecar.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ""
-    authored = record.get(_MANAGED_AGENT) if isinstance(record, dict) else None
-    return authored if isinstance(authored, str) else ""
+    sidecars = (
+        home / _PROJECTION_SIDE_DIR_NAME / _PROJECTION_SIDE_METADATA_DIR_NAME / f"{agent}.json",
+        home / "kiro" / "agents" / _PROJECTION_METADATA_DIR_NAME / f"{agent}.json",
+    )
+    for sidecar in sidecars:
+        try:
+            record = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        authored = record.get(_MANAGED_AGENT) if isinstance(record, dict) else None
+        return authored if isinstance(authored, str) else ""
+    return ""
 
 
 def _split_background_runtimes(home: Path, alive: tuple) -> tuple[list, list]:
