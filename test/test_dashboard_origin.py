@@ -311,7 +311,9 @@ class TestFormatDashboardUrls:
     @patch.dict("os.environ", {}, clear=True)
     @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
     @patch(f"{_MOD}.machine_hostname", return_value="Mac-1234.local")
-    def test_a_hanging_hostname_lookup_cannot_stall_startup(self, _mh: object, _dp: object) -> None:
+    def test_a_hanging_hostname_lookup_cannot_stall_startup(
+        self, _mh: object, _dp: object, monkeypatch, tmp_path
+    ) -> None:
         """The Remote hint is cosmetic; the event loop it runs on is not.
 
         A GitHub macOS runner's own hostname does not resolve and the resolver
@@ -323,9 +325,21 @@ class TestFormatDashboardUrls:
         import threading
         import time
 
+        import kiro_crew.config.paths as _paths
+        from kiro_crew.testing.wait import wait_until
+
+        # Mitigation: while @patch.dict(clear=True) has KIROCREW_HOME absent, any
+        # _resolve_default_home() call sets _resolved_home to the real ~/.kiro/crew
+        # and fires the suite's home-isolation guard. Pinning _resolve_default_home
+        # makes that impossible regardless of which code path reaches it in this
+        # test's execution window.
+        monkeypatch.setattr(_paths, "_resolve_default_home", lambda: tmp_path / "default")
+
         release = threading.Event()
+        lookups: list[threading.Thread] = []
 
         def _hang(_host: str) -> str:
+            lookups.append(threading.current_thread())
             release.wait(30)
             return "10.0.0.1"
 
@@ -338,7 +352,14 @@ class TestFormatDashboardUrls:
                 lines = format_dashboard_urls("http://localhost:5476", port=5476, local_only=True)
             finally:
                 release.set()
-        assert time.monotonic() - started < 5
+            elapsed = time.monotonic() - started
+            # Wait for the resolver thread inside the patch scope so a late-
+            # starting worker still calls _hang rather than the real gethostbyname.
+            # elapsed is captured before this wait so the wait time is excluded
+            # from the bound that checks format_dashboard_urls returned promptly.
+            wait_until(lambda: lookups and not any(t.is_alive() for t in lookups))
+
+        assert elapsed < 5
         assert not any("Remote" in ln for ln in lines)
 
     @patch.dict("os.environ", {}, clear=True)
