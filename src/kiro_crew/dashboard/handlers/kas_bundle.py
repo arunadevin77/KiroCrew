@@ -63,7 +63,11 @@ def _status_payload(app: web.Application) -> dict[str, Any]:
         "pinned_version": KAS_PIN_VERSION,
         "runs_version": pinned_version(),
         "installed": (
-            {"version": installed.version, "node_version": installed.node_version}
+            {
+                "version": installed.version,
+                "node_version": installed.node_version,
+                "bundled": installed.bundled,
+            }
             if installed is not None
             else None
         ),

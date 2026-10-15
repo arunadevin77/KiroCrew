@@ -115,9 +115,23 @@ def _install_root_targets_cached(package_dir: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(spellings))
 
 
+@functools.lru_cache(maxsize=1)
+def _bundled_kas_targets_cached(bundled_kas_dir: str) -> tuple[str, ...]:
+    """Both spellings of the desktop app's staged KAS engine root, or empty."""
+    if not bundled_kas_dir:
+        return ()
+    lexical = os.path.normpath(os.path.abspath(bundled_kas_dir))
+    spellings = [lexical]
+    try:
+        spellings.append(os.path.realpath(lexical))
+    except (OSError, ValueError):
+        pass
+    return tuple(dict.fromkeys(spellings))
+
+
 def _resolved_install_root_targets() -> list[str]:
     """The running gateway's packaged install tree, sealed read-only for every
-    sandboxed child.
+    sandboxed child -- plus the desktop app's staged KAS engine root, when there is one.
 
     Every write that changes the install tree changes what the gateway executes on its
     next start, with the gateway's identity. The legitimate writer is the updater, which
@@ -125,13 +139,33 @@ def _resolved_install_root_targets() -> list[str]:
     nothing. Empty for an editable or from-source checkout (see
     :func:`install_root_targets_for`).
 
-    Computed once per process: the install location does not move under a running
-    gateway, and caching keeps the one ``realpath`` off every later spawn. Never raises.
+    The staged engine root (:data:`constants.BUNDLED_KAS_DIR_ENV`, a sibling of the
+    package directory inside the app's resources) is the same class of target: its
+    ``install.json`` names the Node binary the gateway spawns, outside any sandbox,
+    for every ``agent.kas_bundle`` session, and the binary itself sits beside it. The shell
+    sets the variable only when the build staged the tree, so an unbundled build adds
+    nothing here. The tree is read-only by construction (the build wrote it; the data
+    home's own ``engines/kas`` is where ``kirocrew kas install`` writes), so no
+    legitimate writer is fenced.
+
+    Computed once per process: neither location moves under a running gateway, and
+    caching keeps the ``realpath`` calls off every later spawn. Never raises.
     """
+    # Read here rather than imported at module scope: every module-level name of this
+    # module is served through the ``sandbox`` facade, and the env name is the
+    # ``constants`` module's to export, not this one's.
+    from kiro_crew.constants import BUNDLED_KAS_DIR_ENV
+
+    targets: list[str] = []
     try:
-        return list(_install_root_targets_cached(_gateway_package_dir()))
+        targets.extend(_install_root_targets_cached(_gateway_package_dir()))
     except Exception:
-        return []
+        pass
+    try:
+        targets.extend(_bundled_kas_targets_cached(os.environ.get(BUNDLED_KAS_DIR_ENV, "").strip()))
+    except Exception:
+        pass
+    return list(dict.fromkeys(targets))
 
 
 def _gateway_package_dir() -> str:

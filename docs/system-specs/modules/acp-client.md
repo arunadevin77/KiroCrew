@@ -3123,7 +3123,14 @@ version runs is the release's pin, not a file on disk: `acp/kas_pin.py` holds
 `KAS_PIN_VERSION` and `KAS_PIN_MANIFEST_SHA256` (the sha256 of that version's
 published `manifest.json`, which in turn pins every artifact), `kirocrew kas
 install` installs exactly that and refuses a manifest whose bytes do not hash to
-the pin, and `installed_bundle()` looks up exactly that version's directory. A
+the pin, and `installed_bundle()` looks up exactly that version's directory --
+under the data home's `engines/kas` first, then under the desktop app's staged
+copy when the Electron shell exported one (`KIROCREW_BUNDLED_KAS_DIR`, set by
+`gateway-env.js` only when the build staged the pin for this architecture,
+without running it at boot; `packaging/build-desktop.sh`, `BUNDLE_KAS`). An operator's
+own install therefore wins over the app's copy, the precedence `KIROCREW_KIRO_BIN`
+has over the bundled kiro-cli, and `InstalledKasBundle.bundled` says which one
+answered. A
 Kiro Crew update therefore moves the engine by asking for a different directory:
 the old one stays, so a still-running process of the previous release keeps its
 engine and a rollback finds its own. Another version needs `--unpinned` to

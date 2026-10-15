@@ -133,10 +133,25 @@ export function KasBundleCard() {
           </>
         ) : installed ? (
           <>
-            <CheckCircle2 className="lucide-inline text-ok" aria-hidden="true" />
+            {/* Green only while the engine is what runs: under an OFF switch a green
+                tick beside "not used" reads as two answers to one question. */}
+            <CheckCircle2
+              className={`lucide-inline ${status.enabled ? 'text-ok' : 'text-muted'}`}
+              aria-hidden="true"
+            />
             <span>
-              {i18nT('pages.developer.kasBundleCard.installed', { version: installed.version })}
+              {installed.bundled
+                ? i18nT('pages.developer.kasBundleCard.installed_bundled', {
+                    version: installed.version,
+                  })
+                : i18nT('pages.developer.kasBundleCard.installed', { version: installed.version })}
             </span>
+            {/* A green line under an OFF switch reads as "already running" without this. */}
+            {!status.enabled && (
+              <span className="text-muted" data-testid="kas-bundle-off-note">
+                {i18nT('pages.developer.kasBundleCard.off_note')}
+              </span>
+            )}
           </>
         ) : (
           <>

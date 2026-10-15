@@ -80,12 +80,13 @@ import urllib.parse
 import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from kiro_crew import asset_downloader, platform_compat
 from kiro_crew.acp.kas_pin import KAS_PIN_MANIFEST_SHA256, KAS_PIN_VERSION, pinned_version
 from kiro_crew.config.paths import data_home
+from kiro_crew.constants import BUNDLED_KAS_DIR_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ __all__ = [
     "host_platform_key",
     "install_bundle",
     "install_pinned",
+    "bundled_kas_root",
     "installed_bundle",
     "installed_versions",
     "kas_engines_root",
@@ -111,6 +113,15 @@ __all__ = [
 #: Data-home leaf every installed engine lives under. Also named in
 #: ``sandbox._CREW_READONLY_LEAVES`` and ``security.paths`` -- the three must agree.
 KAS_BUNDLE_ENGINES_LEAF = "engines"
+
+# ``BUNDLED_KAS_DIR_ENV`` (imported from ``constants``, where ``sandbox`` reads it to
+# seal the directory) names the desktop app's staged engine root: set by the Electron
+# shell only when the build staged the engine for this architecture
+# (``packaging/build-desktop.sh``, ``BUNDLE_KAS``; ``gateway-env.js``,
+# ``bundledKasEnvironment``). Like ``KIROCREW_BUNDLED_KIRO_DIR``, and read
+# as a SECOND root after the data home's ``engines/kas``: an operator's own
+# ``kirocrew kas install`` (or a ``--unpinned`` test install) wins over the copy the
+# app was built with, exactly as ``KIROCREW_KIRO_BIN`` wins over the bundled kiro-cli.
 
 #: Object names under ``<base>/kas/`` on the publishing host.
 KAS_BUNDLE_MANIFEST_NAME = "manifest.json"
@@ -189,6 +200,9 @@ class InstalledKasBundle:
     root: Path
     node_bin: Path
     acp_server: Path
+    #: True when *root* is the desktop app's own staged copy
+    #: (``BUNDLED_KAS_DIR_ENV``), not the data home's ``engines/kas``.
+    bundled: bool = False
 
 
 # ── host keys ──────────────────────────────────────────────────────────────────
@@ -359,6 +373,16 @@ def fetch_manifest(
 def kas_engines_root(home: Path | None = None) -> Path:
     """``<data home>/engines/kas``."""
     return (home or data_home()) / KAS_BUNDLE_ENGINES_LEAF / "kas"
+
+
+def bundled_kas_root() -> Path | None:
+    """The desktop app's staged engine root, or ``None`` when not bundled.
+
+    Read from ``BUNDLED_KAS_DIR_ENV``; whitespace-only and unset both read as "not
+    bundled", the blank an unbundled build leaves behind.
+    """
+    value = os.environ.get(BUNDLED_KAS_DIR_ENV, "").strip()
+    return Path(value) if value else None
 
 
 def _sha256_file(path: Path) -> str:
@@ -734,14 +758,44 @@ def installed_bundle(
 ) -> InstalledKasBundle | None:
     """The engine this release runs (*version*, default the pin), or ``None``.
 
+    With no *root*, two roots are asked in order: the data home's ``engines/kas``
+    (an operator's own install, which wins), then the desktop app's staged copy
+    (:func:`bundled_kas_root`) when the shell exported one. An explicit *root* is
+    asked alone.
+
     Never raises: a damaged record reads as "not installed" and is logged, so a
     spawn path can ask without a try/except.
     """
-    root = root or kas_engines_root()
     version = version or pinned_version()
     if not _VERSION_RE.match(version):
         logger.warning("KAS engine version %r is not a version name; ignoring it", version)
         return None
+    if root is not None:
+        return _read_installed(root, version, bundled=False)
+    found = _read_installed(kas_engines_root(), version, bundled=False)
+    if found is not None:
+        return found
+    bundled = bundled_kas_root()
+    if bundled is None:
+        return None
+    return _read_installed(bundled, version, bundled=True)
+
+
+def _stays_inside(rel: str) -> bool:
+    """Whether the record entry *rel*, joined onto its version directory, stays in it.
+
+    ``home / rel`` discards ``home`` for an absolute *rel*, so an absolute form is
+    refused in every spelling a record could carry whatever the host: POSIX, a
+    drive letter or a rooted Windows path. A ``..`` segment is refused too.
+    """
+    if not rel or PurePosixPath(rel).is_absolute() or PureWindowsPath(rel).drive:
+        return False
+    if rel.startswith(("/", "\\")):
+        return False
+    return ".." not in PureWindowsPath(rel).parts
+
+
+def _read_installed(root: Path, version: str, *, bundled: bool) -> InstalledKasBundle | None:
     try:
         home = root / version
         record = json.loads((home / _INSTALL_RECORD_NAME).read_text(encoding="utf-8"))
@@ -753,7 +807,10 @@ def installed_bundle(
         node_version = record.get("node_version")
         if not (isinstance(acp_rel, str) and isinstance(node_rel, str)):
             return None
-        if ".." in acp_rel or ".." in node_rel:
+        if not (_stays_inside(acp_rel) and _stays_inside(node_rel)):
+            logger.warning(
+                "KAS bundle record under %s names an entry outside its root; ignoring it", home
+            )
             return None
         acp_server = home / acp_rel
         node_bin = home / node_rel
@@ -766,6 +823,7 @@ def installed_bundle(
             root=home,
             node_bin=node_bin,
             acp_server=acp_server,
+            bundled=bundled,
         )
     except FileNotFoundError:
         return None

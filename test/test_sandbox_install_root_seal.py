@@ -21,7 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from kiro_crew import sandbox, sandbox_plan, sandbox_seatbelt
+from kiro_crew import sandbox, sandbox_plan, sandbox_seatbelt, sandbox_tiers
+from kiro_crew.constants import BUNDLED_KAS_DIR_ENV
 from kiro_crew.sandbox_plan import (
     BACKEND_NAMESPACE,
     BACKEND_SEATBELT,
@@ -89,11 +90,56 @@ def test_an_editable_or_source_checkout_stays_writable(package_dir: str) -> None
     assert sandbox.install_root_targets_for(package_dir) == []
 
 
-def test_this_source_checkout_is_not_sealed() -> None:
+def test_this_source_checkout_is_not_sealed(monkeypatch: pytest.MonkeyPatch) -> None:
     # The suite runs from a source checkout, which is exactly the developer case.
     if sandbox.install_root_targets_for(sandbox._gateway_package_dir()):
         pytest.skip("running from a packaged install")
+    monkeypatch.delenv(BUNDLED_KAS_DIR_ENV, raising=False)
     assert sandbox._resolved_install_root_targets() == []
+
+
+# --------------------------------------------------------------------------- #
+# The desktop app's staged KAS engine root rides the same seal.
+# --------------------------------------------------------------------------- #
+
+
+@_POSIX_ONLY
+def test_the_bundled_kas_root_is_sealed_in_both_spellings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Its ``install.json`` names the Node the gateway spawns unsandboxed for every
+    # bundle-route session, and the binary sits beside it: a child that could
+    # write the tree would choose a program the operator never installed. The shell
+    # exports the directory only when the build staged it, so this is the one path
+    # by which it reaches the seal.
+    real = tmp_path / "Resources" / "backend-dist" / "kas-arm64"
+    real.mkdir(parents=True)
+    link = tmp_path / "app-current"
+    link.symlink_to(tmp_path / "Resources", target_is_directory=True)
+    exported = link / "backend-dist" / "kas-arm64"
+    monkeypatch.setenv(BUNDLED_KAS_DIR_ENV, f" {exported} ")
+    sandbox_tiers._bundled_kas_targets_cached.cache_clear()
+    targets = sandbox._resolved_install_root_targets()
+    assert str(exported) in targets
+    assert str(real.resolve()) in targets
+    assert targets.index(str(exported)) < targets.index(str(real.resolve()))
+
+    monkeypatch.setenv(BUNDLED_KAS_DIR_ENV, "  ")
+    sandbox_tiers._bundled_kas_targets_cached.cache_clear()
+    assert str(exported) not in sandbox._resolved_install_root_targets()
+
+
+@_POSIX_ONLY
+def test_the_bundled_kas_root_is_read_only_on_both_launchers() -> None:
+    kas_root = "/Applications/Kiro Crew.app/Contents/Resources/backend-dist/kas-arm64"
+    host = _host(install_root_targets=(INSTALL, kas_root))
+    for backend in (BACKEND_NAMESPACE, BACKEND_SEATBELT):
+        plan = plan_confinement(SandboxRequest(tier="standard", backend=backend), host)
+        assert kas_root in plan.readonly, backend
+    seatbelt = plan_confinement(SandboxRequest(tier="standard", backend=BACKEND_SEATBELT), host)
+    profile = sandbox_seatbelt.render_seatbelt_profile(seatbelt)
+    assert f'(deny file-write* (subpath "{kas_root}"))' in profile
+    assert f'(deny file-link (subpath "{kas_root}"))' in profile
 
 
 @pytest.mark.parametrize(
