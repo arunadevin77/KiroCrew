@@ -224,7 +224,7 @@ function ScopeBadge({
   const bg = disabled
     ? 'bg-bg-elevated text-muted'
     : active
-      ? 'bg-ok/20 text-ok border border-ok/40'
+      ? 'bg-ok/20 text-ok-text border border-ok/40'
       : 'bg-bg-elevated text-muted border border-border'
   const pendingRing = pendingChange
     ? 'ring-1 ring-[var(--warn)] ring-offset-1 ring-offset-bg border-dashed'

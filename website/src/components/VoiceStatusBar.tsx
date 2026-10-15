@@ -329,7 +329,7 @@ export default function VoiceStatusBar({ recording, level, deviceLabel, deviceId
   return (
     <div
       aria-live="polite"
-      className="flex items-center gap-2 px-3 py-1.5 text-[12px] text-danger bg-danger-subtle border-b border-danger-subtle"
+      className="flex items-center gap-2 px-3 py-1.5 text-[12px] text-danger-text bg-danger-subtle border-b border-danger-subtle"
     >
       {/* pulsing live dot */}
       <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">

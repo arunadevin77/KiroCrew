@@ -183,12 +183,12 @@ const SubagentCompletionCard = memo(function SubagentCompletionCard({
           <span
             className={`${CHIP} ${
               failed
-                ? 'bg-danger-subtle border-danger/20 text-danger'
+                ? 'bg-danger-subtle border-danger/20 text-danger-text'
                 : interrupted
                   ? 'bg-warn-subtle border-warn/20 text-warn-text'
                   : stopped
                     ? 'bg-muted/15 border-border text-muted'
-                    : 'bg-ok-subtle border-ok/20 text-ok'
+                    : 'bg-ok-subtle border-ok/20 text-ok-text'
             }`}
           >
             {outcomeLabel(parsed.outcome)}
@@ -196,12 +196,12 @@ const SubagentCompletionCard = memo(function SubagentCompletionCard({
         ) : (
           <>
             {parsed.ok > 0 && (
-              <span className={`${CHIP} bg-ok-subtle border-ok/20 text-ok`} data-testid="chip-ok">
+              <span className={`${CHIP} bg-ok-subtle border-ok/20 text-ok-text`} data-testid="chip-ok">
                 <CheckCircle2 size={10} aria-hidden /> {parsed.ok}
               </span>
             )}
             {parsed.failed > 0 && (
-              <span className={`${CHIP} bg-danger-subtle border-danger/20 text-danger`} data-testid="chip-failed">
+              <span className={`${CHIP} bg-danger-subtle border-danger/20 text-danger-text`} data-testid="chip-failed">
                 <AlertCircle size={10} aria-hidden /> {parsed.failed}
               </span>
             )}

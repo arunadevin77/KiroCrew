@@ -133,7 +133,7 @@ function stateTone(source: IssueSource): string {
   if (source.state === 'closed') {
     return source.stateReason === 'not_planned' ? 'bg-bg-hover text-muted' : 'bg-aim/15 text-aim'
   }
-  return 'bg-ok/15 text-ok'
+  return 'bg-ok/15 text-ok-text'
 }
 
 /** Prefilled chat handoff for the whole issue: enough context for the agent to

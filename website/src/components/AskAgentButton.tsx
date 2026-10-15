@@ -175,7 +175,10 @@ export default function AskAgentButton({
     // pre-approval warning box) so the link never escalates its host.
     : tone === 'warn'
       ? 'text-[12px] font-medium text-warn/80 hover:text-warn bg-transparent border-none p-0 underline decoration-warn/30 hover:decoration-warn underline-offset-2'
-      : 'text-[12px] font-medium text-danger/80 hover:text-danger bg-transparent border-none p-0 underline decoration-danger/30 hover:decoration-danger underline-offset-2'
+      // `--danger-text`, not a faded `--danger`: the link sits on the error
+      // banner's danger tint, where only the darkened token clears 4.5:1 in
+      // light palettes. Hover marks itself with the underline instead.
+      : 'text-[12px] font-medium text-danger-text bg-transparent border-none p-0 underline decoration-danger/30 hover:decoration-danger underline-offset-2'
 
   return (
     <button

@@ -34,11 +34,11 @@ const STATUS_META: Record<RunStatus, { cls: string; dot: string; pulse?: boolean
     pulse: true,
   },
   done: {
-    cls: 'bg-ok-subtle text-ok border-ok',
+    cls: 'bg-ok-subtle text-ok-text border-ok',
     dot: 'bg-ok',
   },
   error: {
-    cls: 'bg-danger-subtle text-danger border-danger',
+    cls: 'bg-danger-subtle text-danger-text border-danger',
     dot: 'bg-danger',
   },
   cancelled: {

@@ -358,7 +358,7 @@ export default function ProjectList({ onOpenProject }: ProjectListProps) {
                           }
                         }}
                         disabled={deleteMutation.isPending}
-                        className="p-1 rounded text-muted hover:text-danger hover:bg-danger/10 cursor-pointer bg-transparent border-none transition-colors disabled:opacity-40"
+                        className="p-1 rounded text-muted hover:text-danger-text hover:bg-danger/10 cursor-pointer bg-transparent border-none transition-colors disabled:opacity-40"
                       >
                         <Trash2 className="lucide-inline" />
                       </button>

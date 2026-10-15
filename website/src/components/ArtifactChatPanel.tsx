@@ -103,7 +103,7 @@ export function ArtifactChatPanel({
         <button
           type="button"
           onClick={onClose}
-          className="p-1 rounded text-muted hover:text-danger hover:bg-danger/10 cursor-pointer bg-transparent border-none transition-colors"
+          className="p-1 rounded text-muted hover:text-danger-text hover:bg-danger/10 cursor-pointer bg-transparent border-none transition-colors"
           title={i18nT('components.artifactChatPanel.close_panel_the_session_stays_active')}
           aria-label={i18nT('components.artifactChatPanel.close_chat_panel')}
         >

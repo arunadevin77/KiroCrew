@@ -655,7 +655,7 @@ function SignInProblem({
         panelFootnote: i18nT('components.kasLogin.aside_footnote'),
       }}
     >
-      <div className={`${chrome.tile} bg-danger/10 text-danger`}>
+      <div className={`${chrome.tile} bg-danger/10 text-danger-text`}>
         <AlertTriangle className="lucide-inline" />
       </div>
       <p className={`${chrome.afterTile} ${chrome.eyebrow.replace('text-accent', 'text-danger')}`}>
@@ -966,7 +966,7 @@ function KasLoginFlow({
           panelFootnote: i18nT('components.kasLogin.aside_footnote'),
         }}
       >
-        <div className={`${chrome.tile} bg-danger/10 text-danger`}>
+        <div className={`${chrome.tile} bg-danger/10 text-danger-text`}>
           <AlertTriangle className="lucide-inline" />
         </div>
         <h1 className={`${chrome.afterTile} ${chrome.headline}`}>

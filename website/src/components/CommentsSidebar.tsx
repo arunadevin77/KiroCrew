@@ -285,7 +285,7 @@ export function CommentRow({
           <button
             type="button"
             onClick={() => onResolve(comment)}
-            className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded-md text-muted hover:text-ok hover:bg-ok-subtle bg-transparent border-none cursor-pointer transition-colors"
+            className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded-md text-muted hover:text-ok-text hover:bg-ok-subtle bg-transparent border-none cursor-pointer transition-colors"
             title={i18nT('components.commentsSidebar.resolve_human_only')}
             style={(restrictActions || hideResolveEff) ? { display: 'none' } : undefined}
           ><CheckCircle2 size={13} /> {i18nT('components.commentsSidebar.resolve')}</button>
@@ -302,7 +302,7 @@ export function CommentRow({
         <button
           type="button"
           onClick={() => onDelete(comment)}
-          className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded-md text-muted hover:text-danger hover:bg-danger-subtle bg-transparent border-none cursor-pointer transition-colors ml-auto"
+          className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded-md text-muted hover:text-danger-text hover:bg-danger-subtle bg-transparent border-none cursor-pointer transition-colors ml-auto"
           title={i18nT('components.commentsSidebar.delete')}
           style={(restrictActions || hideDeleteEff) ? { display: 'none' } : undefined}
         ><X size={13} /> {i18nT('components.commentsSidebar.delete')}</button>

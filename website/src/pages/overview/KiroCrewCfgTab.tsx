@@ -226,7 +226,7 @@ function CfgToggle({ label, path, value, hint, onSave }: { label: string; path: 
   useEffect(() => { setLocal(value) }, [value])
   return (
     <CfgRow label={label} hint={hint} ok={ok}>
-      <button className={`h-7 min-w-[120px] px-2 py-0.5 rounded text-[13px] font-mono ${local ? 'bg-ok/15 text-ok border border-ok/30' : 'bg-bg-elevated text-muted border border-border'}`} onClick={() => { markDirty(); const v = !local; setLocal(v); onSave(path, v) }}>
+      <button className={`h-7 min-w-[120px] px-2 py-0.5 rounded text-[13px] font-mono ${local ? 'bg-ok/15 text-ok-text border border-ok/30' : 'bg-bg-elevated text-muted border border-border'}`} onClick={() => { markDirty(); const v = !local; setLocal(v); onSave(path, v) }}>
         {local ? 'on' : 'off'}
       </button>
     </CfgRow>

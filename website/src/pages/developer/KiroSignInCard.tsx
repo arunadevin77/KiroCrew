@@ -55,7 +55,7 @@ function SignedInSummary({
       <div className="flex flex-wrap items-start gap-3">
         <div
           className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-            lapsed ? 'bg-warn/15 text-warn-text' : 'bg-ok/15 text-ok'
+            lapsed ? 'bg-warn/15 text-warn-text' : 'bg-ok/15 text-ok-text'
           }`}
           aria-hidden="true"
         >

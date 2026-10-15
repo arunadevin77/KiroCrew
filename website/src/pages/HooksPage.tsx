@@ -39,14 +39,14 @@ const MATCHER_MODES = ['glob', 'regex', 'contains']
 
 const EVENT_STYLE: Record<string, string> = {
   AgentSpawn: 'bg-accent/15 text-accent border-accent/30',
-  UserPromptSubmit: 'bg-ok-subtle text-ok border-ok/30',
+  UserPromptSubmit: 'bg-ok-subtle text-ok-text border-ok/30',
   PreToolUse: 'bg-aim-subtle text-aim border-aim/30',
   PostToolUse: 'bg-aim-subtle text-aim border-aim/30',
   Stop: 'bg-warn-subtle text-warn-text border-warn/30',
   PreTaskExecution: 'bg-aim-subtle text-aim border-aim/30',
   PostTaskExecution: 'bg-aim-subtle text-aim border-aim/30',
-  FileCreated: 'bg-ok-subtle text-ok border-ok/30',
-  FileEdited: 'bg-ok-subtle text-ok border-ok/30',
+  FileCreated: 'bg-ok-subtle text-ok-text border-ok/30',
+  FileEdited: 'bg-ok-subtle text-ok-text border-ok/30',
   FileDeleted: 'bg-warn-subtle text-warn-text border-warn/30',
   UserTriggered: 'bg-accent/15 text-accent border-accent/30',
 }

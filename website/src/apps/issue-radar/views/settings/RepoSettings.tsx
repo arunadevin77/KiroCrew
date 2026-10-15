@@ -678,7 +678,7 @@ export default function RepoSettings({ repoRef }: { repoRef: RepoRef }) {
         ) : (
           <button
             onClick={() => setConfirmingDelete(true)}
-            className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded-md border border-danger/50 text-danger hover:bg-danger/10 cursor-pointer bg-transparent"
+            className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded-md border border-danger/50 text-danger hover:text-danger-text hover:bg-danger/10 cursor-pointer bg-transparent"
           >
             <Trash2 size={13} /> {i18nT('apps.issueRadar.views.settings.repoSettings.disconnect')}
           </button>

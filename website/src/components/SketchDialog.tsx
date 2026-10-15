@@ -552,7 +552,7 @@ export default function SketchDialog({ open, onOpenChange, onInsert, returnFocus
                   <button
                     className={`text-[12px] px-2.5 py-1 rounded-lg bg-transparent border cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0 ${
                       discardArmed
-                        ? 'text-danger border-danger hover:bg-danger/10'
+                        ? 'text-danger hover:text-danger-text border-danger hover:bg-danger/10'
                         : 'text-muted border-border hover:text-text hover:bg-bg-hover'
                     }`}
                     onClick={() => {

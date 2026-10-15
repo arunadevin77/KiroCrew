@@ -317,7 +317,7 @@ const SubagentProgressBar = memo(function SubagentProgressBar({ slot }: { slot: 
             )}
             {stopTargetCount > 0 && (
               <button
-                className="shrink-0 flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded border border-danger/40 text-danger/70 hover:bg-danger-subtle hover:text-danger cursor-pointer transition-all bg-transparent"
+                className="shrink-0 flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded border border-danger/40 text-danger/70 hover:bg-danger-subtle hover:text-danger-text cursor-pointer transition-all bg-transparent"
                 onClick={stopAll}
                 aria-label={queued > 0 || stoppableCount > 1 ? i18nT('pages.chat.subagentProgressBar.stop_all') : i18nT('pages.chat.subagentProgressBar.stop_running_subagent')}
               >
@@ -446,7 +446,7 @@ const SubagentProgressBar = memo(function SubagentProgressBar({ slot }: { slot: 
                 </button>
                 {stoppable && (
                   <button
-                    className="shrink-0 flex items-center text-[11px] px-1 py-0.5 rounded border border-danger/40 text-danger/70 hover:bg-danger-subtle hover:text-danger cursor-pointer transition-all bg-transparent"
+                    className="shrink-0 flex items-center text-[11px] px-1 py-0.5 rounded border border-danger/40 text-danger/70 hover:bg-danger-subtle hover:text-danger-text cursor-pointer transition-all bg-transparent"
                     onClick={() => stopAgent(a.id, sanitizeLlmOutput(a.agent || a.id))}
                     aria-label={i18nT('pages.chat.subagentProgressBar.stop_subagent', { name: sanitizeLlmOutput(a.agent || a.id) })}
                     title={i18nT('pages.chat.subagentProgressBar.stop_this_subagent')}

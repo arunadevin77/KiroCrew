@@ -322,12 +322,12 @@ const SubagentRunCard = memo(function SubagentRunCard({
             </span>
           )}
           {counts.done > 0 && (
-            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] leading-4 px-1.5 py-0.5 rounded bg-ok-subtle border border-ok/20 text-ok">
+            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] leading-4 px-1.5 py-0.5 rounded bg-ok-subtle border border-ok/20 text-ok-text">
               <CheckCircle2 size={10} aria-hidden /> {counts.done}
             </span>
           )}
           {counts.failed > 0 && (
-            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] leading-4 px-1.5 py-0.5 rounded bg-danger-subtle border border-danger/20 text-danger">
+            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] leading-4 px-1.5 py-0.5 rounded bg-danger-subtle border border-danger/20 text-danger-text">
               <AlertCircle size={10} aria-hidden /> {counts.failed}
             </span>
           )}

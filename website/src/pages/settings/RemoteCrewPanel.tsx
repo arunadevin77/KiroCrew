@@ -2264,7 +2264,7 @@ export function RemoteCrewPanel() {
           className={
             'mb-3 flex items-start gap-2 px-3 py-2 text-[13px] rounded-md border ' +
             (diagNote.kind === 'ok'
-              ? 'bg-ok/10 text-ok border-ok/30'
+              ? 'bg-ok/10 text-ok-text border-ok/30'
               : 'bg-accent/10 text-accent border-accent/30')
           }
         >

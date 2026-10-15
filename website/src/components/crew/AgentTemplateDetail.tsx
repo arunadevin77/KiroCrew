@@ -136,7 +136,7 @@ function Chips({ items, tone }: { items: string[]; tone?: 'ok' | 'aim' | 'danger
   const shown = open ? items : items.slice(0, CHIP_CAP)
   const cls =
     tone === 'ok'
-      ? 'bg-ok/10 border-ok/30 text-ok'
+      ? 'bg-ok/10 border-ok/30 text-ok-text'
       : tone === 'aim'
         ? 'bg-aim-subtle border-aim/30 text-aim'
         : tone === 'danger'

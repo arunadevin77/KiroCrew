@@ -341,7 +341,7 @@ export default function CommentThreads(
                 </span>
               )}
               {t.resolved && (
-                <span className="inline-flex items-center gap-1 text-[10.5px] px-1.5 py-0.5 rounded-full bg-ok-subtle text-ok">
+                <span className="inline-flex items-center gap-1 text-[10.5px] px-1.5 py-0.5 rounded-full bg-ok-subtle text-ok-text">
                   <Check size={10} aria-hidden="true" /> {i18nT('components.commentThreads.resolved')}
                 </span>
               )}

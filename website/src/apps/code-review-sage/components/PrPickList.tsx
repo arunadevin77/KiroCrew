@@ -53,7 +53,7 @@ function PrStateChip({ pr, reviewing, queued }: { pr: RepoPr; reviewing?: boolea
         title={pr.reviewed_at
       ? i18nT('apps.codeReviewSage.components.prPickList.reviewed_age', { age: relativeAge(pr.reviewed_at) })
       : i18nT('apps.codeReviewSage.components.prPickList.already_reviewed')}
-        className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-ok-subtle text-ok whitespace-nowrap"
+        className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-ok-subtle text-ok-text whitespace-nowrap"
       >
         {i18nT('apps.codeReviewSage.components.prPickList.reviewed')}
       </span>

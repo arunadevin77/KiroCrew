@@ -122,8 +122,8 @@ const WorkflowCompletionCard = memo(function WorkflowCompletionCard({
         <span
           className={`shrink-0 text-[10px] leading-4 px-1.5 py-0.5 rounded border ${
             ok
-              ? 'bg-ok/10 border-ok/20 text-ok'
-              : 'bg-danger/10 border-danger/20 text-danger'
+              ? 'bg-ok/10 border-ok/20 text-ok-text'
+              : 'bg-danger/10 border-danger/20 text-danger-text'
           }`}
         >
           {status}

@@ -243,11 +243,11 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
   // so it must escape both the loader icon and the spin animation.
   const Icon = isRejected ? CircleSlash : isAutoDenied ? CircleAlert : isDone ? CircleDot : hasPendingPerm ? Lock : LoaderCircle
   const tone = isRejected
-    ? 'text-danger bg-danger-subtle'
+    ? 'text-danger-text bg-danger-subtle'
     : isAutoDenied
       ? 'text-warn-text bg-warn-subtle'
       : isDone
-        ? 'text-ok bg-ok/5'
+        ? 'text-ok-text bg-ok/5'
         : hasPendingPerm
           ? 'text-warn-text bg-warn-subtle'
           : 'text-accent bg-accent/5'

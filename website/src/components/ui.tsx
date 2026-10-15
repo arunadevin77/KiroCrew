@@ -73,7 +73,7 @@ export const Btn = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttribute
         primary
           ? 'bg-accent text-accent-fg border-accent hover:bg-accent-hover hover:shadow-[0_0_12px_var(--accent-glow)]'
           : danger
-            ? 'border-border bg-transparent text-danger hover:border-danger hover:bg-danger-subtle'
+            ? 'border-border bg-transparent text-danger hover:text-danger-text hover:border-danger hover:bg-danger-subtle'
             : 'border-border bg-transparent text-text hover:border-border-strong hover:bg-bg-hover'
       }`, className)}
       {...rest}
@@ -117,7 +117,7 @@ export const SendBtn = React.forwardRef<HTMLButtonElement, { children: React.Rea
 const ICON_BUTTON_VARIANTS: Record<'default' | 'accent' | 'danger' | 'active', string> = {
   default: 'text-muted hover:text-text hover:bg-bg-hover',
   accent: 'text-muted hover:text-accent hover:bg-bg-hover',
-  danger: 'text-muted hover:text-danger hover:bg-danger-subtle',
+  danger: 'text-muted hover:text-danger-text hover:bg-danger-subtle',
   active: 'text-accent hover:bg-bg-hover',
 }
 
@@ -184,8 +184,8 @@ export function SearchInput({ className = '', ...props }: React.InputHTMLAttribu
 
 export function Badge({ variant, children, className, ...rest }: { variant: 'ok' | 'err' | 'warn' | 'aim' | 'muted' } & Omit<React.ComponentPropsWithoutRef<'span'>, 'children' | 'dangerouslySetInnerHTML'> & { children: React.ReactNode }) {
   const cls =
-    variant === 'ok' ? 'bg-ok-subtle text-ok'
-    : variant === 'err' ? 'bg-danger-subtle text-danger'
+    variant === 'ok' ? 'bg-ok-subtle text-ok-text'
+    : variant === 'err' ? 'bg-danger-subtle text-danger-text'
     : variant === 'aim' ? 'bg-aim-subtle text-aim'
     : variant === 'muted' ? 'bg-[var(--bg-hover)] text-[var(--muted)]'
     : 'bg-warn-subtle text-warn-text'

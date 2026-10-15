@@ -1956,7 +1956,7 @@ export default function AppDetailPage() {
                     <div className="text-muted text-[11px] uppercase tracking-wider mb-1">{i18nT('pages.appDetailPage.mcp_tools')}</div>
                     <div className="flex flex-wrap gap-1">
                       {(app.manifest.permissions.mcpTools || []).map((t: string) => (
-                        <code key={t} className="bg-ok-subtle border border-ok/20 px-1.5 py-0.5 rounded text-[11px] text-ok">{t}</code>
+                        <code key={t} className="bg-ok-subtle border border-ok/20 px-1.5 py-0.5 rounded text-[11px] text-ok-text">{t}</code>
                       ))}
                     </div>
                   </div>
@@ -2002,7 +2002,7 @@ export default function AppDetailPage() {
                     {(sConfig.autoApprove || []).length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {(sConfig.autoApprove || []).map((t: string) => (
-                          <span key={t} className="bg-ok-subtle border border-ok/20 px-1 py-0 rounded text-[10px] text-ok">{t}</span>
+                          <span key={t} className="bg-ok-subtle border border-ok/20 px-1 py-0 rounded text-[10px] text-ok-text">{t}</span>
                         ))}
                       </div>
                     )}

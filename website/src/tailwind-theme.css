@@ -86,6 +86,9 @@
   --color-ok: var(--ok);
   --color-ok-fg: var(--ok-fg);
   --color-ok-subtle: var(--ok-subtle);
+  /* `text-ok-text` / `text-danger-text`: the same shape as `text-warn-text`,
+     for ok and danger text on their own tints (index.css derives both). */
+  --color-ok-text: var(--ok-text);
   --color-warn: var(--warn);
   --color-warn-fg: var(--warn-fg);
   --color-warn-subtle: var(--warn-subtle);
@@ -95,6 +98,7 @@
   --color-danger: var(--danger);
   --color-danger-fg: var(--danger-fg);
   --color-danger-subtle: var(--danger-subtle);
+  --color-danger-text: var(--danger-text);
   --color-info: var(--info);
   --color-info-fg: var(--info-fg);
   --color-info-subtle: color-mix(in srgb, var(--info) 12%, transparent);

@@ -246,7 +246,7 @@ function ReportRowCard({
               <Pill>{i18nT('apps.codeReviewSage.components.reportView.blast_radius',
                 { scope: row.blast })}</Pill>
               {live.red > 0 && (
-                <span className="inline-flex items-center rounded-full bg-danger-subtle text-danger px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">
+                <span className="inline-flex items-center rounded-full bg-danger-subtle text-danger-text px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">
                   {live.red} {i18nT('apps.codeReviewSage.components.reportView.blocking')}
                 </span>
               )}

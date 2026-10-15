@@ -293,7 +293,7 @@ export default function ErrorNotice({
       >
         <AlertTriangle size={14} className="shrink-0" aria-hidden="true" />
         {title && <strong className="font-semibold">{title}</strong>}
-        <span className={`min-w-0 ${messageBelow ? 'basis-full text-[11px] font-normal text-danger/80' : ''} ${messageClassName}`} style={{ overflowWrap: 'anywhere' }} title={messageTooltip}>{withOriginLink(message)}</span>
+        <span className={`min-w-0 ${messageBelow ? 'basis-full text-[11px] font-normal text-danger-text' : ''} ${messageClassName}`} style={{ overflowWrap: 'anywhere' }} title={messageTooltip}>{withOriginLink(message)}</span>
         {askAgent && (
           <AskAgentButton
             report={report}
@@ -350,7 +350,7 @@ export default function ErrorNotice({
   return (
     <div
       role="alert"
-      className={`rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 flex ${dismissLabelVisible ? 'flex-wrap md:flex-nowrap ' : ''}items-start gap-2 text-[13px] text-danger ${className}`}
+      className={`rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 flex ${dismissLabelVisible ? 'flex-wrap md:flex-nowrap ' : ''}items-start gap-2 text-[13px] text-danger-text ${className}`}
       id={id}
       data-testid={testId}
     >
@@ -360,7 +360,7 @@ export default function ErrorNotice({
         {/* Wrapped only when asked: the bare text node is the shape every
             existing consumer's tests read. */}
         {scrollMessage || messageBelow || messageClassName || messageTooltip
-          ? <span className={`${messageBelow ? 'block text-[12px] font-normal text-danger/80' : ''} ${messageClassName}${scrollMessage ? ' min-h-0 overflow-y-auto' : ''}`} title={messageTooltip}>{withOriginLink(message)}</span>
+          ? <span className={`${messageBelow ? 'block text-[12px] font-normal text-danger-text' : ''} ${messageClassName}${scrollMessage ? ' min-h-0 overflow-y-auto' : ''}`} title={messageTooltip}>{withOriginLink(message)}</span>
           : withOriginLink(message)}
         {footer && <div className="mt-1 font-normal">{footer}</div>}
         {askAgent && actionPlacement === 'below' && (

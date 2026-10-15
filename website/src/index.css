@@ -675,6 +675,20 @@ html:lang(ko) {
    every tint the source pairs with it in every light palette. */
 :root{--warn-text:var(--warn);}
 [data-mode="light"]{--warn-text:color-mix(in srgb, var(--warn) 50%, #000);}
+/* Ok- and danger-hued TEXT on its own tint (`bg-ok-subtle`, `bg-ok/N`,
+   `bg-danger-subtle`, `bg-danger/N`): the `text-ok-text` and
+   `text-danger-text` utilities, the same shape as `--warn-text`. In light
+   palettes the plain hue on its 5-25% tint falls below 4.5:1 (ok 1.97:1 in
+   amoled-light, danger 2.37:1 in tokyonight-light), so the text keeps part of
+   the hue and darkens the rest toward black: still green and red. Each share
+   is the most hue that still clears the strongest tint the source pairs with
+   it, so the text stays as coloured as the floor allows. Danger keeps 55%
+   (`bg-danger/25` on hover: 4.82:1 in tokyonight-light; 60% would be
+   4.35:1). Ok keeps 60% (`bg-ok/20`: 4.56:1 in amoled-light; 61% would be
+   4.45:1). statusTextContrast.test.ts reads both shares from this rule and
+   measures every paired tint in every light palette. */
+:root{--ok-text:var(--ok);--danger-text:var(--danger);}
+[data-mode="light"]{--ok-text:color-mix(in srgb, var(--ok) 60%, #000);--danger-text:color-mix(in srgb, var(--danger) 55%, #000);}
 :root,[data-theme="dark"],[data-theme="amber-dark"]{
   --search-highlight:rgba(255,167,38,.45);--search-highlight-current:rgba(255,120,0,.85);--search-highlight-current-border:rgba(255,255,255,.9);
   --bg:#12141a;--bg-accent:#14161d;--bg-elevated:#1a1d25;--bg-hover:#262a35;

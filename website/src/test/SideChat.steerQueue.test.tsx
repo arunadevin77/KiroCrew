@@ -1486,7 +1486,7 @@ describe('chatSlice steer frame placement', () => {
     renderWithProviders(<SideChat slot={SLOT} />, { store })
 
     // The danger treatment is the point: the same text in an assistant row proves nothing.
-    expect(screen.getByText('the backend refused')).toHaveClass('text-danger')
+    expect(screen.getByText('the backend refused')).toHaveClass('text-danger-text')
   })
 
   it('a card whose text this client never had can be neither edited nor cancelled', async () => {

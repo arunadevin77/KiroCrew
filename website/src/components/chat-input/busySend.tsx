@@ -247,7 +247,7 @@ export function BusySendControls({ stopState, killingEscaped, stopWithTap, isQue
             out near white-on-white mid-pulse, and this is the only
             force-stop path while a cancel hangs (#9548 UX review). */}
         <motion.button
-          className="w-8 h-8 rounded-lg bg-danger/10 border-none text-danger hover:bg-danger/20 flex items-center justify-center cursor-pointer transition-all"
+          className="w-8 h-8 rounded-lg bg-danger/10 border-none text-danger-text hover:bg-danger/20 flex items-center justify-center cursor-pointer transition-all"
           onClick={stopWithTap}
           title={i18nT('components.chatInput.force_kill_discards_in_progress_work_and_queued')}
           aria-label={i18nT('components.chatInput.force_kill_session_discards_in_progress_work_and')}
@@ -314,13 +314,13 @@ export function BusySendControls({ stopState, killingEscaped, stopWithTap, isQue
       // the user finds out by pressing. min-w-0 + wrap: a long localized hint
       // shrinks beside the fixed control instead of overflowing a narrow composer.
       <div className="flex items-center gap-1.5 min-w-0">
-        <button className="w-8 h-8 shrink-0 rounded-lg bg-transparent border-none text-danger hover:bg-danger/10 flex items-center justify-center cursor-pointer transition-all" onClick={stopWithTap} title={i18nT('components.chatInput.force_kill_discards_in_progress_work_and_queued')} aria-label={i18nT('components.chatInput.force_kill_session_discards_in_progress_work_and')} data-testid="stop-button-armed">
+        <button className="w-8 h-8 shrink-0 rounded-lg bg-transparent border-none text-danger hover:text-danger-text hover:bg-danger/10 flex items-center justify-center cursor-pointer transition-all" onClick={stopWithTap} title={i18nT('components.chatInput.force_kill_discards_in_progress_work_and_queued')} aria-label={i18nT('components.chatInput.force_kill_session_discards_in_progress_work_and')} data-testid="stop-button-armed">
           <Square size={18} fill="currentColor" />
         </button>
         <span className="text-[13px] leading-4 text-muted min-w-0 break-words" data-testid="stop-declined-hint">{i18nT('components.chatInput.click_again_to_force_stop_resets_session')}</span>
       </div>
     ) : onStop ? (
-      <button className="w-8 h-8 rounded-lg bg-transparent border-none text-danger hover:bg-danger/10 flex items-center justify-center cursor-pointer transition-all" onClick={stopWithTap} title={i18nT('components.chatInput.stop_generation')} aria-label={i18nT('components.chatInput.stop_generation')} data-testid="stop-button-armed" {...uiLocation('composer.stop')}>
+      <button className="w-8 h-8 rounded-lg bg-transparent border-none text-danger hover:text-danger-text hover:bg-danger/10 flex items-center justify-center cursor-pointer transition-all" onClick={stopWithTap} title={i18nT('components.chatInput.stop_generation')} aria-label={i18nT('components.chatInput.stop_generation')} data-testid="stop-button-armed" {...uiLocation('composer.stop')}>
         <Square size={18} fill="currentColor" />
       </button>
     ) : steerOnly ? (

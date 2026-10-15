@@ -311,7 +311,7 @@ function PlaceholderPane({
           onClick={onCancel}
           title={i18nT('components.sessionGridView.close_cell')}
           aria-label={i18nT('components.sessionGridView.close_cell')}
-          className="shrink-0 p-1 rounded text-muted hover:text-danger hover:bg-danger/10 cursor-pointer bg-transparent border-none transition-colors"
+          className="shrink-0 p-1 rounded text-muted hover:text-danger-text hover:bg-danger/10 cursor-pointer bg-transparent border-none transition-colors"
         >
           <X size={14} />
         </button>

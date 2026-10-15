@@ -189,7 +189,7 @@ export function AttachMenu({ plus, onUploadFiles, uploading, onCancelUpload, dir
     <button
       type="button"
       onClick={onCancelUpload}
-      className="relative w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all bg-transparent border-none text-muted hover:text-danger hover:bg-danger/10"
+      className="relative w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all bg-transparent border-none text-muted hover:text-danger-text hover:bg-danger/10"
       aria-label={i18nT('components.chatInput.cancel_upload')}
       title={i18nT('components.chatInput.cancel_upload')}
     >

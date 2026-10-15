@@ -121,7 +121,7 @@ function StatePill({ state, draft, merged }: { state: string; draft?: boolean; m
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 text-[12px] font-medium px-2 py-0.5 rounded-full bg-ok-subtle text-ok">
+    <span className="inline-flex items-center gap-1 text-[12px] font-medium px-2 py-0.5 rounded-full bg-ok-subtle text-ok-text">
       <GitPullRequest size={12} /> {i18nT('apps.issueRadar.components.prDetail.open')}
     </span>
   )

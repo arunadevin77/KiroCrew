@@ -232,7 +232,7 @@ export function pullRequestMergeBlocker(source: PullRequestSource): PullRequestM
 function stateTone(source: PullRequestSource): string {
   const state = source.state.toLowerCase()
   if (source.mergedAt || state === 'merged') return 'bg-aim/15 text-aim'
-  if (state === 'open' || state === 'opened') return 'bg-ok/15 text-ok'
+  if (state === 'open' || state === 'opened') return 'bg-ok/15 text-ok-text'
   return 'bg-bg-hover text-muted'
 }
 

@@ -2550,7 +2550,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
 const _SYNC_TONES: Record<string, { wrap: string; btn: string }> = {
   info: { wrap: 'border-info/40 bg-info-subtle text-info', btn: 'border-info/40 text-info hover:bg-info/10' },
   warn: { wrap: 'border-warn/40 bg-warn-subtle text-warn-text', btn: 'border-warn/40 text-warn-text hover:bg-warn/10' },
-  danger: { wrap: 'border-danger/40 bg-danger-subtle text-danger', btn: 'border-danger/40 text-danger hover:bg-danger/10' },
+  danger: { wrap: 'border-danger/40 bg-danger-subtle text-danger-text', btn: 'border-danger/40 text-danger-text hover:bg-danger/10' },
 }
 
 // `busy` while the page's own save is on the wire: a flush started then would

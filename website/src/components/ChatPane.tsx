@@ -576,7 +576,7 @@ export default function ChatPane({
             </button>
           )}
           {onRemove && (
-            <button onClick={onRemove} title={i18nT('components.chatPane.close_pane')} aria-label={i18nT('components.chatPane.close_pane')} className="shrink-0 rounded text-muted hover:text-danger hover:bg-danger/10 cursor-pointer p-1 transition-colors bg-transparent border-none">
+            <button onClick={onRemove} title={i18nT('components.chatPane.close_pane')} aria-label={i18nT('components.chatPane.close_pane')} className="shrink-0 rounded text-muted hover:text-danger-text hover:bg-danger/10 cursor-pointer p-1 transition-colors bg-transparent border-none">
               <X size={15} />
             </button>
           )}

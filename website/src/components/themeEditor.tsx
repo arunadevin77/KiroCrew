@@ -392,7 +392,7 @@ export function ThemeEditorPanel({ editor }: { editor: ReturnType<typeof useThem
         <Btn onClick={closeEditor}>{i18nT('components.themeEditor.cancel')}</Btn>
         {isEditing && (
           <button onClick={() => handleDelete()}
-            className="ml-auto px-3 py-1.5 rounded-md text-[13px] font-medium cursor-pointer bg-danger/15 border border-danger/40 text-danger hover:bg-danger/25 hover:border-danger/60 transition-all">
+            className="ml-auto px-3 py-1.5 rounded-md text-[13px] font-medium cursor-pointer bg-danger/15 border border-danger/40 text-danger-text hover:bg-danger/25 hover:border-danger/60 transition-all">
             {i18nT('components.themeEditor.delete_theme')}
           </button>
         )}

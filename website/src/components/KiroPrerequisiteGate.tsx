@@ -278,7 +278,7 @@ function SetupStatusError({
   return (
     <SetupShell>
       <>
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-danger/10 text-danger">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-danger/10 text-danger-text">
           <AlertTriangle className="lucide-inline" />
         </div>
         <p className="mt-6 text-[12px] font-bold uppercase tracking-[0.16em] text-danger">
@@ -581,7 +581,7 @@ function SandboxUnavailable({
   // A momentary failure that clears on retry should not be dressed in the same
   // alarm red as a host-level verdict — the body immediately walks that back.
   const transient = failureKind === 'transient'
-  const tone = transient ? 'bg-accent-subtle text-accent' : 'bg-danger/10 text-danger'
+  const tone = transient ? 'bg-accent-subtle text-accent' : 'bg-danger/10 text-danger-text'
   const eyebrowTone = transient ? 'text-accent' : 'text-danger'
   return (
     <SetupShell
@@ -754,7 +754,7 @@ function AgentSpecsMissing({
       asideBody={i18nT('components.kiroPrerequisiteGate.kiro_crew_installs_the_agent_specs_kiro_cli_load')}
     >
       <>
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-danger/10 text-danger">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-danger/10 text-danger-text">
           <AlertTriangle className="lucide-inline" />
         </div>
         <p className="mt-6 text-[12px] font-bold uppercase tracking-[0.16em] text-danger">
@@ -830,7 +830,7 @@ function AgentSpecsRejected({
       asideBody={i18nT('components.kiroPrerequisiteGate.kiro_crew_installs_the_agent_specs_kiro_cli_load')}
     >
       <>
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-danger/10 text-danger">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-danger/10 text-danger-text">
           <AlertTriangle className="lucide-inline" />
         </div>
         <p className="mt-6 text-[12px] font-bold uppercase tracking-[0.16em] text-danger">

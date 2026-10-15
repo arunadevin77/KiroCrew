@@ -271,8 +271,8 @@ export default function NotificationFeed({ selectedTs, onSelect, variant = 'pane
   const searchRow = (
     <div className="flex gap-2 mb-2 items-center shrink-0">
       <div className="flex-1"><SearchInput className="[&>input]:!bg-bg-elevated/40 [&>input]:!border-border/60" placeholder={i18nT('components.notifications.notificationFeed.search')} value={filter} onChange={e => setFilter(e.target.value)} /></div>
-      {!mac && unread > 0 && <button {...uiLocation('notifications.page-mark-all-read')} className="px-2 py-1 rounded-md border border-ok/40 bg-ok/10 text-ok text-[12px] font-semibold cursor-pointer hover:bg-ok/20 transition-all font-body whitespace-nowrap" onClick={() => dispatch(ackAllNotifications())}><Check className="lucide-inline" /> {i18nT('components.notifications.notificationFeed.all')}</button>}
-      {!mac && items.length > 0 && <button {...uiLocation('notifications.page-clear-all')} className="px-2 py-1 rounded-md border border-danger/40 bg-transparent text-danger text-[12px] font-medium cursor-pointer hover:bg-danger/10 transition-all font-body whitespace-nowrap" onClick={() => { if (confirm(i18nT('components.notifications.notificationFeed.clear_all_notifications'))) dispatch(clearNotifications()) }}><X className="lucide-inline" /> {i18nT('components.notifications.notificationFeed.clear')}</button>}
+      {!mac && unread > 0 && <button {...uiLocation('notifications.page-mark-all-read')} className="px-2 py-1 rounded-md border border-ok/40 bg-ok/10 text-ok-text text-[12px] font-semibold cursor-pointer hover:bg-ok/20 transition-all font-body whitespace-nowrap" onClick={() => dispatch(ackAllNotifications())}><Check className="lucide-inline" /> {i18nT('components.notifications.notificationFeed.all')}</button>}
+      {!mac && items.length > 0 && <button {...uiLocation('notifications.page-clear-all')} className="px-2 py-1 rounded-md border border-danger/40 bg-transparent text-danger hover:text-danger-text text-[12px] font-medium cursor-pointer hover:bg-danger/10 transition-all font-body whitespace-nowrap" onClick={() => { if (confirm(i18nT('components.notifications.notificationFeed.clear_all_notifications'))) dispatch(clearNotifications()) }}><X className="lucide-inline" /> {i18nT('components.notifications.notificationFeed.clear')}</button>}
     </div>
   )
 
@@ -310,7 +310,7 @@ export default function NotificationFeed({ selectedTs, onSelect, variant = 'pane
                 title={i18nT('components.notifications.notificationFeed.mark_all_as_read')}
                 aria-label={i18nT('components.notifications.notificationFeed.mark_all_as_read')}
                 {...uiLocation('notifications.mark-all-read')}
-                className="w-6 h-6 rounded-md flex items-center justify-center text-ok bg-transparent border-none cursor-pointer hover:bg-ok/10 transition-colors shrink-0"
+                className="w-6 h-6 rounded-md flex items-center justify-center text-ok hover:text-ok-text bg-transparent border-none cursor-pointer hover:bg-ok/10 transition-colors shrink-0"
                 onClick={() => dispatch(ackAllNotifications())}
               ><CheckCheck className="lucide-inline" /></button>
             )}
@@ -319,7 +319,7 @@ export default function NotificationFeed({ selectedTs, onSelect, variant = 'pane
                 title={i18nT('components.notifications.notificationFeed.clear_all_notifications')}
                 aria-label={i18nT('components.notifications.notificationFeed.clear_all_notifications')}
                 {...uiLocation('notifications.clear-all')}
-                className="w-6 h-6 rounded-md flex items-center justify-center text-muted bg-transparent border-none cursor-pointer hover:bg-danger/10 hover:text-danger transition-colors shrink-0"
+                className="w-6 h-6 rounded-md flex items-center justify-center text-muted bg-transparent border-none cursor-pointer hover:bg-danger/10 hover:text-danger-text transition-colors shrink-0"
                 onClick={() => { if (confirm(i18nT('components.notifications.notificationFeed.clear_all_notifications'))) dispatch(clearNotifications()) }}
               ><Trash2 className="lucide-inline" /></button>
             )}

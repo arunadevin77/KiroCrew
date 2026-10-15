@@ -396,7 +396,7 @@ export function InstancesPanel() {
         </div>
       )}
       {connectedNote && (
-        <div role="status" className="flex items-start gap-2 px-3 py-2 text-[13px] rounded-md bg-ok/10 text-ok border border-ok/30">
+        <div role="status" className="flex items-start gap-2 px-3 py-2 text-[13px] rounded-md bg-ok/10 text-ok-text border border-ok/30">
           <Plug size={14} className="lucide-inline mt-0.5 shrink-0" />
           <span className="flex-1 break-words">{connectedNote}</span>
           <button type="button" aria-label={i18nT('pages.settings.instancesPanel.dismiss')} className="shrink-0 opacity-70 hover:opacity-100" onClick={() => setConnectedNote(null)}><X size={12} /></button>
@@ -419,7 +419,7 @@ export function InstancesPanel() {
           className={
             'flex items-start gap-2 px-3 py-2 text-[13px] rounded-md border ' +
             (diagNote.kind === 'ok'
-              ? 'bg-ok/10 text-ok border-ok/30'
+              ? 'bg-ok/10 text-ok-text border-ok/30'
               : 'bg-accent/10 text-accent border-accent/30')
           }
         >

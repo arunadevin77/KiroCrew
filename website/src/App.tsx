@@ -384,7 +384,7 @@ export function UpdateOverlay({ onCancel }: { onCancel: () => void }) {
         ) : isStuck ? (
           <div className="flex flex-col gap-3 items-center">
             <div className="text-sm text-warn">{i18nT('app.this_step_seems_to_be_taking_longer_than_expecte')}</div>
-            <button className="px-4 py-1.5 rounded-lg text-[13px] font-medium cursor-pointer bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20 transition-colors" onClick={handleCancel}>
+            <button className="px-4 py-1.5 rounded-lg text-[13px] font-medium cursor-pointer bg-danger/10 border border-danger/30 text-danger-text hover:bg-danger/20 transition-colors" onClick={handleCancel}>
               {i18nT('app.cancel_update')}
             </button>
           </div>
@@ -2375,7 +2375,7 @@ export default function App() {
             // `pointer-events-none`: the strip hangs over the top 24px of
             // whatever <main> paints; a readout must not swallow the taps and
             // scroll starts that land there while the socket is down.
-            className="absolute left-0 right-0 top-full z-[1] pointer-events-none flex items-center justify-center gap-1.5 h-6 text-[12px] font-medium text-danger bg-danger-subtle border-b border-danger/30"
+            className="absolute left-0 right-0 top-full z-[1] pointer-events-none flex items-center justify-center gap-1.5 h-6 text-[12px] font-medium text-danger-text bg-danger-subtle border-b border-danger/30"
           >
             <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse [animation-iteration-count:3]! motion-reduce:animate-none" />
             {i18nT('app.gateway_offline_reconnecting')}

@@ -605,7 +605,7 @@ export const ErrorCard = memo(function ErrorCard({
   if (!onContinue) {
     return (
       <div
-        className="bg-danger-subtle text-danger text-[13px] leading-5 px-3 py-2 rounded-md ring-1 ring-inset forced-colors:border ring-danger/15 self-center animate-scale-in"
+        className="bg-danger-subtle text-danger-text text-[13px] leading-5 px-3 py-2 rounded-md ring-1 ring-inset forced-colors:border ring-danger/15 self-center animate-scale-in"
         data-testid="error-card"
         style={{ overflowWrap: 'anywhere' }}
       >

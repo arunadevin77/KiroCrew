@@ -117,7 +117,7 @@ export default function WebPreviewPanelNativeSurface({ native, annotate, draft, 
               onClick={clearAnnotations}
               disabled={!annotations.length || annotateBusy}
               className={`text-[12px] px-2 h-6 rounded-md border transition-colors cursor-pointer bg-transparent disabled:opacity-40 disabled:cursor-default ${
-                clearArmed ? 'text-danger border-danger hover:bg-danger/10' : 'text-text border-border hover:bg-bg-hover hover:border-border-strong'
+                clearArmed ? 'text-danger hover:text-danger-text border-danger hover:bg-danger/10' : 'text-text border-border hover:bg-bg-hover hover:border-border-strong'
               }`}
               aria-label={clearArmed
                 ? i18nT('components.webPreviewPanel.annotate_clear_confirm', { count: annotations.length })

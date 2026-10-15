@@ -345,7 +345,7 @@ export default function SkillsTab() {
           {s.source === 'package'
             ? <span className="text-[10px] px-1.5 py-[1px] rounded-full bg-aim-subtle text-aim border border-aim/30 font-bold shrink-0">{i18nT('pages.overview.skillsTab.package')}</span>
             : s.always
-              ? <span className="text-[10px] px-1.5 py-[1px] rounded-full bg-ok-subtle text-ok font-bold shrink-0">{i18nT('pages.overview.skillsTab.auto')}</span>
+              ? <span className="text-[10px] px-1.5 py-[1px] rounded-full bg-ok-subtle text-ok-text font-bold shrink-0">{i18nT('pages.overview.skillsTab.auto')}</span>
               : s.inject_on_trigger === false
                 ? <span className="text-[10px] px-1.5 py-[1px] rounded-full bg-accent-subtle text-accent border border-accent/30 font-bold shrink-0">{i18nT('pages.overview.skillsTab.pointer')}</span>
                 : <span className="text-[10px] px-1.5 py-[1px] rounded-full bg-bg-elevated text-muted border border-border font-bold shrink-0">{i18nT('pages.overview.skillsTab.on_demand')}</span>}

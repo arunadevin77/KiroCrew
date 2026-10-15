@@ -32,7 +32,7 @@ export const BAND_LABEL_KEY: Record<Band, string> = {
 const BAND_META: Record<Band, { dot: string; on: string; off: string }> = {
   red: {
     dot: 'text-danger',
-    on: 'bg-danger-subtle text-danger border-danger',
+    on: 'bg-danger-subtle text-danger-text border-danger',
     off: 'bg-card text-muted border-border hover:text-text',
   },
   yellow: {
@@ -42,7 +42,7 @@ const BAND_META: Record<Band, { dot: string; on: string; off: string }> = {
   },
   green: {
     dot: 'text-ok',
-    on: 'bg-ok-subtle text-ok border-ok',
+    on: 'bg-ok-subtle text-ok-text border-ok',
     off: 'bg-card text-muted border-border hover:text-text',
   },
 }

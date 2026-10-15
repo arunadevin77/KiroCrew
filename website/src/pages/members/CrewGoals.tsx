@@ -50,7 +50,7 @@ type Tone = 'accent' | 'info' | 'ok' | 'warn' | 'quiet'
 const TONE_TILE: Record<Tone, string> = {
   accent: 'bg-accent-subtle text-accent',
   info: 'bg-info-subtle text-info',
-  ok: 'bg-ok-subtle text-ok',
+  ok: 'bg-ok-subtle text-ok-text',
   warn: 'bg-warn-subtle text-warn-text',
   quiet: 'bg-bg-hover text-muted',
 }
