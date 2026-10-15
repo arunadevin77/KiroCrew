@@ -1274,14 +1274,15 @@ def test_a_third_party_fallback_stays_silent(
 
 
 def test_the_fallback_precheck_covers_every_control_plane() -> None:
-    """The stub decides "is this a Crew name" from the leaf ``mcp_cleanup`` set so
-    a third-party fallback never imports gatewayd. That precheck must be a
-    superset of the daemon's ``CONTROL_PLANE_BACKENDS``, or a control plane added
-    to the daemon's set alone would be skipped here silently: no vetting, no
-    token, no WARNING -- the exact tokenless shape this PR fixed."""
+    """The stub decides "is this a Crew name" from a set it spells out so a
+    third-party fallback never imports ``mcp_cleanup`` (and through it
+    ``agent_sdk``). That spelled-out set must equal the leaf ``mcp_cleanup`` one
+    and be a superset of the daemon's ``CONTROL_PLANE_BACKENDS``, or a control
+    plane added to the daemon's set alone would be skipped here silently: no
+    vetting, no token, no WARNING -- the exact tokenless shape this PR fixed."""
     from kiro_crew import mcp_cleanup
 
-    assert stub_mod.KIROCREW_BIN_MCP_SERVERS is mcp_cleanup.KIROCREW_BIN_MCP_SERVERS
+    assert stub_mod.KIROCREW_BIN_MCP_SERVERS == frozenset(mcp_cleanup.KIROCREW_BIN_MCP_SERVERS)
     assert gw.CONTROL_PLANE_BACKENDS <= frozenset(stub_mod.KIROCREW_BIN_MCP_SERVERS)
 
 

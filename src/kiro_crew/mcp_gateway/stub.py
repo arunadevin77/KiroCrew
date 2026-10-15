@@ -44,7 +44,6 @@ from kiro_crew import platform_compat
 from kiro_crew.executors import configure_default_executor, subprocess_executor
 from kiro_crew.json_line import parse_json_object_line
 from kiro_crew.mcp_caller import CallerContext, _parent_pid
-from kiro_crew.mcp_cleanup import KIROCREW_BIN_MCP_SERVERS
 from kiro_crew.mcp_gateway import transport
 from kiro_crew.mcp_gateway.claim import STUB_SESSION_TOKEN_ENV
 from kiro_crew.mcp_gateway.hashing import (
@@ -602,6 +601,36 @@ def _binary_version(command: str) -> str:
         return h.hexdigest()[:24]
     except OSError:
         return "unknown"
+
+
+#: Every managed-binary MCP server name (its command is the ``kirocrew`` shim).
+#: Two cold-start-path consumers read it: :func:`build_register_payload` folds
+#: the code fingerprint in for these, and :func:`_fallback_target_is_own_control_plane`
+#: gates the session token on them.
+#:
+#: Spelled out rather than imported from ``mcp_cleanup`` -- the same reason as
+#: :data:`_KIROCREW_MCP_SUBCOMMANDS` below. ``mcp_cleanup`` eagerly imports
+#: ``agent_sdk.mcp_refs`` for an unrelated constant, so taking this 10-string
+#: tuple from it put ``kiro_crew.agent_sdk`` and its 14 submodules into every
+#: stub (one per session per MCP server). The stub needs only the names.
+#: ``test_mcp_gateway_stub_import_budget`` pins this set equal to
+#: ``mcp_cleanup.KIROCREW_BIN_MCP_SERVERS`` so the copy cannot drift.
+KIROCREW_BIN_MCP_SERVERS = frozenset(
+    {
+        # ALWAYS_ON (must be in an agent spec).
+        "kirocrew-cron",
+        "kirocrew-core",
+        "kirocrew-computer",
+        "kirocrew-guide",
+        "kirocrew-mate",
+        # OPT_IN (assignable; most agents are simply not granted them).
+        "kirocrew-dashboard",
+        "kirocrew-work",
+        "kirocrew-crew-log",
+        "kirocrew-debug",
+        "kirocrew-panel",
+    }
+)
 
 
 #: Kiro Crew's own MCP servers, as the subcommand a stub's target args name.

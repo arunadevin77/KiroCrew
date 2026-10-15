@@ -51,6 +51,11 @@ FORBIDDEN_WHEN_BRIDGING = (
     "kiro_crew.jsonl_util",
     "kiro_crew.security",
     "kiro_crew.validation",
+    # The stub needs only the 10 managed server NAMES, which it spells out
+    # (``stub.KIROCREW_BIN_MCP_SERVERS``). Taking them from ``mcp_cleanup``
+    # instead reached ``agent_sdk.mcp_refs`` and pulled ``kiro_crew.agent_sdk``
+    # and its 14 submodules into every stub.
+    "kiro_crew.agent_sdk",
 )
 
 #: Additionally absent after a bare ``import``: building the Register payload
