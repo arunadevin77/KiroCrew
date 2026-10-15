@@ -168,7 +168,7 @@ export function fmtRelativeTime(ts: string | number | undefined): string {
   const time = fmtDateFields(d, { hour: '2-digit', minute: '2-digit' })
   if (daysAgo <= 0) return time
   // The existing catalog key, NOT `fmtRelative`: CLDR returns a lowercase
-  // "yesterday", which clashed with the capitalized group header in ChatSidebar
+  // "yesterday", which clashed with the capitalized group header in chat-sidebar/chrome.tsx
   // that already uses this same key. One key, one casing.
   if (daysAgo === 1) return `${i18nT('pages.chatSidebar.yesterday')} ${time}`
   if (daysAgo <= 6) return `${fmtDateFields(d, { weekday: 'short' })} ${time}`

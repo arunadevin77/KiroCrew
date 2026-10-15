@@ -14,21 +14,40 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join, relative } from 'node:path'
 
 import { SearchFilterBar, FilterMenuButton, FilterChip } from '../components/SearchFilterBar'
 
 const read = (...p: string[]) => readFileSync(join(__dirname, '..', ...p), 'utf8')
 
-const PAGES: ReadonlyArray<readonly [label: string, file: readonly string[]]> = [
-  ['ChatSidebar', ['pages', 'ChatSidebar.tsx']],
-  ['MembersPage', ['pages', 'members', 'MembersPage.tsx']],
+/** The sidebar's own files: the facade and the owners under pages/chat-sidebar/ it
+ *  composes, where its search row and chips are drawn. */
+function sidebarFiles(): string[][] {
+  const root = join(__dirname, '..')
+  const out: string[][] = [['pages', 'ChatSidebar.tsx']]
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name)
+      if (statSync(p).isDirectory()) walk(p)
+      else if (/\.(ts|tsx)$/.test(name) && !/\.test\./.test(name)) out.push(relative(root, p).split(/[\\/]/))
+    }
+  }
+  walk(join(root, 'pages', 'chat-sidebar'))
+  return out
+}
+
+const PAGES: ReadonlyArray<readonly [label: string, files: readonly string[][]]> = [
+  ['ChatSidebar', sidebarFiles()],
+  ['MembersPage', [['pages', 'members', 'MembersPage.tsx']]],
 ]
 
+/** One page's source text: every file it is built from, joined. */
+const source = (files: readonly string[][]) => files.map(f => read(...f)).join('\n')
+
 describe('search row parity — one SearchFilterBar on both list panels', () => {
-  it.each(PAGES)('%s mounts SearchFilterBar with a FilterMenuButton trigger', (_label, file) => {
-    const src = read(...file)
+  it.each(PAGES)('%s mounts SearchFilterBar with a FilterMenuButton trigger', (_label, files) => {
+    const src = source(files)
     expect(src).toMatch(/import \{[^}]*\bSearchFilterBar\b[^}]*\bFilterMenuButton\b[^}]*\} from '(\.\.\/)+components\/SearchFilterBar'/)
     expect(src).toContain('<SearchFilterBar')
     expect(src).toContain('<FilterMenuButton')
@@ -47,8 +66,8 @@ describe('search row parity — one SearchFilterBar on both list panels', () => 
     expect(src).not.toContain('rounded-full text-[11px] border transition-colors')
   })
 
-  it.each(PAGES)('%s marks its active filters with the shared FilterChip row, not an inline pill', (_label, file) => {
-    const src = read(...file)
+  it.each(PAGES)('%s marks its active filters with the shared FilterChip row, not an inline pill', (_label, files) => {
+    const src = source(files)
     expect(src).toMatch(/import \{[^}]*\bFilterChip\b[^}]*\bFILTER_CHIP_ROW_CLS\b[^}]*\} from '(\.\.\/)+components\/SearchFilterBar'/)
     expect(src).toContain('<FilterChip')
     expect(src).toContain('className={FILTER_CHIP_ROW_CLS}')

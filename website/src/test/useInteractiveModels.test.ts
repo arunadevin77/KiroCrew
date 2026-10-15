@@ -3,7 +3,7 @@ import { createElement } from 'react'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { effortToCarry, filterInteractiveModels, legacyCodexEffort, normalizeHiddenModels, shouldSeparateModelEffort, switchGroupedModel, useModelPickerConfigured, useModelPickerHiddenModelsQuery } from '../hooks/useInteractiveModels'
@@ -252,7 +252,18 @@ describe('interactive model visibility', () => {
     const chatPage = readFileSync(resolve(root, 'pages/ChatPage.tsx'), 'utf8')
     const chatPane = ['components/useChatPanePickers.ts', 'components/ChatPanePickerMenus.tsx']
       .map(rel => readFileSync(resolve(root, rel), 'utf8')).join('\n')
-    const bulkSwitcher = readFileSync(resolve(root, 'pages/ChatSidebar.tsx'), 'utf8')
+    // The sidebar, whose bulk model switch lives in pages/chat-sidebar/bulkModelSwitch.tsx:
+    // the shell joined with every owner it composes.
+    const sidebarFiles = [resolve(root, 'pages/ChatSidebar.tsx')]
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir).sort()) {
+        const p = resolve(dir, name)
+        if (statSync(p).isDirectory()) walk(p)
+        else if (/\.(ts|tsx)$/.test(name) && !/\.test\./.test(name)) sidebarFiles.push(p)
+      }
+    }
+    walk(resolve(root, 'pages/chat-sidebar'))
+    const bulkSwitcher = sidebarFiles.map(f => readFileSync(f, 'utf8')).join('\n')
     // Settings ▸ Chat is a facade over sibling owners: read them as one text.
     const settings = [
       'ChatPanel.tsx', 'ChatPanelLinkPatternsEditor.tsx', 'chatPanelOptions.ts',

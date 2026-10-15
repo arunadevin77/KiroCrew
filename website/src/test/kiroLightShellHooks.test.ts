@@ -13,10 +13,29 @@
  * class behind that reads as load-bearing.
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const read = (...p: string[]) => readFileSync(join(__dirname, '..', ...p), 'utf8')
+
+/** The owners under pages/chat-sidebar/ the sidebar shell composes. */
+function sidebarOwnerSources(): string[] {
+  const out: string[] = []
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir).sort()) {
+      const p = join(dir, name)
+      if (statSync(p).isDirectory()) walk(p)
+      else if (/\.(ts|tsx)$/.test(name) && !/\.test\./.test(name)) out.push(readFileSync(p, 'utf8'))
+    }
+  }
+  walk(join(__dirname, '..', 'pages', 'chat-sidebar'))
+  return out
+}
+
+/** A page's surface for the negative half: the sidebar shell joined with its owners, any
+ *  other page its one file. */
+const surface = (file: string[]) =>
+  file.join('/') === 'pages/ChatSidebar.tsx' ? [read(...file), ...sidebarOwnerSources()].join('\n') : read(...file)
 const css = read('index.css')
 
 /** hook class -> the source that must render it, and the regex proving it does */
@@ -69,9 +88,10 @@ describe('kiro-light shell hooks', () => {
     // the white canvas while the sessions list beside it stepped back to
     // --panel — the hook only reaches a card that mounts LIST_SHELL_CLS.
     const src = read(...file)
+    const joined = surface(file)
     expect(src, KEEP_HOOK('sidebar-inner', file)).toMatch(/import \{[^}]*\bLIST_SHELL_CLS\b[^}]*\} from '(\.\.\/)+components\/listShell'/)
     expect(src, KEEP_HOOK('sidebar-inner', file)).toMatch(/\$\{LIST_SHELL_CLS\}/)
-    expect(src, KEEP_HOOK('sidebar-inner', file)).not.toMatch(/className="sidebar sidebar-inner /)
+    expect(joined, KEEP_HOOK('sidebar-inner', file)).not.toMatch(/className="sidebar sidebar-inner /)
   })
 
   it('the user bubble tint is scoped to the non-steer branch only', () => {

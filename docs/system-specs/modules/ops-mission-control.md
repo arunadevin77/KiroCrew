@@ -3003,7 +3003,7 @@ the base rule cannot see.
 **Label tables hold catalog KEYS, not English.** The `Record<…, string>` label tables
 (`STATUS_LABEL_KEY`, `MODE_HELP_KEY`, `CHANNEL_WHEN_KEY`, `BLOCKED_LABEL_KEY`, and the two
 `SegmentedControl` segment lists) follow the `FILTER_LABEL_KEY` pattern from
-`pages/ChatSidebar.tsx`, because `eslint-plugin-i18next` exempts anything inside an ALL-CAPS
+`pages/chat-sidebar/SearchDock.tsx`, because `eslint-plugin-i18next` exempts anything inside an ALL-CAPS
 module constant by default, and English literals there would be invisible to the i18n gate.
 Three non-obvious constraints:
 

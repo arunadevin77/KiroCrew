@@ -1,9 +1,12 @@
 /** The sidebar's shared row and folder chrome: the open-in-tab gesture, the
- *  disclosure chevron, the pinned-section divider, and the folder body geometry
- *  and text-control classes that the session row, the folder blocks and the
- *  lanes all draw with. */
+ *  disclosure chevron, the pinned-section divider, the folder body geometry and
+ *  text-control classes that the session row, the folder blocks and the lanes all
+ *  draw with, and the date-segment label the flat lane and the Older Sessions pane
+ *  head their groups with. */
 import { ChevronRight } from 'lucide-react'
 import { IS_MAC } from '../../hooks/useKeyboardShortcuts'
+import { i18nT } from '../../i18n/t'
+import { fmtDateFields } from '../../i18n/format'
 
 /** Is this click the "open as a tab" modifier gesture? One predicate for every
  *  surface that offers it (session rows, the New button, the folder create
@@ -104,3 +107,22 @@ export const BOARD_FOLDER_BODY_CLS = 'relative border-l border-border ml-3 pl-1'
 export const SIDEBAR_TEXT_CONTROL_CLS = 'text-left text-[12px] text-muted hover:text-accent hover:bg-accent-subtle rounded-md cursor-pointer bg-transparent border-none transition-colors'
 /** The dormant toggle: the shared look plus a full-width flex row for the chevron. */
 export const STALE_TOGGLE_CLS = `w-full flex items-center gap-1.5 px-3 py-0.5 leading-4 ${SIDEBAR_TEXT_CONTROL_CLS}`
+
+/** Compute a date segment label for a session timestamp. Mirrors ChatGPT/Claude.
+ *  Accepts either a Unix epoch (seconds) from backend `modified` or an ISO `created` string. */
+export function dateSegment(ts: number | string | undefined): string {
+  if (ts == null) return i18nT('pages.chatSidebar.older')
+  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
+  if (isNaN(d.getTime())) return i18nT('pages.chatSidebar.older')
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  const daysAgo7 = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7)
+  const daysAgo30 = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30)
+  if (d >= startOfToday) return i18nT('pages.chatSidebar.today')
+  if (d >= startOfYesterday) return i18nT('pages.chatSidebar.yesterday')
+  if (d >= daysAgo7) return i18nT('pages.chatSidebar.last_7_days')
+  if (d >= daysAgo30) return i18nT('pages.chatSidebar.last_30_days')
+  if (d.getFullYear() === now.getFullYear()) return fmtDateFields(d, { month: 'long' })
+  return fmtDateFields(d, { year: 'numeric', month: 'long' })
+}

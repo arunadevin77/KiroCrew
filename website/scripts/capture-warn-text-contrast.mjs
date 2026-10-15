@@ -29,7 +29,7 @@
  *   dark              dark palettes keep plain `--warn`: before == after
  *
  * Each frame holds the tints the source pairs with the text: `bg-warn-subtle`,
- * `bg-warn/10`, `bg-warn/15`, `bg-warn/20` (the ChatSidebar hover) and
+ * `bg-warn/10`, `bg-warn/15`, `bg-warn/20` (the chat-sidebar/boardLane.tsx hover) and
  * `bg-warn/30` (the VectorMemoryCard filter pill), as a chip row and a notice.
  * The utilities are painted through the built stylesheet's own classes, so the
  * fixture names the same class strings the components do.

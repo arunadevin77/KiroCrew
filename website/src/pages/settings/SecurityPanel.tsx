@@ -66,7 +66,7 @@ interface SecurityFeature {
  * Shaped as flat `Record`s of full literal keys, indexed inline at the `i18nT()` call,
  * because that is the form `scripts/check-i18n-keys.mjs` can resolve statically — a key
  * it cannot resolve is a key it cannot verify exists. Same shape as `FILTER_LABEL_KEY`
- * in `pages/ChatSidebar.tsx` and `EFFORT_LABEL_KEY` in `lib/effort.ts`.
+ * in `pages/chat-sidebar/SearchDock.tsx` and `EFFORT_LABEL_KEY` in `lib/effort.ts`.
  */
 export const FEATURE_LABEL_KEY: Record<SecurityFeatureKey, string> = {
   os_sandbox: 'pages.settings.securityPanel.feature_os_sandbox',

@@ -70,7 +70,7 @@ export function isLegacySlackSlotKey(slotKey?: string): boolean {
  * so it never reaches this predicate.)
  *
  * Single source of truth for that set: `ChatPage.tsx`'s `filteredSlots` and
- * `ChatSidebar.tsx`'s resume-from-history handler both need the identical
+ * `chat-sidebar/HistoryPane.tsx`'s resume-from-history handler both need the identical
  * answer to "can the chat page show this slot", and having two independent
  * copies is exactly how #3624 happened — the sidebar offered every history
  * row unconditionally, the page silently couldn't display some of them, and

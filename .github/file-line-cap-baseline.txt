@@ -446,7 +446,6 @@
 2125 website/src/pages/AppDetailPage.tsx
 2777 website/src/pages/ArtifactDetailPage.tsx
 6990 website/src/pages/ChatPage.tsx
-7398 website/src/pages/ChatSidebar.tsx
 2699 website/src/pages/DevFleetPage.tsx
 2117 website/src/pages/chat/SidePanel.tsx
 2026 website/src/pages/connections/ConnectionsPage.tsx

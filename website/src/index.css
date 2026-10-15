@@ -2252,7 +2252,7 @@ file-tree-container{
    The hit area can only reach as far as the nearest `overflow: hidden`
    ancestor: a clipped part of a box is not hit-testable. A host inside such
    a wrapper must lift the clip under the same media query (the sidebar's
-   split New button does, see ChatSidebar). */
+   split New button does, see chat-sidebar/SidebarHeader.tsx). */
 @layer components {
   @media (pointer: coarse) {
     .mc-touch-hit, .mc-touch-hit-y, .mc-touch-hit-end { position: relative; }
@@ -3116,7 +3116,7 @@ body.mc-focus-mode.mc-focus-rail .focus-chrome-rail{
    fade completes (REVEAL_FLASH_FADE_MS in ChatSidebar.tsx covers it). */
 .session-row.session-reveal-flash,.folder-row.session-reveal-flash,.folder-col.session-reveal-flash{outline:2px solid var(--accent);outline-offset:-2px}
 .session-row.session-reveal-flash-fade,.folder-row.session-reveal-flash-fade,.folder-col.session-reveal-flash-fade{outline-color:transparent}
-/* Pinned folder headers in the Sessions lane (ChatSidebar renderFolderHeader).
+/* Pinned folder headers in the Sessions lane (chat-sidebar/folderBlocks.tsx renderFolderHeader).
    A sticky row needs an opaque surface or the session rows scroll visibly
    through it; it takes the card's own surface so it reads as part of the
    panel. `:where()` keeps this at one class of specificity so the row's
@@ -3148,7 +3148,7 @@ body.mc-focus-mode.mc-focus-rail .focus-chrome-rail{
 .folder-rail:hover>span{left:3px;width:3px;background:color-mix(in srgb,var(--accent) 60%,transparent)}
 @media (prefers-reduced-motion:reduce){.folder-rail>span{transition:none}}
 /* Rows scrolled into view (arrow-key roving, focus, reveal) stop below the
-   pinned header stack of their folder block (ChatSidebar renderFolderBlock
+   pinned header stack of their folder block (chat-sidebar/folderBlocks.tsx renderFolderBlock
    sets --folder-pin-stack); unfiled rows have no stack and keep 0. Chromium's
    `block: 'nearest'` ignores this margin for a row already in view, so the
    arrow-key rove re-aligns such a row itself (chat/sessionRowNav.ts). */
@@ -3165,7 +3165,7 @@ body.mc-focus-mode.mc-focus-rail .focus-chrome-rail{
    surface (kiro-light's --panel, the /embed/sessions host's --bg). */
 :where(.sidebar) .list-dock-shelf{background:linear-gradient(to bottom,transparent,var(--folder-row-sticky-bg,var(--bg-elevated)) 8px)}
 :where([data-theme="kiro-light"] .sidebar-inner) .list-dock-shelf{background:linear-gradient(to bottom,transparent,var(--folder-row-sticky-bg,var(--panel)) 8px)}
-/* Stalled goal loop (ChatSidebar `goalLoopStalled`): the loop is armed but its
+/* Stalled goal loop (chat-sidebar/SessionRow.tsx `goalLoopStalled`): the loop is armed but its
    last turn died and nothing is executing — the whole card flashes danger-red
    until the user resumes. Two-class specificity outranks the Tailwind
    bg-accent-subtle an active row carries, so the alarm wins on the selected
@@ -3175,7 +3175,7 @@ body.mc-focus-mode.mc-focus-rail .focus-chrome-rail{
    would silence the alarm exactly for the users who asked for less motion. */
 .session-row.session-loop-stalled{background-color:var(--danger-subtle);animation:kc-loop-stalled-flash 1.6s ease-in-out infinite}
 @keyframes kc-loop-stalled-flash{0%,100%{background-color:var(--danger-subtle)}50%{background-color:transparent}}
-/* Live session dot (ChatSidebar `showLiveDot`): leads the session name while the
+/* Live session dot (chat-sidebar/SessionRow.tsx `showLiveDot`): leads the session name while the
    row's state resolver says the session is working. A filled accent disc, so it
    claims none of the row chrome other states own: the background (selection,
    stalled alarm) and the left edge (session colour bar, recency tint) stay

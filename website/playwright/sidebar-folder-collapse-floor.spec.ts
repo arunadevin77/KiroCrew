@@ -3,7 +3,7 @@ import { test, expect, Page, APIRequestContext } from '@playwright/test'
 /**
  * Collapsing a folder whose header is pinned keeps that header in place
  * (chat-sidebar/stickyCollapse.ts, plus the near-end scroll floor in
- * chat-sidebar/collapseFloor.ts; wired in ChatSidebar's list-view toggles).
+ * chat-sidebar/collapseFloor.ts; wired in chat-sidebar/folderBlocks.tsx's list-view toggles).
  *
  * The bug: a list-view folder header is sticky inside its folder block, so with
  * the block's top scrolled off the lane the header sits pinned at the top.

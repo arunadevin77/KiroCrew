@@ -8,7 +8,7 @@ const SLOW_NOACK = '[[SLOW_NOACK]]'
 const SLOW_LATEACK = '[[SLOW_LATEACK]]'
 
 // The new-chat control's stable accessible name: the en.json value of
-// pages.chatSidebar.new_chat_session (ChatSidebar.tsx aria-label). A
+// pages.chatSidebar.new_chat_session (chat-sidebar/SidebarHeader.tsx aria-label). A
 // whole-string exact match cannot collide with the per-turn minimap buttons,
 // whose accessible names are prompt-derived (e.g. "What is 2+2?"), or the
 // per-folder "New chat in <name>" buttons. fork.spec.ts uses the same locator.

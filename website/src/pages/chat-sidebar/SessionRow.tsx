@@ -208,7 +208,7 @@ interface SessionRowActions {
 
 interface SessionRowProps {
   /** Everything the row renders from, already masked for its origin by the row
-   *  model (./chat-sidebar/rows): a peer row's view carries no local state. */
+   *  model (./rows): a peer row's view carries no local state. */
   view: SessionRowView
   actions: SessionRowActions
 }

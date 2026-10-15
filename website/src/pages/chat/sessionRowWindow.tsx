@@ -50,7 +50,7 @@ export const SESSION_ROW_STUB_DEFAULT_PX = 76
  *  observer has reported anything, so the initial paint shows real rows. Per
  *  root, not per lane: every board column is its own root and scrolls on its
  *  own, so each column gets its own first two viewports of 64px rows. This is
- *  its own number: ChatSidebar's SIDEBAR_DISPLACEMENT_WINDOW bounds which rows
+ *  its own number: chat-sidebar/laneRows.tsx's SIDEBAR_DISPLACEMENT_WINDOW bounds which rows
  *  animate when the lane reorders, a separate concern that can change on its
  *  own without affecting this budget. */
 export const SESSION_ROW_INITIAL_MOUNT_BUDGET = 48

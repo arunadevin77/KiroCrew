@@ -68,7 +68,7 @@ export const LOCATIONS = {
       },
     ],
   },
-  // The New button in the sessions sidebar header (ChatSidebar). Its visible
+  // The New button in the sessions sidebar header (chat-sidebar/SidebarHeader.tsx). Its visible
   // text switches between "New" and "Creating…" and is hidden in a narrow
   // header, so the label is the static accessible name; "New chat" is its title.
   // Drawn in the sidebar, so it is reached exactly like Older Sessions.

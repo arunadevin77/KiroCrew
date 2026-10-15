@@ -113,7 +113,7 @@ export function useChatPageSessionController({
 }: UseChatPageSessionControllerArgs) {
   // Older-sessions history is fetched lazily, not on mount: the
   // sidebar's "Older sessions" section self-fetches when expanded (see
-  // ChatSidebar's footer toggle -- the section starts collapsed and its open
+  // chat-sidebar/HistoryPane.tsx's footer toggle -- the section starts collapsed and its open
   // state is not persisted, so it can never be open at mount), which leaves
   // the welcome-screen "Continue a previous chat?" suggestions as the only
   // consumer that can need the payload before that. They need it only once

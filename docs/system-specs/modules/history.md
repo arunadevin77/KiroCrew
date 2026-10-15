@@ -329,7 +329,14 @@ order, and pins that no owner imports the facade:
 | `sessionSources.ts` | the rendered row set (local tabs plus live peer rows, deduplicated by row identity, local wins), the crew groups, the peer-list error, and the federated Older Sessions search |
 | `SessionRow.tsx` | one session row: its type scale, its ordered state resolver (the status line and the one marker leading it), the live per-slot state it subscribes to under `view.localKey`, its menus, and its click, keyboard and drag gestures |
 | `SessionSourceChips.tsx` | a row's pull-request and issue chips: the provider mark, the one status glyph a change chip shows (`chipStatusGlyph`), and the `+N` overflow that fetches the links the slots payload leaves out |
-| `chrome.tsx` | the sidebar's shared drawing atoms, used by both the row and the shell: the open-in-tab click predicate, `DisclosureChevron` (the sidebar's one disclosure grammar), and the folder and divider chrome (the pinned-section divider, the folder body geometry and the text-control classes) |
+| `scope.ts` | the shell's interface: `ChatSidebarProps`, and `SidebarScope`, the one object of props, shell state, owner-hook results and confirming callbacks the shell builds after its last hook call and hands every render owner below |
+| `laneRows.tsx` | how a lane draws its rows: `renderSessionRow` (each row behind its window stub, stamped in paint order and clamped at `SIDEBAR_DISPLACEMENT_WINDOW`), the dormant section and its hover hold, the Older Sessions hint that ends a lane, and the crew groups |
+| `folderBlocks.tsx` | the tree's folder blocks: the folder header row and its hover cluster, its two menus, the body with the pinned conductor card and the sorted and dormant rows, the hidden-folder reveal, and the folder-scoped create-failure notice |
+| `listLanes.tsx`, `boardLane.tsx` | the conductor, flat and tree lanes, with the drag overlay and chat-pane drop target the flat and tree lanes share (the conductor lane has no drag and drop); the tag-column board with its column headers, filter popover, card drop, column folder blocks and unfile strip |
+| `SidebarHeader.tsx`, `SearchDock.tsx` | the header (list menu and split New button); the dock over the lanes: its field (the search row's lane toggle and sort and filter menu, with the filter and sort label tables) and its shelf (the active filter chips and the list-level notices) |
+| `HistoryPane.tsx`, `folderModal.tsx` | the Older Sessions splitter, footer and pane; the one folder create / settings modal |
+| `sessionCleanup.tsx`, `bulkModelSwitch.tsx` | the cleanup panel (`useSessionCleanup`: window, dry-run preview, archive write) and the model switch panel (`useBulkModelSwitch`: pick, roster, skip-running, switch write) |
+| `chrome.tsx` | the sidebar's shared drawing atoms, used by the row and the render owners: the open-in-tab click predicate, `DisclosureChevron` (the sidebar's one disclosure grammar), the folder and divider chrome (the pinned-section divider, the folder body geometry and the text-control classes), and `dateSegment`, the date-segment label the flat lane and the Older Sessions pane head their groups with |
 | `CrewGroups.tsx` | the per-machine group chrome: the `Local` header, each crew group's header, badge, offline note and tunnel-error notice, and the collapsed-crew set |
 | `rows.ts` | the row model: the one declaration of every filter dimension and what each consumer derives from it (`filteredSlots`, `listNarrowed`, the reveal registry), the status-chip predicates and badge counts, the one lane order, the drag freeze, the split of the filtered rows between the `Local` lanes and the crew groups (each crew group's rows, the folder hide applied), the flat lane, the tree's ungrouped rows and per-folder rows, the board's pool (local rows the folder filter does not conceal), the dormant split's gates, and each rendered row's `SessionRowView` and window |
 | `search.ts` | the debounced backend session search, and the folder-name matches the search box adds |
@@ -361,7 +368,7 @@ to it, and a peer row is never exempt.
 Three reads outside the model still take the raw key: the conductor lane's collapsed
 needs-you aggregate (unread, sub-agent approvals), the pinned-section divider
 (`startsAutomaticSection` in `pinnedOrder.ts`) and the tree root's fresh/dormant
-divider (`pinned.has(...)` on the last fresh root row in `ChatSidebar.tsx`); all
+divider (`pinned.has(...)` on the last fresh root row in `listLanes.tsx`); all
 three are tracked in #16996. The facade calls `buildSidebarRows` on every render
 with the previous result. Each memoized output (the lists, the lane populations, the
 order, the predicates, the reveal registry, the chip counts) keeps its identity while
@@ -386,23 +393,20 @@ re-renders only when something it draws changed. Rows still subscribe to their o
 live state (status line, goal loop, queued sub-agents, workflow runs) slot-scoped,
 under `view.localKey`.
 
-Some code stays in `ChatSidebar.tsx`: the row and folder render closures, the
-conductor lane's tree walk, the crew-window open, the idle-session cleanup, the
-bulk model switch and the JSX. Source pins read them in that file:
-
-- `switchSlotCallsiteClassification.test.ts` counts the folder menu's and folder
-  row's two `switchSlot` dispatches there (the row's three are counted in
-  `SessionRow.tsx`).
-- `listShellParity.test.ts` reads the list-shell recipes the card and the row use,
-  across this file and its owners.
-- `useInteractiveModels.test.ts` reads the bulk model switch.
-- `hoverVariantPolicy.test.ts` reads the row shell's touch flag.
-- The restyle ratchet counts this file's flagged sites in the header, the filter
-  and folder menus and the board column.
-
-The idle-session cleanup is state that only the header menu's dialog in this file
-reads. The render closures also stamp rows in paint order (`orderStamp`, a view field
-the row never reads), and the row memo depends on that order.
+What stays in `ChatSidebar.tsx`: every hook call (the owner hooks in `CALL_ORDER`
+order, and the inline state, queries and memos between them), the row actions and
+row shell the row memo compares, the crew-window open, the native `confirm()`
+dialogs as the confirming callbacks the render owners call (eslint's native-dialog
+allowlist names this file), the scope it builds after its last hook call, and the
+root region with its resize handle. The render owners call no hooks: the factories
+(`createLaneRows`, `createFolderBlocks`, `createListLanes`, `createBoardLane`) run
+once per render after the scope is built, so the row stamps (`orderStamp`, a view
+field the row never reads, which the row memo depends on) belong to that render's
+pass. Source pins read the facade and its owners together: the list-shell, search
+row and UI-location pins join the facade with the owner files; the switchSlot
+call-site table, the hover-state rows and the restyle ratchet name each owner file;
+`useInteractiveModels.test.ts` reads `bulkModelSwitch.tsx`; and
+`hoverVariantPolicy.test.ts` reads the row shell's touch flag here.
 
 New sidebar code goes to the owner whose row above names its responsibility, not
 to `ChatSidebar.tsx`: a new filter dimension is one entry in `rows.ts`, and a new
@@ -412,7 +416,8 @@ imports the facade, and a new owner hook is listed at its call position in
 `CALL_ORDER` in `ChatSidebar.ownerComposition.test.ts`. A new browser-storage key
 is declared in `persistence.ts` (the three keys named in its
 row above are the exceptions), and a view type the owners share goes to
-`types.ts`. The facade grows only in the code listed above as staying there.
+`types.ts`. A value a render owner needs from the shell is one more `SidebarScope`
+member. The facade grows only in the code listed above as staying there.
 
 ## ConversationLog (`history.py` facade)
 

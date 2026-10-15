@@ -1868,7 +1868,7 @@ def _chat_folder_siblings(
     return sorted(kids, key=_chat_folder_sort_key(mode))
 
 
-# ``ChatSidebar``'s ``renderFolderBlock`` returns nothing for ``depth > 10``, so a
+# ``chat-sidebar/folderBlocks.tsx``'s ``renderFolderBlock`` returns nothing for ``depth > 10``, so a
 # row nested deeper is not drawn. The store caps folder COUNT but not nesting, so
 # such a tree is legal rather than corrupt. Only the reported DEPTH is clamped
 # here, never the row: this listing is an agent's one view of the tree and it

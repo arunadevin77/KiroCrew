@@ -28,7 +28,7 @@ const { switchSlotMock, resumeFromHistoryMock } = vi.hoisted(() => ({
   switchSlotMock: vi.fn(() => ({ type: 'chat/switchSlot/pending', meta: {} })),
   // Real dispatch of a real createAsyncThunk() call is augmented with
   // .unwrap() by RTK; this mock returns a plain action object instead, so it
-  // needs its own `unwrap` to match that shape now that ChatSidebar's resume
+  // needs its own `unwrap` to match that shape now that chat-sidebar/HistoryPane.tsx's resume
   // handler chains off it (#3624). Never-resolving is fine — these tests only
   // assert the dispatch call happened, not what resume does after it resolves.
   resumeFromHistoryMock: vi.fn(() => ({ type: 'chat/resumeFromHistory/pending', meta: {}, unwrap: () => new Promise(() => {}) })),
