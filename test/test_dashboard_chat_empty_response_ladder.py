@@ -478,16 +478,21 @@ class TestEmptyResponseRetryLadder:
         """A productive episode keeps its wording across EVERY continuation it is
         budgeted for, not just the first.
 
-        With a budget of 2 the episode runs two continuations: the first carries
-        `_ACTIVITY_NO_REPLY_CONTINUE_MSG`, the second `_EMPTY_AUTO_CONTINUE_MSG`
-        (the non-productive branch queues that body once the continuation itself
-        streams nothing). Both are this ladder's own, so both must preserve the
-        episode's evidence -- if either body is missing from the identity pair,
-        that turn looks like an unrelated one, the episode-end clear fires, and
-        give-up falls back to inviting a resend of tools that already ran.
+        With a budget of 2 the episode runs two continuations, and both carry
+        `_ACTIVITY_NO_REPLY_CONTINUE_MSG` under the "from what already ran"
+        notice. The second follows a continuation that streamed nothing, so the
+        per-turn activity snapshot alone reads it as a plain empty turn: a
+        "returned nothing" notice and `_EMPTY_AUTO_CONTINUE_MSG` there would tell
+        the model its episode produced no output and invite a redo of tools that
+        already ran. Both continuations are this ladder's own, so the episode's
+        evidence also reaches give-up, which must not invite a resend.
         """
         from kiro_crew.acp.types import STOP_REASON_END_TURN
         from kiro_crew.dashboard import chat_runner as cr
+        from kiro_crew.dashboard.chat_utils import (
+            _ACTIVITY_NO_REPLY_CONTINUE_MSG,
+            _EMPTY_AUTO_CONTINUE_MSG,
+        )
         from kiro_crew.providers.base import (
             EVENT_COMPLETE,
             EVENT_TOOL_CALL,
@@ -514,18 +519,39 @@ class TestEmptyResponseRetryLadder:
         client.stream = _stream
         client.stream_command = _stream
 
-        await _run_chat(state, slot, "test message")
-        # Drain repeatedly: each continuation queues the next one.
-        for _round in range(4):
-            for _bg_task in list(state._background_tasks):
-                try:
-                    await _bg_task
-                except Exception:
-                    pass
-        await self._cancel_background_tasks(state)
+        calls: list[tuple] = []
+        orig = _ChatSlot.queue_insert
+
+        def spy(self_slot, *a, **kw):
+            calls.append(a)
+            return orig(self_slot, *a, **kw)
+
+        with patch.object(_ChatSlot, "queue_insert", spy):
+            await _run_chat(state, slot, "test message")
+            # Drain repeatedly: each continuation queues the next one.
+            for _round in range(4):
+                for _bg_task in list(state._background_tasks):
+                    try:
+                        await _bg_task
+                    except Exception:
+                        pass
+            await self._cancel_background_tasks(state)
 
         assert _turns["n"] >= 3, f"the second continuation never ran (turns={_turns['n']})"
         notice_msgs = [m for m in slot.messages if m.get("role") == "notice"]
+        assert not any("returned nothing" in m.get("content", "") for m in notice_msgs), (
+            "a continuation inside a productive episode was told the model "
+            "returned nothing, which invites a redo of tools that already ran"
+        )
+        assert any(
+            "from what already ran (recovery 2 of 2)" in m.get("content", "") for m in notice_msgs
+        )
+        bodies = [a[1] for a in calls if len(a) > 1]
+        assert _EMPTY_AUTO_CONTINUE_MSG not in bodies, (
+            "the second continuation queued the empty-response body, which tells "
+            "the model its productive episode produced no output"
+        )
+        assert bodies.count(_ACTIVITY_NO_REPLY_CONTINUE_MSG) == 2
         assert not any("send your message again" in m.get("content", "") for m in notice_msgs), (
             "give-up invited a resend after a productive episode spent its full "
             "continuation budget, so the episode's evidence was lost partway"

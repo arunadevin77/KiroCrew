@@ -859,7 +859,7 @@ against sweep completeness, and are torn down at `close_all`.
   cancellation is treated as a transient provider failure and recovered
   through a bounded three-rung ladder driven by `slot._empty_response_retries`,
   with `slot._empty_episode_productive` carrying one episode-scoped fact the
-  counter cannot (rung 3 below):
+  counter cannot (rungs 2 and 3 below):
   1. **first empty** → the ORIGINAL message is silently re-queued at the
      front of the slot queue (no visible card). Reached ONLY by a turn with no
      activity — see the productive-turn exclusion below;
@@ -872,7 +872,11 @@ against sweep completeness, and are torn down at `close_all`.
      "auto-continuing once"; above 1 consecutive failures keep continuing and
      the notice shows "recovery N of M"). Gated by
      `session.empty_response_auto_continue` (default ON; the gate fails open),
-     and suppressed while a Stop is active;
+     and suppressed while a Stop is active. Like rung 3's card, the notice and
+     the queued body are split per EPISODE: a continuation that streams nothing
+     after a productive turn of the same episode keeps the productive notice
+     and `_ACTIVITY_NO_REPLY_CONTINUE_MSG`, never "returned nothing" and
+     `_EMPTY_AUTO_CONTINUE_MSG`;
   3. **budget exhausted** (the nudges also produced nothing) → terminal notice card
      asking the user to send a message; the counter resets so the next
      genuine user turn gets a fresh budget. The card's sentences are the
