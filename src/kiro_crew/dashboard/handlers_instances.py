@@ -1654,15 +1654,15 @@ async def api_instances_send_session(request: web.Request) -> web.Response:
         # request leaves. Blocking; the send runs it off the loop.
         try:
             _revalidate_for_publication()
-        except TranscriptWithheld:
-            return {
-                "error": "cannot transfer a non-persistent session",
-                "code": "transfer_slot_not_persistent",
-            }
         except TranscriptBusy:
             return {
                 "error": "the session could not be copied consistently right now; please retry",
                 "code": "transfer_snapshot_unstable",
+            }
+        except TranscriptWithheld:
+            return {
+                "error": "cannot transfer a non-persistent session",
+                "code": "transfer_slot_not_persistent",
             }
         return None
 
