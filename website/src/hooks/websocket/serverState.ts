@@ -14,6 +14,7 @@ import { api } from '../../api/client'
 // do not export ApiError, and an `instanceof` against a missing mock export
 // throws inside the reconnect heal's own catch.
 import { ApiError } from '../../api/apiError'
+import { refreshDashboardReads } from '../../api/dashboardRefresh'
 import { forgetUnobservedMemberThreads, MEMBERS_ROSTER_QUERY_KEY, MEMBER_PROJECTIONS_QUERY_PREFIX } from '../../api/membersQuery'
 import { memberProjectionStore } from '../../state/memberProjectionStore'
 import { threadLiveStore, type ThreadReplyFrame } from '../../state/threadLiveStore'
@@ -277,14 +278,18 @@ export const SESSION_DASHBOARD_QUERY_PREFIX = 'session-dashboard'
 export function handleDashboardMoved(queryClient: QueryClient, data: FrameData): void {
   const frame = (data ?? {}) as { slug?: unknown; slot?: unknown }
   const slug = String(frame.slug || '')
+  // A busy crewmate sends these faster than one read takes, so the re-read goes
+  // through `refreshDashboardReads`, which keeps one read per open dashboard out at
+  // a time. A read per frame would pile up on the gateway, each one computed in full
+  // whether or not anyone still waits for it.
   if (slug) {
-    queryClient.invalidateQueries({ queryKey: [MEMBER_DASHBOARD_QUERY_PREFIX, slug] })
+    refreshDashboardReads(queryClient, [MEMBER_DASHBOARD_QUERY_PREFIX, slug])
   }
   // A ROOT session's own page is named by its slot: its store key is a digest no
   // client can match, so the gateway's frame carries the slot instead.
   const slot = String(frame.slot || '')
   if (slot) {
-    queryClient.invalidateQueries({ queryKey: [SESSION_DASHBOARD_QUERY_PREFIX, slot] })
+    refreshDashboardReads(queryClient, [SESSION_DASHBOARD_QUERY_PREFIX, slot])
   }
 }
 
