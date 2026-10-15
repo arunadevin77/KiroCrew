@@ -38,7 +38,8 @@ Four properties the callers depend on:
   path a LIVE client in this process is seeding stays that client's own.
 
 The sharer registry (:func:`share` / :func:`unshare` / :func:`has_sharers`)
-interleaves with the owner lifecycle in ``acp/client.py``; these are the
+interleaves with the owner lifecycle in ``acp/client_claude_seed.py``,
+``acp/client_seed_ownership.py`` and ``acp/client_lifecycle.py``; these are the
 invariants both modules hold together, each backed by a review ruling on the
 PR that introduced it:
 

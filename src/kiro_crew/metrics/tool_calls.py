@@ -29,7 +29,8 @@ to instrument, because the two backends parse tool frames in different places.
 The kiro backend runs on ``AcpRuntime`` + ``AcpSessionHandle``, which parses
 through the shared ``acp/_dispatch.py`` builders; the claude backend (and the app
 worker pools that build a client directly, e.g. ``knowledge/llm_pool``) stays on
-``acp/client.py``, which re-implements the same shaping inline and never calls
+``AcpClient`` (its tool-frame shaping lives in ``acp/client_tool_events.py``), which
+re-implements the same shaping inline and never calls
 ``parse_session_update``. ``providers/acp.py`` constructs an ``AcpClient`` and
 then swaps in an ``AcpSessionProvider`` at startup for the kiro path, so both
 parsers are live in a normal install and both are instrumented here.

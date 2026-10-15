@@ -2261,9 +2261,9 @@ upgrade for a policy that loads today.
 (`AcpEvent.tool_kind` / `.raw_tool_params`); the call sites thread them
 (`llm_helpers`, `subagent`, `task_executor`, `task_planner`, dashboard
 `chat_runner`, slack `handler`). **The `EVENT_PERMISSION_REQUEST` event the gate
-runs on must carry `raw_tool_params`** — `acp/client.py` caches the structured
+runs on must carry `raw_tool_params`** — `acp/client_tool_events.py` caches the structured
 rawInput at the ToolCall notification (`_tool_call_params`, keyed by
-`toolCallId`) and attaches it to the later permission event, because that
+`toolCallId`) and `acp/client_permissions.py` attaches it to the later permission event, because that
 message itself carries only a truncated title. Without this the two arg-derived
 scopes would be inert in production.
 

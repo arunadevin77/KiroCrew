@@ -1837,9 +1837,10 @@ def test_both_transports_record_their_inbound_frames() -> None:
     other two backends unrecordable, which is invisible until someone tries to
     refresh their corpus.
     """
-    for module in (runtime_module, client_module):
-        path = Path(module.__file__ or "")
-        source = path.read_text(encoding="utf-8")
+    client_family = (client_module, *(sys.modules[n] for n in client_module._CLIENT_OWNERS))
+    for modules in ((runtime_module,), client_family):
+        path = Path(modules[0].__file__ or "")
+        source = "".join(Path(m.__file__ or "").read_text(encoding="utf-8") for m in modules)
         assert "await record_frame(" in source, (
             f"{path.name} does not await record_frame; the frames its backends read "
             "cannot be recorded, or the call blocks the event loop"

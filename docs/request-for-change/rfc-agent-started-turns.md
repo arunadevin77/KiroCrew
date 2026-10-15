@@ -38,7 +38,7 @@ This RFC adds an **agent-started turn**: a reader that watches stdout between tu
 
 ### Current frame flow
 
-All readers below are `AcpClient` methods in `src/kiro_crew/acp/client.py`.
+All readers below are `AcpClient` methods: `_prompt_loop` in `src/kiro_crew/acp/client.py`, the command and init waits in `src/kiro_crew/acp/client_transport.py`, and the compaction readers in `src/kiro_crew/acp/client_usage.py`.
 
 | When | Who reads stdout | What happens to a frame |
 |---|---|---|
@@ -47,13 +47,13 @@ All readers below are `AcpClient` methods in `src/kiro_crew/acp/client.py`.
 | Compaction | `wait_for_compaction`, `_drain_post_compaction_metadata` | Read outside `_turn_lock` |
 | Between turns | nobody | Frames sit in the pipe; the next `_prompt_loop` takes `_buffer` first (`_read_message`), then reads them as this turn's |
 
-Those five sites are every caller of `_read_message` in `client.py`. `_process_message` classifies any `session/update` as `"update"` with no turn attribution, and nothing on main reads `_meta["_claude/origin"]`.
+Those five sites are every caller of `_read_message` (`client_transport.py`) on `AcpClient`. `_process_message` classifies any `session/update` as `"update"` with no turn attribution, and nothing on main reads `_meta["_claude/origin"]`.
 
 `AcpSessionHandle` backends (kiro, KAS, codex; `ACP_BACKENDS_ACP_RUNTIME`, `src/kiro_crew/agent_sdk/backends.py`) do not misplace these frames: the pre-turn drain in `AcpSessionHandle.prompt()` (`src/kiro_crew/acp/session_handle.py`) discards them, counted in one warning, never shown. `AcpClient` backends (`ACP_BACKENDS_ACP_CLIENT_SPAWNABLE`, `backends.py`) have no drain.
 
 ### Why dropping is not enough
 
-[#17884](https://github.com/kirodotdev/KiroCrew/pull/17884) gave `AcpClient` a claude-only drain. Its review rounds showed that every frame type other than text carries a side effect the read loop runs: the SEL tool-invocation audit (`_maybe_audit_tool_call`, `client.py`), PreToolUse / PostToolUse hooks (`_maybe_fire_pre_tool_hooks`, `_maybe_fire_post_tool_hooks`), the per-harness tripwires, permission answers, MCP OAuth and init notices, config-option updates, usage tracking (`_track_usage_update`, `client.py`), background-launch tracking (`_note_background_launch`, `client.py`), the harness parity gate, and the 100-entry replay buffer bound (`AcpClient._buffer`). Its final form dropped only text chunks and left every other frame to the next turn. The [self-review](https://github.com/kirodotdev/KiroCrew/pull/17884#issuecomment-6052833639) rejected that: the model's reply is lost while its tool rows still render, and Claude's own session holds a reply the user never saw. #17884 is closed in favour of this RFC.
+[#17884](https://github.com/kirodotdev/KiroCrew/pull/17884) gave `AcpClient` a claude-only drain. Its review rounds showed that every frame type other than text carries a side effect the read loop runs: the SEL tool-invocation audit (`_maybe_audit_tool_call`, `client_tool_events.py`), PreToolUse / PostToolUse hooks (`_maybe_fire_pre_tool_hooks`, `_maybe_fire_post_tool_hooks`), the per-harness tripwires, permission answers, MCP OAuth and init notices, config-option updates, usage tracking (`_track_usage_update`, `client_usage.py`), background-launch tracking (`_note_background_launch`, `client_turn_control.py`), the harness parity gate, and the 100-entry replay buffer bound (`AcpClient._buffer`). Its final form dropped only text chunks and left every other frame to the next turn. The [self-review](https://github.com/kirodotdev/KiroCrew/pull/17884#issuecomment-6052833639) rejected that: the model's reply is lost while its tool rows still render, and Claude's own session holds a reply the user never saw. #17884 is closed in favour of this RFC.
 
 The lesson that shapes this design: a second reader that interprets frames has to re-implement the read loop. The reader proposed here interprets nothing. It only notices that a frame arrived and hands stdout to a real turn.
 

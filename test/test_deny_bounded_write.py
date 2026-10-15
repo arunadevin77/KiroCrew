@@ -1624,11 +1624,13 @@ class TestEveryBackendIdLogSiteIsSanitized:
 
     SITES = {
         "src/kiro_crew/acp/client.py": [
+            "ACP event: method=%s id=%s action=%s",
+        ],
+        "src/kiro_crew/acp/client_transport.py": [
             "to req=%s; treating the backend as dead",
             "while sending request method=%s req=%s;",
             "Deferring inbound server request: method=%s id=%s (waiting for %d)",
             "Deferring non-matching response: id=%s (waiting for %d)",
-            "ACP event: method=%s id=%s action=%s",
         ],
         "src/kiro_crew/acp/client_permissions.py": [
             "reject_tool: no deny option advertised for req=%s",
@@ -1643,6 +1645,11 @@ class TestEveryBackendIdLogSiteIsSanitized:
         "src/kiro_crew/acp/client_seed_ownership.py": [],
         "src/kiro_crew/acp/client_spawn_env.py": [],
         "src/kiro_crew/acp/client_timeouts.py": [],
+        "src/kiro_crew/acp/client_lifecycle.py": [],
+        "src/kiro_crew/acp/client_mcp_array.py": [],
+        "src/kiro_crew/acp/client_tool_events.py": [],
+        "src/kiro_crew/acp/client_turn_control.py": [],
+        "src/kiro_crew/acp/client_usage.py": [],
         "src/kiro_crew/acp/session_handle.py": [
             "reject_tool: no deny option advertised for req=%s",
             "rejected permission request id=%s stranded in the ",

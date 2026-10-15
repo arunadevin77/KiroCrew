@@ -498,10 +498,14 @@ class TestReportFrameFloor:
         # client), so this pins the one line the leak lives on. The OAuth and
         # config captures above it must stay UNgated.
         import inspect
+        import sys
 
         from kiro_crew.acp import client as client_mod
 
-        src = inspect.getsource(client_mod)
+        src = "".join(
+            inspect.getsource(sys.modules[name])
+            for name in (client_mod.__name__, *client_mod._CLIENT_OWNERS)
+        )
         marker = "if idx >= self._mcp_report_frame_floor:"
         assert marker in src, (
             "the buffered drain records into the report without the attempt floor, "

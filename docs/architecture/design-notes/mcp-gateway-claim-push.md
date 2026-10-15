@@ -123,6 +123,6 @@ claim-path involvement.
   `daemon/connection.py` — per-frame caller pickup
 - `src/kiro_crew/mcp_gateway/stub.py` — `ancestor_pids` on register; unbounded
   backoff recaller
-- `src/kiro_crew/acp/client.py`, `src/kiro_crew/acp/session_provider.py` —
+- `src/kiro_crew/acp/client_lifecycle.py`, `src/kiro_crew/acp/session_provider.py` —
   `rekey()` claim hooks
 - `test/test_mcp_gateway_claim.py` — functional + unit coverage

@@ -254,10 +254,12 @@ def _gate_side_baseline_log_sites(
 #: nets to zero (both edits land in one reviewed diff), and the scan is
 #: single-scope (see :func:`_gate_side_baseline_log_sites`).
 _BASELINE_LOG_SITE_CENSUS: dict[str, int] = {
-    "acp/client.py": 4,
+    "acp/client.py": 2,
+    "acp/client_lifecycle.py": 1,
     # +1: model-unavailable warning log in the rejected-model path
     "acp/client_model_selection.py": 2,
     "acp/client_permissions.py": 1,
+    "acp/client_transport.py": 1,
     # _format_acp_error's scrubbed-content warning, in the same gateway process as
     # acp/client.py's sites.
     "acp/transport_errors.py": 1,

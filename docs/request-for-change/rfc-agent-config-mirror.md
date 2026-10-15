@@ -294,7 +294,7 @@ These are routinely conflated and the plan is wrong if they are:
 
 - **Crew's own hooks** (`src/kiro_crew/hooks.py`, the `config.json` `hooks`
   section) fire on Crew's side of the wire, on ACP tool events, via
-  `fire_tool_hooks` / `get_global_hook_store` in `acp/client.py`. They are
+  `fire_tool_hooks` / `get_global_hook_store` in `acp/client_tool_events.py`. They are
   already backend-agnostic and already work everywhere. **This RFC does not
   touch them, and no gap here is about them.**
 - **The spec's `hooks` block** (written by `_kiro_hooks_only` +

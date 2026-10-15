@@ -4,8 +4,7 @@ Bounded no-follow reads of the seed path, the inode-pinned move-aside and no-clo
 restore, whose-file checks, and the settle, discard and release steps that end a
 session's claim. The three seed static methods that read the ``AcpClient`` global
 (``_settings_path_holds``, ``_claim_pathname_if_ours``, ``_restore_aside_without_clobber``)
-stay on the class, and ``_foreign_settings_owner`` and
-``_settle_claude_settings_seed_locked`` join this module with the lifecycle owners.
+stay on the class.
 
 Each function here whose first parameter is ``self`` is an ``AcpClient`` method: the
 class binds it by name, so it reads and writes the session's own state on the instance,
@@ -425,3 +424,155 @@ def release_settings_seed_claim(self: AcpClient) -> None:
     self._claude_settings_claim_unrevoked = False
     self._claude_settings_shared = False
     self._permission_surface_share_validated = False
+
+
+def _foreign_settings_owner(self: AcpClient, local_settings: Path) -> str:
+    """Who a ``settings.local.json`` Crew does not govern belongs to, as a log phrase.
+
+    The bytes Crew's durable record names are a Crew seed another open
+    session holds, not the project's own file: removing or renaming it only
+    lasts until that session re-seeds it. Same bounded, no-follow read as
+    the share check.
+    """
+    recorded = seed_provenance.recorded_durable(local_settings)
+    if self._settings_path_bytes(local_settings, recorded) is not None:
+        return "is another open Crew session's settings seed for this work dir"
+    return "belongs to the project"
+
+
+def _settle_claude_settings_seed_locked(
+    self: AcpClient,
+    path: Path,
+    owner: str,
+    payload: str | None,
+    expectation: tuple[int, str] | None,
+) -> None:
+    try:
+        if seed_provenance.has_sharers(path):
+            # A live SHARER session in this process delivered its MCP array
+            # against exactly the bytes at this path, and it can neither see
+            # nor stop whatever would occupy the pathname next. Unlinking here
+            # would free the name for a different permission file -- another
+            # session's mode, up to bypassPermissions -- under tools already
+            # delivered. So the file and its durable record both stay: that is
+            # precisely the recorded-orphan shape a kill -9 leaves, which the
+            # next session adopts and repairs once the sharers are gone (claim
+            # refuses adoption while any remain). Only this owner's live slot
+            # is handed back.
+            logger.info(
+                "%s is still shared by a live sibling session; leaving the seed in "
+                "place for it rather than deleting a permission file its tools were "
+                "delivered against. The next session adopts and cleans it up once "
+                "the sharers are gone.",
+                path,
+            )
+            if not seed_provenance.release(path, owner):
+                logger.warning(
+                    "could not durably release Crew's claim on %s; retaining the claim "
+                    "with the seed until a later retry or process exit",
+                    path,
+                )
+            return
+        claimed = self._claim_pathname_if_ours(path, expectation)
+        if claimed is None:
+            logger.info(
+                "%s no longer holds the bytes Crew wrote; leaving the replacement in "
+                "place instead of deleting a file Crew does not own.",
+                path,
+            )
+            # Nothing at the pathname is Crew's to move, revoke or delete, but
+            # the durable owner holder ``record`` published still carries this
+            # live process's identity. Handed back here, as the sibling arms do:
+            # left standing, no prune reclaims it while this process lives, and
+            # every later session on this work_dir reads the pathname as held
+            # by a live sibling. ``release`` drops only this owner's holder --
+            # never the record, the file, or a sharer's lease.
+            if not seed_provenance.release(path, owner):
+                logger.warning(
+                    "could not durably release Crew's claim on %s; retaining the claim "
+                    "until a later retry or process exit",
+                    path,
+                )
+            return
+        aside, aside_ident = claimed
+        # Re-checked AFTER the move-aside, not only at the top: the probe above
+        # and the move are not one atomic step, and a sharer registers BEFORE it
+        # validates -- so a sharer whose disk check passed read the file before
+        # the move, and its registration is necessarily visible here. Without
+        # this barrier the interleaving "probe sees none -> sharer registers and
+        # validates -> move/forget/unlink proceed" frees the pathname under a
+        # governed reader. Restore the moved inode and stand down instead.
+        if seed_provenance.has_sharers(path):
+            logger.info(
+                "%s gained a live sharer while its teardown was starting; restoring "
+                "the seed and leaving it in place for that session.",
+                path,
+            )
+            # No-clobber, because the pathname has been free since the
+            # move-aside: a settings file the user recreated in that window is
+            # theirs, and a replace-semantics restore would silently destroy it.
+            self._restore_aside_without_clobber(aside, path, aside_ident)
+            if not seed_provenance.release(path, owner):
+                logger.warning(
+                    "could not durably release Crew's claim on %s; retaining the claim "
+                    "with the restored seed until a later retry or process exit",
+                    path,
+                )
+            return
+        # The file is now the moved inode ``aside`` and the pathname is free, so a
+        # user replacement racing in lands at a fresh ``path`` this never touches.
+        if not seed_provenance.forget(path, owner):
+            # Not revoked on disk, so the file must stay: a restart would still
+            # read Crew as its owner, and a later session repairs it. Restore it
+            # under the pathname and hand back the live claim.
+            logger.warning(
+                "could not durably revoke Crew's claim on %s; restoring the file so a "
+                "later session can re-seed or remove it rather than deleting it "
+                "behind a revocation that never reached the disk",
+                path,
+            )
+            self._restore_aside_without_clobber(aside, path, aside_ident)
+            if not seed_provenance.release(path, owner):
+                logger.warning(
+                    "could not durably release Crew's claim on %s; retaining the claim "
+                    "with the restored seed until a later retry or process exit",
+                    path,
+                )
+            return
+        try:
+            unlink_errors: list[OSError] = []
+            pinned_fs.unlink_verified_by_name(
+                path.parent,
+                aside.name,
+                aside_ident,
+                on_error=unlink_errors.append,
+            )
+            if unlink_errors:
+                raise unlink_errors[0]
+        except OSError:
+            # Revoke landed but the moved inode will not delete. Put it back under
+            # the pathname and re-record, so the path is a repairable orphan rather
+            # than a frozen ``.crew-gc`` no session names.
+            logger.debug(
+                "could not remove %s after session reset; re-recording Crew's claim so "
+                "a later session can still re-seed or remove it",
+                path,
+                exc_info=True,
+            )
+            if payload is not None:
+                if self._restore_aside_without_clobber(aside, path, aside_ident):
+                    if seed_provenance.record(path, payload, owner):
+                        if not seed_provenance.release(path, owner):
+                            logger.warning(
+                                "could not durably release Crew's re-recorded claim on "
+                                "%s; retaining it until a later retry or process exit",
+                                path,
+                            )
+                    else:
+                        logger.warning(
+                            "could not durably re-record Crew's restored seed at %s; "
+                            "leaving the recoverable bytes in place",
+                            path,
+                        )
+    except Exception:  # pragma: no cover - defensive; teardown must not raise
+        logger.debug("could not settle Crew's settings seed at %s", path, exc_info=True)

@@ -2092,10 +2092,16 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         "cli_chat.py",
         "acp/_dispatch.py",
         "acp/client.py",
-        # The client's model-selection and permission owners: code that was
-        # acp/client.py's own, scrubbing the same strings for the same records.
+        # The client's owners: code that was acp/client.py's own, scrubbing the
+        # same strings for the same records.
+        "acp/client_lifecycle.py",
+        "acp/client_mcp_array.py",
         "acp/client_model_selection.py",
         "acp/client_permissions.py",
+        "acp/client_tool_events.py",
+        "acp/client_transport.py",
+        "acp/client_turn_control.py",
+        "acp/client_usage.py",
         "acp/transport_errors.py",
         # Redacts the tool title in the auto-rejected-permission WARNING (a
         # gate-side log line) and defers user-facing display to the routed

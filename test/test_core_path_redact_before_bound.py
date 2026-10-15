@@ -201,11 +201,17 @@ _SCANNED_MODULES = [
     # The client's owner modules.
     "src/kiro_crew/acp/client_claude_seed.py",
     "src/kiro_crew/acp/client_claude_session.py",
+    "src/kiro_crew/acp/client_lifecycle.py",
+    "src/kiro_crew/acp/client_mcp_array.py",
     "src/kiro_crew/acp/client_model_selection.py",
     "src/kiro_crew/acp/client_permissions.py",
     "src/kiro_crew/acp/client_seed_ownership.py",
     "src/kiro_crew/acp/client_spawn_env.py",
     "src/kiro_crew/acp/client_timeouts.py",
+    "src/kiro_crew/acp/client_tool_events.py",
+    "src/kiro_crew/acp/client_transport.py",
+    "src/kiro_crew/acp/client_turn_control.py",
+    "src/kiro_crew/acp/client_usage.py",
     # The client's error formatter and classifiers, with their redactor calls.
     "src/kiro_crew/acp/transport_errors.py",
     "src/kiro_crew/dashboard/handlers/artifacts.py",

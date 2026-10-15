@@ -56,15 +56,22 @@ through it reaches every owner binding the same object (`kiro_crew._facade_mirro
 | `acp/client_seed_ownership.py` | proving and handing back Crew's ownership of the seed on disk: bounded no-follow reads, move-aside and restore, settle, discard and release |
 | `acp/client_model_selection.py` | the session's model: advertised list and entitlement re-probe, served-default correction, `set_model`, the config-option push ladder (`_push_model_via_effort_split`, `_is_config_value_rejection`) and effort levels |
 | `acp/client_permissions.py` | permission requests and in-band tool restrictions: the permission event, approve and reject, the auto-approve identity gate, zero-tool and spec-disabled refusals, identity-drift refusals, the pi, DeepSeek and goose-mode tripwires and the routing read-back |
+| `acp/client_mcp_array.py` | the session's `mcpServers` array: member mounts, pooled broker stubs, the per-harness translations, the pi handoff, pruning of servers that cannot start, the MCP registration report and the spec's zero-tools answer |
+| `acp/client_transport.py` | JSON-RPC over the child's stdio: request ids, bounded request and response writes, frame reads, waiting for a response while deferring other frames, and draining notifications |
+| `acp/client_tool_events.py` | tool-call frames: text chunk, tool call, update and refinement extraction with their provenance caches, the ACP-layer SEL audit record, the Pre/PostToolUse hook fires and the tool results read back from kiro-cli's session JSONL |
+| `acp/client_usage.py` | usage, metadata and compaction frames: usage and prompt-token updates, context-window metadata, claude and codex inline compaction and `wait_for_compaction` |
+| `acp/client_turn_control.py` | a turn controlled from outside it: kiro, claude and goose steers, cancel, slash commands and the turn-state queries callers poll |
+| `acp/client_lifecycle.py` | the child after it is spawned: the stderr drain, process-tree tracking, kill, failed-start classification, state reset, the workspace and sandbox discards, re-binding a live process, and shutdown |
 
 `AcpClient` (its constructor, properties, class defaults and member table),
 `AcpRuntime` and `AcpSessionHandle` stay in their modules. `AcpClient` also keeps the
 three seed static methods that read the `AcpClient` global (`_settings_path_holds`,
-`_claim_pathname_if_ours`, `_restore_aside_without_clobber`), and, until the lifecycle
-owners land, `_foreign_settings_owner` and `_settle_claude_settings_seed_locked`. `acp/client.py` also keeps
+`_claim_pathname_if_ours`, `_restore_aside_without_clobber`), `is_process_alive` (the
+pid-reader ratchet counts its name) and, until the session-start owner lands,
+`_retire_liveness_state`. `acp/client.py` also keeps
 `_mise_which`, `_resolve_ssh_auth_sock` and `_resolve_spawn_env` (the spawn audit, the
 subprocess-encoding baseline and the cross-platform gate key them on this path),
-kiro-cli's own spawn arm, and everything after the process exists that no owner row
+kiro-cli's own spawn arm, the session start, the turn loop, and whatever no owner row
 above names yet.
 
 New module-level code goes to the owner whose row above names its
