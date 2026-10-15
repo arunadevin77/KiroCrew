@@ -3,8 +3,8 @@ title: Crewmate dynamic dashboard -- a project report beside every crewmate's ch
 status: partial
 author: chenmingwei23, with kirocrew-lead
 created: 2026-10-03
-last-audited: 2026-10-12
-audited-at: 10350b7294
+last-audited: 2026-10-15
+audited-at: 40139dc512
 doc-pr: 19204
 implementation-prs: [17507, 17998, 18014, 18994]
 tracking-issues: [18642]
@@ -40,6 +40,7 @@ superseded-by: []
   questions 3, supersedes §Backward compatibility's account of the published
   page, and sets two rules for the catalog that hold only until the first one's
   retirement of it lands.
+- The amendment of 2026-10-15 drops the preview step. A `builtin` or `user` template and the owner's own `kind="dashboard"` package both go live on apply. Every apply writes a version, rollback is one call, `dashboard_write` keeps working on a bound package, and the frame's containment does not change. `RENDERABLE_SOURCES` and `AUTHORED_PAGE_REFUSAL` do not change, and a guard test holds that every renderable template writes values as text only.
 - Author: written up by the crew that implements it.
 - Created: 2026-10-03
 - Related:
@@ -965,3 +966,72 @@ Piece 7 of #18642 leaves a crewmate with no saved page on an empty state. It
 waits until a composed page renders end to end. Until then, such a crewmate
 keeps a default page rather than an empty tab, because after decision 1 every
 reader sees that tab.
+
+
+## Amendment 2026-10-15 -- a page goes live on apply, with no preview step
+
+**This section records an accepted decision, not a proposal.** It was decided on 2026-10-15 by maintainer iamwhatever for the dashboard line tracked in [issue #18642](https://github.com/kirodotdev/KiroCrew/issues/18642), and it settles [issue #20354](https://github.com/kirodotdev/KiroCrew/issues/20354). It lands on main on its own, so the pull request that removes the step reads it off the base branch. Where this section and the text above disagree, this section holds. The three earlier amendments stand except where this one names a passage.
+
+### Why the step goes
+
+The preview was asked to be a safety gate, and it cannot be one. A page that leaks values does so in script. A person looking at the drawn page sees charts and cells, not the script, so a page that leaks looks the same as one that does not. A "yes" given after looking proves nothing about safety. It is only an extra step.
+
+What does keep a page safe is unchanged by this amendment:
+
+| part | what it holds | where |
+| --- | --- | --- |
+| who wrote a template's script | only a `builtin` page (reviewed in this repo) or a `user` page (the operator put it in `panel-templates`) renders as a template | `RENDERABLE_SOURCES`, checked by `_check` in `src/kiro_crew/dashboard_templates/instance.py` |
+| who wrote a package's script | only the owner agent, resolved from the calling session | the package binding, `_page_binding` in `src/kiro_crew/dashboard/handlers/agent_panel.py` |
+| what reaches the page | typed values only, as text, never markup or a URL | `dashboard_write`, type-checked, redacted, bounded |
+| what the page can reach | `allow-scripts` only, `connect-src 'none'`, `frame-src 'none'`, `form-action 'none'` | `src/kiro_crew/dashboard_frame.py` |
+
+### Decision 1 -- apply makes a page live, and it always writes a version
+
+This supersedes §The agent surface for the page itself's four-row verb table, its "A preview records nothing" and "Apply takes no argument" paragraphs, and the sentence on the person's "yes" being part of the flow. It supersedes the first amendment of 2026-10-12's decision 1 (stage -> preview -> a person approves -> apply), and the 2026-10-11 amendment's "Ownership, and the flow a change goes through" bullets that require it.
+
+| the crewmate does | the tool | what it writes |
+| --- | --- | --- |
+| uses a shipped or operator page | `dashboard_apply` with a `template_id` | one new instance version |
+| uses the page it composed | `dashboard_save`, then `dashboard_apply` of that package | one new package version, now bound and live |
+| goes back | `dashboard_rollback` (template) or `artifact_revert` (package) | one new version |
+
+- Apply installs the page now. There is no staged file, and no Keep or Discard button between apply and the tab.
+- The person can press the same apply, and the same one-press rollback, in the Dashboard tab.
+- Every apply and every rollback writes a new version. Earlier versions stay, so any page can be put back.
+- Rollback re-runs the same checks as apply, so a page that no longer passes is not restored.
+- `dashboard_write` keeps working on a bound package. Binding a package does not stop the crewmate's own fields.
+- Owner only, as before. The page is the calling crewmate's own, resolved from the calling session and never from an argument. A worker still cannot write a package bound to another crewmate.
+
+### Decision 2 -- the 2026-10-11 exemption is re-granted without the gate
+
+The first amendment of 2026-10-12 says removing the gate reopens the 2026-10-11 decision that an owner-written page renders with no minted wrapper. This amendment reopens it and closes it again, the same way. The 2026-10-11 reasons were reasons about the author: only the owner writes the page, values reach it as text, the frame holds only the subscribed-fields allowlist, and the owner agent already reaches the network with its own tools. None of them depended on a person looking first, and the look added nothing, for the reason above. So the exemption stands on those four reasons alone, and its admin-ceiling condition stands with it: under a network-deny ceiling the page renders without `allow-scripts`.
+
+### Decision 3 -- what does NOT change
+
+- `RENDERABLE_SOURCES` stays `{builtin, user}`. A `shared` template and a template an agent wrote are still refused at apply and at rollback.
+- `AUTHORED_PAGE_REFUSAL` stays. A template call that hands the store a `manifest` or `html` is refused. Its text names `dashboard_preview`, so the sentence is reworded to name `dashboard_apply`; what it refuses does not change. `EDITED_PAGE_REFUSAL` stays for the same reason. An agent's own page goes through the package path, not the template path.
+- The frame's containment does not change: same sandbox, same policy, same CDN allowlist.
+- The catalog's link and junction refusal for the operator folder stays, and a `user` page never shadows a `builtin` id.
+- The layout lock stays. A locked crewmate's apply and rollback are refused, as today.
+
+### Decision 4 -- a guard test holds the "values are text" premise
+
+A reviewed template is safe to run because it never turns a value into markup or code. Checked at `40139dc512`: the 13 directories under `src/kiro_crew/dashboard_templates/builtin/` contain none of the calls below. Until now nothing enforced that. The pull request that removes the step adds the guard in the same change:
+
+| where | what it does |
+| --- | --- |
+| a test over every `builtin/*/template.html` | fails if a page contains a listed call |
+| the same check in the catalog scan, for a `user` page | the page is reported as a problem and not served, like a bad manifest |
+
+The listed calls: `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `document.writeln`, `eval(`, `Function(`, `setTimeout` or `setInterval` with a string, `createContextualFragment`, `DOMParser`, `setHTMLUnsafe`, `srcdoc`. One list in one module, read by both the test and the scan, so they cannot drift.
+
+It is a text match, not a parser. It can refuse a page that only names a call in a comment, which is the safe way to be wrong. It cannot prove a page is safe. It keeps the one route by which a value becomes code from being added quietly. A page with a real need for a listed call goes through review with the list changed in the same pull request.
+
+### Cross-platform
+
+Nothing here is platform-specific. Instance versions stay under `data_home()`, package versions stay in the artifact store, and the operator folder keeps its link and junction refusal through `platform_compat.is_link_or_junction`. Linux, macOS and Windows behave the same. The frame runs in the Electron shell's Chromium on all three, and in the reader's browser.
+
+### Out of scope
+
+- A gateway-minted wrapper document around an authored page, an outer document whose own `frame-src 'none'` would stop the page navigating itself. Decision 2 rests on the author, not on a wrapper, so this amendment does not build one.
+- Pages over the `view.html` size cap, as #20354 says.
