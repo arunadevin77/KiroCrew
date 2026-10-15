@@ -17,6 +17,10 @@ vi.mock('../hooks/useBranding', () => ({
   useBranding: () => ({ botName: 'Test', avatar: '', directLocal: brandingEnv.directLocal }),
 }))
 
+// The row's star reads the gateway connection; these cases are about the path,
+// so they run connected (LibraryTable.folderMenuOffline covers the offline star).
+vi.mock('../hooks/useConnected', () => ({ useConnected: () => true }))
+
 const PATH = '/ws/research/FINDINGS.md'
 const realFetch = globalThis.fetch
 
