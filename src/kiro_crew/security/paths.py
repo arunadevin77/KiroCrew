@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import platform
 import re
@@ -3571,16 +3572,40 @@ def sensitive_path_refusal(path_str: str, base_dir: str | None = None) -> str | 
         matched = _path_in_home_dirs(
             path_str, _SENSITIVE_HOME_DIRS, base_dir, strict=True
         ) or _is_keystone_publish_artifact(path_str, base_dir, strict=True)
-    except PathResolutionStalled:
-        return (
-            f"{UNVERIFIABLE_PATH_PREFIX} (symlink resolution did not complete in time), "
-            "so it is refused fail-closed. This is NOT a match: the path is not known to "
-            "be sensitive. Retry the same call after a short wait; do not re-spell it. "
-            f"Path: {path_str!r}"
-        )
-    if matched:
-        return f"Blocked: access to sensitive path: {path_str}"
-    return None
+    except PathResolutionStalled as exc:
+        return _stall_refusal(exc, path_str)
+    return f"Blocked: access to sensitive path: {path_str}" if matched else None
+
+
+def sensitive_write_path_refusal(path_str: str, base_dir: str | None = None) -> str | None:
+    """:func:`is_sensitive_write_path` as reason-or-``None``: same decision, a stall
+    still refuses, worded as the stall :func:`sensitive_path_refusal` words it."""
+    try:
+        matched = _path_in_home_dirs(
+            path_str, _SENSITIVE_HOME_DIRS + _WRITE_PROTECTED_HOME_PATHS, base_dir, strict=True
+        ) or _is_keystone_publish_artifact(path_str, base_dir, strict=True)
+    except PathResolutionStalled as exc:
+        return _stall_refusal(exc, path_str)
+    return f"Blocked: write to protected path: {path_str}" if matched else None
+
+
+def _stall_refusal(exc: PathResolutionStalled, path_str: str) -> str:
+    # Caller text follows the fixed prefix; the whole stalled prefix is named (cooldown).
+    now = _path_resolve_clock()
+    with _path_resolve_lock:
+        until = _path_resolve_degraded.get(exc.prefix, (0.0, 0))[0]
+    wait = (
+        f"Paths under that prefix are refused for about {max(1, math.ceil(until - now))} "
+        "s more; retry the same call after that wait"
+        if until > now
+        else "Retry the same call after a short wait"
+    )
+    return (
+        f"{UNVERIFIABLE_PATH_PREFIX} (symlink resolution did not complete in time: the "
+        f"check timed out under {exc.prefix!r}), so it is refused fail-closed. "
+        f"This is NOT a match: the path is not known to be sensitive. {wait}; do not "
+        f"re-spell it. Path: {path_str!r}"
+    )
 
 
 def path_contains_sensitive(
@@ -3652,9 +3677,7 @@ def is_sensitive_write_path(path_str: str, base_dir: str | None = None) -> bool:
     read+write gate refused it, the same one-path-only hole the pairing notes above warn
     about.
     """
-    return _path_in_home_dirs(
-        path_str, _SENSITIVE_HOME_DIRS + _WRITE_PROTECTED_HOME_PATHS, base_dir
-    ) or _is_keystone_publish_artifact(path_str, base_dir)
+    return sensitive_write_path_refusal(path_str, base_dir) is not None
 
 
 def sensitive_home_dirs() -> tuple[str, ...]:
