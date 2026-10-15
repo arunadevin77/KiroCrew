@@ -408,6 +408,16 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
             "(self, loop: 'NudgeLoop', wake_message: 'str | None' = None) -> 'bool | MonitorDispatchResult'",
         ),
         (
+            "_bookkeeping_section",
+            "method",
+            "(self) -> 'contextlib.AbstractContextManager[None]'",
+        ),
+        (
+            "_fire_slack_inner_nudge",
+            "async method",
+            "(self, loop: 'NudgeLoop', wake_message: 'str | None', bookkeeping: 'contextlib.ExitStack') -> 'bool | MonitorDispatchResult'",
+        ),
+        (
             "_fire_dm_nudge",
             "async method",
             "(self, loop: 'NudgeLoop', adapter: '_DmDispatchAdapter', wake_message: 'str | None' = None) -> 'bool | MonitorDispatchResult'",
@@ -493,6 +503,7 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
     "exit_path": (
         ("_shutdown", "async method", "(self) -> 'None'"),
+        ("_stop_services_and_sessions", "async method", "(self) -> 'None'"),
         ("_write_marker_worker", "method", "(self, run_marker: 'Any', port: 'int') -> 'None'"),
         ("_install_shutdown_signal_handlers", "method", "(self) -> 'None'"),
         (
