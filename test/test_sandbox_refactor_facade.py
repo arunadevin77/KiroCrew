@@ -217,11 +217,11 @@ _BOUND_HERE: frozenset[str] = frozenset("""
     _DELEGATED_OVERLAP_LEAF_REASONS _IN_SANDBOX_LEVEL_VAR _IN_SANDBOX_MARKER
     _POD_OS_HOME_GRANT_STORE_LEAVES _POD_OS_HOME_MASKED_SUBLEAVES _PYTHON_ENV_PREFIXES
     _RELOCATED_CREW_HIDDEN_LEAVES _SANDBOX_MODE_ALIASES _SENSITIVE_ENV_PREFIXES _STANDARD_DIRS
-    _TIER_ORDINALS _clamp_sandbox_mode_to_floor _crew_home_alias_roots
+    _TIER_ORDINALS _VOICE_RUNTIME_LEAF _clamp_sandbox_mode_to_floor _crew_home_alias_roots
     _directory_ancestor_identities _floor_mandates_sandbox _governance_sandbox_floor
     _literal_ancestor_guards _materialize_live_target_mask_target _materialize_maskable_dirs
     _materialize_md_notebook_mask_targets _materialize_sealable_ceilings
-    _md_notebook_degraded_mask_dirs _mode_to_level _open_directory_descriptor
+    _md_notebook_degraded_mask_dirs _mode_to_level _open_directory_descriptor _pod_os_home_targets
     _reconcile_auth_store_staging_links _referent_identity _refuse_aliased_masked_leaves
     _refuse_linked_models_leaf _refuse_multilinked_credential_leaves _relocated_crew_targets
     _relocated_policy_cache_dirs _resolved_install_root_targets _resolved_kiro_agents_targets
