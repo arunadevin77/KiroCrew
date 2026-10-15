@@ -1085,7 +1085,7 @@ What moved:
 - Each of the six identity checks now reads a field: the model-id namespace
   (`config/loader.py`, `dashboard/chat_handlers.py`), whether the backend's own
   advertised list must be read back (`dashboard/handlers/agents.py`,
-  `dashboard/chat_runner.py`'s pinned-model verdict), which provider seam serves
+  `dashboard/chat_turn/model_fallback.py`'s pinned-model verdict), which provider seam serves
   the session (`dashboard/chat_runner.py`'s billing label, `subagent.py`'s
   session-file cleanup), whether compaction finishes inline
   (`dashboard/chat_runner.py`), and which channel carries an effort change

@@ -148,7 +148,7 @@ failure. kiro-cli hands the URL to Kiro Crew over the ACP notification
 ([../reference/kiro-cli/acp.md](../reference/kiro-cli/acp.md), "MCP server
 events"), and Kiro Crew renders it as an **inline banner** in chat — a lock
 icon, `miro requires authentication.`, and an **Authorize** link that opens the
-provider (`dashboard/chat_runner._emit_mcp_oauth_request`, rendered by
+provider (`dashboard/chat_turn/mcp_session._emit_mcp_oauth_request`, rendered by
 `McpOAuthBanner`). Requests kiro-cli buffered while bringing MCP servers up are
 flushed into the transcript at session init, so the banner also appears on a
 fresh session with nothing typed.
@@ -269,7 +269,7 @@ providers' MCP authorization servers plus the classic web-OAuth hosts.
 server needs no entry of your own; a host outside that set whose consent URL
 exceeds the query-length heuristic fails closed instead. The fix is
 agent-fenced with no dashboard writer, so two surfaces name it: the chat banner
-that reports the rejection (`dashboard/chat_runner.py`) names the remedy inline,
+that reports the rejection (`dashboard/chat_turn/mcp_session.py`) names the remedy inline,
 and the Connections card names the refused endpoint, shows the remedy line and
 links to this section.
 

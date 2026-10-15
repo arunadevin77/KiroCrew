@@ -1,5 +1,5 @@
-"""Recovery from an AcpError a dashboard turn raised: the post-token CONTINUE re-prompt
-and the poisoned-conversation verdict.
+"""Recovery from an AcpError a dashboard turn raised: the post-token CONTINUE re-prompt,
+the poisoned-conversation verdict and its canary's settings.
 
 The turn's except arm keeps the classification (which arm applies), every redaction
 of error text and every retry-budget reset a repository guard counts in
@@ -162,3 +162,19 @@ async def _recover_posttoken_transient(
     # (_prompt_depth != 0) — do NOT requeue; partial + notice already
     # shown, so the streamed answer survives in the transcript. The
     # allowance is left UNconsumed so a later turn can still recover once.
+
+
+# Canary probe for the poisoned-conversation escalation: before any discard,
+# ONE tool-free prompt is run through an ephemeral fresh background session
+# (run_bg_oneliner). Only a canary that SUCCEEDS while this conversation keeps
+# failing constitutes conversation-specific rejection evidence — the exact
+# incident signature ("a fresh session works instantly while this session
+# fails every prompt"). A canary that also fails means the backend itself is
+# down/throttled, so no discard fires and nothing is consumed; the next
+# user-initiated exhausted cycle re-probes. This replaces any error-text
+# classification: the ACP classifier contract forbids branching on formatted
+# message wording, and the canary needs no classification at all.
+_POISON_CANARY_PROMPT = "Reply with the single word OK."
+
+
+_POISON_CANARY_TIMEOUT_SECS = 30.0

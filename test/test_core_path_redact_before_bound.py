@@ -181,6 +181,8 @@ _SCANNED_PACKAGES = {
     "src/kiro_crew/apps/builtins/auto_research": 8,
     # The owners composed into the Slack gateway facade, slack/gateway.py.
     "src/kiro_crew/slack/gateway_runtime": 5,
+    # The owners composed into the dashboard chat runner, dashboard/chat_runner.py.
+    "src/kiro_crew/dashboard/chat_turn": 7,
 }
 
 # Every module the issue names, then every module of the packages scanned whole,

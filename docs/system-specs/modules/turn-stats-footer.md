@@ -48,7 +48,7 @@ The attach is gated on `_turn_boundary_set`, which dispatch sets when it capture
 
 ### Cron run results
 
-`chat_runner.turn_stats_meta` builds the same `turn_stats` dict for both writers. The single-agent cron run in `slack/gateway.py` builds it from the run's `provider_last_turn_usage` and `read_turn_model`, and `cron_inject.inject_cron_result_to_dashboard` passes it as `meta` on the result row's `slot.append`, so the live broadcast and the slot window both carry it. It also passes it (as `row_meta`) to the durable `cron:{id}` append, so a restart before the slot save keeps the footer. Cron results have no `chat_done`; the broadcast is what an open tab renders. `test/test_cron_turn_stats_footer.py` pins all three — the broadcast row, the durable `cron:{id}` row (`test_durable_cron_row_carries_turn_stats`), and that an inject with no stats stamps nothing.
+`chat_turn.turn_stats.turn_stats_meta` builds the same `turn_stats` dict for both writers. The single-agent cron run in `slack/gateway.py` builds it from the run's `provider_last_turn_usage` and `read_turn_model`, and `cron_inject.inject_cron_result_to_dashboard` passes it as `meta` on the result row's `slot.append`, so the live broadcast and the slot window both carry it. It also passes it (as `row_meta`) to the durable `cron:{id}` append, so a restart before the slot save keeps the footer. Cron results have no `chat_done`; the broadcast is what an open tab renders. `test/test_cron_turn_stats_footer.py` pins all three — the broadcast row, the durable `cron:{id}` row (`test_durable_cron_row_carries_turn_stats`), and that an inject with no stats stamps nothing.
 
 ### Model attribution
 

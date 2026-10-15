@@ -2196,7 +2196,7 @@ session: it is counted there, cancelled there, and recovered there. Concretely:
   `_note_dropped_frame`); the count is best-effort and a display never implies
   the scheduler can pause one child.
 
-The UI showing per-child cards (`_native_subagent_sync` in `chat_runner.py`)
+The UI showing per-child cards (`_native_subagent_sync` in `chat_turn/native_cards.py`)
 never implies the scheduler can pause or restart one child; a backend that later
 exposes per-child cancel/resume is integrated by adding a row adapter. On a
 shared runtime, recovery of the parent rebuilds only that session handle, never
@@ -2257,7 +2257,7 @@ whose transport behaviour this module owns.
 | `_RESPONSE_WRITE_MIN_PROGRESS_BYTES` | 4 KiB | the smallest drain per window that counts as progress |
 | `_RESPONSE_WRITE_UNOBSERVABLE_BOUND_SECS` | 900s | the single fixed window under the proactor loop, where the level cannot be observed |
 
-`AcpProcessDied` is raised by every stdin writer on `BrokenPipeError` / `ConnectionResetError`, and additionally by the **request-, response- and notification-frame** writers when `stdin.drain()` has not made progress within `_RESPONSE_WRITE_BOUND_SECS` (5.0s, sized like chat_runner's `_STEER_NOTICE_BOUND_SECS`): `AcpClient._send_response` / `_send_error` raise it directly, and the shared `AcpRuntime.send_response` / `send_error` (the default kiro backend, one stdin for every multiplexed session) mark the runtime dead and raise `AcpRuntimeDead`, which `AcpSessionProvider` translates to `AcpProcessDied`.
+`AcpProcessDied` is raised by every stdin writer on `BrokenPipeError` / `ConnectionResetError`, and additionally by the **request-, response- and notification-frame** writers when `stdin.drain()` has not made progress within `_RESPONSE_WRITE_BOUND_SECS` (5.0s, sized like `chat_turn/deny_chokepoints.py`'s `_STEER_NOTICE_BOUND_SECS`): `AcpClient._send_response` / `_send_error` raise it directly, and the shared `AcpRuntime.send_response` / `send_error` (the default kiro backend, one stdin for every multiplexed session) mark the runtime dead and raise `AcpRuntimeDead`, which `AcpSessionProvider` translates to `AcpProcessDied`.
 
 `drain()` returns at once while the pipe has room and parks only when the writer is flow-control paused — the pipe behind it is full — which is what a backend that stopped reading looks like, but also what a healthy backend looks like while it consumes another session's multi-MB prompt frame queued ahead of the response on the shared stdin.
 

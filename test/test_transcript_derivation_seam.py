@@ -487,7 +487,7 @@ class TestThePublicationFence:
                 "save_slot_off_loop",
             ),
             (
-                "kiro_crew/dashboard/chat_runner.py",
+                "kiro_crew/dashboard/chat_turn/tool_rows.py",
                 "_persist_tool_result_rows",
                 "save_slot_off_loop",
             ),

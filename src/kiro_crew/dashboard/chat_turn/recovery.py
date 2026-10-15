@@ -1,4 +1,5 @@
-"""Recovery policy for a dashboard turn: empty-turn continuation, error cards, retry delays and stop gates."""
+"""Recovery policy for a dashboard turn: empty-turn continuation, error cards, retry delays and
+stop gates, the refusal card text and the compact-after-turn notice."""
 
 from __future__ import annotations
 
@@ -26,10 +27,12 @@ if TYPE_CHECKING:
         DashboardState,
         KiroCrewConfig,
         PoisonedConversationEscalation,
+        RefusalInfo,
         ResetCause,
         _ChatSlot,
         _has_user_queued_followup,
         _remove_queued_by_id,
+        append_and_surface,
         build_recovery_requeue,
         effective_session_key,
         is_synthetic_payload_item,
@@ -766,3 +769,157 @@ async def _requeue_after_prompt_busy(
         # depth>0 with budget remaining: no re-queue (mirrors AcpProcessDied),
         # but still surface feedback so the nested turn doesn't fail silently.
         slot.append("error", "⟳ Session busy — please retry.", "msg msg-err")
+
+
+_REFUSAL_CARD_LEAD = "Response declined by the model."
+
+
+def refusal_card_text(
+    refusal: "RefusalInfo | None",
+    *,
+    streamed_text: str = "",
+    fallback_off: bool = False,
+) -> str:
+    """The one refusal card, rendered from whatever the harness reported.
+
+    Every harness lands on the same ``RefusalInfo``; this renders one line per
+    field that carries a value and NOTHING for a field the provider left
+    empty -- an absent category is silence, not "category: unknown". The Kiro
+    service fills category + explanation (+ sometimes a model that would take
+    the request); Anthropic's adapter fills nothing, so its card is the bare
+    lead plus the rephrase hint. Retry is never offered: a refusal is
+    deterministic.
+
+    *streamed_text* is what the turn already showed as assistant text. The Kiro
+    service streams its canned explanation before the terminal, so when that
+    text already carries the explanation the card does not repeat it -- the
+    user reads it once, and the card adds only what the text could not say
+    (the category, the hint).
+
+    *fallback_off* is ``True`` when ``agent.refusal_fallback_model`` is not
+    configured. The card then appends one sentence naming the setting so the
+    user can discover the automatic-recovery feature at the moment they need it.
+    """
+    lines = [_REFUSAL_CARD_LEAD]
+    if refusal is not None and refusal.category:
+        lines.append(f"Content filter: {refusal.category.lower()}.")
+    if refusal is not None and refusal.explanation and refusal.explanation not in streamed_text:
+        lines.append(refusal.explanation)
+    if refusal is not None and refusal.recommended_model:
+        lines.append(f"The provider suggests model '{refusal.recommended_model}' for this request.")
+    else:
+        lines.append(
+            "Try rephrasing your request, or start a new conversation without the "
+            "content that tripped the filter."
+        )
+    if fallback_off:
+        lines.append(
+            "Automatic retry on another model is available but switched off"
+            " (`agent.refusal_fallback_model`)."
+        )
+    return " ".join(lines)
+
+
+#: The chat row shown once per turn when the context crosses the compaction
+#: threshold mid-turn. The frontend's CompactionCard matches this exact shape and
+#: renders it from the catalog, so the English here is the stored form only.
+COMPACT_AFTER_TURN_NOTICE = (
+    "🔄 Context at {pct:.0f}% (limit {limit:.0f}%) — will compact after this turn."
+)
+
+
+#: ``meta["notice"]`` on that row. A notice marker keeps ``is_turn_interrupted``
+#: from reading the row as a ``/compact`` result: nothing has been compacted yet.
+COMPACT_AFTER_TURN_NOTICE_KIND = "compact_after_turn"
+
+
+def _tool_rows_settled(slot: Any) -> bool:
+    """True when no tool row of the trailing tool run is still waiting for its result.
+
+    A notice row appended between a running tool's row and its result would stop the
+    turn's backward scans (the post-tool "mark tools done" walk and
+    ``_flush_segment``'s cleanup) before they reach that tool, so the notice waits
+    for a boundary where every tool above it has finished.
+    """
+    for m in reversed(slot.messages):
+        role = m.get("role")
+        if role == "tool":
+            if not (m.get("meta") or {}).get("done"):
+                return False
+        elif role not in ("permission", "card"):
+            return True
+    return True
+
+
+async def _notice_compaction_after_turn(
+    state: DashboardState, slot: Any, client: Any, session_key: str
+) -> bool:
+    """Tell the person "will compact after this turn", once, while the turn still runs.
+
+    Called at a tool-result boundary of a running turn. Does nothing and returns
+    False unless the end-of-turn check would compact this session right now
+    (:meth:`SessionManager.compaction_due_after_turn`) and the transcript is at a
+    clean boundary. Otherwise appends the notice row and returns True, so the caller
+    can make it once per turn. A display row only: the model is not told anything
+    and the turn runs on unchanged. Never compacts: compaction stays where it was,
+    after the turn. Never raises.
+    """
+    try:
+        # `is not True`: only the manager's own verdict counts, never a truthy stand-in.
+        if state.sessions.compaction_due_after_turn(session_key, client) is not True:
+            return False
+        pct = float(client.context_usage_pct())
+        limit = float(state.sessions.effective_autocompact_pct(session_key))
+    except Exception:
+        logger.debug("compact-after-turn: no context reading", exc_info=True)
+        return False
+    if not _tool_rows_settled(slot):
+        return False
+    try:
+        # Finalize the clients' streaming message first. Pre-tool narration was
+        # persisted without a broadcast, so an open client still holds it as the
+        # streaming row, and an assistant frame arriving now would replace it.
+        state.broadcast_ws("chat_segment", {"slot": slot.key})
+        append_and_surface(
+            state,
+            slot,
+            "assistant",
+            COMPACT_AFTER_TURN_NOTICE.format(pct=pct, limit=limit),
+            "msg msg-a",
+            meta={"kind": "compaction", "notice": COMPACT_AFTER_TURN_NOTICE_KIND},
+        )
+    except Exception:
+        logger.debug("compact-after-turn: notice row failed", exc_info=True)
+    logger.info(
+        "Session %s context at %.0f%% (threshold %.0f%%) mid-turn -- noticed; "
+        "compaction runs after the turn",
+        session_key,
+        pct,
+        limit,
+    )
+    return True
+
+
+# Retries granted to a turn abandoned after a TRANSIENT compaction failure
+# (a throttled or 5xx'd summarization call). Its own budget rather than a share
+# of _acp_pipe_death_retries: charging an unrelated fault to another recovery's
+# budget is what let one false positive burn a whole session's allowance. Two,
+# not three — a throttle still firing after two session resets is not clearing
+# inside this turn, and every attempt costs the summarization call again.
+_COMPACTION_FAILED_RETRIES = 2
+
+
+# Cap the backend-echoed reason interpolated into the "Compaction failed"
+# notice. The notice is a one-line receipt in the transcript, so an unbounded
+# provider string (a stack trace, an echoed payload) would scroll the
+# conversation away instead of explaining it.
+_COMPACT_FAIL_REASON_MAX_CHARS = 300
+
+
+# The answer to a /compact that reached a fresh provider session still owing the
+# Kiro Crew conversation replay. The replay rides the next context-bearing
+# prompt, so that session holds nothing yet and the backend reports no
+# compaction status to wait for.
+COMPACT_REPLAY_PENDING_NOTICE = (
+    "Nothing to compact yet: the restored history is delivered with your next message."
+)

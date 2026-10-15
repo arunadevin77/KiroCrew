@@ -1030,7 +1030,7 @@ routed through the `hooks.safe_read_file_bytes` keystone. `source` is recorded
 as `chat` for materialized documents.
 
 Both the session-document list and that allowlist come from the recorded
-`meta.file_changes`, which is capped per turn (`dashboard/chat_runner.py`): at
+`meta.file_changes`, which is capped per turn (`dashboard/chat_turn/file_changes.py`): at
 most 200 entries (`_MAX_TURN_SNAPSHOT_ENTRIES`, newest kept), and 400,000 chars
 of path plus snapshot content beside the turn's protected entry
 (`_MAX_TURN_SNAPSHOT_CHARS`). An entry dropped by the cap is only counted, in

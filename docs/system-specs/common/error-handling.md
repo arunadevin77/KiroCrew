@@ -348,7 +348,7 @@ did not say — never guessed.
 - **claude-agent-acp, codex-acp** — only Anthropic's bare `stopReason: "refusal"`
   reaches the client; `terminal_refusal` passes it through with no payload, and
   the dashboard's refusal branch (keyed on the stop reason) renders the bare card.
-- **Dashboard** — `chat_runner.refusal_card_text` renders one card from
+- **Dashboard** — `chat_turn.recovery.refusal_card_text` renders one card from
   `RefusalInfo`: the lead line, then one line per non-empty field. Because the
   Kiro explanation streams as text, the card is emitted from BOTH the answered
   and the text-less branch of the turn epilogue.

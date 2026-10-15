@@ -1,4 +1,5 @@
-"""Pre-write file snapshots and the line changes a turn made."""
+"""Pre-write file snapshots, the line changes a turn made, the per-turn snapshot budget and
+the end-of-turn file-change flush."""
 
 from __future__ import annotations
 
@@ -9,19 +10,12 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from kiro_crew.dashboard.chat_runner import (
-        _EXCERPT_CONTEXT_LINES,
-        _MAX_RECONSTRUCT_BYTES,
         _MAX_SLOT_MESSAGES,
-        _MAX_SNAPSHOT,
-        _MAX_SNAPSHOT_PATH_CHARS,
         _MAX_TURN_FULL_CONTENT_CHARS,
-        _MAX_TURN_SNAPSHOT_CHARS,
-        _MAX_TURN_SNAPSHOT_ENTRIES,
-        _SNAPSHOT_READ_BYTES,
-        _SNAPSHOT_TRUNCATION_MARKER,
-        _WRITE_COMMANDS,
         _ChatSlot,
         line_changes_from_file_changes,
+        logger,
+        redact,
         row_mid,
         safe_read_file,
         safe_read_file_bytes_nolink,
@@ -811,3 +805,339 @@ def _note_reply_row(slot: "_ChatSlot", row: dict[str, Any]) -> None:
         if len(mids) >= _MAX_SLOT_MESSAGES:
             del mids[0]
         mids.append(mid)
+
+
+# ── File-chip snapshots ────────────────────────────────────────────────────
+# When the agent invokes a write tool, capture the file's content BEFORE the
+# write executes. After the turn ends, capture the AFTER content and attach
+# {path, before, after} entries to the assistant message meta. Frontend
+# renders these as file-change chips with click-through to a Monaco diff.
+
+_WRITE_COMMANDS = frozenset({"create", "strReplace", "insert"})
+
+
+_MAX_SNAPSHOT = 200_000  # cap per-file snapshot to bound message meta size
+
+
+# Appended to a snapshot side cut at ``_MAX_SNAPSHOT``, so one stored side is at
+# most ``_MAX_SNAPSHOT`` plus this marker.
+_SNAPSHOT_TRUNCATION_MARKER = f"\n... (truncated at {_MAX_SNAPSHOT} chars)"
+
+
+# Reconstruction reads the whole file synchronously on the event loop; past
+# this size the stored snapshot is truncated to _MAX_SNAPSHOT anyway, so
+# reconstruction declines instead of stalling the loop on a huge file.
+_MAX_RECONSTRUCT_BYTES = 2_000_000
+
+
+# Unchanged lines ``_excerpt_pair`` shows around each changed run of a windowed
+# large-file diff. Runs closer than twice this share one window.
+_EXCERPT_CONTEXT_LINES = 20
+
+
+# Chars of path+before+after one TURN's file_changes may carry across every
+# entry EXCEPT its protected one -- the most recent entry whose content differs,
+# which ``_apply_turn_snapshot_budget`` keeps whole and never charges here.
+# ``_MAX_SNAPSHOT`` bounds one file; without a turn bound a single turn that
+# rewrites a dozen large files still attaches megabytes to one message, and
+# every later read of that transcript pays for it. Two per-file caps' worth, so
+# beside the protected entry the budget holds paths and one more large
+# before/after. An entry truncated on BOTH sides exceeds it and is demoted.
+# The most one turn stores is this budget plus the protected entry: at most
+# ``2 * _MAX_SNAPSHOT`` plus two markers and ``_MAX_SNAPSHOT_PATH_CHARS``.
+_MAX_TURN_SNAPSHOT_CHARS = 2 * _MAX_SNAPSHOT
+
+
+# Chars of PATH one snapshot entry may carry. The path is LLM-supplied and is
+# retained even for an entry whose content the turn budget drops, so without a
+# bound here one tool call naming a megabyte-long path puts that megabyte on the
+# message. The bound sits at the longest path a supported OS can open: Windows
+# with the extended-length prefix (``\\?\``, which ``strip_extended_length_prefix``
+# handles) reaches 32,767 characters, well past Linux's 4,096 and macOS's 1,024,
+# so a longer string cannot name a file anywhere and refusing it loses no real
+# snapshot.
+_MAX_SNAPSHOT_PATH_CHARS = 32_767
+
+
+# Entries one turn's file_changes may carry. Bounding content and path length
+# still leaves the ROW COUNT open, and a path-only row is not free: without this
+# a turn touching thousands of files puts thousands of rows on one message. Far
+# above any real turn -- the largest observed touched 11 files. The flush applies
+# it newest-first (``_apply_turn_snapshot_budget``), so a turn past it keeps the
+# files it wrote last and reports how many files it dropped. The in-turn
+# accumulator holds every distinct path once, so a repeated write adds no row.
+_MAX_TURN_SNAPSHOT_ENTRIES = 200
+
+
+# Bytes the snapshot read pulls before ``_truncate_snapshot`` caps it. A UTF-8
+# code point is at most four bytes, so ``_MAX_SNAPSHOT`` characters never span
+# more than ``4 * _MAX_SNAPSHOT`` bytes — reading one code point's worth beyond
+# that keeps the marker honest: a file longer than the cap always decodes to
+# MORE than ``_MAX_SNAPSHOT`` characters, whether it was cut here or read whole,
+# so the truncation marker is appended exactly when the file exceeds the cap.
+_SNAPSHOT_READ_BYTES = 4 * _MAX_SNAPSHOT + 4
+
+
+def _cap_redacted(text: str, limit: int, marker: str) -> tuple[str, bool]:
+    """Hold redacted text to ``limit`` chars plus ``marker``; say whether it was cut.
+
+    The snapshot bounds apply before redaction, and redaction can grow text: each
+    short credential becomes a 22-character tag, so a side dense with them grows
+    about threefold. Re-applying the bound to the redacted text is what keeps a
+    stored field within it -- including the protected entry, which the turn
+    budget never charges. Text already within ``limit`` plus the marker is
+    returned unchanged, so a side ``_truncate_snapshot`` cut before redaction and
+    redaction did not grow keeps its one marker.
+
+    The cut runs on redacted text, so what it can split is a redaction tag's own
+    text, never the secret the tag replaced.
+    """
+    if len(text) <= limit + len(marker):
+        return text, False
+    return text[:limit] + marker, True
+
+
+def _turn_after_reads(
+    changes: list[dict[str, Any]], turn_had_shell: bool
+) -> dict[str, tuple[_Snapshot | None, tuple[str, str] | None]]:
+    """``_flush_file_changes``'s ``after_reads``: whole reads, redaction and windows.
+
+    Runs OFF the event loop (the caller wraps it in ``asyncio.to_thread``): reads
+    up to two megabytes per path and diffs them. The WHOLE texts are redacted
+    before ``_excerpt_pair`` cuts windows: a window can start inside a credential
+    (a PEM body below its BEGIN line), and the redactor recognizes one only with
+    its delimiters in view. The flush redacts the windows again, which leaves
+    already-redacted text unchanged.
+    """
+    reads: dict[str, tuple[_Snapshot | None, tuple[str, str] | None]] = {}
+    for key, (after, whole) in _read_turn_afters(changes, turn_had_shell).items():
+        excerpt = _excerpt_pair(redact(whole[0]), redact(whole[1])) if whole else None
+        reads[key] = (after, excerpt)
+    return reads
+
+
+def _flush_file_changes(
+    slot: "_ChatSlot",
+    turn_boundary: int = 0,
+    turn_start_mid: str | None = None,
+    turn_had_shell: bool = False,
+    after_reads: dict[str, tuple[_Snapshot | None, tuple[str, str] | None]] | None = None,
+) -> None:
+    """Attach accumulated file changes to this turn's last assistant message.
+
+    ``after_reads`` is ``_turn_after_reads`` run off the event loop by the
+    caller: each path's capped after and, for a change past a large file's
+    per-file cut, its windowed before/after, which replace the top cuts here.
+    Without it each after is the ordinary capped read, inline, and such a change
+    keeps the top cut.
+
+    Dedups by canonical path (first before, last after), reads the AFTER content
+    from disk, and settles a ``pending_str_replace`` snapshot against that
+    turn-end after-content by content ALONE — only the pre-write hypothesis is
+    resolvable, so a settled before is always content captured from disk at
+    snapshot time, never a value synthesised from the turn-end state. A pending
+    snapshot is settled only when the turn-end state is attributable to a single
+    tracked write: ``_record_turn_snapshot`` drops the pending hypothesis when a
+    second (or unknown) WRITE TOOL touches the same canonical path, and
+    ``turn_had_shell`` drops ALL pending resolution for the turn when a shell
+    tool ran — a shell command is opaque, can write any path, and never passes
+    through ``_record_turn_snapshot``, so a post-write snapshot followed by a
+    shell edit could otherwise leave the resolver settling an intermediate state
+    as the before. Both cases fall back to the fragment rather than a wrong
+    before (see ``_resolve_pending_str_replace`` for the resolution rule and
+    ``_record_turn_snapshot`` for the write-tool gate). Writes the list
+    to message meta as ``file_changes``. Files the turn budget dropped are
+    counted in ``file_changes_omitted_files``, a plain int present only when it
+    is non-zero. Called on every exit path (success / cancel / error) so users
+    always see what was modified, even on aborted turns.
+
+    Only rows appended by this turn are scanned (see ``_turn_rows`` for the
+    two ways the turn's start is identified), so a turn that changed files but
+    ended without an assistant row gets its own synthetic anchor instead of
+    writing its chips onto the previous turn's answer. Within those rows the
+    anchor must also be a reply THIS runner appended (``slot._turn_reply_mids``,
+    filled by ``_note_reply_row``): the live window is shared, and an assistant
+    row another writer injected mid-turn (a workflow or sub-agent completion
+    envelope) is not this turn's reply even when it is the newest assistant row
+    in the turn. A slot that tracks no identities (a test double without the
+    list) keeps the position rule.
+    """
+    # Defensive: only proceed when a real, non-empty list is present. Tests
+    # using MagicMock slots leave _file_changes as a MagicMock attribute
+    # (always truthy), so an isinstance check is needed in addition to the
+    # length check to avoid a synthetic message getting fabricated when no
+    # writes actually happened.
+    fc_changes = getattr(slot, "_file_changes", None)
+    if not isinstance(fc_changes, list) or not fc_changes:
+        return
+    # Dedup: keep first before for each path (truest "before") since a file
+    # may be modified multiple times in one turn.
+    deduped: dict[str, dict[str, Any]] = {}
+    pending_by_path: dict[str, dict[str, Any]] = {}
+    for write_order, fc in enumerate(slot._file_changes):
+        p = fc["path"]
+        # ``/tmp/f`` and ``/tmp/./f`` share one bucket: the key is the canonical
+        # path ``_snapshot_write_target`` computes off the event loop at snapshot
+        # time, so this loop resolves no path itself. One bucket keeps the first
+        # before for a file written under two spellings.
+        key = fc.get("canonical_path") or p
+        if key not in deduped:
+            before_truncated = bool(fc.get("truncated", False))
+            deduped[key] = {
+                "path": p,
+                "before": fc["content"],
+                "after": "",
+                "_before_truncated": before_truncated,
+            }
+            if fc.get("pending_str_replace"):
+                pending_by_path[key] = fc["pending_str_replace"]
+        # The accumulator moves a path's first snapshot to the tail on every
+        # write, so its position carries last-write recency without extra rows.
+        # Assigning on every occurrence also supports directly supplied repeats.
+        deduped[key]["_last_write"] = write_order
+    # Read after-content once per path. Uses _safe_read_snapshot so sensitive
+    # paths and unreadable files yield empty after rather than crashing or
+    # leaking credentials.
+    for key, entry in deduped.items():
+        before_truncated = entry.pop("_before_truncated")
+        # The caller's off-loop reads when it made them (_read_turn_afters);
+        # otherwise only the ordinary capped snapshot, read inline: no whole-file
+        # read or diff on the event loop, so such an entry keeps the top cut.
+        read = after_reads.get(key) if after_reads is not None else None
+        after, excerpt = read if read is not None else (_safe_read_snapshot(entry["path"]), None)
+        entry["after"] = after.content if after is not None else ""
+        pending = pending_by_path.get(key)
+        # Resolve a deferred strReplace against the turn-end content. The
+        # resolver settles only the pre-write hypothesis, so a resolved before
+        # is always the content captured from disk at snapshot time. The
+        # pending payload is present here only when a single known write tool
+        # touched the path this turn — _record_turn_snapshot already dropped it
+        # if a second or unknown WRITE TOOL did. A shell tool is opaque and
+        # never recorded there, so a shell write after a post-write snapshot
+        # could shape the turn-end read into a false pre-write match: when a
+        # shell ran this turn (turn_had_shell), skip resolution entirely and
+        # keep the fragment rather than trust an unattributable turn-end state.
+        if pending is not None and after is not None and not turn_had_shell:
+            resolved = _resolve_pending_str_replace(pending, after.content)
+            if resolved is not None:
+                # Already _MAX_SNAPSHOT-capped by _pending_str_replace_payload;
+                # re-truncating would append a second marker.
+                entry["before"] = resolved.content
+                before_truncated = resolved.truncated
+        if excerpt is not None:
+            # The per-file cap keeps a side's first _MAX_SNAPSHOT chars, so an
+            # edit past it leaves two equal cuts: no diff, and the turn budget
+            # does not protect an entry that reads as unchanged. The windows
+            # _read_turn_afters cut from the WHOLE sides show every change, and
+            # each side is within _MAX_SNAPSHOT, so every bound below holds.
+            entry["before"], entry["after"] = excerpt
+        elif before_truncated or (after is not None and after.truncated):
+            entry.update(truncated=True, snapshot_limit_chars=_MAX_SNAPSHOT)
+    # Scrub exfil URLs and credentials from path/before/after BEFORE attaching
+    # to message meta. _save_slot_to_history runs _redact_meta on persist, but
+    # the in-memory slot.messages reaches the dashboard UI via SSE/WS BEFORE
+    # persistence — so without this, a config file containing an AKIA* key
+    # (path not on the sensitive-path list) would briefly appear in the chip
+    # diff. Redact in place so both the live and persisted views are clean.
+    # `security.redact` IS the canonical exfil-first composition — the URL pass
+    # classifies partly by query length and replaces the whole URL, so a
+    # hand-sequenced pair here risks re-introducing the creds-first ordering
+    # that defeats it.
+    #
+    # Redaction can grow text past the bounds applied before it, so each field is
+    # held to its bound again afterwards. A side cut here is flagged truncated on
+    # the STORED entry only: the WakaTime line count reads the accumulator's own
+    # entries, before this flush runs, so the flag cannot drop a file from it.
+    for entry in deduped.values():
+        entry["path"], _ = _cap_redacted(
+            redact(entry["path"]),
+            _MAX_SNAPSHOT_PATH_CHARS - len(_PATH_TRUNCATION_MARKER),
+            _PATH_TRUNCATION_MARKER,
+        )
+        side_cut = False
+        for side in ("before", "after"):
+            if entry[side]:
+                entry[side], cut = _cap_redacted(
+                    redact(entry[side]), _MAX_SNAPSHOT, _SNAPSHOT_TRUNCATION_MARKER
+                )
+                side_cut = side_cut or cut
+        if side_cut:
+            entry.update(truncated=True, snapshot_limit_chars=_MAX_SNAPSHOT)
+    # No-op entries (before == after, e.g. an idempotent format-on-save)
+    # are deliberately KEPT: the dashboard renders an explicit "no changes"
+    # caption for them (FileChangeChips) instead of a contentless diff, so
+    # the UI is the single place that answers the no-op state. Dropping them in
+    # the backend would compare post-truncation/post-redaction content, which
+    # would silently discard real changes past the snapshot limit or inside
+    # redacted spans.
+    fc_list = list(deduped.values())
+    # Bound the whole turn AFTER redaction, so the budget measures the content
+    # that actually gets stored rather than the pre-redaction size.
+    fc_list, _demoted, _dropped = _apply_turn_snapshot_budget(fc_list)
+    file_meta: dict[str, Any] = {"file_changes": fc_list}
+    if _dropped:
+        file_meta["file_changes_omitted_files"] = _dropped
+    # Attach to the most recent reply row this runner appended this turn; if
+    # none exists (turn aborted before any text, or every assistant row in the
+    # turn was injected by another writer), create a synthetic message so the
+    # chips still surface without touching a row that is not this turn's reply.
+    reply_mids = getattr(slot, "_turn_reply_mids", None)
+    for m in reversed(_turn_rows(slot, turn_boundary, turn_start_mid)):
+        if m.get("role") != "assistant":
+            continue
+        if isinstance(reply_mids, list) and row_mid(m) not in reply_mids:
+            continue
+        meta = m.setdefault("meta", {})
+        meta.update(file_meta)
+        # The count describes the file_changes written beside it, so a
+        # flush that drops nothing leaves no earlier count behind.
+        if not _dropped:
+            meta.pop("file_changes_omitted_files", None)
+        break
+    else:
+        # broadcast=False: the synthetic message reaches the UI via the same
+        # SSE/WS path the dashboard already drains for this slot. Default
+        # broadcast=True would schedule a fan-out via asyncio.ensure_future(),
+        # which (a) is redundant here and (b) raises RuntimeError when the
+        # function is invoked from a sync context like a unit test.
+        # Content-less on purpose. The turn's error row (every ``except``
+        # branch appends it before this ``finally`` runs) is already in the
+        # window, so this row lands AFTER it; an assistant row with text there
+        # would be read by ``state.is_turn_interrupted`` and its frontend twin
+        # ``selectTurnInterrupted`` as the turn's reply, hiding the trailing
+        # error and with it the Resume control. Every last-conversational-row
+        # scan looks through an assistant row whose ``content`` is empty, and
+        # the transcript still draws it because the chips are content
+        # (``invisibleText.ts::isHiddenInvisibleAssistantRow``). The chips say
+        # what is known here -- files changed -- and the row beside them says
+        # whether the turn stopped, errored, or queued a continuation.
+        slot.append(
+            "assistant",
+            "",
+            "msg msg-a",
+            broadcast=False,
+            meta=file_meta,
+        )
+    logger.info(
+        "Attached %d file_changes to slot %s "
+        "(%d path-only, %d dropped, over the %d-char turn budget)",
+        len(fc_list),
+        slot.key,
+        _demoted,
+        _dropped,
+        _MAX_TURN_SNAPSHOT_CHARS,
+    )
+    # Honour the in-place-mutation contract (see resolve_permission_message in
+    # state.py): "the periodic flush skips non-dirty slots, so an unflagged
+    # in-place mutation can be lost on restart". The assistant-message branch
+    # above mutates meta in place without appending, so nothing else marks the
+    # slot dirty. That matters on the error/cancel call path, which — unlike the
+    # success path — is NOT followed by an explicit save_slot_off_loop: without
+    # this flag a periodic flush that snapshotted the message just before this
+    # write clears _dirty, and the file_changes never reach disk.
+    # (slot.append in the else branch already sets it; setting it once here
+    # covers both branches and cannot be missed by a later edit.)
+    slot._dirty = True
+    slot._file_changes = []
+    if isinstance(reply_mids, list):
+        reply_mids.clear()

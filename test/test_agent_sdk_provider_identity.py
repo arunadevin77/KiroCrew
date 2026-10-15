@@ -168,12 +168,14 @@ def test_importing_this_module_does_not_load_the_acp_package() -> None:
 
 #: A converted file whose functions live in owner modules it composes: the
 #: dashboard agents handlers run the functions ``dashboard/agent_admin`` defines on
-#: ``handlers/agents.py``'s globals, and the chat handlers those ``dashboard/chat_api``
-#: defines on ``chat_handlers.py``'s, so the literal ratchet reads those owners as
+#: ``handlers/agents.py``'s globals, the chat handlers those ``dashboard/chat_api``
+#: defines on ``chat_handlers.py``'s, and the chat runner those ``dashboard/chat_turn``
+#: defines on its own, so the literal ratchet reads those owners as
 #: part of that file.
 _COMPOSED_OWNERS = {
     "dashboard/handlers/agents.py": "dashboard/agent_admin",
     "dashboard/chat_handlers.py": "dashboard/chat_api",
+    "dashboard/chat_runner.py": "dashboard/chat_turn",
 }
 
 

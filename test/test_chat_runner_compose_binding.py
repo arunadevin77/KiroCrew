@@ -14,9 +14,9 @@ What this pins:
   raise instead of keeping either;
 * the owners ``compose`` sees are exactly the package's modules;
 * every name the runner itself imports is read by something: an owner function, the
-  runner's own code, a test's patch of it, or the base-names surface. A runner import
-  that only an owner reads carries ``# noqa: F401``, which pyflakes cannot check, so
-  this check reads the owners too.
+  runner's own code, a test's patch of it, or the base-names surface. The runner is
+  exempt from F401 (``setup.cfg``): pyflakes reads only its own text, and an import
+  whose only reader moved to an owner is read in another file.
 
 Each check has a self-test on synthetic modules, so a check that stopped seeing
 anything fails here rather than passing.
@@ -219,6 +219,41 @@ def _unread_imports(source: str, reader_sources: list[str], keep: set[str]) -> l
     return sorted(imported - read - keep)
 
 
+def _unread_local_imports(source: str) -> list[str]:
+    """``function:name`` for each import inside a function that nothing in that function
+    (its nested scopes included) reads."""
+    found = []
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        own = [
+            node
+            for node in ast.walk(fn)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            and not any(
+                node in ast.walk(inner)
+                for inner in ast.walk(fn)
+                if inner is not fn and isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+        ]
+        read = {
+            n.id for n in ast.walk(fn) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+        }
+        for node in own:
+            for alias in node.names:
+                name = (alias.asname or alias.name).split(".")[0]
+                if name not in read:
+                    found.append(f"{fn.name}:{name}")
+    return sorted(found)
+
+
+def test_the_local_import_check_sees_a_dead_one() -> None:
+    source = "def f():\n    import json\n    from os import sep\n    return sep\n"
+    assert _unread_local_imports(source) == ["f:json"]
+    nested = "def f():\n    import json\n    def g():\n        return json\n    return g\n"
+    assert _unread_local_imports(nested) == []
+
+
 def test_every_name_the_runner_imports_is_read() -> None:
     keep = set(_BASE_NAMES) | _facade_patched_names()
     runner = Path(cr.__file__).read_text(encoding="utf-8")
@@ -226,6 +261,7 @@ def test_every_name_the_runner_imports_is_read() -> None:
         Path(owner.__file__).read_text(encoding="utf-8") for owner in chat_turn.owner_modules()
     ]
     assert _unread_imports(runner, owners, keep) == []
+    assert _unread_local_imports(runner) == []
 
 
 def test_the_import_read_check_sees_a_dead_import() -> None:
