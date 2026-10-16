@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef, useState } from 'react'
 import type { MutableRefObject, RefObject } from 'react'
-import { $getRoot, $getSelection, $isRangeSelection, CAN_REDO_COMMAND, CAN_UNDO_COMMAND, COMMAND_PRIORITY_LOW, CONTROLLED_TEXT_INSERTION_COMMAND, COPY_COMMAND, KEY_ARROW_DOWN_COMMAND, KEY_ARROW_UP_COMMAND, KEY_ENTER_COMMAND, KEY_MODIFIER_COMMAND, PASTE_COMMAND, REDO_COMMAND, UNDO_COMMAND, type LexicalCommand, type LexicalEditor } from 'lexical'
+import { $getRoot, $getSelection, $isRangeSelection, CAN_REDO_COMMAND, CAN_UNDO_COMMAND, COMMAND_PRIORITY_LOW, CONTROLLED_TEXT_INSERTION_COMMAND, COPY_COMMAND, KEY_ARROW_DOWN_COMMAND, KEY_ARROW_UP_COMMAND, KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND, KEY_ENTER_COMMAND, KEY_MODIFIER_COMMAND, PASTE_COMMAND, REDO_COMMAND, UNDO_COMMAND, type LexicalCommand, type LexicalEditor } from 'lexical'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import LexicalComposerInput from '../components/LexicalComposerInput'
 import type { ComposerControl } from '../components/composerControl'
@@ -33,6 +33,8 @@ function ControlledHost({
   historyScope,
   showFullPastes,
   onEditLastRequest,
+  onMentionKey,
+  onEndUndoBurst,
 }: {
   initial?: string
   initialBlocks?: PasteBlock[]
@@ -46,6 +48,8 @@ function ControlledHost({
   historyScope?: string
   showFullPastes?: boolean
   onEditLastRequest?: () => void
+  onMentionKey?: (text: string, selStart: number, selEnd: number, key: string, mods: { meta: boolean; ctrl: boolean; alt: boolean; shift: boolean }) => { value: string; caret: number } | null
+  onEndUndoBurst?: () => void
 }) {
   const [value, setValue] = useState(initial)
   const [blocks, setBlocks] = useState(initialBlocks)
@@ -67,6 +71,8 @@ function ControlledHost({
         sentMessages={sentMessages?.map(text => ({ text }))}
         historyScope={historyScope}
         onEditLastRequest={onEditLastRequest}
+        onMentionKey={onMentionKey}
+        onEndUndoBurst={onEndUndoBurst}
       />
       <output data-testid="value">{value}</output>
       <output data-testid="blocks">{JSON.stringify(blocks)}</output>
@@ -195,6 +201,137 @@ describe('LexicalComposerInput', () => {
     await user.keyboard('{Backspace}')
     await waitFor(() => expect(screen.getByTestId('value')).toHaveTextContent('xy'))
     expect(screen.queryByTestId('paste-token-1')).not.toBeInTheDocument()
+  })
+
+  // #18186: the Lexical composer must delete a staged @mention as one atomic
+  // unit, matching the textarea composer (#17929). The editor hands the flat
+  // text + flat selection to the shared `onMentionKey` handler (mentionKeyEdit)
+  // and applies the whole-value result. These exercise the wiring + the
+  // range-removal/caret application; mentionKeyEdit's own span logic is covered
+  // by the textarea/fileTokens suites. The stub below reproduces exactly what
+  // mentionKeyEdit returns for the single staged mention `@src/main.ts`.
+  describe('atomic staged-mention delete (#18186)', () => {
+    const MENTION = '@src/main.ts'
+    // A faithful one-mention stand-in for mentionKeyEdit: find the mention span,
+    // and for a Backspace/Delete on/next to it (or a selection overlapping it)
+    // return the text with the whole mention (and one adjacent space) removed.
+    const mentionKeyEditForSrcMain = (
+      text: string, selStart: number, selEnd: number, key: string,
+      mods: { meta: boolean; ctrl: boolean; alt: boolean; shift: boolean },
+    ): { value: string; caret: number } | null => {
+      if (key !== 'Backspace' && key !== 'Delete') return null
+      if (key === 'Delete' && mods.shift && selStart !== selEnd) return null
+      if (mods.meta) return null
+      const at = text.indexOf(MENTION)
+      if (at < 0) return null
+      const end = at + MENTION.length
+      const hasSelection = selStart !== selEnd
+      const take = hasSelection
+        ? selStart < end && selEnd > at
+        : key === 'Backspace'
+          ? selStart > at && selStart <= end
+          : selStart >= at && selStart < end
+      if (!take) return null
+      let s = hasSelection ? Math.min(selStart, at) : at
+      let e = hasSelection ? Math.max(selEnd, end) : end
+      if (e < text.length && text[e] === ' ') e++
+      else if (s > 0 && text[s - 1] === ' ') s--
+      return { value: text.slice(0, s) + text.slice(e), caret: s }
+    }
+
+    const setCaret = async (controlRef: MutableRefObject<ComposerControl | null>, pos: number) => {
+      await waitFor(() => expect(controlRef.current).not.toBeNull())
+      act(() => controlRef.current!.setSelection(pos, pos, { focus: true }))
+    }
+
+    it('Backspace with the caret just past a mention removes the whole mention and its chip would unstage', async () => {
+      const editorRef = createRef<LexicalEditor>()
+      const controlRef: MutableRefObject<ComposerControl | null> = { current: null }
+      const initial = `hi ${MENTION} there`
+      render(<ControlledHost initial={initial} editorRef={editorRef} controlRef={controlRef} onMentionKey={mentionKeyEditForSrcMain} />)
+      await waitFor(() => expect(editorRef.current).not.toBeNull())
+      // Caret immediately after `@src/main.ts` (index 3 + 12 == 15).
+      await setCaret(controlRef, 3 + MENTION.length)
+      const event = new KeyboardEvent('keydown', { key: 'Backspace', cancelable: true })
+      act(() => { editorRef.current!.dispatchCommand(KEY_BACKSPACE_COMMAND, event) })
+      // The whole mention (and one adjacent space) is gone — never the
+      // half-reference `@src/main.t` a one-character delete would leave.
+      await waitFor(() => expect(screen.getByTestId('value')).toHaveTextContent('hi there'))
+    })
+
+    it('Backspace with the caret inside a mention removes it whole', async () => {
+      const editorRef = createRef<LexicalEditor>()
+      const controlRef: MutableRefObject<ComposerControl | null> = { current: null }
+      const initial = `hi ${MENTION} there`
+      render(<ControlledHost initial={initial} editorRef={editorRef} controlRef={controlRef} onMentionKey={mentionKeyEditForSrcMain} />)
+      await waitFor(() => expect(editorRef.current).not.toBeNull())
+      await setCaret(controlRef, 3 + 6) // mid-mention
+      const event = new KeyboardEvent('keydown', { key: 'Backspace', cancelable: true })
+      act(() => { editorRef.current!.dispatchCommand(KEY_BACKSPACE_COMMAND, event) })
+      await waitFor(() => expect(screen.getByTestId('value')).toHaveTextContent('hi there'))
+    })
+
+    it('Delete with the caret just before a mention removes it whole', async () => {
+      const editorRef = createRef<LexicalEditor>()
+      const controlRef: MutableRefObject<ComposerControl | null> = { current: null }
+      const initial = `hi ${MENTION} there`
+      render(<ControlledHost initial={initial} editorRef={editorRef} controlRef={controlRef} onMentionKey={mentionKeyEditForSrcMain} />)
+      await waitFor(() => expect(editorRef.current).not.toBeNull())
+      await setCaret(controlRef, 3) // at the `@`
+      const event = new KeyboardEvent('keydown', { key: 'Delete', cancelable: true })
+      act(() => { editorRef.current!.dispatchCommand(KEY_DELETE_COMMAND, event) })
+      await waitFor(() => expect(screen.getByTestId('value')).toHaveTextContent('hi there'))
+    })
+
+    it('a selection overlapping a mention removes the whole mention, not a fragment', async () => {
+      const editorRef = createRef<LexicalEditor>()
+      const controlRef: MutableRefObject<ComposerControl | null> = { current: null }
+      const initial = `hi ${MENTION} there`
+      render(<ControlledHost initial={initial} editorRef={editorRef} controlRef={controlRef} onMentionKey={mentionKeyEditForSrcMain} />)
+      await waitFor(() => expect(editorRef.current).not.toBeNull())
+      // Select from inside "hi " across into the middle of the mention.
+      await waitFor(() => expect(controlRef.current).not.toBeNull())
+      act(() => controlRef.current!.setSelection(1, 3 + 6, { focus: true }))
+      const event = new KeyboardEvent('keydown', { key: 'Backspace', cancelable: true })
+      act(() => { editorRef.current!.dispatchCommand(KEY_BACKSPACE_COMMAND, event) })
+      // "h" + (the selection, the whole mention, and its trailing space all
+      // consumed) -> "hthere" — never a fragment like "h @src/main."
+      await waitFor(() => expect(screen.getByTestId('value')).toHaveTextContent('hthere'))
+    })
+
+    it('a Backspace that touches no staged mention leaves the mention intact (handler declines)', async () => {
+      const editorRef = createRef<LexicalEditor>()
+      const controlRef: MutableRefObject<ComposerControl | null> = { current: null }
+      const initial = `hello ${MENTION}`
+      render(<ControlledHost initial={initial} editorRef={editorRef} controlRef={controlRef} onMentionKey={mentionKeyEditForSrcMain} />)
+      await waitFor(() => expect(editorRef.current).not.toBeNull())
+      await setCaret(controlRef, 5) // after "hello", nowhere near the mention
+      const event = new KeyboardEvent('keydown', { key: 'Backspace', cancelable: true })
+      act(() => { editorRef.current!.dispatchCommand(KEY_BACKSPACE_COMMAND, event) })
+      // The mention handler returns null and does NOT remove the mention: a
+      // delete away from any staged mention is an ordinary edit the editor's
+      // own delete owns (jsdom does not simulate that native one-char delete on
+      // a dispatched command, so the value is simply left untouched here).
+      await waitFor(() => expect(screen.getByTestId('value')).toHaveTextContent(`hello ${MENTION}`))
+    })
+
+    it('ends the undo burst before removing the mention, so Ctrl+Z does not swallow prior typing', async () => {
+      // The structural delete must get its own undo step: without ending the
+      // host's typing burst, a short mention deleted within the burst window
+      // merges into the current typing snapshot and one Ctrl+Z would undo both
+      // the mention and the text typed just before it (Opus 5.5 / GPT review).
+      const editorRef = createRef<LexicalEditor>()
+      const controlRef: MutableRefObject<ComposerControl | null> = { current: null }
+      const onEndUndoBurst = vi.fn()
+      const initial = `hi ${MENTION} there`
+      render(<ControlledHost initial={initial} editorRef={editorRef} controlRef={controlRef} onMentionKey={mentionKeyEditForSrcMain} onEndUndoBurst={onEndUndoBurst} />)
+      await waitFor(() => expect(editorRef.current).not.toBeNull())
+      await setCaret(controlRef, 3 + MENTION.length)
+      const event = new KeyboardEvent('keydown', { key: 'Backspace', cancelable: true })
+      act(() => { editorRef.current!.dispatchCommand(KEY_BACKSPACE_COMMAND, event) })
+      await waitFor(() => expect(screen.getByTestId('value')).toHaveTextContent('hi there'))
+      expect(onEndUndoBurst).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('supports undo and redo through Lexical history', async () => {
