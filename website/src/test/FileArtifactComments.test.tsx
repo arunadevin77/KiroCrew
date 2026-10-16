@@ -122,6 +122,21 @@ describe('useFileArtifactComments', () => {
     expect(latest!.activeCommentId).toBe('root')
   })
 
+  it('marks the sidebar rows a host Submit would send, and none without one', async () => {
+    const agent = { ...mk('agent'), is_agent: true, body: 'agent note' }
+    vi.mocked(api.artifactComments).mockResolvedValue({ comments: [mk('pending'), mk('sent'), agent] } as CommentsResponse)
+    const withSubmit = renderHookWithProviders(() => useFileArtifactComments({ slug: 'doc', ...refs(), submitSentIds: new Set(['sent']) }))
+    await waitFor(() => expect(withSubmit.result.current.commentCount).toBe(3))
+    const marked = renderWithProviders(<>{withSubmit.result.current.sidebar}</>)
+    expect(marked.getAllByTestId('comment-pending-submit')).toHaveLength(1)
+    marked.unmount()
+
+    const noSubmit = renderHookWithProviders(() => useFileArtifactComments({ slug: 'doc', ...refs() }))
+    await waitFor(() => expect(noSubmit.result.current.commentCount).toBe(3))
+    const unmarked = renderWithProviders(<>{noSubmit.result.current.sidebar}</>)
+    expect(unmarked.queryByTestId('comment-pending-submit')).toBeNull()
+  })
+
   it('toggles the sidebar open state', async () => {
     vi.mocked(api.artifactComments).mockResolvedValue({ comments: [] } as CommentsResponse)
     const { result } = renderHookWithProviders(() => useFileArtifactComments({ slug: 'doc', ...refs() }))
