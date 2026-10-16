@@ -61,6 +61,7 @@ from kiro_crew.dashboard import (  # noqa: F401
     channel_slots,
     chat,
     handlers,
+    restart_resume,
 )
 from kiro_crew.dashboard import server_runtime as _server_runtime
 from kiro_crew.dashboard import (  # noqa: F401
