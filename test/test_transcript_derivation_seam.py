@@ -173,6 +173,10 @@ class TestTheFence:
         derivers = {
             "kiro_crew/dashboard/chat_summary.py",
             "kiro_crew/dashboard/session_transfer.py",
+            "kiro_crew/dashboard/session_transfer_install.py",
+            "kiro_crew/dashboard/session_transfer_intake.py",
+            "kiro_crew/dashboard/session_transfer_layers.py",
+            "kiro_crew/dashboard/session_transfer_staging.py",
             "kiro_crew/dashboard/session_export.py",
             "kiro_crew/suggestions.py",
             "kiro_crew/mcp_tools/sessions.py",
@@ -209,6 +213,8 @@ _PUBLISH_MODULES = frozenset(
         "kiro_crew/dashboard/handlers/sessions.py",
         "kiro_crew/dashboard/session_export.py",
         "kiro_crew/dashboard/handlers_instances.py",
+        "kiro_crew/dashboard/handlers_instances_gate.py",
+        "kiro_crew/dashboard/handlers_instances_peer.py",
         "kiro_crew/history_consolidation.py",
     }
 )
