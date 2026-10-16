@@ -10053,6 +10053,16 @@
       "config_unavailable": "Die Dashboard-Einstellungen konnten nicht gelesen werden",
       "config_unavailable_detail": "Lade die Seite neu, um es erneut zu versuchen, oder bitte den Agenten, sich das anzusehen.",
       "load_failed": "Ein Teil des Dashboards konnte nicht geladen werden. Lade die Seite neu, um es erneut zu versuchen."
+    },
+    "concurrencyCutChip": {
+      "exec_reduced": "<0>Unter Last:</0> <1>{{cap}} von {{configured}} Agenten gleichzeitig</1>",
+      "exec_reduced_queued": "<0>Unter Last:</0> <1>{{cap}} von {{configured}} Agenten gleichzeitig · {{queued}} in der Warteschlange</1>",
+      "gate_reduced": "<0>Unter Last:</0> <1>{{cap}} von {{configured}} Agent-Starts gleichzeitig</1>",
+      "gate_paused": "<0>Unter Last:</0> <1>neue Agenten warten auf den Start</1>",
+      "hint": "Solange das System unter Last steht, laufen weniger Agenten gleichzeitig. Wartende Arbeit behält ihren Platz und startet, sobald Platz frei wird. Details unter „Aufgaben & Kapazität“.",
+      "session_queued": "Diese Sitzung: {{queued}} in der Warteschlange",
+      "session_queued_hint": "Von dieser Sitzung gestartete Agenten warten auf einen freien Platz, solange weniger gleichzeitig laufen.",
+      "load_failed": "Der Parallelitätsstatus konnte nicht gelesen werden"
     }
   },
   "hooks": {

@@ -100,7 +100,7 @@ import { useListboxKeyboard } from '../hooks/useListboxKeyboard'
 import AgentDropdownList, { DefaultAgentRow, ManageAgentsFooter, defaultWriteKind, isCrewmateChat } from '../components/AgentDropdownList'
 import ProjectPicker from '../components/ProjectPicker'
 import { ProjectAwsProfileSection } from '../components/ProjectAwsProfile'
-import InboundLinkChip from '../components/InboundLinkChip'
+import ChatHeaderChips from '../components/ChatHeaderChips'
 import ModelEffortDropdown from '../components/ModelEffortDropdown'
 
 import ChatInput from '../components/ChatInput'
@@ -1746,7 +1746,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                   prompt and the header fade stay: they belong to the transcript
                   column, not to the bar. */}
               {!titleInTopbar && (
-              <div className={`relative pr-1.5 pt-[9px] pb-2 flex items-center gap-2 bg-bg pointer-events-none transition-[padding-left] duration-[240ms] [transition-timing-function:cubic-bezier(.32,.72,0,1)] ${!isMobile && embedMode !== 'chat' && filteredSlots.length > 0 && !sidebarOpen ? 'pl-[60px]' : isMobile ? (embedMode === 'chat' ? 'pl-4' : 'pl-3') : 'pl-5'}`}>
+              <div className={`@container/chathead relative pr-1.5 pt-[9px] pb-2 flex items-center gap-2 bg-bg pointer-events-none transition-[padding-left] duration-[240ms] [transition-timing-function:cubic-bezier(.32,.72,0,1)] ${!isMobile && embedMode !== 'chat' && filteredSlots.length > 0 && !sidebarOpen ? 'pl-[60px]' : isMobile ? (embedMode === 'chat' ? 'pl-4' : 'pl-3') : 'pl-5'}`}>
                 {/* Divider between toggle and title — ALWAYS mounted and
                     absolute (zero width, no flex-gap participation) so it can
                     never change the row's layout; it rides the row (title
@@ -1795,7 +1795,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                   />
                 )}
                 </div>
-              <InboundLinkChip slotKey={activeSlot} />
+              <ChatHeaderChips slotKey={activeSlot} />
               {/* Trailing controls grouped under a single ml-auto so multiple
                   right-aligned items don't each absorb free space (two ml-auto
                   siblings split the gap, parking the split icon mid-header). */}

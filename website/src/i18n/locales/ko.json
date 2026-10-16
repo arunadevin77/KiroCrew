@@ -9911,6 +9911,16 @@
       "config_unavailable": "대시보드 설정을 읽을 수 없습니다",
       "config_unavailable_detail": "페이지를 새로고침해 다시 시도하거나 에이전트에게 확인을 요청하세요.",
       "load_failed": "대시보드 일부를 불러오지 못했습니다. 페이지를 새로고침해 다시 시도하세요."
+    },
+    "concurrencyCutChip": {
+      "exec_reduced": "<0>부하 상태:</0> <1>에이전트 {{configured}}개 중 {{cap}}개 동시 실행</1>",
+      "exec_reduced_queued": "<0>부하 상태:</0> <1>에이전트 {{configured}}개 중 {{cap}}개 동시 실행 · {{queued}}개 대기 중</1>",
+      "gate_reduced": "<0>부하 상태:</0> <1>에이전트 시작 {{configured}}개 중 {{cap}}개 동시 진행</1>",
+      "gate_paused": "<0>부하 상태:</0> <1>새 에이전트가 시작을 기다리는 중</1>",
+      "hint": "시스템에 부하가 걸린 동안에는 동시에 실행되는 에이전트 수가 줄어듭니다. 대기 중인 작업은 순서를 유지하며 자리가 나는 대로 시작됩니다. 자세한 내용은 작업 및 용량을 여세요.",
+      "session_queued": "이 세션: {{queued}}개 대기 중",
+      "session_queued_hint": "동시에 실행되는 수가 줄어든 동안 이 세션이 시작한 에이전트가 빈 자리를 기다리고 있습니다.",
+      "load_failed": "동시성 상태를 읽을 수 없습니다"
     }
   },
   "hooks": {

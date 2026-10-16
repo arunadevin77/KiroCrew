@@ -10195,6 +10195,16 @@
       "config_unavailable": "Impossible de lire les paramètres du tableau de bord",
       "config_unavailable_detail": "Recharge la page pour réessayer, ou demande à l’agent d’examiner le problème.",
       "load_failed": "Une partie du tableau de bord n’a pas pu se charger. Recharge la page pour réessayer."
+    },
+    "concurrencyCutChip": {
+      "exec_reduced": "<0>Sous charge :</0> <1>{{cap}} agents sur {{configured}} à la fois</1>",
+      "exec_reduced_queued": "<0>Sous charge :</0> <1>{{cap}} agents sur {{configured}} à la fois · {{queued}} en file d’attente</1>",
+      "gate_reduced": "<0>Sous charge :</0> <1>{{cap}} démarrages d’agent sur {{configured}} à la fois</1>",
+      "gate_paused": "<0>Sous charge :</0> <1>les nouveaux agents attendent de démarrer</1>",
+      "hint": "Moins d’agents s’exécutent à la fois tant que le système est sous charge. Le travail en attente garde sa place et démarre dès qu’il y a de la place. Ouvre Tâches et capacité pour les détails.",
+      "session_queued": "Cette session : {{queued}} en file d’attente",
+      "session_queued_hint": "Les agents lancés par cette session attendent un emplacement libre tant que moins d’agents s’exécutent à la fois.",
+      "load_failed": "Impossible de lire l’état de la concurrence"
     }
   },
   "hooks": {

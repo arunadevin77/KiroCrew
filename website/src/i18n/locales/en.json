@@ -5944,6 +5944,16 @@
       "moreCols": "more columns",
       "fewerRows": "fewer rows",
       "moreRows": "more rows"
+    },
+    "concurrencyCutChip": {
+      "exec_reduced": "<0>Under load:</0> <1>{{cap}} of {{configured}} agents at once</1>",
+      "exec_reduced_queued": "<0>Under load:</0> <1>{{cap}} of {{configured}} agents at once · {{queued}} queued</1>",
+      "gate_reduced": "<0>Under load:</0> <1>{{cap}} of {{configured}} agent starts at once</1>",
+      "gate_paused": "<0>Under load:</0> <1>new agents wait to start</1>",
+      "hint": "Fewer agents run at once while the system is under load. Waiting work keeps its place and starts as room frees up. Open Tasks & capacity for details.",
+      "session_queued": "This session: {{queued}} queued",
+      "session_queued_hint": "Agents this session started are waiting for a free slot while fewer run at once.",
+      "load_failed": "Could not read the concurrency state"
     }
   },
   "hooks": {

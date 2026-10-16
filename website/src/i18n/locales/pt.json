@@ -10195,6 +10195,16 @@
       "config_unavailable": "Não foi possível ler as configurações do painel",
       "config_unavailable_detail": "Recarregue a página para tentar novamente ou peça ao agente para verificar.",
       "load_failed": "Não foi possível carregar uma parte do painel. Recarregue a página para tentar novamente."
+    },
+    "concurrencyCutChip": {
+      "exec_reduced": "<0>Sob carga:</0> <1>{{cap}} de {{configured}} agentes ao mesmo tempo</1>",
+      "exec_reduced_queued": "<0>Sob carga:</0> <1>{{cap}} de {{configured}} agentes ao mesmo tempo · {{queued}} na fila</1>",
+      "gate_reduced": "<0>Sob carga:</0> <1>{{cap}} de {{configured}} inícios de agente ao mesmo tempo</1>",
+      "gate_paused": "<0>Sob carga:</0> <1>novos agentes aguardam para iniciar</1>",
+      "hint": "Menos agentes são executados ao mesmo tempo enquanto o sistema está sob carga. O trabalho em espera mantém o seu lugar e começa assim que houver espaço. Abra Tarefas e capacidade para ver os detalhes.",
+      "session_queued": "Esta sessão: {{queued}} na fila",
+      "session_queued_hint": "Os agentes iniciados por esta sessão aguardam um espaço livre enquanto menos são executados ao mesmo tempo.",
+      "load_failed": "Não foi possível ler o estado da concorrência"
     }
   },
   "hooks": {

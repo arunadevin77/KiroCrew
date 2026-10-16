@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Columns2, ExternalLink, EyeOff, MoreHorizontal, Pin, VenetianMask } from 'lucide-react'
 
 import { generateSlotTitle } from '../../../hooks/slotTitleGeneration'
+import { ConcurrencyCutDot, ConcurrencyCutLiveRegion, ConcurrencyCutMenuItem } from '../../../components/ConcurrencyCutChip'
 import ErrorBoundary from '../../../components/ErrorBoundary'
 import ErrorNotice, { ErrorNoticeMenuItem } from '../../../components/ErrorNotice'
 import { PanelRightSolid } from '../../../components/icons/panels'
@@ -176,10 +177,16 @@ export default function MobileTopBar({
         the activity panel, and split view. Nothing here is a hard swap: the
         menu opens with DropdownMenu's own animation. */}
     {topbarTrailSlot && activeSlot && !embedMode && createPortal(
+      <>
+      {/* The inline title row, which carries the concurrency-cut chip, is not
+          rendered on a phone: the cut is announced here, marked on this
+          trigger, and named as the menu's first row. */}
+      <ConcurrencyCutLiveRegion />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" className="mc-touch-hit w-8 h-8 rounded-md flex items-center justify-center text-text hover:text-text-strong hover:bg-bg-hover bg-transparent border-none cursor-pointer shrink-0" aria-label={i18nT('pages.chatPage.more_actions')} title={i18nT('pages.chatPage.more_actions')} data-testid="mobile-topbar-more">
+          <button type="button" className="relative mc-touch-hit w-8 h-8 rounded-md flex items-center justify-center text-text hover:text-text-strong hover:bg-bg-hover bg-transparent border-none cursor-pointer shrink-0" aria-label={i18nT('pages.chatPage.more_actions')} title={i18nT('pages.chatPage.more_actions')} data-testid="mobile-topbar-more">
             <MoreHorizontal size={18} />
+            <ConcurrencyCutDot />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-[220px]">
@@ -210,6 +217,9 @@ export default function MobileTopBar({
               </>
             }
           ><Suspense fallback={null}><MobileUpdateMenuItem variant="menu-item" /></Suspense></ErrorBoundary>
+          {/* The concurrency cut, after an update and ahead of the window
+              actions: renders nothing while no cut is in force. */}
+          <ConcurrencyCutMenuItem Item={DropdownMenuItem} />
           {activePoppedOut ? (
             <DropdownMenuItem className="[@media(hover:none)]:min-h-10" onSelect={() => focusActivePopout(activeSlot)}>
               <span className="flex items-center gap-2"><ExternalLink size={14} className="shrink-0 text-muted" /><span>{i18nT('pages.chatPage.focus_popped_out_window')}</span></span>
@@ -234,7 +244,8 @@ export default function MobileTopBar({
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
-      </DropdownMenu>,
+      </DropdownMenu>
+      </>,
       topbarTrailSlot,
     )}
     </>
