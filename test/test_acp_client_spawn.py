@@ -848,7 +848,14 @@ class TestEnsureReadyRetryOnAcpError:
 
 class TestEnsureReadyRecreatesWorkDir:
     @pytest.mark.asyncio
-    async def test_recreates_missing_work_dir(self, tmp_path):
+    async def test_recreates_missing_work_dir(self, tmp_path, monkeypatch):
+        # Off the chain-pin gate: the pre-spawn mkdir creates a missing named
+        # work dir by name. On the gate (the default) that mkdir is skipped and
+        # the pin creates the directory under held ancestors instead -- pinned
+        # by test_work_dir_chain_pin's ensure_ready tests.
+        from kiro_crew.acp import client as client_module
+
+        monkeypatch.setattr(client_module, "_PIN_WORK_DIR_CHAIN", False)
         work_dir = tmp_path / "ws"
         client = AcpClient(work_dir=work_dir)
         client._process = MagicMock()

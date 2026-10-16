@@ -592,8 +592,8 @@ class TestResolveKiroBinEnvOverride:
         bound_fds: list[int | None] = []
         real_bind = client_module.bind_voice_safe_agent_workspace_async
 
-        async def spy_bind(workspace):
-            spawn_dir, descriptor = await real_bind(workspace)
+        async def spy_bind(workspace, *, descriptor=None):
+            spawn_dir, descriptor = await real_bind(workspace, descriptor=descriptor)
             bound_fds.append(descriptor)
             return spawn_dir, descriptor
 

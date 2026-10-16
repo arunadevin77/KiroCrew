@@ -496,6 +496,7 @@ from kiro_crew.memory_startup import (  # noqa: F401
 )
 from kiro_crew.memory_stores import UnknownMemoryStore  # noqa: F401
 from kiro_crew.messaging.link import canonical_key, is_channel_session_key  # noqa: F401
+from kiro_crew.project_dir_rule import ProjectDirRefused, resolve_project_dir  # noqa: F401
 from kiro_crew.providers.acp import AcpProvider
 from kiro_crew.providers.base import LLMProvider
 from kiro_crew.safety_override import (  # noqa: F401
