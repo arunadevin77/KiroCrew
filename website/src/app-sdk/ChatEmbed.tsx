@@ -421,6 +421,14 @@ function ChatEmbed({
     return [...serverMessages.slice(0, -1), { ...last, role: 'assistant' }]
   }, [serverMessages, stalled])
   const title = shown?.title ?? ''
+  // No page yet for this slot and no failure: the title is still unknown.
+  const titlePending = shown == null && !isError
+  // Only a loaded page with no history, here or beyond the page, is new.
+  const isFresh = shown != null && serverMessages.length === 0 && !shown.has_more
+  const headerTitle = title
+    || (titlePending ? i18nT('appSdk.chatEmbed.loading_session_title')
+      : isFresh ? i18nT('appSdk.chatEmbed.untitled_session_title')
+        : i18nT('appSdk.chatEmbed.untitled_existing_session_title'))
   // Queued sends, through the same hydration and split the dashboard panes
   // use, so a sub-agent delivery or a recovery continuation never shows as a
   // user card here either. Read-only: the embed offers no cancel/edit, so it
@@ -965,14 +973,16 @@ function ChatEmbed({
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card shrink-0">
           {/* Muted while stalled: the idle accent would say the session is fine. */}
           <span className={`w-2 h-2 rounded-full shrink-0 ${stalled ? 'bg-muted' : running ? 'bg-ok animate-pulse' : 'bg-accent'}`} />
-          {/* An untitled session reads "New session", never the internal slot
-              key; the key stays reachable on hover for whoever is debugging. */}
+          {/* An untitled session reads a localized label (loading, new, or
+              untitled), never the internal slot key; the key stays reachable
+              on hover for whoever is debugging. */}
           <span
-            className="text-[13px] font-semibold text-text-strong truncate flex-1"
+            className={`text-[13px] font-semibold truncate flex-1 ${titlePending ? 'text-muted' : 'text-text-strong'}`}
             title={slotKey}
+            aria-busy={titlePending || undefined}
             data-testid="chat-embed-title"
           >
-            {title || i18nT('appSdk.chatEmbed.untitled_session_title')}
+            {headerTitle}
           </span>
           {agent && <span className="text-[10px] font-mono text-muted">{agent}</span>}
           {running && <span className={`text-[10px] font-mono ${stopUnderWay ? 'text-danger' : 'text-ok'}`}>{stopUnderWay ? stopLabel : i18nT('appSdk.chatEmbed.streaming')}</span>}
@@ -1014,7 +1024,7 @@ function ChatEmbed({
                 {i18nT('components.chatPane.retry')}
               </button>
             </div>
-          ) : messages.length === 0 && !running ? (
+          ) : messages.length === 0 && !running && !titlePending ? (
             <div className="text-center text-muted text-[13px] py-10">{i18nT('appSdk.chatEmbed.session_ready_type_a_message_to_start')}</div>
           ) : undefined,
           // The main chat's working indicator (ChatFooter, shared with ChatPage

@@ -456,7 +456,9 @@
       "uploading_files": "Caricamento dei file…",
       "stop_restarts_session": "Interrompi riavvierà questa sessione: la cronologia della chat resta, ma il lavoro in corso e i messaggi in coda vengono scartati.",
       "stop_did_not_go_through": "Quell’interruzione non è andata a buon fine.",
-      "untitled_session_title": "Nuova sessione"
+      "untitled_session_title": "Nuova sessione",
+      "untitled_existing_session_title": "Sessione senza titolo",
+      "loading_session_title": "Caricamento della sessione…"
     },
     "chatMessageList": {
       "copied": "Copiato!",

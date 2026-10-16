@@ -66,7 +66,9 @@
       "streaming": "streaming",
       "attachments_not_allowed": "This app doesn't accept files. Attach them in {{page}} instead.",
       "uploading_files": "Uploading files…",
-      "untitled_session_title": "New session"
+      "untitled_session_title": "New session",
+      "untitled_existing_session_title": "Untitled session",
+      "loading_session_title": "Loading session…"
     },
     "chatMessageList": {
       "open_path": "Open {{path}}"

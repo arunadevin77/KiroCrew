@@ -50,6 +50,8 @@ describe('ChatEmbed framing', () => {
     await act(async () => {
       renderWithProviders(<ChatEmbed slotKey="coder-abc123" />)
     })
+    // React Query delivers the first read through its notification timer.
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     const header = screen.getByTestId('chat-embed-title')
     expect(header).toHaveTextContent('New session')
     expect(header).toHaveAttribute('title', 'coder-abc123')

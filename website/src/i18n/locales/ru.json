@@ -470,7 +470,9 @@
       "uploading_files": "Загрузка файлов…",
       "stop_restarts_session": "«Остановить» перезапустит сессию: история чата останется, но текущая работа и сообщения в очереди будут отброшены.",
       "stop_did_not_go_through": "Эта остановка не прошла.",
-      "untitled_session_title": "Новый сеанс"
+      "untitled_session_title": "Новый сеанс",
+      "untitled_existing_session_title": "Сеанс без названия",
+      "loading_session_title": "Загрузка сеанса…"
     },
     "chatMessageList": {
       "copied": "Скопировано!",

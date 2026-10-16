@@ -442,7 +442,9 @@
       "uploading_files": "Dateien werden hochgeladen…",
       "stop_restarts_session": "Stopp startet diese Sitzung neu: Der Chatverlauf bleibt, laufende Arbeit und Nachrichten in der Warteschlange werden verworfen.",
       "stop_did_not_go_through": "Dieser Stopp ist nicht durchgegangen.",
-      "untitled_session_title": "Neue Sitzung"
+      "untitled_session_title": "Neue Sitzung",
+      "untitled_existing_session_title": "Unbenannte Sitzung",
+      "loading_session_title": "Sitzung wird geladen…"
     },
     "chatMessageList": {
       "copied": "Kopiert!",

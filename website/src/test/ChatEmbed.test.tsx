@@ -127,6 +127,8 @@ describe('ChatEmbed', () => {
       await act(async () => {
         renderWithProviders(<ChatEmbed slotKey="slot-1" />)
       })
+      // React Query delivers the first read through its notification timer.
+      await act(async () => { await vi.advanceTimersToNextTimerAsync() })
       expect(screen.getByText('Session ready. Type a message to start.')).toBeInTheDocument()
     })
 
@@ -460,17 +462,19 @@ describe('ChatEmbed', () => {
     })
 
     it.each([
-      { name: 'a fresh session', messages: [] },
-      { name: 'a resumed session', messages: [{ role: 'user', content: 'Earlier turn', cls: '' }] },
-    ])('replaces the untitled label after polling $name without remounting', async ({ messages }) => {
+      { name: 'a fresh session', messages: [], label: 'New session' },
+      { name: 'a resumed session', messages: [{ role: 'user', content: 'Earlier turn', cls: '' }], label: 'Untitled session' },
+    ])('replaces the untitled label after polling $name without remounting', async ({ messages, label }) => {
       mockGet.mockResolvedValue({ messages, running: false })
       const slotKey = 'coder-untitled'
       await act(async () => {
         renderWithProviders(<ChatEmbed slotKey={slotKey} />)
       })
+      // React Query delivers the first read through its notification timer.
+      await act(async () => { await vi.advanceTimersToNextTimerAsync() })
       expect(mockGet).toHaveBeenCalledTimes(1)
       const header = screen.getByTestId('chat-embed-title')
-      expect(header).toHaveTextContent(/^New session$/)
+      expect(header).toHaveTextContent(new RegExp(`^${label}$`))
       expect(header).toHaveAttribute('title', slotKey)
       expect(screen.queryByText(slotKey)).toBeNull()
 
@@ -484,7 +488,7 @@ describe('ChatEmbed', () => {
       await act(async () => { await vi.advanceTimersToNextTimerAsync() })
       expect(screen.getByTestId('chat-embed-title')).toBe(header)
       expect(header).toHaveTextContent(/^Trip planning$/)
-      expect(screen.queryByText('New session')).toBeNull()
+      expect(screen.queryByText(label)).toBeNull()
       expect(screen.queryByText(slotKey)).toBeNull()
     })
 
@@ -524,6 +528,7 @@ describe('ChatEmbed', () => {
       await act(async () => {
         renderWithProviders(<ChatEmbed slotKey="fallback-slot" />)
       })
+      await act(async () => { await vi.advanceTimersToNextTimerAsync() })
 
       expect(screen.getByText('New session')).toHaveAttribute('title', 'fallback-slot')
       expect(screen.queryByText('fallback-slot')).toBeNull()

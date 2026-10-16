@@ -442,7 +442,9 @@
       "uploading_files": "ফাইল আপলোড হচ্ছে…",
       "stop_restarts_session": "থামান চাপলে সেশন রিস্টার্ট হবে: চ্যাটের ইতিহাস থাকবে, কিন্তু চলমান কাজ আর অপেক্ষমাণ মেসেজ বাদ যাবে।",
       "stop_did_not_go_through": "ওই থামানোটা কাজ করেনি।",
-      "untitled_session_title": "নতুন সেশন"
+      "untitled_session_title": "নতুন সেশন",
+      "untitled_existing_session_title": "শিরোনামহীন সেশন",
+      "loading_session_title": "সেশন লোড হচ্ছে…"
     },
     "chatMessageList": {
       "copied": "কপি হয়েছে!",

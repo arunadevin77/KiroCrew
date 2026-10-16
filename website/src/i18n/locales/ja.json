@@ -428,7 +428,9 @@
       "uploading_files": "ファイルをアップロード中…",
       "stop_restarts_session": "「停止」を押すとセッションが再起動します。チャット履歴は残りますが、進行中の作業とキュー内のメッセージは破棄されます。",
       "stop_did_not_go_through": "その停止は完了しませんでした。",
-      "untitled_session_title": "新しいセッション"
+      "untitled_session_title": "新しいセッション",
+      "untitled_existing_session_title": "無題のセッション",
+      "loading_session_title": "セッションを読み込み中…"
     },
     "chatMessageList": {
       "copied": "コピーしました！",

@@ -442,7 +442,9 @@
       "uploading_files": "फ़ाइलें अपलोड हो रही हैं…",
       "stop_restarts_session": "रोकें दबाने पर सेशन रीस्टार्ट होगा: चैट इतिहास रहेगा, लेकिन चल रहा काम और कतार में लगे मैसेज हटा दिए जाएँगे।",
       "stop_did_not_go_through": "वह रोकना नहीं हो पाया।",
-      "untitled_session_title": "नया सेशन"
+      "untitled_session_title": "नया सेशन",
+      "untitled_existing_session_title": "बिना शीर्षक का सेशन",
+      "loading_session_title": "सेशन लोड हो रहा है…"
     },
     "chatMessageList": {
       "copied": "कॉपी किया गया!",

@@ -456,7 +456,9 @@
       "uploading_files": "Enviando arquivos…",
       "stop_restarts_session": "Parar vai reiniciar esta sessão: o histórico do chat fica, mas o trabalho em andamento e as mensagens na fila são descartados.",
       "stop_did_not_go_through": "Essa parada não foi concluída.",
-      "untitled_session_title": "Nova sessão"
+      "untitled_session_title": "Nova sessão",
+      "untitled_existing_session_title": "Sessão sem título",
+      "loading_session_title": "Carregando sessão…"
     },
     "chatMessageList": {
       "copied": "Copiado!",
