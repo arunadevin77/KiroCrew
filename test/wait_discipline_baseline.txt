@@ -71,7 +71,6 @@
  1 test_auto_research_onloop_db.py
 13 test_autonudge.py
  2 test_autonudge_reconciler.py
- 2 test_autonudge_refactor_contract.py
  4 test_autonudge_remove_offload_425.py
  4 test_aws_control_backup.py
  1 test_aws_control_backup_job.py

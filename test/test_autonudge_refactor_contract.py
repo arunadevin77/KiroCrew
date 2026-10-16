@@ -45,6 +45,7 @@ from kiro_crew.monitoring.models import (
     monitor_state_to_dict,
 )
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
+from kiro_crew.testing.wait import await_until
 
 #: Every function, class and constant the pre-split ``autonudge.py`` defined.
 _BASE_DEFINED = frozenset(
@@ -798,7 +799,7 @@ class TestModuleSeamsReachTheCodeThatReadsThem:
         monkeypatch.setattr(svc, "_reconcile_once", passed.set)
         task = asyncio.create_task(svc._reconcile_forever())
         try:
-            await asyncio.wait_for(passed.wait(), 10)
+            await await_until(passed, what="reconcile pass")
         finally:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -977,7 +978,7 @@ class TestInstanceSeamsReachEveryInternalCaller:
 
         monkeypatch.setattr(svc, "_persist_locked", _persist)
         svc._persist_soon()
-        await asyncio.wait_for(persisted.wait(), 10)
+        await await_until(persisted, what="persistence callback")
 
     @pytest.mark.asyncio
     async def test_mutations_go_through_emit_cancel_and_the_mutation_lock(
