@@ -318,6 +318,11 @@ const tierWhy = (key: SizeTier['family']) =>
       : i18nT('pages.settings.remoteCrewPanel.tier_power_why')
 
 const PRICING_CALCULATOR_URL = 'https://calculator.aws'
+// AWS's own install page for the plugin: the same page the Remote Crew on EC2
+// guide and the gateway's not-installed message (cloud/ssm.py) link. It covers
+// every platform, so unlike the install command below it can live here.
+const SESSION_MANAGER_PLUGIN_INSTALL_URL =
+  'https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html'
 // NOTE: the session-manager-plugin install command is NOT hardcoded here. It has to
 // match the platform of the machine running the gateway — which may be a Linux host
 // while this dashboard is open on a Mac — so the preflight response carries it.
@@ -1220,6 +1225,9 @@ function PrereqRow({
   rechecking,
   extraAction,
   error,
+  failure,
+  failureDetail,
+  failureLink,
 }: {
   ok: boolean
   title: string
@@ -1233,6 +1241,19 @@ function PrereqRow({
   /** A failure of one of this row's own actions, rendered beside the buttons
    *  that caused it rather than in the page-level notices above the fold. */
   error?: string
+  /** The check's own failure diagnostic (a CLI error, a refused binary).
+   *  Shown in place of `detail`, through ErrorNotice, because it is the
+   *  outcome of something that failed rather than status text. */
+  failure?: string
+  /** The tool's own output behind `failure` (the AWS CLI's error line), when
+   *  `failure` is a plain-language sentence written about it. Rendered under
+   *  the sentence, smaller and monospace, so the step to take leads and the
+   *  raw text reads as a detail. It stays the notice's `message`, so the agent
+   *  hand-off carries the CLI's own words. */
+  failureDetail?: string
+  /** An external page that carries out the step `failure` asks for, linked
+   *  right under it. */
+  failureLink?: { href: string; label: string }
 }) {
   return (
     <li className="flex items-start gap-3 py-2.5 border-b border-border last:border-b-0">
@@ -1241,7 +1262,31 @@ function PrereqRow({
       </span>
       <div className="min-w-0 flex-1">
         <div className="text-[13px] font-medium text-text-strong">{title}</div>
-        {detail ? <div className="text-[12px] text-muted mt-0.5 whitespace-pre-wrap">{detail}</div> : null}
+        {failure ? (
+          // askAgent ON: the launch form on this tab persists its size and
+          // account, so the navigation loses nothing. showIcon OFF: the row's
+          // warning circle already marks the failed check.
+          <div className="mt-0.5">
+            {failureDetail ? (
+              <ErrorNotice
+                variant="inline"
+                showIcon={false}
+                title={failure}
+                message={failureDetail}
+                messagePlacement="below"
+                messageClassName="font-mono whitespace-pre-wrap"
+                askAgent
+              />
+            ) : (
+              <ErrorNotice variant="inline" showIcon={false} messageClassName="whitespace-pre-wrap" message={failure} askAgent />
+            )}
+            {failureLink ? (
+              <a className="mt-1 w-fit flex items-center gap-1 text-[12px] text-accent font-medium hover:underline" href={failureLink.href} target="_blank" rel="noreferrer">
+                {failureLink.label} <ExternalLink size={12} aria-hidden="true" />
+              </a>
+            ) : null}
+          </div>
+        ) : detail ? <div className="text-[12px] text-muted mt-0.5 whitespace-pre-wrap">{detail}</div> : null}
         {command ? (
           <code className="block mt-1.5 rounded-md border border-border bg-bg-elevated px-2.5 py-1.5 font-mono text-[12px] text-accent overflow-x-auto">
             {command}
@@ -2576,7 +2621,18 @@ export function RemoteCrewPanel() {
                   title={i18nT('pages.settings.remoteCrewPanel.prereq_credentials')}
                   detail={preflight.reachable && preflight.account
                     ? i18nT('pages.settings.remoteCrewPanel.credentials_ok', { profile: checkedProfile || i18nT('pages.settings.remoteCrewPanel.no_profile_set'), account: preflight.account })
-                    : (preflight.detail || i18nT('pages.settings.remoteCrewPanel.credentials_bad'))}
+                    : ''}
+                  failure={preflight.reachable && preflight.account
+                    ? undefined
+                    : preflight.credential_helper_missing
+                      // The helper's name is the actionable part, so the sentence
+                      // leads; the CLI's own error sits under it (failureDetail)
+                      // for anything the sentence misses.
+                      ? i18nT('pages.settings.remoteCrewPanel.credentials_helper_missing', { name: preflight.credential_helper_missing })
+                      : (preflight.detail || i18nT('pages.settings.remoteCrewPanel.credentials_bad'))}
+                  failureDetail={preflight.reachable && preflight.account
+                    ? undefined
+                    : (preflight.credential_helper_missing && preflight.detail) || undefined}
                   onRecheck={runCheck}
                   rechecking={preflightQuery.isFetching}
                 />
@@ -2586,7 +2642,21 @@ export function RemoteCrewPanel() {
                 <PrereqRow
                   ok={preflight.session_manager_plugin}
                   title={i18nT('pages.settings.remoteCrewPanel.plugin')}
-                  detail={preflight.session_manager_plugin ? i18nT('pages.settings.remoteCrewPanel.plugin_ok') : i18nT('pages.settings.remoteCrewPanel.plugin_missing')}
+                  detail={preflight.session_manager_plugin
+                    ? i18nT('pages.settings.remoteCrewPanel.plugin_ok')
+                    : i18nT('pages.settings.remoteCrewPanel.plugin_missing')}
+                  failure={preflight.session_manager_plugin || !preflight.session_manager_plugin_refused_path
+                    ? undefined
+                    // Found but refused is not "not installed": the install
+                    // command would put the same refused file back.
+                    : preflight.session_manager_plugin_command
+                      ? i18nT('pages.settings.remoteCrewPanel.plugin_refused_fix', { path: preflight.session_manager_plugin_refused_path, reason: preflight.session_manager_plugin_refused_reason ?? '' })
+                      : i18nT('pages.settings.remoteCrewPanel.plugin_refused', { path: preflight.session_manager_plugin_refused_path, reason: preflight.session_manager_plugin_refused_reason ?? '' })}
+                  // The fix sentence asks for a reinstall from AWS before the
+                  // ownership command, so it links where to do that.
+                  failureLink={!preflight.session_manager_plugin && preflight.session_manager_plugin_refused_path && preflight.session_manager_plugin_command
+                    ? { href: SESSION_MANAGER_PLUGIN_INSTALL_URL, label: i18nT('pages.settings.remoteCrewPanel.plugin_install_page') }
+                    : undefined}
                   command={preflight.session_manager_plugin ? undefined : (preflight.session_manager_plugin_command || undefined)}
                   onCopyCommand={
                     preflight.session_manager_plugin || !preflight.session_manager_plugin_command

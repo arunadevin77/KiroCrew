@@ -42,11 +42,19 @@ export interface CloudPreflight {
   ssm_reachable: boolean
   note: string
   detail: string
+  /** The bare program name the AWS CLI could not find while resolving
+   *  credentials (usually the profile's `credential_process` command), or "". */
+  credential_helper_missing?: string
   session_manager_plugin: boolean
   /** Copy-pasteable install command for the GATEWAY's platform, resolved
    *  server-side (the browser cannot know that host's OS). "" when the platform
-   *  has no one-liner. */
+   *  has no one-liner. When the plugin was found but refused, this is the
+   *  command that clears the refusal instead, or "" when none is known. */
   session_manager_plugin_command?: string
+  /** Where the gateway found a plugin it refused to run, or "". */
+  session_manager_plugin_refused_path?: string
+  /** The provenance check's reason for that refusal, server-authored, or "". */
+  session_manager_plugin_refused_reason?: string
 }
 
 /** One remote-instance provisioner the gateway offers, from

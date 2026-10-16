@@ -636,6 +636,38 @@ class TestDoctor:
         assert resolved in probed
         assert "aws" not in probed  # the bare-name probe is the defect
 
+    def test_doctor_reports_a_refused_plugin_as_refused_not_missing(self, monkeypatch, capsys):
+        monkeypatch.setattr(cli_cloud, "resolve_aws_bin", lambda: "/opt/aws-cli/aws")
+        monkeypatch.setattr(cli_cloud, "_resolve", lambda _args: ("dev", "us-west-2"))
+        monkeypatch.setattr(cli_cloud.ssm, "session_manager_plugin_installed", lambda: False)
+        monkeypatch.setattr(
+            cli_cloud.ssm,
+            "session_manager_plugin_refusal",
+            lambda: cli_cloud.ssm.PluginRefusal(
+                path="/usr/local/sessionmanagerplugin/bin/session-manager-plugin",
+                reason="executable is owned by another user (uid 1501)",
+                remedy_command="sudo chown -R root:wheel /usr/local/sessionmanagerplugin",
+            ),
+        )
+        monkeypatch.setattr(
+            cli_cloud.iam,
+            "reachability_check",
+            lambda profile, region: {"reachable": False, "note": ""},
+        )
+
+        assert cli_cloud.handle_cloud(_args(cloud_action="doctor")) == 0
+        out = capsys.readouterr().out
+        assert (
+            "found at /usr/local/sessionmanagerplugin/bin/session-manager-plugin but refused" in out
+        )
+        assert "owned by another user (uid 1501)" in out
+        assert "sudo chown -R root:wheel /usr/local/sessionmanagerplugin" in out
+        # The command makes whatever binary is in the tree an accepted credential
+        # receiver, so the remedy asks for AWS provenance before it.
+        assert "reinstall it from AWS first" in out
+        assert out.index("reinstall it from AWS first") < out.index("sudo chown -R root:wheel")
+        assert "session-manager-plugin not found" not in out
+
 
 _ACCT = "123456789012"
 _DENIED_CREATE = (

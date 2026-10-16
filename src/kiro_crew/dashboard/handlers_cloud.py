@@ -401,17 +401,28 @@ async def api_cloud_preflight(request: web.Request) -> web.Response:
     region = request.query.get("region", "")
     reach = await _in_executor(iam.reachability_check, profile, region)
     plugin = await _in_executor(ssm.session_manager_plugin_installed)
+    # Installed but refused by the provenance check is not "not installed": the
+    # install command would reinstall the same refused file. The row then shows the
+    # refusal reason and, when one is known, the command that clears it.
+    refusal = None if plugin else await _in_executor(ssm.session_manager_plugin_refusal)
     # The remedy is resolved server-side: this process knows which OS the check ran
     # on, and the browser does not (a remote gateway can be Linux while the user is
     # on a Mac). Empty when the platform has no one-liner — the UI then shows only
     # the localized "not installed" line.
-    plugin_cmd = "" if plugin else await _in_executor(ssm.session_manager_plugin_install_command)
+    if plugin:
+        plugin_cmd = ""
+    elif refusal is not None:
+        plugin_cmd = refusal.remedy_command
+    else:
+        plugin_cmd = await _in_executor(ssm.session_manager_plugin_install_command)
     _audit("preflight", "success")
     return web.json_response(
         {
             **reach,
             "session_manager_plugin": bool(plugin),
             "session_manager_plugin_command": plugin_cmd,
+            "session_manager_plugin_refused_path": refusal.path if refusal else "",
+            "session_manager_plugin_refused_reason": refusal.reason if refusal else "",
         }
     )
 

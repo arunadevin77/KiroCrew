@@ -26,7 +26,7 @@ import secrets
 import shutil
 import subprocess
 import time
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from kiro_crew.sandbox import cgroup_scope_argv, run_limited, wrap_argv
 
@@ -156,12 +156,33 @@ def resolve_aws_tool_bin(name: str) -> str:
     there is refused; the pair is cleared when that name passes in that dir, so
     repairing the install needs no restart.
     """
+    return resolve_aws_tool_bin_with_refusals(name)[0]
+
+
+class AwsToolRefusal(NamedTuple):
+    """One install-dir candidate the provenance check refused, and why."""
+
+    path: str
+    reason: str
+
+
+def resolve_aws_tool_bin_with_refusals(name: str) -> tuple[str, tuple[AwsToolRefusal, ...]]:
+    """:func:`resolve_aws_tool_bin`, plus the candidates THIS walk refused.
+
+    Same search, same validation and same :data:`_REFUSED_AWS_BIN_DIRS` updates;
+    the second element only reports what the walk already decided, so a caller
+    that has to explain a bare-name result can tell "nothing installed" from
+    "installed but refused" and name the refusal reason. The refusals come from
+    this call alone, never from the shared set, so a candidate removed since an
+    earlier walk is not reported.
+    """
+    refusals: list[AwsToolRefusal] = []
     env_path = os.environ.get("PATH", "")
     found = shutil.which(name, path=env_path) if env_path else None
     if found:
         # Same trust class as the pre-existing behaviour: execvp against the
         # inherited PATH already executed exactly this binary.
-        return found
+        return found, ()
     for directory in _AWS_BIN_DIRS:
         if not directory:
             continue
@@ -172,11 +193,12 @@ def resolve_aws_tool_bin(name: str) -> str:
 
         try:
             resolved = validate_provider_executable(found)
-        except ValueError:
+        except ValueError as exc:
             # This (name, dir) is out — for the argv head AND for the child's
             # PATH. Keyed by name too: a sibling name passing in this dir must not
             # clear THIS name's refusal.
             _REFUSED_AWS_BIN_DIRS.add((name, directory))
+            refusals.append(AwsToolRefusal(found, str(exc)))
             logger.warning(
                 "refusing %s at %s: failed provenance validation; trying the remaining "
                 "install dirs",
@@ -185,8 +207,8 @@ def resolve_aws_tool_bin(name: str) -> str:
             )
             continue
         _REFUSED_AWS_BIN_DIRS.discard((name, directory))
-        return resolved
-    return name
+        return resolved, tuple(refusals)
+    return name, tuple(refusals)
 
 
 def resolve_aws_bin() -> str:

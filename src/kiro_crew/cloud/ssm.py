@@ -32,7 +32,12 @@ from typing import Optional
 
 from kiro_crew import platform_compat
 from kiro_crew.cloud import aws
-from kiro_crew.deploy.engine import aws_spawn_env, resolve_aws_bin, resolve_aws_tool_bin
+from kiro_crew.deploy.engine import (
+    aws_spawn_env,
+    resolve_aws_bin,
+    resolve_aws_tool_bin,
+    resolve_aws_tool_bin_with_refusals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +239,94 @@ def session_manager_plugin_installed() -> bool:
     uses, so probe and spawn agree.
     """
     return shutil.which(resolve_aws_tool_bin(_SESSION_MANAGER_PLUGIN)) is not None
+
+
+@dataclass(frozen=True)
+class PluginRefusal:
+    """A Session Manager plugin that is installed but failed the provenance check.
+
+    ``path`` is the candidate the resolver found and ``reason`` the check's own
+    words. ``remedy_command`` is a copy-pasteable fix when one is known for this
+    install, else "".
+    """
+
+    path: str
+    reason: str
+    remedy_command: str
+
+
+def session_manager_plugin_refusal() -> Optional[PluginRefusal]:
+    """Why an installed plugin is not used, or None when there is nothing to explain.
+
+    None when the resolver accepted a plugin, and None when it found none at all
+    (the "not installed" case, whose remedy is the install command). Otherwise the
+    first refused candidate: reporting that as "not installed" would send the user
+    to an install command that reinstalls the same refused file.
+
+    Reads the same walk :func:`session_manager_plugin_installed` performs and
+    changes nothing about what is accepted.
+    """
+    resolved, refusals = resolve_aws_tool_bin_with_refusals(_SESSION_MANAGER_PLUGIN)
+    if os.path.isabs(resolved) or not refusals:
+        return None
+    first = refusals[0]
+    remedy = _plugin_ownership_remedy(first.path, first.reason)
+    # With a remedy, name the resolved file: the candidate is often a link from a
+    # bin directory, and the command targets the folder the real file sits in.
+    return PluginRefusal(
+        path=os.path.realpath(first.path) if remedy else first.path,
+        reason=first.reason,
+        remedy_command=remedy,
+    )
+
+
+#: Where AWS's own macOS and Linux packages install the plugin. The macOS ``.pkg``
+#: stamps this tree with the packager's uid rather than root, which the
+#: provenance check refuses as "owned by another user". Only meaningful on POSIX:
+#: :func:`_plugin_ownership_remedy` returns "" where there is no ``geteuid``.
+_AWS_PKG_PLUGIN_PREFIX = os.path.join(os.sep, "usr", "local", "sessionmanagerplugin")
+
+#: The provenance check's wording for its relaxed-policy ownership refusal: a path
+#: component owned by an account that is neither root nor the gateway user. It is
+#: the only refusal a root-owned tree clears; a root gateway, the strict policy and
+#: a world-writable component are refused for reasons ``chown`` does not touch.
+_THIRD_ACCOUNT_OWNER_REFUSAL = re.compile(r"\bis owned by another user \(uid \d+\)\Z")
+
+
+def _plugin_ownership_remedy(candidate: str, reason: str) -> str:
+    """``sudo chown -R root:<group> <prefix>`` when a third account owns AWS's install tree.
+
+    Offered only when *reason* is the provenance check's third-account ownership
+    refusal, the candidate resolves inside :data:`_AWS_PKG_PLUGIN_PREFIX`, and some
+    directory or file on the way from that prefix to the binary is owned by an
+    account that is neither root nor the gateway user: exactly the state a stock
+    AWS ``.pkg`` install leaves, and one that making the tree root-owned clears.
+    Anything else returns "" and the caller shows only the reason, rather than a
+    command that would not fix it.
+    """
+    if not _THIRD_ACCOUNT_OWNER_REFUSAL.search(reason):
+        return ""
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None:
+        return ""
+    try:
+        prefix = Path(os.path.realpath(_AWS_PKG_PLUGIN_PREFIX))
+        real = Path(os.path.realpath(candidate))
+    except OSError:
+        return ""
+    if prefix not in real.parents:
+        return ""
+    allowed = {0, geteuid()}
+    chain = [prefix, *[p for p in reversed(real.parents) if prefix in p.parents], real]
+    for component in chain:
+        try:
+            owner = component.stat().st_uid
+        except OSError:
+            return ""
+        if owner not in allowed:
+            group = "wheel" if platform.system() == "Darwin" else "root"
+            return f"sudo chown -R root:{group} {_AWS_PKG_PLUGIN_PREFIX}"
+    return ""
 
 
 def session_manager_plugin_install_hint() -> str:

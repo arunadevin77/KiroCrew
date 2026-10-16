@@ -134,6 +134,7 @@ export default function ErrorNotice({
   messageClassName = '',
   messageTooltip,
   testId,
+  showIcon = true,
 }: {
   /** DOM id for controls, including menu hand-offs, that describe themselves with this alert. */
   id?: string
@@ -272,6 +273,13 @@ export default function ErrorNotice({
    * an existing `<p data-testid="…">` keeps its id here.
    */
   testId?: string
+  /**
+   * Off for a notice nested in a row that already marks the failure with its
+   * own status icon (a pre-flight check row's warning circle), so the problem
+   * is not shown twice. The icon is decorative (`aria-hidden`), so turning it
+   * off changes nothing for assistive tech; `role="alert"` stays. On by default.
+   */
+  showIcon?: boolean
 } & ErrorNoticeNoHandoff) {
   if (!message) return null
   // The secondary line: smaller than the title, lighter than the lead, but still
@@ -291,7 +299,7 @@ export default function ErrorNotice({
         id={id}
         data-testid={testId}
       >
-        <AlertTriangle size={14} className="shrink-0" aria-hidden="true" />
+        {showIcon && <AlertTriangle size={14} className="shrink-0" aria-hidden="true" />}
         {title && <strong className="font-semibold">{title}</strong>}
         <span className={`min-w-0 ${messageBelow ? 'basis-full text-[11px] font-normal text-danger-text' : ''} ${messageClassName}`} style={{ overflowWrap: 'anywhere' }} title={messageTooltip}>{withOriginLink(message)}</span>
         {askAgent && (
@@ -354,7 +362,7 @@ export default function ErrorNotice({
       id={id}
       data-testid={testId}
     >
-      <AlertTriangle size={14} className="mt-[2px] shrink-0" aria-hidden="true" />
+      {showIcon && <AlertTriangle size={14} className="mt-[2px] shrink-0" aria-hidden="true" />}
       <div className={`min-w-0 flex-1 whitespace-pre-wrap${scrollMessage ? ' min-h-0 self-stretch flex flex-col' : ''}`} style={{ overflowWrap: 'anywhere' }}>
         {title && <strong className="font-semibold">{title} </strong>}
         {/* Wrapped only when asked: the bare text node is the shape every

@@ -833,6 +833,39 @@ class TestReachabilityCheck:
         assert r["reachable"] is False
         assert "did not resolve" in r["note"]
         assert "Unable to locate credentials" in r["detail"]
+        assert r["credential_helper_missing"] == ""
+
+    def test_a_credential_helper_missing_from_path_is_named(self, monkeypatch):
+        # The AWS CLI's own words when the profile's credential_process command is
+        # not on the PATH a GUI-launched gateway hands it.
+        err = "\naws: [ERROR]: [Errno 2] No such file or directory: 'sso-cred-helper'\n"
+        monkeypatch.setattr(aws, "run_aws", lambda *a, **k: (255, "", err))
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        r = iam.reachability_check("work")
+        assert r["reachable"] is False
+        assert r["credential_helper_missing"] == "sso-cred-helper"
+        assert "credential_process" in r["note"]
+        assert "/full/path/to/sso-cred-helper" in r["note"]
+        assert "aws configure sso" not in r["note"]
+        assert "sso-cred-helper" in r["detail"]
+
+    def test_a_missing_absolute_path_is_not_reported_as_a_path_lookup(self, monkeypatch):
+        # A path with a separator was never searched on PATH, so the PATH advice
+        # would be wrong for it; the generic note stands.
+        err = "aws: [ERROR]: [Errno 2] No such file or directory: '/opt/x/helper'"
+        monkeypatch.setattr(aws, "run_aws", lambda *a, **k: (255, "", err))
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        r = iam.reachability_check("p")
+        assert r["credential_helper_missing"] == ""
+        assert "did not resolve" in r["note"]
+
+    def test_missing_credential_helper_reads_both_quote_styles(self):
+        assert iam.missing_credential_helper('[Errno 2] No such file or directory: "ada"') == "ada"
+        assert iam.missing_credential_helper("[Errno 2] No such file or directory: 'ada'") == "ada"
+        assert iam.missing_credential_helper("") == ""
+        assert iam.missing_credential_helper("AccessDenied") == ""
 
     def test_all_reachable(self, monkeypatch):
         def fake_run(args, profile="", region="", *, timeout=aws.DEFAULT_TIMEOUT):

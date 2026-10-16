@@ -16,6 +16,7 @@ CloudFormation needs.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from kiro_crew.cloud import aws
@@ -972,6 +973,35 @@ def policy_json() -> str:
     return json.dumps(policy_document(), indent=2)
 
 
+# The AWS CLI's report of a program it could not exec, e.g.
+# ``aws: [ERROR]: [Errno 2] No such file or directory: 'sso-cred-helper'``. Only a bare
+# name is captured: a name with a path separator was not looked up on PATH, so the
+# PATH advice below would be wrong for it.
+_MISSING_PROGRAM_RE = re.compile(r"\[Errno 2\] No such file or directory: (['\"])([^'\"/\\\s]+)\1")
+
+
+def missing_credential_helper(stderr: str) -> str:
+    """The bare program name an ``aws`` call could not find, or "".
+
+    During credential resolution the program the CLI runs by name is the profile's
+    ``credential_process`` command, which it looks up on its own PATH. A
+    GUI-launched gateway hands it a minimal PATH, so a helper installed in a
+    per-user directory is not found even though the profile works in a terminal.
+    """
+    match = _MISSING_PROGRAM_RE.search(stderr or "")
+    return match.group(2) if match else ""
+
+
+def credential_helper_hint(name: str) -> str:
+    """What to do when the profile's ``credential_process`` helper is not found."""
+    return (
+        f"The AWS CLI could not find `{name}` on the gateway's PATH. This is usually "
+        "the program the profile's credential_process runs: set an absolute path for "
+        f"it in your AWS config (credential_process = /full/path/to/{name} ...), then "
+        "retry."
+    )
+
+
 def reachability_check(profile: str, region: str = "") -> dict[str, Any]:
     """Read-only reachability (NOT full verification).
 
@@ -988,13 +1018,20 @@ def reachability_check(profile: str, region: str = "") -> dict[str, Any]:
         "ssm_reachable": False,
         "note": "",
         "detail": "",
+        "credential_helper_missing": "",
     }
     rc, out, err = aws.run_aws(["sts", "get-caller-identity", "--output", "json"], profile, region)
     if rc != 0:
         result["detail"] = (err or "could not resolve credentials").strip()[:300]
+        helper = missing_credential_helper(err)
+        result["credential_helper_missing"] = helper
         result["note"] = aws.env_credentials_hint() or (
-            "Profile did not resolve — run `aws configure sso --profile <name>` "
-            "(or `aws configure --profile <name>`) and retry."
+            credential_helper_hint(helper)
+            if helper
+            else (
+                "Profile did not resolve — run `aws configure sso --profile <name>` "
+                "(or `aws configure --profile <name>`) and retry."
+            )
         )
         return result
     try:
