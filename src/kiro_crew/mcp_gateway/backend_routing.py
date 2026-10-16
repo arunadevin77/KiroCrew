@@ -484,6 +484,9 @@ async def _settle(
         # stub's subscribe swallowed with no response, hung forever.
         if pending.method == _RESOURCES_SUBSCRIBE_METHOD and pending.resource_uri:
             orphan_uri = pending.resource_uri
+            # A named caller's identity release is decided in one place,
+            # _defer_identity_release; another caller's routed stub never holds it.
+            per_caller = self.supports_caller_identity and pending.caller is not None
             self._lease_awaiting_grant.discard(orphan_uri)
             riders = self._lease_pending_riders.pop(orphan_uri, [])
             if _is_success_response(msg):
@@ -513,11 +516,16 @@ async def _settle(
                         # replay's caller — record it so a later
                         # detach can release as the right principal.
                         self._grant_callers[(orphan_uri, pending.replay_stub)] = pending.caller
-                elif orphan_uri not in self._resource_subscriptions:
+                elif per_caller or orphan_uri not in self._resource_subscriptions:
                     # A granted lease nobody wants: release on the
                     # spot, as the caller that took it (a replay's
-                    # grant belongs to the replay's principal).
-                    await self._release_upstream_subscriptions([orphan_uri], caller=pending.caller)
+                    # grant belongs to the replay's principal). The
+                    # release keeps the stub the subscribe came from,
+                    # so that stub's resubscribe waits for it. For a
+                    # named identity caller the rule decides instead.
+                    await self._release_upstream_subscriptions(
+                        [orphan_uri], caller=pending.caller, origin_stub=pending.origin_stub
+                    )
                 for rider_uuid, rider_id in riders:
                     await self._reply_locally(rider_uuid, rider_id, result={})
             else:
@@ -528,12 +536,17 @@ async def _settle(
                 # the subscribe may well have taken. Denying routing
                 # while keeping such a lease would strand it live
                 # upstream, with every later update charged to the
-                # server as a hazard, so an unsettled verdict with
-                # nobody routed releases the lease on the spot.
-                if (error_obj is None or verdict_unknown) and (
-                    orphan_uri not in self._resource_subscriptions
+                # server as a hazard, so an unsettled verdict releases the
+                # lease on the spot: through the rule for a named identity
+                # caller, else when nobody is routed. A release left to this
+                # subscribe (``release_owed``) is sent on a refusal too.
+                if pending.release_owed or (
+                    (error_obj is None or verdict_unknown)
+                    and (per_caller or orphan_uri not in self._resource_subscriptions)
                 ):
-                    await self._release_upstream_subscriptions([orphan_uri], caller=pending.caller)
+                    await self._release_upstream_subscriptions(
+                        [orphan_uri], caller=pending.caller, origin_stub=pending.origin_stub
+                    )
                 for rider_uuid, rider_id in riders:
                     await self._reply_locally(
                         rider_uuid,
@@ -565,8 +578,16 @@ async def _settle(
             waiters = self._lease_release_waiters.pop(_rel_uri, [])
             if _is_success_response(msg):
                 self._orphaned_leases.discard(_rel_uri)
+                # The stub the release was sent for is unsubscribed
+                # upstream, so it is not routed and holds no grant
+                # caller either: a cancel hands its own final
+                # unsubscribe here while it stays attached (a detach
+                # has already removed both, so this is a no-op then).
+                if pending.origin_stub:
+                    self._grant_callers.pop((_rel_uri, pending.origin_stub), None)
                 subscribers = self._resource_subscriptions.get(_rel_uri)
                 if subscribers is not None:
+                    subscribers.discard(pending.origin_stub)
                     for waiter_uuid, _waiter_id in waiters:
                         subscribers.discard(waiter_uuid)
                     if not subscribers:

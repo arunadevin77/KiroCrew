@@ -160,32 +160,7 @@ async def detach_stub(self: Backend, stub_uuid: str) -> int:
         p = self._pending_requests.get(fid)
         if p is None:
             continue
-        if p.resource_uri and p.method == _RESOURCES_SUBSCRIBE_METHOD:
-            # BOTH regimes: dropping the pending would drop the server's
-            # verdict — a late identity grant would strand the upstream
-            # lease with nobody to release it. Coalesced: hand it to the
-            # first parked rider; otherwise (including every identity
-            # pending, which never has riders) convert to the sentinel,
-            # whose grant arm releases a granted-but-unwanted lease as
-            # ``pending.caller`` — the right principal.
-            riders = (
-                []
-                if self.supports_caller_identity
-                else self._lease_pending_riders.get(p.resource_uri, [])
-            )
-            if riders:
-                p.stub_uuid, p.original_id = riders.pop(0)
-            else:
-                p.origin_stub = stub_uuid
-                p.stub_uuid = _RELEASE_STUB_SENTINEL
-                p.original_id = None
-            continue
-        if p.resource_uri and p.method == _RESOURCES_UNSUBSCRIBE_METHOD:
-            # Let the release-in-flight settle silently; the table entry
-            # is pruned below either way.
-            p.origin_stub = stub_uuid
-            p.stub_uuid = _RELEASE_STUB_SENTINEL
-            p.original_id = None
+        if self._hand_off_lease_request(p, stub_uuid):
             continue
         self._pending_requests.pop(fid, None)
     # Drop the departing stub from the resource-subscription table so a
@@ -266,6 +241,40 @@ def _next_forward_id(self: Backend) -> str:
     return f"gw-{self.pid}-{self._forward_id_seq}"
 
 
+def _hand_off_lease_request(self: Backend, p: "_PendingRequest", stub_uuid: str) -> bool:
+    """Re-own ``p`` when it is a subscribe or unsubscribe whose stub,
+    ``stub_uuid``, detached or cancelled it; True if so.
+
+    Its response still has to settle shared lease state, so the entry is
+    kept. BOTH regimes: dropping it would drop the server's verdict, and a
+    late grant would strand the upstream lease with nobody to release it.
+    A coalesced subscribe with parked riders is handed to the first rider,
+    which then receives the server's verdict under its own id. Any other
+    subscribe (including every identity pending, which never has riders)
+    is converted to the sentinel, whose grant arm releases a
+    granted-but-unwanted lease as ``pending.caller``, the right principal.
+    An unsubscribe is converted too, so the release in flight settles
+    silently.
+    """
+    if not p.resource_uri:
+        return False
+    if p.method == _RESOURCES_SUBSCRIBE_METHOD:
+        riders = (
+            []
+            if self.supports_caller_identity
+            else self._lease_pending_riders.get(p.resource_uri, [])
+        )
+        if riders:
+            p.stub_uuid, p.original_id = riders.pop(0)
+            return True
+    elif p.method != _RESOURCES_UNSUBSCRIBE_METHOD:
+        return False
+    p.origin_stub = stub_uuid
+    p.stub_uuid = _RELEASE_STUB_SENTINEL
+    p.original_id = None
+    return True
+
+
 async def forward_from_stub(
     self: Backend,
     stub_uuid: str,
@@ -326,7 +335,7 @@ async def forward_from_stub(
         # or a non-final unsubscribe) and must NOT reach the backend —
         # the server holds one subscription per URI, and forwarding
         # either frame would break a co-tenant's live subscription.
-        if await self._handle_resource_subscription(stub_uuid, method, msg):
+        if await self._handle_resource_subscription(stub_uuid, method, msg, caller=caller):
             return
 
     # Request/response rewrite: only requests carry both method AND id.
@@ -397,15 +406,21 @@ async def forward_from_stub(
             _cparams = msg.get("params")
             if isinstance(_cparams, dict) and "requestId" in _cparams:
                 orig_req = _cparams["requestId"]
-                cancel_fid = next(
+                match = next(
                     (
-                        f
+                        (f, pend)
                         for f, pend in self._pending_requests.items()
                         if pend.stub_uuid == stub_uuid and pend.original_id == orig_req
                     ),
                     None,
                 )
-                if cancel_fid is not None:
+                if match is not None:
+                    cancel_fid, cancelled = match
+                    if self._hand_off_lease_request(cancelled, stub_uuid):
+                        # Other stubs wait on this lease transition, so the
+                        # server is not asked to drop it: its answer settles
+                        # the lease under the request's new owner.
+                        return
                     msg = dict(msg)
                     new_params = dict(_cparams)
                     new_params["requestId"] = cancel_fid
@@ -415,18 +430,7 @@ async def forward_from_stub(
                     # detector skips a marked entry instead of aging the
                     # shared backend into its ceiling, while notification
                     # attribution and the last-stub recycle still see it.
-                    # A subscribe/unsubscribe is not marked: its verdict
-                    # still settles the shared lease tables.
-                    cancelled = self._pending_requests[cancel_fid]
-                    if not (
-                        cancelled.resource_uri
-                        and cancelled.method
-                        in (
-                            _RESOURCES_SUBSCRIBE_METHOD,
-                            _RESOURCES_UNSUBSCRIBE_METHOD,
-                        )
-                    ):
-                        cancelled.cancelled = True
+                    cancelled.cancelled = True
         # Trust boundary: unconditionally strip any stub-supplied caller
         # identity on EVERY forwarded request regardless of method, then
         # inject the authoritative caller block when known.

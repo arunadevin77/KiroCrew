@@ -250,8 +250,46 @@ async def evict_stub_subscriptions(self: Backend, stub_uuid: str) -> int:
     return evicted
 
 
+def _identity_lease_transition_unsettled(
+    self: Backend, uri: str, stub_uuid: str, caller: Optional[CallerContext]
+) -> bool:
+    """Whether an identity subscribe for ``uri`` by ``stub_uuid`` (sent as
+    ``caller``) must wait for an earlier transition of the same principal.
+
+    An identity server holds one subscription per URI and caller, and
+    adjudicates a release by caller: a release sent as that caller removes
+    whatever subscription the caller then holds, including one a later
+    subscribe took. Two pending transitions end in such a release: an
+    unsubscribe (a stub's own, or one the gateway sends), and a subscribe
+    the gateway owns (a cancelled, retracted or evicted one, a detached
+    stub's, or a replay), which the release sentinel's grant arm releases
+    when nobody takes the grant. A subscribe forwarded beside either can be
+    granted first; the release then lands after it, and the stub stays
+    routed while the server holds nothing for it. The principal is the
+    caller when the gateway names one; an unnamed stub is matched by its
+    own uuid, as ``stub_uuid`` or ``origin_stub``.
+    """
+    for p in self._pending_requests.values():
+        if p.resource_uri != uri:
+            continue
+        if p.method != _RESOURCES_UNSUBSCRIBE_METHOD and not (
+            p.method == _RESOURCES_SUBSCRIBE_METHOD and p.stub_uuid == _RELEASE_STUB_SENTINEL
+        ):
+            continue
+        if stub_uuid in (p.stub_uuid, p.origin_stub):
+            return True
+        if caller is not None and p.caller == caller:
+            return True
+    return False
+
+
 async def _handle_resource_subscription(
-    self: Backend, stub_uuid: str, method: str, msg: dict[str, Any]
+    self: Backend,
+    stub_uuid: str,
+    method: str,
+    msg: dict[str, Any],
+    *,
+    caller: Optional[CallerContext] = None,
 ) -> bool:
     """Apply subscription-lease bookkeeping for a stub-forwarded
     ``resources/subscribe`` / ``resources/unsubscribe``; return ``True``
@@ -336,17 +374,33 @@ async def _handle_resource_subscription(
             )
             return True
         if any(
-            p.stub_uuid == stub_uuid
+            (
+                p.stub_uuid == stub_uuid
+                or (
+                    p.stub_uuid == _RELEASE_STUB_SENTINEL
+                    and p.origin_stub == stub_uuid
+                    and (self.supports_caller_identity or uri not in self._lease_awaiting_release)
+                )
+            )
             and p.method == _RESOURCES_UNSUBSCRIBE_METHOD
             and p.resource_uri == uri
             for p in self._pending_requests.values()
         ):
-            # This stub's own unsubscribe for the URI is still in flight.
+            # This stub's own unsubscribe for the URI is still in flight,
+            # under its own uuid or under the release sentinel with the
+            # stub as ``origin_stub`` (a cancel hands it there, see
+            # ``_hand_off_lease_request``, and a release sent for a grant
+            # the stub gave up keeps it).
             # Its response may arrive AFTER a new grant (out-of-order
             # server) and would then erase it — the releasing stub and the
             # re-subscriber are the same uuid, so the per-stub discard
             # cannot tell them apart. Refuse the resubscribe; the client
-            # retries once the unsubscribe settles.
+            # retries once the unsubscribe settles. An identity-less server
+            # refuses behind a sentinel release only when
+            # ``_lease_awaiting_release`` does not cover it (a cancelled
+            # unsubscribe of a URI nothing tracked is forwarded unflagged):
+            # a covered one parks the resubscribe below, and it is
+            # forwarded only once the release settles.
             await self._reply_locally(
                 stub_uuid,
                 original_id,
@@ -359,7 +413,22 @@ async def _handle_resource_subscription(
             return True
         if self.supports_caller_identity:
             # Per-caller authorization: the server must see this stub's
-            # own subscribe (the caller block is injected downstream).
+            # own subscribe (the caller block is injected downstream) --
+            # but not while an earlier transition of the same principal
+            # can still end in a release, which would land after this
+            # subscribe's grant (see _identity_lease_transition_unsettled).
+            if self._identity_lease_transition_unsettled(uri, stub_uuid, caller):
+                await self._reply_locally(
+                    stub_uuid,
+                    original_id,
+                    error={
+                        "code": _JSONRPC_SERVER_ERROR,
+                        "message": "an earlier resources/subscribe or "
+                        "unsubscribe for this URI is still "
+                        "settling; retry after it completes",
+                    },
+                )
+                return True
             return False
         if uri in self._lease_awaiting_grant:
             self._lease_pending_riders.setdefault(uri, []).append((stub_uuid, original_id))
@@ -603,14 +672,16 @@ async def _on_resource_subscription_response(
                     # Grant-time is the only moment the grant principal
                     # is certain; detach releases with this caller.
                     self._grant_callers[(uri, pending.stub_uuid)] = pending.caller
-            elif verdict_unknown or "error" not in msg:
+            elif verdict_unknown or "error" not in msg or pending.release_owed:
                 # UNSETTLED verdict (neither result nor error, or the
                 # gateway's error for a reply it could not use): the
                 # subscribe may well have taken upstream, and recording
                 # nothing would strand a live per-caller lease firing
                 # updates that route nowhere. Release it as the caller
                 # that took it — the same fail-closed release the
-                # coalesced arms apply to malformed verdicts.
+                # coalesced arms apply to malformed verdicts. A refusal
+                # releases too when a release was left to this verdict
+                # (``release_owed``): an earlier grant is still held.
                 await self._release_upstream_subscriptions([uri], caller=pending.caller)
             return
         # Coalesced grant: the forwarder and every parked rider settle on
@@ -961,11 +1032,40 @@ async def _drain_replacement_subscribes(self: Backend, uri: str, *, released: bo
             await self._reply_locally(parker_uuid, parker_id, error=err)
 
 
+def _defer_identity_release(self: Backend, uri: str, caller: Optional[CallerContext]) -> bool:
+    """Whether an identity release for ``uri`` sent as ``caller`` is held back.
+
+    The server holds one subscription per URI and caller and releases by
+    caller, so a release must not land after a same-principal grant that
+    routes a stub. It is not sent while a stub of the principal is routed
+    for the URI, which that subscription serves. While any subscribe of
+    the principal for the URI is in flight, whoever owns it (a stub's own,
+    a respawn replay for a stub, or one the gateway took over or scoped to
+    release on its grant), the release is left to its verdict
+    (``release_owed``): a grant that routes a stub needs no release, and
+    every other verdict sends it then. A release with no caller names no
+    principal and is never held back.
+    """
+    if caller is None:
+        return False
+    if any(
+        self._grant_callers.get((uri, stub)) == caller
+        for stub in self._resource_subscriptions.get(uri, ())
+    ):
+        return True
+    for p in self._pending_requests.values():
+        if p.method == _RESOURCES_SUBSCRIBE_METHOD and p.resource_uri == uri and p.caller == caller:
+            p.release_owed = True
+            return True
+    return False
+
+
 async def _release_upstream_subscriptions(
     self: Backend,
     uris: list[str],
     *,
     caller: Optional[CallerContext] = None,
+    origin_stub: str = "",
 ) -> None:
     """Send a gateway-originated ``resources/unsubscribe`` for each URI
     whose last subscriber departed without unsubscribing. Best-effort: a
@@ -975,8 +1075,17 @@ async def _release_upstream_subscriptions(
     the release is adjudicated per principal, so a bare unsubscribe
     (adjudicated as the connection) would be refused — or worse, revoke
     a different principal's live subscription.
+
+    The pending keeps ``caller`` and ``origin_stub`` (the stub the release
+    is sent for, when there is one), so a later identity subscribe by the
+    same principal is held off until this release settles
+    (:meth:`_identity_lease_transition_unsettled`). On an identity server a
+    release is first passed through :meth:`_defer_identity_release`, which
+    may leave it to a same-principal subscribe still in flight.
     """
     for uri in uris:
+        if self.supports_caller_identity and self._defer_identity_release(uri, caller):
+            continue
         fid = self._next_forward_id()
         self._pending_requests[fid] = _PendingRequest(
             stub_uuid=_RELEASE_STUB_SENTINEL,
@@ -984,6 +1093,8 @@ async def _release_upstream_subscriptions(
             method=_RESOURCES_UNSUBSCRIBE_METHOD,
             resource_uri=uri,
             t_start_ms=time.monotonic() * 1000.0,
+            caller=caller,
+            origin_stub=origin_stub,
         )
         if not self.supports_caller_identity:
             # Mark the release in flight BEFORE writing: without the

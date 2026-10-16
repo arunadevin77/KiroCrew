@@ -4807,9 +4807,11 @@ is recycled as on main. Notification attribution and the last-stub recycle
 log for it routes or drops exactly as for any pending request, and the last
 stub leaving after a cancel still recycles a backend whose synchronous tool kept
 running. A subscribe or unsubscribe is not marked, because its verdict settles
-the shared lease tables. The client side is gated on the declaration because a
-direct kiro-cli or an older gateway never asked, and would at best drop the
-frame as unattributable.
+the shared lease tables: its cancel is not forwarded, and the request is handed
+to the first stub parked on its URI or to the release sentinel, as a detaching
+stub's is (`Backend._hand_off_lease_request`). The client side is gated on the
+declaration because a direct kiro-cli or an older gateway never asked, and would
+at best drop the frame as unattributable.
 
 ### Checklist for a new tool
 
