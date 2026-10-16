@@ -483,7 +483,7 @@ brief is what carries the screening and the lane is what authorizes it.
   scope — before a lane is picked, so an install with no consent recorded has no
   built-in brief on either lane (§7 Q4). That function states the rule;
   `_judge_authority` beside it states the spec half for a loop that wrote criteria,
-  and `config/sections.py` repeats that half as its section's rationale. Neither
+  and `config/sections_decisions.py` repeats that half as its section's rationale. Neither
   names the briefless case, and they sit in files this document does not change.
 
 ### 3.5 Rendering

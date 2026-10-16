@@ -289,6 +289,54 @@ _OWNER_CONFIG_IMPORTS = {
     "kiro_crew.config.service_sections": {"kiro_crew.config.fields"},
     "kiro_crew.config.memory_sections": {"kiro_crew.config.fields"},
     "kiro_crew.config.integration_sections": {"kiro_crew.config.fields"},
+    "kiro_crew.config.sections_defaults": {"kiro_crew.config.fields"},
+    "kiro_crew.config.sections_agent_env": set(),
+    "kiro_crew.config.sections_agent_fields": {
+        "kiro_crew.config.fields",
+        "kiro_crew.config.sections_defaults",
+    },
+    "kiro_crew.config.sections_agent": {
+        "kiro_crew.config.fields",
+        "kiro_crew.config.sections_agent_env",
+        "kiro_crew.config.sections_agent_fields",
+        "kiro_crew.config.sections_defaults",
+    },
+    "kiro_crew.config.sections_session": {
+        "kiro_crew.config.fields",
+        "kiro_crew.config.sections_defaults",
+    },
+    "kiro_crew.config.sections_limits": {
+        "kiro_crew.config.fields",
+        "kiro_crew.config.sections_agent",
+    },
+    "kiro_crew.config.sections_tailnet": {
+        "kiro_crew.config.fields",
+        "kiro_crew.config.resolution",
+        "kiro_crew.config.sections_defaults",
+    },
+    "kiro_crew.config.sections_dashboard": {
+        "kiro_crew.config.fields",
+        "kiro_crew.config.sections_tailnet",
+    },
+    "kiro_crew.config.sections_dashboard_hosts": {"kiro_crew.config.sections_dashboard"},
+    "kiro_crew.config.sections_slack": {
+        "kiro_crew.config.fields",
+        "kiro_crew.config.sections_defaults",
+    },
+    "kiro_crew.config.sections_channels": {"kiro_crew.config.fields"},
+    "kiro_crew.config.sections_telegram": {
+        "kiro_crew.config.fields",
+        "kiro_crew.config.sections_channels",
+        "kiro_crew.config.sections_defaults",
+        "kiro_crew.config.sections_slack",
+    },
+    "kiro_crew.config.sections_stt": {"kiro_crew.config.fields"},
+    "kiro_crew.config.sections_decisions": {
+        "kiro_crew.config.fields",
+        "kiro_crew.config.sections_agent_fields",
+        "kiro_crew.config.sections_defaults",
+    },
+    "kiro_crew.config.sections_telemetry": {"kiro_crew.config.fields"},
     "kiro_crew.config.section_builders": {
         "kiro_crew.config.fields",
         "kiro_crew.config.integration_sections",

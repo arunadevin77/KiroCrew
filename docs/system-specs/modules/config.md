@@ -34,7 +34,16 @@ representative seams of each kind.
 | Owner | Owns |
 |---|---|
 | `config/fields.py` | `_meta` field metadata, the `_safe_*` value coercers every section shares, and `field_default`, the one reader of a DTO field's declared default (`SectionReader` reads through it). An integer coercer keeps a legacy numeric string or integral float already in a config file (`"5"` -> 5, `5.0` -> 5) and rejects booleans and non-integral, malformed or non-finite values in favour of the default. A leaf: it imports nothing from `kiro_crew`. |
-| `config/sections.py` | The DTOs other specs and tests anchor here: agent, crew record, workspace, session, dashboard (with `TailscaleConfig` and its parser), the messaging channels, `wakatime`, speech-to-text and its degradation rules, telemetry, decisions, resource limits, and the bounds constants. It is also the facade for the three section owners below. It also holds `SectionReader`, which resolves a builder's omitted key and coercer fallback to the DTO field's declared default. |
+| `config/sections.py` | The facade other specs and tests name for the section DTOs below and for the three domain owners after them: it re-exports every name they define as the same object, and defines nothing of its own. |
+| `config/sections_defaults.py` | `SectionReader`, which resolves a builder's omitted key and coercer fallback to the DTO field's declared default, and the named defaults a DTO field and a load fallback share (`DEFAULT_MODEL`, `DEFAULT_POOL_SIZE`, ...). |
+| `config/sections_agent_env.py` | The environment an agent process receives: the `agent.env` name policy and its refusals, `agent.child_env_defaults` and `agent.deepseek_env`. |
+| `config/sections_agent_fields.py` | Field coercion for `agent` and the crew records: model pins, role maps, effort, the context-token map, approval modes, the avatar record and bot-name filter, the jail, ACP-backend, YOLO-duration and completion-keep readers, and the KAS bundle url. |
+| `config/sections_agent.py` | `AgentConfig`, and the readers that resolve against its declared defaults. |
+| `config/sections_session.py` | `session`, the crew record `KiroCrewAgentConfig`, `workspaces` and a session's `ResolvedBindings`. |
+| `config/sections_limits.py` | The bounds constants the loader's clamps and the dashboard's write gate share, and `resource_limits`. |
+| `config/sections_tailnet.py`, `config/sections_dashboard.py`, `config/sections_dashboard_hosts.py` | `dashboard`: `TailscaleConfig` and its parser; the DTO with its Jira and link-rule records; the host-list and link-pattern coercers. |
+| `config/sections_slack.py`, `config/sections_telegram.py`, `config/sections_channels.py` | The messaging channels: Slack with its per-channel records and the activation modes; Telegram; and the others with the coercers they share. |
+| `config/sections_stt.py`, `config/sections_decisions.py`, `config/sections_telemetry.py` | Speech-to-text and its degradation rules; `decisions`; `telemetry` and `wakatime`. |
 | `config/memory_sections.py` | `memory`, `knowledge`, `skills`, `session_summary` and the named `memory_stores` records. |
 | `config/integration_sections.py` | `mcp`, `mcp_gateway` (with the MCP stub roster readers the gateway seed shares), `instances`, `tunnel`, `publish`, `computer_use`, `aws` and the external app `registries`. |
 | `config/service_sections.py` | `taskrunner`, `messaging`, `cron_history`, `monitoring`, `heartbeat` and `watchdog`. |
@@ -45,24 +54,28 @@ representative seams of each kind.
 | `config/paths.py`, `config/live.py`, `config/superseded_defaults.py` | Pure path primitives, the one live-config watcher and applier registry, and the superseded-default registry with its acknowledgment ledger. |
 | `config/loader.py` | `KiroCrewConfig` (load, serialize, save, model and provider resolution) and the residual core below. |
 
-Imports run one way: `fields`, then the three section owners, then `sections`,
-then `section_builders` and `migration`, then `loader`. Each module imports only
-modules earlier in that order plus the existing leaves (`sections` imports
-`resolution`, `migration` imports `superseded_defaults`, and neither leaf imports
-back), and none of the owners imports `loader`, `schema` or `validation`;
+Imports run one way: `fields`, then the section owners (the `sections_*`
+owners import each other lowest layer first, in the facade's `_OWNERS` order),
+then `sections`, then `section_builders` and `migration`, then `loader`. Each
+module imports only modules earlier in that order plus the existing leaves
+(`sections` and `sections_tailnet` import `resolution`, `migration` imports
+`superseded_defaults`, and neither leaf imports back), and none of the owners imports `loader`, `schema` or `validation`;
 `test_config_module_boundaries.py` pins the graph. Every module
 split out of the loader logs as `kiro_crew.config.loader`, so a relocated warning
 keeps the record name operators filter on.
 
-`sections.py` keeps its DTOs because other specs name the file for them:
+`sections.py` stays the import path because other specs name it for these DTOs:
 [messaging](messaging.md) (the channel restart flags), [slack-gateway](slack-gateway.md),
 [crew-mode](crew-mode.md), [history](history.md), [stt-streaming](stt-streaming.md),
 [metrics](metrics.md), [decisions](decisions.md), [security](security.md),
 [model-selection](../common/model-selection.md), [model-fallback](model-fallback.md),
 [subagent](subagent.md), [acp-client](acp-client.md) and
-[crew-log-projection](crew-log-projection.md). Four source scans also allow a construct
-only in that file: `ResourceLimitsConfig.from_raw`, `_tailscale_config_from`, the
-`_AVATAR_MOTIONS` literal and the `AgentConfig.acp_backend` declaration.
+[crew-log-projection](crew-log-projection.md). It is a `_facade_mirror` facade: a patch
+through it reaches every owner that binds the name, and the STT warn-once markers an
+owner rebinds are read from that owner. Four source scans allow a construct only in its
+owner: `ResourceLimitsConfig.from_raw` (`sections_limits.py`), `_tailscale_config_from`
+(`sections_tailnet.py`), the `_AVATAR_MOTIONS` literal (`sections_agent_fields.py`) and
+the `AgentConfig.acp_backend` declaration (`sections_agent.py`).
 
 `loader.py` groups each residual responsibility into one bannered section. Each
 stays in that file because something outside this package names the file, or
@@ -88,13 +101,13 @@ New section constants, including local speech's automatic-language default, are
 read from `config.sections` directly; they do not expand that historical facade.
 
 New work goes to the owner of its responsibility, not to a facade: a field to
-the module that owns its section's DTO, a new section's DTO to
-`memory_sections.py`, `integration_sections.py` or `service_sections.py` by
-domain, a shared coercer to `config/fields.py`, a section's `_build_*` helper to
+the module that owns its section's DTO, a new section's DTO to the `sections_*`,
+`memory_sections.py`, `integration_sections.py` or `service_sections.py` owner of
+its domain, a shared coercer to `config/fields.py`, a section's `_build_*` helper to
 `config/section_builders.py`, a migration rule to `config/migration.py`, and
 overlay, validation, schema, live-applier and path work to its owner in the
 table above. `config/loader.py` takes only work inside one of its residual rows,
-and `sections.py` gains a new DTO only when another spec anchors it there.
+and `sections.py` only re-exports what an owner defines.
 
 A feature whose section spends tokens on the user's behalf defaults to off and
 documents its knobs in its own spec — `session_summary` is the current example
@@ -2827,8 +2840,8 @@ per-channel claims that are not shared).
 ## Schema
 
 Selected fields only, not the full schema. The authoritative per-field catalogue is
-the owner modules (`config/sections.py`, `service_sections.py`, `memory_sections.py`,
-`integration_sections.py`) and `GET /api/config/schema`.
+the owner modules (the `config/sections_*.py` owners, `service_sections.py`,
+`memory_sections.py`, `integration_sections.py`) and `GET /api/config/schema`.
 
 ```python
 @dataclass
@@ -2838,7 +2851,7 @@ class AgentConfig:
     model: str = "auto"            # resolved from agent config
     model_context_tokens: dict[str, int] = {}  # operator-declared served context window per EXACT agent.model id, e.g. {"server-a/org/model-7b": 32768}; value an int in [1024, 10000000], first 64 entries read, a warning per dropped entry (coerce_model_context_tokens); live via model_registry.apply_operator_windows
     provider: str = "acp"          # fixed to "acp" (kiro-cli) — the only provider
-    bot_name: str = ""             # the name the agent identifies as in conversations (the {bot_name} placeholder in prompts); "" = the provider's default (Kiro). Loaded through _sanitize_bot_name (sections.py): NFC-normalized, capped at 50 code points (_BOT_NAME_MAX), then filtered to Unicode letters (Lu/Ll/Lt/Lm/Lo), the combining marks that attach to them (Mn/Mc), decimal digits (Nd) and letter numbers (Nl, the ideographic zero) in any script, plus the ASCII space, "_", "-" and "." -- the character policy of the artifact tag rule (artifacts.md § Validation & Limits), applied as a filter that drops instead of a validator that refuses. Everything else is dropped: braces (the placeholder must not recurse), other punctuation, symbols and emoji, enclosing marks (the keycap), other numbers (², ½), controls, format characters (zero-width, bidi), the letters and marks that render as nothing (variation selectors, Hangul fillers: terminal_safe._is_invisible, the one shared table), surrogates and private-use. A non-ASCII space (NO-BREAK SPACE, IDEOGRAPHIC SPACE) becomes the plain space; a space run a removal leaves behind folds to one and a leading or trailing one is stripped; a double space the user typed is kept; the result is NFC-normalized again, since a removal can leave a composable pair adjacent. Three tag rules are not applied: compatibility forms (full-width ｋｉｒｏ) are kept as typed because a drop cannot name the plain spelling; a name may open with a separator; and a run of combining marks is not bounded, since the bound guards a chip's width and nothing draws this name. A name that filters to "" takes the default. Nothing is logged when a name changes, and the CLI `config set` echo shows the raw value (#18728 follow-ups). dashboard.bot_name is a separate field and is not filtered.
+    bot_name: str = ""             # the name the agent identifies as in conversations (the {bot_name} placeholder in prompts); "" = the provider's default (Kiro). Loaded through _sanitize_bot_name (sections_agent_fields.py): NFC-normalized, capped at 50 code points (_BOT_NAME_MAX), then filtered to Unicode letters (Lu/Ll/Lt/Lm/Lo), the combining marks that attach to them (Mn/Mc), decimal digits (Nd) and letter numbers (Nl, the ideographic zero) in any script, plus the ASCII space, "_", "-" and "." -- the character policy of the artifact tag rule (artifacts.md § Validation & Limits), applied as a filter that drops instead of a validator that refuses. Everything else is dropped: braces (the placeholder must not recurse), other punctuation, symbols and emoji, enclosing marks (the keycap), other numbers (², ½), controls, format characters (zero-width, bidi), the letters and marks that render as nothing (variation selectors, Hangul fillers: terminal_safe._is_invisible, the one shared table), surrogates and private-use. A non-ASCII space (NO-BREAK SPACE, IDEOGRAPHIC SPACE) becomes the plain space; a space run a removal leaves behind folds to one and a leading or trailing one is stripped; a double space the user typed is kept; the result is NFC-normalized again, since a removal can leave a composable pair adjacent. Three tag rules are not applied: compatibility forms (full-width ｋｉｒｏ) are kept as typed because a drop cannot name the plain spelling; a name may open with a separator; and a run of combining marks is not bounded, since the bound guards a chip's width and nothing draws this name. A name that filters to "" takes the default. Nothing is logged when a name changes, and the CLI `config set` echo shows the raw value (#18728 follow-ups). dashboard.bot_name is a separate field and is not filtered.
     sandbox: str = "auto"          # "auto" (default: standard tier -- namespace on Linux, seatbelt on macOS; leaves ~/.aws, ~/.ssh, ~/.kube visible for credential tooling; delegates to kiro-cli's internal sandbox on macOS when enabled) | "strict" (opt-in: also hides ~/.aws incl. sso/cache, ~/.ssh bar known_hosts, ~/.kube, ~/.config/gh and the _CC_FILES credential files; applies to sessions started after the change) | "off" (skips Kiro Crew's sandbox). Any other value falls back to "auto"
     sandbox_allow_no_isolation: bool = False  # SEC-009: acknowledge running un-isolated when no sandbox backend exists; false = loud SECURITY warning, true = info-level
     soft_stop_budget_secs: float = 10.0  # seconds to wait for cooperative cancel before hard kill [0.5, 60.0]
@@ -3039,7 +3052,7 @@ class KiroCrewConfig:
 
 `KiroCrewAgentConfig.avatar` is a sparse override, exactly like the per-crew
 `model` and `session_color` fields: absent or `{}` means the face is derived from
-the crew's name (zero migration). `_safe_avatar` (`config/sections.py`) is the
+the crew's name (zero migration). `_safe_avatar` (`config/sections_agent_fields.py`) is the
 total coercer applied on load, in the create/update endpoints and by the roster's
 `_roster_avatar`,
 and it is deliberately NOT re-exported from `loader.py` — the loader's
@@ -3352,8 +3365,8 @@ screenshot.
 ### Security-Bounded Config Clamp
 
 Resource-limit and timeout knobs are clamped to hard ceilings **at load time**, not
-just at the dashboard write gate. The ceilings are owned beside the field models
-in `sections.py` and re-exported by `loader.py`; the load-time clamp remains in
+just at the dashboard write gate. The ceilings are owned in `sections_limits.py`
+and re-exported by `sections.py` and `loader.py`; the load-time clamp remains in
 `loader.py`:
 
 | Constant | Value | Field |
@@ -3407,7 +3420,7 @@ closing the direct-config-edit DoS gap.
 
 ### `resource_limits`: one block, three mechanisms, two meanings of `0`
 
-`ResourceLimitsConfig` (`config/sections.py`, re-exported by
+`ResourceLimitsConfig` (`config/sections_limits.py`, re-exported by
 `config/loader.py`) carries the kernel confinement ceilings for spawned agent
 processes. It is the one config block whose keys are
 read by more than one enforcement mechanism, and two of those keys mean

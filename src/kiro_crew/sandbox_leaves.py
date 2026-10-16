@@ -941,7 +941,7 @@ _CREW_CHILD_READABLE_LEAVES: tuple[str, ...] = (
     "cloud_launch_state.json",
     # The runtime config and its overlay. NOT credential-free, unlike ``cloud.json``:
     # a channel bot token stored inline (``telegram.bot_token``, ``discord.bot_token``,
-    # ``weixin``/``webex``; the ``sensitive`` fields in ``config/sections.py``) lives
+    # ``weixin``/``webex``; the ``sensitive`` fields in ``config/sections_*.py``) lives
     # in these files, and the env/.env spelling those fields recommend is only a
     # recommendation. The read is granted anyway because in-sandbox code DEPENDS on it:
     # every ``KiroCrewConfig.load()`` in a sandboxed CLI or MCP server opens both, and

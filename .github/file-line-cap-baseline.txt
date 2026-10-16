@@ -66,7 +66,6 @@
 2105 src/kiro_crew/computer_use/macos_ffi.py
 2723 src/kiro_crew/computer_use/windows_ffi.py
 7958 src/kiro_crew/config/loader.py
-7759 src/kiro_crew/config/sections.py
 2339 src/kiro_crew/connections/warm.py
 4102 src/kiro_crew/context.py
 5311 src/kiro_crew/crew_log/emit.py

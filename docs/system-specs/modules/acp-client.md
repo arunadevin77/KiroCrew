@@ -2027,7 +2027,7 @@ read-only verdict holds AND the call streamed no output
 (`_tool_output_seen`); a command that printed may have acted, so a
 non-interactive retry is never proposed as safe, and any retry stays inside the
 already-granted approval scope with the original parameters. The config key
-behind the policy is `agent.interactive_command_policy` (`config/sections.py`,
+behind the policy is `agent.interactive_command_policy` (`config/sections_agent.py`,
 read by `_load_watchdog_settings`); the snapshot field is the seam.
 
 ### Structured status protocol (`kirocrew/status`, version 1)

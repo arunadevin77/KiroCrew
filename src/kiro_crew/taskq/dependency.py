@@ -133,7 +133,7 @@ _UNREADABLE = "unreadable"
 #: input; a row that cannot enter that wait (not running) is ``failed``.
 AUTH_STATE: str = WAITING_INPUT
 
-# Defaults mirror ``agent.dependency_*`` in ``config/sections.py``.
+# Defaults mirror ``agent.dependency_*`` in ``config/sections_agent.py``.
 DEFAULT_MAX_ATTEMPTS = 20
 
 

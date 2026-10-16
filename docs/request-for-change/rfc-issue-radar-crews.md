@@ -119,7 +119,7 @@ worth stating plainly what cannot be done:
 
 **A turn cannot be made not to end.** The turn ends when the model stops emitting
 tool calls, and `agent.chat_turn_timeout_secs` caps it (range
-`CHAT_TURN_TIMEOUT_MIN`–`CHAT_TURN_TIMEOUT_MAX` in `config/sections.py`, clamped
+`CHAT_TURN_TIMEOUT_MIN`–`CHAT_TURN_TIMEOUT_MAX` in `config/sections_limits.py`, clamped
 against the ACP prompt timeout by `prompt_timeout_for_ceiling` in `acp/client_timeouts.py`). A crew working three issues across six
 hours is therefore many turns, and something must start each one.
 

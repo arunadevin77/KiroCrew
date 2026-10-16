@@ -1396,7 +1396,7 @@ may drive a turn; the per-message admission decision is still audited where it i
 made.
 
 `slack.command` is the one Slack field marked `restart=True` in
-`config/sections.py`: the slash command is registered with Slack's app manifest, so
+`config/sections_slack.py`: the slash command is registered with Slack's app manifest, so
 no in-process apply can change it. No channel CONNECTION field is marked, because
 `restart_channel` applies those without a process restart.
 

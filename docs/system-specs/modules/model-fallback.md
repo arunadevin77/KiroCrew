@@ -14,7 +14,7 @@ warning and does not fail the model change.
 ## Configuration
 
 `AgentConfig.fallback_model` is normalized by
-`config/sections.py:coerce_fallback_model`. `llm_helpers.configured_fallback_chain`
+`config/sections_agent.py:coerce_fallback_model`. `llm_helpers.configured_fallback_chain`
 is the shared derivation used by the fallback callers:
 
 - The automatic-routing sentinel is the field default; its configured value
@@ -137,7 +137,7 @@ families — a different model routinely accepts what another's filter declined
 — so the dashboard retries the declined message once on a configured model.
 
 - `AgentConfig.refusal_fallback_model` is normalized by
-  `config/sections.py:coerce_refusal_fallback_model`: the empty default
+  `config/sections_agent_fields.py:coerce_refusal_fallback_model`: the empty default
   disables the feature (junk input collapses to disabled, never to enabled);
   the automatic sentinel defers to the `recommended_model` the provider's
   refusal envelope names, resolving to disabled when it names none; a concrete

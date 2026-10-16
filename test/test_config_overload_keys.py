@@ -1,4 +1,4 @@
-"""Every scalar ``agent.*`` / ``mcp_gateway.*`` key declared in ``sections.py``
+"""Every scalar ``agent.*`` / ``mcp_gateway.*`` key declared in ``sections_agent.py``
 (``agent``) or ``integration_sections.py`` (``mcp_gateway``) must be READ by the
 loader with the bounds its ``_meta`` help text declares.
 
