@@ -19,10 +19,18 @@ dispatcher takes a single new row, each of those is examined once:
 
 ``cancelled`` and the other terminal states are never touched: a cancel that
 landed before the crash stays a cancel, whatever the artifacts say.
+
+A ``queued`` row is claimed by nobody and is normally its dispatcher's to pick
+up, so it is examined for ONE thing only: an artifact that records its ending.
+A refusal or a stop that was recorded for a row the dispatcher never claimed,
+whose own ``failed``/``cancelled`` write was lost before the crash, is settled
+from that record rather than started as if the refusal had never happened; a
+``queued`` row whose artifacts say nothing is left exactly as it was.
 """
 
 from __future__ import annotations
 
+import functools
 import logging
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
@@ -62,6 +70,8 @@ DEFAULT_RECOVERY_ADAPTERS: frozenset[str] = frozenset({KIND_SUBAGENT})
 @dataclass
 class ReconcileReport:
     examined: int = 0
+    #: ``queued`` rows read for an artifact-recorded ending (not in ``examined``).
+    queued_examined: int = 0
     settled_done: int = 0
     settled_failed: int = 0
     settled_cancelled: int = 0
@@ -71,6 +81,9 @@ class ReconcileReport:
     awaiting_adapter: int = 0
     #: rows ended ``failed`` because their lost-owner recoveries were spent.
     lost_owner_limit: int = 0
+    #: ``queued`` rows whose artifact-recorded ending the store refused to
+    #: write, held out of dispatch until it lands (``TaskStore.hold_until_settled``).
+    held: int = 0
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -84,6 +97,10 @@ class ReconcileReport:
             + self.unknown_side_effect
             + self.lost_owner_limit
         )
+
+
+#: The probe verdicts that are a row's ending; ``STARTED`` and ``None`` are not.
+_TERMINAL_VERDICTS = frozenset({DONE, FAILED, CANCELLED})
 
 
 def _no_probe(_: TaskRecord) -> str | None:
@@ -106,17 +123,28 @@ def reconcile_on_boot(
     known = frozenset(adapters)
     ts = store.now() if now is None else now
     report = ReconcileReport()
+    # The queued pass runs FIRST: a row the active pass requeues from
+    # ``admitted`` was examined by it, and must not be read a second time here.
+    if not _queued_pass(store, probe, report):
+        # A read the store refused leaves rows unexamined that may owe the
+        # terminal write ``hold_until_settled`` exists for, and a hold needs the
+        # row's id. So the whole dispatch is fenced: every dispatch read re-runs
+        # this pass first and publishes nothing until it has run to completion
+        # (rows settled by the pages that did land are terminal and not re-read).
+        store.fence_dispatch(functools.partial(_queued_pass, store, probe, report))
     for rec in store.active_rows(exclude_owner=store.incarnation):
         report.examined += 1
         try:
             _settle_one(store, rec, probe, known, ts, report)
         except TaskStoreUnavailable as exc:
             report.errors.append(f"{rec.id}: {exc}")
-    if report.examined:
+    if report.examined or report.changed or report.errors:
         logger.info(
-            "taskq reconcile: examined=%d done=%d failed=%d cancelled=%d requeued=%d "
-            "recovering=%d unknown_side_effect=%d awaiting_adapter=%d errors=%d",
+            "taskq reconcile: examined=%d queued_examined=%d done=%d failed=%d cancelled=%d "
+            "requeued=%d recovering=%d unknown_side_effect=%d awaiting_adapter=%d held=%d "
+            "errors=%d",
             report.examined,
+            report.queued_examined,
             report.settled_done,
             report.settled_failed,
             report.settled_cancelled,
@@ -124,9 +152,84 @@ def reconcile_on_boot(
             report.recovering,
             report.unknown_side_effect,
             report.awaiting_adapter,
+            report.held,
             len(report.errors),
         )
     return report
+
+
+def _probe_verdict(rec: TaskRecord, probe: ArtifactProbe, report: ReconcileReport) -> str | None:
+    try:
+        return probe(rec)
+    except Exception as exc:  # noqa: BLE001 - a probe that cannot answer says nothing
+        # The probe is the caller's callable and ``None`` is already its "the
+        # artifacts say nothing" answer, so an exception is that answer for THIS
+        # row: settling it by class is safe (``unknown`` never re-runs), while
+        # unwinding would abandon every row behind it with no later sweep.
+        report.errors.append(f"{rec.id}: artifact probe failed: {exc}")
+        return None
+
+
+def _queued_pass(store: TaskStore, probe: ArtifactProbe, report: ReconcileReport) -> bool:
+    """Settle every ``queued`` row its artifacts say ended; False when a read failed.
+
+    Walks the backlog one dispatch-window page at a time, keyed on the last row
+    of the previous page, so a boot over a large backlog never holds more rows
+    than the dispatcher would; a page shorter than the window is the last. A
+    page the store refuses ends the pass with the error on the report.
+    """
+    after: tuple[float, str] | None = None
+    while True:
+        try:
+            page = store.queued_rows(after=after)
+        except TaskStoreUnavailable as exc:
+            report.errors.append(f"queued pass: {exc}")
+            return False
+        for rec in page:
+            report.queued_examined += 1
+            _settle_queued(store, rec, probe, report)
+        if len(page) < store.window:
+            return True
+        after = (page[-1].created_at, page[-1].id)
+
+
+def _settle_queued(
+    store: TaskStore, rec: TaskRecord, probe: ArtifactProbe, report: ReconcileReport
+) -> None:
+    """Settle a ``queued`` row into the ending its artifacts record, if any."""
+    verdict = _probe_verdict(rec, probe, report)
+    try:
+        _settle_terminal(store, rec, verdict, report)
+    except TaskStoreUnavailable as exc:
+        report.errors.append(f"{rec.id}: {exc}")
+        # The artifacts say this row ended and the store refused to record it.
+        # Left as it is, the row is a dispatchable ``queued`` row the moment the
+        # store answers again -- a run its caller was told was refused. The
+        # store keeps it out of every claim and retries the write at the
+        # dispatch read, so the ending is persisted before the row can be
+        # published.
+        if verdict in _TERMINAL_VERDICTS:
+            store.hold_until_settled(rec.id, verdict)
+            report.held += 1
+
+
+def _settle_terminal(
+    store: TaskStore, rec: TaskRecord, verdict: str | None, report: ReconcileReport
+) -> bool:
+    """Settle *rec* into the terminal its artifacts recorded; False when they recorded none."""
+    if verdict == DONE:
+        if store.transition(rec.id, DONE, detail={"reconciled": "artifact"}):
+            report.settled_done += 1
+        return True
+    if verdict == FAILED:
+        if store.transition(rec.id, FAILED, detail={"reconciled": "artifact"}):
+            report.settled_failed += 1
+        return True
+    if verdict == CANCELLED:
+        if store.cancel(rec.id, reason="reconciled: tombstone") is not None:
+            report.settled_cancelled += 1
+        return True
+    return False
 
 
 def _settle_one(
@@ -137,26 +240,8 @@ def _settle_one(
     now: float,
     report: ReconcileReport,
 ) -> None:
-    try:
-        verdict = probe(rec)
-    except Exception as exc:  # noqa: BLE001 - a probe that cannot answer says nothing
-        # The probe is the caller's callable and ``None`` is already its "the
-        # artifacts say nothing" answer, so an exception is that answer for THIS
-        # row: settling it by class is safe (``unknown`` never re-runs), while
-        # unwinding would abandon every row behind it with no later sweep.
-        report.errors.append(f"{rec.id}: artifact probe failed: {exc}")
-        verdict = None
-    if verdict == DONE:
-        if store.transition(rec.id, DONE, detail={"reconciled": "artifact"}):
-            report.settled_done += 1
-        return
-    if verdict == FAILED:
-        if store.transition(rec.id, FAILED, detail={"reconciled": "artifact"}):
-            report.settled_failed += 1
-        return
-    if verdict == CANCELLED:
-        if store.cancel(rec.id, reason="reconciled: tombstone") is not None:
-            report.settled_cancelled += 1
+    verdict = _probe_verdict(rec, probe, report)
+    if _settle_terminal(store, rec, verdict, report):
         return
     if rec.state == ADMITTED and not (
         verdict == STARTED and rec.side_effect_class == SIDE_EFFECT_UNKNOWN
