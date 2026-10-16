@@ -544,6 +544,13 @@ _STRICT_INTERNAL_API_PATHS = frozenset(
         "/api/browser/command",
         "/api/browser/command-drain",
         "/api/browser/command-result",
+        # External terminal grant redemption. Its only caller is the desktop
+        # shell's main process, over the same channel as the browser command
+        # drain above; the browser holds the grant but must never redeem it, so
+        # STRICT (not mixed). The handler re-asserts ``internal_auth`` and
+        # loopback because a ``local_only=False`` deployment reclassifies strict
+        # paths as mixed.
+        "/api/terminal/external-grant",
         # Computer use: the ``kirocrew-computer`` stdio shim's forwarding leg.
         # STRICT (not mixed): no browser calls it, and it is the entry point to
         # accessibility reads and input synthesis into the operator's real

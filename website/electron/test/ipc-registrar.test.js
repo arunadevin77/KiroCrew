@@ -36,6 +36,8 @@ const SHELL_HANDLES = [
   "dashboard:can-pick-folder",
   "dashboard:open-file",
   "dashboard:pick-folder",
+  "external-terminal:detect",
+  "external-terminal:open",
   "global-hotkey:get",
   "local-gateway:get",
   "local-gateway:set",
@@ -191,6 +193,8 @@ function harness({
   // What the fake native folder dialog answers: a value, or a function of the
   // call's arguments so a test can hold the dialog open.
   dialogResult = { canceled: true, filePaths: [] },
+  externalTerminal = undefined,
+  internalSecret = "",
   detectWsl = async () => ({
     available: true,
     distros: [],
@@ -200,6 +204,7 @@ function harness({
   const order = [];
   const shellCalls = [];
   const crashScans = [];
+  const secretReads = [];
   const windowCalls = [];
   const gatewayCalls = [];
   const appCalls = [];
@@ -372,6 +377,13 @@ function harness({
       return typeof crashScan === "function" ? crashScan() : crashScan;
     },
     glog: (line) => logs.push(line),
+    ...(externalTerminal ? { externalTerminal } : {}),
+    // Like main.js's readInternalSecret: the secret belongs to one gateway
+    // URL, so a read that names no URL gets nothing.
+    readInternalSecret: (gatewayUrl) => {
+      secretReads.push(gatewayUrl);
+      return gatewayUrl === backendUrl ? internalSecret : "";
+    },
   });
 
   return {
@@ -392,6 +404,7 @@ function harness({
     wslDetections,
     shellCalls,
     crashScans,
+    secretReads,
     dialogCalls,
     logs,
   };
@@ -467,13 +480,13 @@ test("registerShell owns the exact shell channel set and is idempotent", () => {
 
   assert.deepEqual([...h.handlers.keys()].sort(), SHELL_HANDLES);
   assert.deepEqual([...h.listeners.keys()].sort(), SHELL_LISTENERS);
-  assert.equal(h.handlers.size + h.listeners.size, 38);
+  assert.equal(h.handlers.size + h.listeners.size, 40);
 
   // boot-complete is a further non-update host channel, but it is deliberately
   // gateway-owned and scoped to a single connecting WebContents. Registering it
   // globally here would weaken its sender check and leak listeners.
   assert.match(GATEWAY_SOURCE, /ipcMain\.on\("boot-complete", onComplete\)/);
-  assert.equal(h.handlers.size + h.listeners.size + 1, 39);
+  assert.equal(h.handlers.size + h.listeners.size + 1, 41);
   assert.equal(h.handlers.has("boot-complete"), false);
   assert.equal(h.listeners.has("boot-complete"), false);
 
@@ -1187,6 +1200,135 @@ test("dashboard:pick-folder rejects when the dialog fails to open, without namin
   // The in-flight latch is released by a failure too.
   h.electron.dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
   assert.equal(await h.handlers.get("dashboard:pick-folder")(wslEvent()), null);
+});
+
+// ── external terminal ─────────────────────────────────────────────────────
+
+/** A stand-in for external-terminal.js that records what the registrar asks. */
+function fakeExternalTerminal({ installed = ["kitty", "wezterm"], launchResult = { ok: true, app: "kitty" } } = {}) {
+  const calls = [];
+  const labels = { kitty: "kitty", wezterm: "WezTerm" };
+  return {
+    calls,
+    detectTerminals: () => {
+      calls.push(["detect"]);
+      return installed.map((id) => ({ id, label: labels[id] || id }));
+    },
+    launchFromGrant: async (grant, deps) => {
+      calls.push(["launch", grant, deps]);
+      return launchResult;
+    },
+  };
+}
+
+const GRANT = "g".repeat(43);
+
+// The three ways a window fails the local-dashboard gate, each as harness
+// options plus the event it sends.
+const NOT_LOCAL_WINDOWS = [
+  // Wrong origin: a connection window pointed at a remote gateway.
+  ["a remote origin", {}, () => wslEvent("https://remote.example/chat")],
+  // Right origin but the window's gateway is remote (an SSH tunnel on loopback).
+  ["a remote gateway behind a tunnel", { wslGatewayLocal: false }, () => wslEvent()],
+  // The primary port is held by something other than this shell's gateway.
+  ["a foreign port holder", { primaryPortOwner: "foreign" }, () => wslEvent()],
+];
+
+test("external-terminal:open rejects a sender that is not the local dashboard", async () => {
+  for (const [why, opts, event] of NOT_LOCAL_WINDOWS) {
+    const ext = fakeExternalTerminal();
+    const h = harness({ externalTerminal: ext, ...opts });
+    h.registrar.registerShell();
+    await assert.rejects(
+      () => h.handlers.get("external-terminal:open")(event(), GRANT),
+      { message: "external-terminal:open is restricted to the local dashboard" },
+    );
+    assert.deepEqual(ext.calls, [], `${why}: a rejected sender reaches no launch`);
+  }
+});
+
+// A desktop window reaching a remote crew through an SSH tunnel reads as a
+// direct-local request to that crew, so the renderer does ask. The answer is
+// "not capable", not a rejection: a rejection reads as a failed check, whose
+// notice and Retry could never clear for that window.
+test("external-terminal:detect answers a window that is not the local dashboard as not capable", async () => {
+  for (const [why, opts, event] of NOT_LOCAL_WINDOWS) {
+    const ext = fakeExternalTerminal();
+    const h = harness({ externalTerminal: ext, ...opts });
+    h.registrar.registerShell();
+    assert.deepEqual(
+      await h.handlers.get("external-terminal:detect")(event()),
+      { apps: [], capable: false },
+      `${why}: answered as not capable`,
+    );
+    assert.deepEqual(ext.calls, [], `${why}: a refused window reaches no detection`);
+    assert.ok(
+      h.logs.some((line) => line.startsWith("external-terminal:detect rejected")),
+      `${why}: the refusal is still logged`,
+    );
+  }
+});
+
+test("external-terminal:detect lists the installed allowlisted apps only", async () => {
+  const h = harness({ externalTerminal: fakeExternalTerminal() });
+  h.registrar.registerShell();
+  assert.deepEqual(await h.handlers.get("external-terminal:detect")(wslEvent()), {
+    apps: [{ id: "kitty", label: "kitty" }, { id: "wezterm", label: "WezTerm" }],
+    capable: true,
+  });
+  assert.equal(h.store.writes.length, 0, "the pick lives in gateway config, not the shell's store");
+});
+
+test("external-terminal:detect still rejects when detection itself fails on a local window", async () => {
+  const ext = fakeExternalTerminal();
+  ext.detectTerminals = () => { throw new Error("probe failed"); };
+  const h = harness({ externalTerminal: ext });
+  h.registrar.registerShell();
+  await assert.rejects(() => h.handlers.get("external-terminal:detect")(wslEvent()), { message: "probe failed" });
+});
+
+test("external-terminal:open launches only through a gateway grant redeemed with the internal secret", async () => {
+  const ext = fakeExternalTerminal();
+  const h = harness({ externalTerminal: ext, internalSecret: "s3cret" });
+  h.registrar.registerShell();
+  // A second argument naming an app, a path or an argv is ignored: the renderer
+  // hands over the opaque grant and nothing else.
+  const result = await h.handlers.get("external-terminal:open")(wslEvent(), GRANT, "/bin/sh", ["-c", "x"]);
+  assert.deepEqual(result, { ok: true, app: "kitty" });
+  const launches = ext.calls.filter(([n]) => n === "launch");
+  assert.equal(launches.length, 1);
+  const [, grant, deps] = launches[0];
+  assert.equal(grant, GRANT);
+  assert.equal(deps.backendUrl, "http://localhost:5476", "redeemed at this shell's own gateway");
+  assert.equal(deps.getSecret(), "s3cret");
+  assert.equal(typeof deps.fetchFn, "function");
+  assert.equal(h.shellCalls.length, 0, "nothing reaches shell.openPath or any shell method");
+});
+
+test("external-terminal:open reads the internal secret for this shell's own gateway URL", async () => {
+  const ext = fakeExternalTerminal();
+  const h = harness({ externalTerminal: ext, internalSecret: "s3cret" });
+  h.registrar.registerShell();
+  await h.handlers.get("external-terminal:open")(wslEvent(), GRANT);
+  const [, , deps] = ext.calls.find(([n]) => n === "launch");
+  // redeemGrant calls getSecret() with no argument, so the registrar's
+  // getSecret must name the gateway URL itself.
+  assert.equal(deps.getSecret(), "s3cret");
+  assert.deepEqual(h.secretReads, ["http://localhost:5476"]);
+});
+
+test("external-terminal:open passes a refusal through for the renderer to fall back", async () => {
+  const ext = fakeExternalTerminal({ launchResult: { ok: false, error: "no-grant" } });
+  const h = harness({ externalTerminal: ext });
+  h.registrar.registerShell();
+  assert.deepEqual(
+    await h.handlers.get("external-terminal:open")(wslEvent(), GRANT),
+    { ok: false, error: "no-grant" },
+  );
+});
+
+test("the registrar's default external terminal is the real allowlist module", () => {
+  assert.match(SOURCE, /externalTerminal = require\("\.\/external-terminal"\)/);
 });
 
 test("bind and unregister remain owned by the dedicated hotkey helper", () => {

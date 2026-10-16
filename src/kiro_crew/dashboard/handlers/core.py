@@ -71,6 +71,7 @@ from kiro_crew.config.sections import (
     DECISION_BUCKET_MAX,
     DECISION_BUCKET_MIN,
     DECISION_MODEL_ROUTE_TIERS,
+    EXTERNAL_TERMINAL_APPS,
     FOLDER_SORT_MODES,
     JUDGE_PROVIDERS,
     STT_LANGUAGE_AUTO,
@@ -3199,6 +3200,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # next click with no restart. Only a literal `true` turns it on — a
     # hand-edited non-boolean stays off.
     "dashboard.terminal.reuse_current": {"type": "bool"},
+    # The terminal app "Open in external terminal" starts (Settings → Display →
+    # Terminal). "" = unset, the default, which withholds the action. Limited
+    # to the desktop shell's launch allowlist; the launch gate in
+    # handlers/external_terminal.py re-reads it and treats anything else as
+    # unset.
+    "dashboard.terminal.external_app": {
+        "type": "enum",
+        "values": ["", *EXTERNAL_TERMINAL_APPS],
+    },
     # Keep the host awake while the agent is running a task. Gateway-host
     # behavior (not a display pref), read by the prevent-sleep poll in
     # dashboard/server.py; off by default.

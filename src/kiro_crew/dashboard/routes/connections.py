@@ -19,6 +19,7 @@ from kiro_crew.dashboard import (
     handlers_instances,
     handlers_project,
 )
+from kiro_crew.dashboard.handlers import external_terminal
 from kiro_crew.dashboard.handlers.auth_mobile import api_auth_mobile_link
 from kiro_crew.dashboard.handlers.auth_refresh import (
     api_auth_logout,
@@ -50,6 +51,12 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/terminal/redact", handlers.api_terminal_redact)
     app.router.add_post("/api/terminal/complete", handlers.api_terminal_complete)
     app.router.add_delete("/api/terminal/sessions/{session_id}", handlers.api_terminal_delete)
+    # External terminal app: the owner's approval, then the desktop shell's
+    # machine-only redemption (see handlers/external_terminal.py).
+    app.router.add_post("/api/terminal/external", external_terminal.api_terminal_external)
+    app.router.add_post(
+        "/api/terminal/external-grant", external_terminal.api_terminal_external_grant
+    )
     app.router.add_get("/api/taskrunner/refine", handlers.api_taskrunner_refine_status)
     app.router.add_post("/api/taskrunner/refine", handlers.api_taskrunner_refine)
     app.router.add_post("/api/taskrunner/refine/cancel", handlers.api_taskrunner_refine_cancel)

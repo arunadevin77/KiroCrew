@@ -158,6 +158,7 @@
       "singleton-lock.js",
       "context-menu.js",
       "find-bin.js",
+      "external-terminal.js",
       "gateway-env.js",
       "mac-env.js",
       "bundle-integrity.js",

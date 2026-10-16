@@ -254,6 +254,21 @@ contextBridge.exposeInMainWorld("folderPickAPI", {
   pick: () => ipcRenderer.invoke("dashboard:pick-folder"),
 });
 
+// External terminal bridge for the Files tab's "Open in external terminal" row
+// and its Settings picker. `detect` resolves { apps: [{id, label}], capable },
+// the allowlisted terminal apps installed on this machine; for a window whose
+// gateway is not this machine's it resolves { apps: [], capable: false }, so the
+// row and the picker stay hidden there. `open` hands the main process the
+// opaque grant the gateway answered POST /api/terminal/external with, and
+// resolves { ok, app?, error? }; the main process redeems the grant at the
+// gateway and starts nothing without it, so no app name, path or argument
+// crosses this bridge. `open` rejects for a window whose gateway is not this
+// machine's. Absent in a plain browser and the PWA, where the row is hidden.
+contextBridge.exposeInMainWorld("externalTerminalAPI", {
+  detect: () => ipcRenderer.invoke("external-terminal:detect"),
+  open: (grant) => ipcRenderer.invoke("external-terminal:open", String(grant || "")),
+});
+
 // Native zoom bridge for the Settings > Display "Zoom Level" stepper.
 // Chromium's per-origin zoom (the thing Cmd/Ctrl +/- changes) is not
 // reachable from page JS, so the renderer round-trips through main.js.

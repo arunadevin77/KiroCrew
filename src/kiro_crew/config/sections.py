@@ -306,6 +306,21 @@ def normalize_agent_model(model: object) -> str:
 # sub-agent work pins it here without changing the interactive chat default.
 ROLE_MODEL_KEYS: tuple[str, ...] = ("background", "subagent")
 
+# The terminal apps the desktop shell can open in a project directory
+# (``dashboard.terminal.external_app``), by id. Must equal the ids of
+# ``TERMINALS`` in ``website/electron/external-terminal.js``, which maps each id
+# to its fixed install paths and pinned argv; test_external_terminal_gate.py
+# pins the two lists equal.
+EXTERNAL_TERMINAL_APPS: tuple[str, ...] = (
+    "alacritty",
+    "ghostty",
+    "gnome-terminal",
+    "kitty",
+    "konsole",
+    "wezterm",
+    "xfce4-terminal",
+)
+
 # The kiro agents that run the "background" role: auto-titles, memory
 # consolidation, heartbeat polls. Named here rather than inline at the one place
 # that branched on them, because the effort chain is now read by two callers (the
@@ -3912,6 +3927,24 @@ class DashboardConfig:
                             "environment, an active login session). With no terminal "
                             "open, it still copies the command for you to paste — it is "
                             "never run for you. Off = a fresh terminal each time."
+                        ),
+                    },
+                },
+                # The choices are EXTERNAL_TERMINAL_APPS above, the desktop
+                # shell's launch allowlist. Unset by default, and any other
+                # value reads as unset where it is used.
+                "external_app": {
+                    "type": "string",
+                    "default": "",
+                    "enum": ["", *EXTERNAL_TERMINAL_APPS],
+                    "x-meta": {
+                        "label": "External terminal app",
+                        "help": (
+                            "Desktop app only, on the machine running the gateway: adds "
+                            '"Open in <your terminal app>" to the Files tab\'s Project '
+                            "actions menu, which opens this app in the project directory. "
+                            "Empty = no external terminal; the built-in terminal is "
+                            "unaffected either way."
                         ),
                     },
                 },

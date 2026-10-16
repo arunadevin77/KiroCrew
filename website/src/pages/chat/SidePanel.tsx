@@ -42,6 +42,8 @@ import {
 } from '../../components/ui/dropdown-menu'
 import { ContentSkeleton } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
+import { SettingsLink } from '../../components/SettingsLink'
+import type { ExternalTerminalFallbackNote } from '../../lib/externalTerminal'
 import ErrorBoundary from '../../components/ErrorBoundary'
 import { fetchFileRead, fileReadQueryKey, FILE_READ_STALE_MS, isPartialRead } from '../../utils/fileReadQuery'
 import { errMessage } from '../../utils/thunkError'
@@ -682,6 +684,10 @@ export default function SidePanel({
   // points cannot drift on WHERE the shell starts — that cwd is the whole point
   // of the affordance.
   const openProjectTerminal = useCallback(() => { openTerminal({ cwd: projectDir }) }, [openTerminal, projectDir])
+  // The note an "Open in <app>" fallback leaves (see the banner below the tab
+  // bodies). Held here rather than in the Files tab, which that fallback takes
+  // out of view.
+  const [externalTerminalNote, setExternalTerminalNote] = useState<ExternalTerminalFallbackNote | null>(null)
   const openMenuItem = useCallback((kind: ViewKind | 'terminal') => {
     const run = () => {
       if (kind === 'terminal') openProjectTerminal()
@@ -1340,6 +1346,36 @@ export default function SidePanel({
       {/* Body — render every doc/terminal tab mounted (hidden when inactive) so
           xterm sessions and editor scroll state survive tab switches; category
           views mount only when active (cheap + query-driven). */}
+      {/* The Files tab's "Open in <app>" fell back to the integrated terminal,
+          which this panel has just brought to the front; the note lives here so
+          it outlives the Files tab going out of view. In flow above the bodies,
+          not layered over them, so it never covers a shell's first lines. The
+          launch failed, so it is an ErrorNotice (errors-use-error-notice) even
+          though a terminal did open. The notes that send the user to the picker
+          link straight to it, inside the notice as its footer so the link reads
+          as part of it. No hand-off: the adjacent chat composer can hold
+          unsent text. */}
+      {externalTerminalNote && (
+        <div className="shrink-0 px-3 pt-3">
+          <ErrorNotice
+            className="w-full"
+            message={externalTerminalNote.message}
+            onDismiss={() => setExternalTerminalNote(null)}
+            testId="side-panel-external-terminal-fallback"
+            footer={externalTerminalNote.offerSettings ? (
+              <SettingsLink
+                tab="display"
+                sub="terminal"
+                highlight="display.external-terminal-app"
+                className="text-[12px] text-accent hover:underline"
+                data-testid="side-panel-external-terminal-settings"
+              >
+                {i18nT('pages.chat.sidePanel.external_terminal_open_settings')}
+              </SettingsLink>
+            ) : undefined}
+          />
+        </div>
+      )}
       {/* Content area: left + top border (square corner) so the border wraps
           only the content, NOT the tab strip above (which stays borderless). */}
       {confirmDialog}
@@ -1467,6 +1503,7 @@ export default function SidePanel({
                   // panel will not open.
                   onOpenTerminal={terminalEnabled && !isWithheld('terminal') ? openProjectTerminal : undefined}
                   onOpenFolder={p => openFolder(p, t.slot ?? null)}
+                  onExternalTerminalFailed={setExternalTerminalNote}
                 />
               </div>
             )

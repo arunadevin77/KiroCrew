@@ -45,6 +45,13 @@ function createIpcRegistrar({
   // consumed by the will-download handler (see download-expectations.js). When
   // absent the download:expect channel is simply not registered.
   downloadExpectations = null,
+  // The terminal-app allowlist and its grant-gated launcher. Injected so the
+  // channel can be exercised without probing real install paths.
+  externalTerminal = require("./external-terminal"),
+  // The gateway's internal secret, re-read per call (it rotates per boot). Used
+  // only to redeem an external-terminal grant at this shell's own gateway.
+  readInternalSecret = () => "",
+  fetchFn = (url, init) => fetch(url, init),
 } = {}) {
   if (!electron) throw new Error("createIpcRegistrar: electron is required");
   if (!store) throw new Error("createIpcRegistrar: store is required");
@@ -468,6 +475,44 @@ function createIpcRegistrar({
       } catch {
         return false;
       }
+    });
+
+    // Open the user's own terminal app in a project directory. Gated like
+    // `dashboard:open-file` because it is a LAUNCH on the machine in front of
+    // the user, and a connection window pointed at a remote gateway shares this
+    // preload.
+    //
+    // `detect` lists the allowlisted apps installed here, for the Settings
+    // picker; the pick itself is gateway config. `open` takes the opaque grant
+    // the gateway minted after its own checks (owner, direct-local request,
+    // integrated terminal enabled, an app picked) and starts nothing unless the
+    // gateway redeems it. The app id and the directory come from that
+    // redemption, the binary and argv from the allowlist in
+    // external-terminal.js, and no OS opener is involved at any step.
+    //
+    // `detect` answers a refused window `{ apps: [], capable: false }` instead
+    // of rejecting, as `dashboard:can-pick-folder` answers false: a desktop
+    // window reaching a remote crew through an SSH tunnel is an ordinary
+    // window that can never launch here, not a failed check, so the renderer
+    // hides the row and the picker rather than reporting an error a Retry
+    // cannot clear. The gate still runs (and logs) before any probe, so a
+    // refused window learns only this one bit, and `open` keeps rejecting.
+    ipcMain.handle("external-terminal:detect", async (event) => {
+      try {
+        await assertLocalDashboard(event, "external-terminal:detect");
+      } catch {
+        return { apps: [], capable: false };
+      }
+      return { apps: externalTerminal.detectTerminals(), capable: true };
+    });
+    ipcMain.handle("external-terminal:open", async (event, grant) => {
+      await assertLocalDashboard(event, "external-terminal:open");
+      return externalTerminal.launchFromGrant(grant, {
+        backendUrl,
+        getSecret: () => readInternalSecret(backendUrl),
+        fetchFn,
+        log,
+      });
     });
 
     ipcMain.handle("zoom:get", (event) =>
