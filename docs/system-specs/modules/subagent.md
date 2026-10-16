@@ -1144,6 +1144,9 @@ made; no gate reads it back. Two consumers:
 - The advisory `subagent_queued` lifecycle event (`_emit_queue_depth`) carries
   `reason` and, for the low-memory kind, `available_gb` /
   `required_gb` beside `queued`; the memory-pressure kind carries no figures.
+  A low-memory wait on an unreadable cgroup usage file carries
+  `cause: cgroup_usage_unreadable` and no `available_gb` (the 0 that usage
+  contributes is not an amount), and the chip says free memory is unknown.
   Both memory kinds also carry `max_wait_secs`, the live
   `agent.subagent_queue_max_wait_secs` read as the frame is published
   through `taskq_memory_wait_bound_secs` (the reader the sweep and the

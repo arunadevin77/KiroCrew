@@ -35,6 +35,11 @@ const KINDS = [
 
 export type SubagentQueuedReasonKind = (typeof KINDS)[number]
 
+/** The gate's `MEMORY_CAUSE_CGROUP_USAGE_UNREADABLE`, the one cause the chip
+ *  renders on its own; any other cause parses to `undefined`. */
+export type SubagentQueuedCause = 'cgroup_usage_unreadable'
+const CAUSE_USAGE_UNREADABLE: SubagentQueuedCause = 'cgroup_usage_unreadable'
+
 export type SubagentQueuedReason = {
   reason: SubagentQueuedReasonKind
   /** Reclaimable host memory the gate measured, in GB (`low_memory` only;
@@ -42,6 +47,10 @@ export type SubagentQueuedReason = {
   available_gb?: number
   /** The bar that measurement fell short of, in GB (`low_memory` only). */
   required_gb?: number
+  /** Why the measurement is missing (`low_memory` only). Only
+   *  `cgroup_usage_unreadable` is kept: a memory limit is set but its usage
+   *  file cannot be read, so the free figure is unknown rather than zero. */
+  cause?: SubagentQueuedCause
   /** How long the rows may wait for memory before they give up, in seconds:
    *  the live `agent.subagent_queue_max_wait_secs`. `0` waits forever;
    *  absent from an older gateway. Memory kinds only. */
@@ -57,6 +66,7 @@ export type SubagentQueuedEvent = {
   available_gb?: number
   required_gb?: number
   max_wait_secs?: number
+  cause?: string
 }
 
 const KIND_SET: ReadonlySet<string> = new Set<string>(KINDS)
@@ -75,6 +85,7 @@ export function parseSubagentQueuedReason(ev: SubagentQueuedEvent): SubagentQueu
   if (required !== undefined) out.required_gb = required
   const maxWait = finiteOrUndefined(ev.max_wait_secs)
   if (maxWait !== undefined && maxWait >= 0) out.max_wait_secs = Math.floor(maxWait)
+  if (out.reason === 'low_memory' && ev.cause === CAUSE_USAGE_UNREADABLE) out.cause = CAUSE_USAGE_UNREADABLE
   return out
 }
 
@@ -114,6 +125,13 @@ export function queuedWaitText(reason: SubagentQueuedReason | undefined): string
   const unbounded = bound === 0
   switch (reason?.reason) {
     case 'low_memory': {
+      // Unknown headroom wins over any figure: the 0 an unreadable usage file
+      // contributes is not an amount, so it is never shown as "0 free".
+      if (reason.cause === CAUSE_USAGE_UNREADABLE) {
+        if (limit !== undefined) return i18nT('pages.chat.subagentQueued.low_memory_unknown_limit', { limit })
+        if (unbounded) return i18nT('pages.chat.subagentQueued.low_memory_unknown_no_limit')
+        return i18nT('pages.chat.subagentQueued.low_memory_unknown')
+      }
       if (reason.required_gb !== undefined && reason.available_gb !== undefined) {
         const figures = { required: gb(reason.required_gb), available: gb(reason.available_gb) }
         if (limit !== undefined) return i18nT('pages.chat.subagentQueued.low_memory_limit', { ...figures, limit })

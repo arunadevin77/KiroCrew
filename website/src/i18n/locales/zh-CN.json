@@ -11351,6 +11351,9 @@
         "low_memory_no_figures_limit": "等待开始 — 可用内存不足；请释放内存以继续；若内存持续不足 {{limit}}，将不会启动",
         "low_memory_no_figures_no_limit": "等待开始 — 可用内存不足；请释放内存以继续；等待没有时间上限",
         "low_memory_no_limit": "等待开始 — 需要 {{required}} 可用内存，当前可用 {{available}}；请释放内存以继续；等待没有时间上限",
+        "low_memory_unknown": "等待开始 — 可用内存未知：已设置内存上限，但无法读取其用量；请恢复读取权限以继续",
+        "low_memory_unknown_limit": "等待开始 — 可用内存未知：已设置内存上限，但无法读取其用量；请恢复读取权限以继续；若持续未知 {{limit}}，将不会启动",
+        "low_memory_unknown_no_limit": "等待开始 — 可用内存未知：已设置内存上限，但无法读取其用量；请恢复读取权限以继续；等待没有时间上限",
         "memory_pressure": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解",
         "memory_pressure_limit": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；若内存持续不足 {{limit}}，将不会启动",
         "memory_pressure_no_limit": "等待开始 — macOS 报告内存压力；关闭其他应用可缓解；等待没有时间上限"

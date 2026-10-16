@@ -11681,6 +11681,9 @@
         "low_memory_no_figures_limit": "en attente de démarrage — mémoire libre insuffisante ; libère de la mémoire pour continuer ; ils ne démarrent jamais si la mémoire reste insuffisante pendant {{limit}}",
         "low_memory_no_figures_no_limit": "en attente de démarrage — mémoire libre insuffisante ; libère de la mémoire pour continuer ; ils attendent sans limite de temps",
         "low_memory_no_limit": "en attente de démarrage — nécessite {{required}} de mémoire libre, {{available}} libres actuellement ; libère de la mémoire pour continuer ; ils attendent sans limite de temps",
+        "low_memory_unknown": "en attente de démarrage — mémoire libre inconnue : une limite de mémoire est définie, mais son utilisation est illisible ; rétablis l’accès en lecture pour continuer",
+        "low_memory_unknown_limit": "en attente de démarrage — mémoire libre inconnue : une limite de mémoire est définie, mais son utilisation est illisible ; rétablis l’accès en lecture pour continuer ; ils ne démarrent jamais si elle reste inconnue pendant {{limit}}",
+        "low_memory_unknown_no_limit": "en attente de démarrage — mémoire libre inconnue : une limite de mémoire est définie, mais son utilisation est illisible ; rétablis l’accès en lecture pour continuer ; ils attendent sans limite de temps",
         "memory_pressure": "en attente de démarrage — macOS signale une pression mémoire ; ferme d’autres apps pour la réduire",
         "memory_pressure_limit": "en attente de démarrage — macOS signale une pression mémoire ; ferme d’autres apps pour la réduire ; ils ne démarrent jamais si la mémoire reste insuffisante pendant {{limit}}",
         "memory_pressure_no_limit": "en attente de démarrage — macOS signale une pression mémoire ; ferme d’autres apps pour la réduire ; ils attendent sans limite de temps"

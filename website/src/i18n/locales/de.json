@@ -11516,6 +11516,9 @@
         "low_memory_no_figures_limit": "wartet auf den Start — nicht genug freier Speicher; gib Speicher frei, um fortzufahren; sie starten nie, wenn der Speicher {{limit}} lang knapp bleibt",
         "low_memory_no_figures_no_limit": "wartet auf den Start — nicht genug freier Speicher; gib Speicher frei, um fortzufahren; sie warten ohne Zeitlimit",
         "low_memory_no_limit": "wartet auf den Start — benötigt {{required}} freien Speicher, aktuell {{available}} frei; gib Speicher frei, um fortzufahren; sie warten ohne Zeitlimit",
+        "low_memory_unknown": "wartet auf den Start — freier Speicher unbekannt: Ein Speicherlimit ist gesetzt, aber seine Nutzung ist nicht lesbar; stelle den Lesezugriff wieder her, um fortzufahren",
+        "low_memory_unknown_limit": "wartet auf den Start — freier Speicher unbekannt: Ein Speicherlimit ist gesetzt, aber seine Nutzung ist nicht lesbar; stelle den Lesezugriff wieder her, um fortzufahren; sie starten nie, wenn er {{limit}} lang unbekannt bleibt",
+        "low_memory_unknown_no_limit": "wartet auf den Start — freier Speicher unbekannt: Ein Speicherlimit ist gesetzt, aber seine Nutzung ist nicht lesbar; stelle den Lesezugriff wieder her, um fortzufahren; sie warten ohne Zeitlimit",
         "memory_pressure": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken",
         "memory_pressure_limit": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie starten nie, wenn der Speicher {{limit}} lang knapp bleibt",
         "memory_pressure_no_limit": "wartet auf den Start — macOS meldet Speicherdruck; schließe andere Apps, um ihn zu senken; sie warten ohne Zeitlimit"
