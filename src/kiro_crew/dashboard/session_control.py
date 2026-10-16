@@ -3140,10 +3140,12 @@ if TYPE_CHECKING:  # every owner-defined name this module forwards, for type che
         _clean_new_session_title,
         _clean_rename_title,
         _is_allowed_format_char,
+        _parse_session_color,
         _refuse_hidden_title_characters,
         _shows_nothing,
         generate_title_target,
         rename_target,
+        set_color_target,
     )
     from kiro_crew.dashboard.session_control_parts.session_tree import (  # noqa: F401
         _MAX_FORK_TITLE_CHARS,
