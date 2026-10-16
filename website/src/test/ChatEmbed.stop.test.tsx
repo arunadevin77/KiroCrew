@@ -79,6 +79,20 @@ describe('ChatEmbed Stop', () => {
     expect(screen.queryByTestId('chat-embed-stop-hint')).toBeNull()
   })
 
+  it('draws the line above the hint strip, not between the hint and the input', async () => {
+    mockGet.mockResolvedValue({ messages: [{ role: 'user', content: 'hi', ts: 1 }], running: true, title: '', stopping: true, stop_state: 'soft_pending' })
+    await mount()
+    // The strip opens the composer block, so the line that separates the
+    // block from the transcript (and its working indicator) sits on top of it.
+    const strip = screen.getByTestId('chat-embed-stop-hint').parentElement!.closest('.shrink-0')
+    expect(strip).toHaveClass('border-t')
+    expect(screen.getByRole('textbox').closest('.shrink-0')).not.toHaveClass('border-t')
+    // A draft hides the hint, and the composer row draws the line again.
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'more' } })
+    expect(screen.queryByTestId('chat-embed-stop-hint')).toBeNull()
+    expect(screen.getByRole('textbox').closest('.shrink-0')).toHaveClass('border-t')
+  })
+
   it('shows Send, not Stop, once the turn is over', async () => {
     mockGet.mockResolvedValue({ messages: [{ role: 'assistant', content: 'done', ts: 1 }], running: false, title: '' })
     await mount()

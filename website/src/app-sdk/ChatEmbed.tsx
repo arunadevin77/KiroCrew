@@ -1120,9 +1120,12 @@ function ChatEmbed({
       )}
 
       {/* The press hints describe the Stop button, so they show only while it
-          is on screen; typing a draft swaps it for Send, which queues. */}
+          is on screen; typing a draft swaps it for Send, which queues. The
+          strip carries the line the composer row would draw, so it reads as
+          the top of the composer, not as the transcript's last row; under an
+          attachment strip the line is already drawn above. */}
       {(stopError || pressHint) && (
-        <div className={`shrink-0 px-3 pt-2 ${frameless ? '' : 'bg-bg-accent'}`}>
+        <div className={`shrink-0 px-3 pt-2 ${frameless ? '' : `${attachments.notice || attachments.files.length || attachments.uploadingNames.length ? '' : 'border-t border-border '}bg-bg-accent`}`}>
           {stopError && (
             // A failed press that leaves a next press with a cost (the reset
             // hatch, or a force stop that drops queued messages) is said
@@ -1140,7 +1143,7 @@ function ChatEmbed({
 
       <Composer slotKey={slotKey} value={draft} onChange={setDraft} capabilities={EMBED_CAPABILITIES}>
         <div
-          className={`flex items-end gap-2 px-3 py-2 shrink-0 ${frameless ? '' : `${attachments.notice || attachments.files.length || attachments.uploadingNames.length ? '' : 'border-t'} border-border bg-bg-accent`}`}
+          className={`flex items-end gap-2 px-3 py-2 shrink-0 ${frameless ? '' : `${attachments.notice || attachments.files.length || attachments.uploadingNames.length || stopError || pressHint ? '' : 'border-t'} border-border bg-bg-accent`}`}
         >
           {attachments.granted && (
             <>
