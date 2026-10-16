@@ -101,6 +101,7 @@ import AgentDropdownList, { DefaultAgentRow, ManageAgentsFooter, defaultWriteKin
 import ProjectPicker from '../components/ProjectPicker'
 import { ProjectAwsProfileSection } from '../components/ProjectAwsProfile'
 import InboundLinkChip from '../components/InboundLinkChip'
+import { StaleConfigReloadButton } from '../components/StaleConfigBadge'
 import ModelEffortDropdown from '../components/ModelEffortDropdown'
 
 import ChatInput from '../components/ChatInput'
@@ -162,6 +163,7 @@ import { tryQuickSend } from '../lib/quickSend'
 import { sessionTitleRoster } from '../utils/sessionRoster'
 import { errMessage } from '../utils/thunkError'
 import { showTranscriptForkFailure } from '../utils/forkFailure'
+import { generateSlotTitle } from '../hooks/slotTitleGeneration'
 // Only a crew session mounts the window, so its code loads on first open.
 const CrewChatWindow = lazy(() => import('./chat/crew-window/CrewChatWindow'))
 // Eager: holds the window's isolation guards until its chunk arrives.
@@ -338,6 +340,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   } = useSteerDelivery({
     dispatch, activeSlot, drafts, saveDrafts, composerSlotRef, composerMountedRef, setInput, inputRef,
   })
+  const [titleUndoOffered, setTitleUndoOffered] = useState(false)
   const {
     automationOpen, setAutomationOpen, automation, automationId, automationCreationReady, automationSnapshotFailed,
     applyAutomationChange,
@@ -1777,6 +1780,14 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                     dispatch(requestSlotReveal(activeSlot))
                   } : undefined}
                   onRename={activeSlot ? () => setEditingTitleSlot(activeSlot) : undefined}
+                  // The title's hover Auto-title button is off while the chat is
+                  // stale (hoverActions below), so the menu carries it then.
+                  onAutoTitle={activeSlot && currentSlot?.config_stale ? () => {
+                    const run = generateSlotTitle(activeSlot, dispatch)
+                    if (!run) return
+                    setActionError(null)
+                    run.catch(e => showActionError(errMessage(e) || i18nT('pages.chatPage.unknown_error'), i18nT('pages.chatPage.could_not_generate_title')))
+                  } : undefined}
                   mode={effectiveMode}
                   sidebarOnScreen={sidebarOnScreen}
                   newSessionHere={embedMode !== 'chat' && isMobile ? mobileNewSessionItem : undefined}
@@ -1792,9 +1803,23 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                     onEditingChange={open => setEditingTitleSlot(open ? activeSlot : null)}
                     onError={showActionError}
                     onAttempt={() => setActionError(null)}
+                    hoverActions={!currentSlot?.config_stale}
+                    onUndoOfferedChange={setTitleUndoOffered}
                   />
                 )}
                 </div>
+              {/* Right after the title, the same spot as on the phone bar. While
+                  the chat is stale the row holds two controls, the session-menu
+                  trigger and this button: the title's hover Rename and Auto-title
+                  are off (hoverActions above) and stay in the session menu, so
+                  the row never grows to four. The title's Undo (a generated
+                  title just landed) cannot be hidden, so the button waits for
+                  it to end; Reload stays in the session menu meanwhile. A
+                  failed reload goes to the action-error region, not a notice
+                  of its own, which would be a third control. */}
+              {currentSlot?.config_stale && !titleUndoOffered && (
+                <StaleConfigReloadButton slot={currentSlot} mode={effectiveMode} onError={showActionError} />
+              )}
               <InboundLinkChip slotKey={activeSlot} />
               {/* Trailing controls grouped under a single ml-auto so multiple
                   right-aligned items don't each absorb free space (two ml-auto
