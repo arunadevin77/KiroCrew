@@ -984,7 +984,7 @@ class TestSpawnedMarkerInjection:
 
         src_root = Path(__file__).resolve().parent.parent / "src" / "kiro_crew"
         spawn_sites = [
-            "sandbox.py",
+            "sandbox_spawn.py",
             "acp/launch.py",
             "mcp_gateway/backend.py",
         ]

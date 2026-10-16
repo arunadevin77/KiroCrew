@@ -390,7 +390,7 @@ _PC = platform_compat.__name__
 #: assignment).
 _MOVED = "_overflow_uid"
 _MOVED_PC = "file_lock"
-_KEPT = "_ssh_supports_accept_new"
+_KEPT = "_is_policy_cache_dir"
 _KEPT_PC = "IS_WINDOWS"
 
 

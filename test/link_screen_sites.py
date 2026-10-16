@@ -155,7 +155,7 @@ DECLARED_SITES = frozenset(
         ("pod/runtime_home.py", "orphan_homes"),
         ("pod/runtime_home.py", "write_pod_config"),
         ("portability.py", "apply_import_zip"),
-        ("sandbox.py", "cleanup_stale_sandbox_profiles"),
+        ("sandbox_argv.py", "cleanup_stale_sandbox_profiles"),
         ("seed.py", "copy_fixture_into_witnessed_dir"),
         ("seed.py", "copy_fixture_into_witnessed_dir._walk"),
         ("seed.py", "publish_fixture_manifest_into_witnessed_dir"),

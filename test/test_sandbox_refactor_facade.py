@@ -8,10 +8,10 @@ owner's own callers read it -- whether or not a scan could read the patched name
 test. The path rules moved to ``kiro_crew.sandbox_plan`` are bound on the facade as plain
 compatibility aliases instead, pinned by identity below; a patch of one does not reach
 the planner. The two
-builders are the facade's own functions: they gather the live host here, plan the spawn
-(``kiro_crew.sandbox_plan``) and hand the plan to the owner's renderer, so a test that
-rebinds a tier list or a host-fact helper on the facade reaches the plan, and no owner
-imports the facade at all.
+builders live in ``sandbox_argv``: they gather the live host (``_live_plan_host``), plan the
+spawn (``kiro_crew.sandbox_plan``) and hand the plan to the owner's renderer, so a test that
+rebinds a tier list or a host-fact helper through the facade reaches the plan through the
+mirror, and no owner imports the facade at all.
 
 The rest of what sandbox.py defined is carved into the owners in ``_CARVED``, which import
 each other lowest layer first (``_CARVED_IMPORTS``) and never the facade. Their code read
@@ -62,16 +62,25 @@ from kiro_crew import (
     platform_compat,
     sandbox,
     sandbox_aliases,
+    sandbox_argv,
+    sandbox_cgroup,
+    sandbox_delegation,
     sandbox_launcher,
     sandbox_leaves,
     sandbox_mount_sweep,
     sandbox_plan,
     sandbox_precreate,
+    sandbox_probe,
+    sandbox_rlimit,
     sandbox_seals,
     sandbox_seatbelt,
+    sandbox_slice,
+    sandbox_spawn,
     sandbox_staging,
     sandbox_tiers,
+    sandbox_unavailable,
     sandbox_workspace,
+    sandbox_wrap,
 )
 
 # The patch census parses every test file once; keep it on one worker.
@@ -95,6 +104,15 @@ _CARVED: dict[str, ModuleType] = {
         sandbox_aliases,
         sandbox_staging,
         sandbox_workspace,
+        sandbox_argv,
+        sandbox_delegation,
+        sandbox_probe,
+        sandbox_unavailable,
+        sandbox_wrap,
+        sandbox_cgroup,
+        sandbox_slice,
+        sandbox_rlimit,
+        sandbox_spawn,
     )
 }
 
@@ -104,8 +122,8 @@ _OWNERS: dict[str, ModuleType] = {
 }
 
 #: Every module-level name the split moved out of sandbox.py, by its owner. The two
-#: builders are not here: they are ``kiro_crew.sandbox``'s own functions again, which
-#: plan the spawn and hand the plan to the owners' renderers.
+#: builders that plan a spawn and hand the plan to the renderers live in
+#: ``sandbox_argv``.
 _MOVED: dict[str, tuple[str, ...]] = {
     "kiro_crew.sandbox_launcher": (),
     "kiro_crew.sandbox_seatbelt": ("_SEATBELT_PROFILE",),
@@ -206,29 +224,118 @@ _MOVED: dict[str, tuple[str, ...]] = {
         _bound_agent_workspace_matches bound_agent_workspace_target BoundWorkspaceMismatch
         resolve_bound_session_workspace
         """.split()),
+    "kiro_crew.sandbox_argv": tuple("""
+        _LAUNCHER_MAX_AGE_SECONDS _SANDBOX_ARTIFACT_PREFIX _LAUNCHER_SCRIPT_SUFFIX
+        _SEATBELT_PROFILE_SUFFIX _PI_GATE_ARTIFACT_PREFIX _PI_GATE_ARTIFACT_SUFFIXES
+        _RUN_DIR_ARTIFACTS _DSH_GATE_ARTIFACT_PREFIX _DSH_PATCH_ARTIFACT_PREFIX
+        _DSH_GATE_ARTIFACT_SUFFIXES _PI_GATE_DIR_ARTIFACTS _LEGACY_LAUNCHER_DIR
+        _resolve_agent_executable _ssh_supports_accept_new namespace_launcher_script_dir
+        _ensure_run_dir _LAUNCHER_INTERPRETER_FLAGS _launcher_script_of _log_refusals
+        _carveout_probes _plan_cwd _live_plan_host _spawn_plan _build_launcher_script
+        _build_seatbelt_profile namespace_argv _pinned_env_bin sandbox_exec_argv
+        _sandbox_env_scrub_keys _sandbox_env_unset_args cleanup_stale_sandbox_profiles
+        _ENV_BINARY_CANDIDATES _unset_env_argv
+        """.split()),
+    "kiro_crew.sandbox_delegation": tuple("""
+        _KIRO_INTERNAL_SETTINGS_PATH _KIRO_INTERNAL_SANDBOX_KEY _kiro_delegation_warned
+        kiro_internal_sandbox_enabled kiro_internal_sandbox_switch SANDBOX_LAYER_CREW
+        SANDBOX_LAYER_HARNESS wrapped_by_crew_sandbox sandbox_init_remediation
+        delegated_workspace_exposes_sealed_target _spawns_kiro_cli
+        _delegate_to_kiro_internal_sandbox _command_log_label
+        """.split()),
+    "kiro_crew.sandbox_probe": tuple("""
+        _CLONE_NEWUSER _CLONE_NEWNS _PROBE_MS_REC _PROBE_MS_PRIVATE _TRANSIENT_PROBE_ERRNOS
+        _PROBE_TRANSIENT_RETRY_DELAY_SECS _WARM_JOIN_TIMEOUT_SECS _PROBE_STEP_NEWUSER
+        _PROBE_STEP_NEWNS _PROBE_STEP_MOUNT_PRIVATE _PROBE_STEP_MULTITHREADED
+        _PROBE_MULTITHREADED_REASON _probe_reason_is_multithreaded_collapse
+        _PROBE_CHILD_GONE_ERRNOS _PROBE_HANDSHAKE_TIMEOUT_SECS
+        _SANDBOX_BACKEND_PROBE_TIMEOUT_SECS REMEDY_APPARMOR_USERNS
+        REMEDY_MAX_USER_NAMESPACES REMEDY_NO_USER_NS REMEDY_USERNS_DENIED
+        REMEDY_MOUNT_DENIED _remedy_for_step _LINUX_REMEDY_GUIDANCE _linux_remedy_guidance
+        _close_probe_fds _PROBE_CHILD_FD_SWEEP_CAP _fd_sweep_ranges _close_fd_ranges
+        _probe_failure _probe_harness_failure _probe_child_unshare _probe_child_make_private
+        _probe_bind_libc _probe_child_thread_count _probe_write_identity_maps
+        _probe_read_step _probe_child_death _probe_reap _probe_child_sequence
+        _probe_parent_sequence _probe_unshare_once _PROBE_SHIM_CODE
+        _PROBE_SPAWN_TIMEOUT_SECONDS _probe_spawn_unavailable_logged _probe_spawned_death
+        _probe_unshare_via_spawn _probe_unshare_via_fork is_wsl is_docker_container
+        _probe_sandbox_exec _inside_kirocrew_sandbox _macos_sandbox_state
+        _inside_macos_sandbox
+        """.split()),
+    "kiro_crew.sandbox_unavailable": tuple("""
+        _allow_no_isolation UNSANDBOXED_BY_OPERATOR UNSANDBOXED_BY_PLATFORM
+        _allow_unsandboxed_exec _unsandboxed_grant_source _unsandboxed_exec_key_declared
+        _SSH_VISIBLE_TIERS _ssh_dir_masked _tier_lists_ssh _forward_ssh_auth_sock
+        _forward_for_effective_tier unsandboxed_exec_permitted_by _bundled_cli_invocation
+        _apparmor_userns_restricted _no_backend_guidance _classify_unavailable
+        agent_confinement_evidence _warn_mode_off_unconfined
+        _warn_first_party_unconfined_once _first_party_no_backend_passthrough
+        CRON_SCRIPT_CHILD_ENV UnauditedSpawnRefused refuse_unaudited_on_dead_fs
+        SandboxUnavailableError LAUNCHER_EXIT_PREFIXES _LAUNCHER_REFUSAL_RE launcher_refusal
+        _TRUSTED_LAUNCHER_TIMEOUT_SECS
+        """.split()),
+    "kiro_crew.sandbox_wrap": tuple("""
+        _last_unshare_failure unavailable_remedy unavailable_reason remedy_guidance
+        _warm_thread _record_probe_failure _background_warm _kick_background_warm
+        prewarm_backend warm_backend _probe_unshare userns_available _backend
+        unavailable_kind _warn_no_isolation detect_backend reset_backend wrap_argv
+        """.split()),
+    "kiro_crew.sandbox_cgroup": tuple("""
+        _CGROUP_DEFAULT_MAX_PROCESSES _CGROUP_DEFAULT_CPU_WEIGHT _CGROUP_MEMORY_FRACTION
+        _CGROUP_FALLBACK_MAX_MEMORY_MB _CGROUP_AGENTS_SLICE _instance_slice_token
+        _agents_slice_name _default_max_memory_mb _CGROUP_SCOPE_PROBE
+        _CGROUP_SCOPE_PROBE_SESSION _CGROUP_SCOPE_PROBE_AT _CGROUP_SCOPE_PROBE_TTL_SECONDS
+        _CGROUP_SCOPE_PROBE_LOCK _CGROUP_WARNED _CGROUP_LINGER_REMEDY
+        _warn_cgroup_unavailable _user_slice_controllers_path _user_bus_socket_paths
+        _stat_identity _cgroup_scope_session_fingerprint _user_bus_reachable
+        _probe_cgroup_scope _log_cgroup_scope_transition _compute_cgroup_scope_probe
+        _CPU_DELEGATED _cpu_controller_delegated _cgroup_limits_from_config
+        """.split()),
+    "kiro_crew.sandbox_slice": tuple("""
+        _SLICE_MEMORY_HIGH_FRACTION _SLICE_FALLBACK_MEMORY_HIGH_MB _SLICE_MEMHIGH_APPLIED
+        _SLICE_MEMHIGH_DISABLED _default_slice_memory_high_mb
+        _ensure_agent_slice_memory_high _SLICE_MEMHIGH_EVENTS_SEEN
+        _SLICE_MEMHIGH_CLIMB_WARNED _slice_memory_events_high _check_slice_memory_pressure
+        _SLICE_MEMHIGH_MUTEX _reconcile_slice_memory_high_off_thread
+        _WINDOWS_INERT_RESOURCE_LIMIT_KEYS _WINDOWS_INERT_LIMITS_WARNED
+        _warn_windows_inert_resource_limits_once apply_windows_resource_ceiling
+        _SCOPE_UNIT_PREFIX _SCOPE_UNIT_TOKEN_SAFE scope_unit_name cgroup_scope_argv
+        name_scope_unit _CGROUP_TOTAL_MEMORY_FRACTION _CGROUP_FALLBACK_MAX_TOTAL_MEMORY_MB
+        _CGROUP_DEFAULT_MAX_TOTAL_TASKS _default_max_total_memory_mb
+        _slice_limits_from_config _SLICE_LIMITS_APPLIED ensure_agents_slice_limits
+        _USER_MANAGER_CGROUP_BASE _agents_slice_cgroup_dir _read_cgroup_counters
+        read_cgroup_int _SLICE_THROTTLE_PROBE_SEEN _SLICE_THROTTLE_EDGE_AT
+        _SLICE_THROTTLE_EDGE_HOLD_SECS agents_slice_throttling _SLICE_OOM_SEEN
+        check_agents_slice_pressure
+        """.split()),
+    "kiro_crew.sandbox_rlimit": tuple("""
+        _UNSET _RESOURCE_PREEXEC resource_limit_preexec _EXTRACTOR_PREEXEC
+        extractor_resource_limit_preexec _RESOURCE_SUPERVISOR_ARGV
+        resource_limit_supervisor_argv _SESSION_HOST_PREEXEC session_host_preexec
+        _BUILD_NOFILE_CEILING _BUILD_RESOURCE_PREEXEC build_resource_limit_preexec
+        _SPAWN_SHIM_SOURCE _SPAWN_SHIM_CODE RLIMIT_PROFILE_TOOL RLIMIT_PROFILE_BUILD
+        RLIMIT_PROFILE_SESSION_HOST RLIMIT_PROFILE_EXTRACTOR _EXTRACTOR_MAX_AS_BYTES
+        _EXTRACTOR_MAX_CPU_SECS _EXTRACTOR_MAX_NOFILE RLIMIT_PROFILE_NONE _PROFILE_OOM_BIAS
+        _SHIM_ARGV_SEPARATOR _SHIM_CHDIR_FD_FLAG _SHIM_CTTY_FD_FLAG _SHIM_ARGV_CACHE
+        _SHIM_UNAVAILABLE_LOGGED _rlimit_spec spawn_shim_argv _shim_prefix_entering_fd
+        _pass_fds_including _preexec_for_profile _resolve_spawn_target _pinned_spawn_path
+        _needs_path_search create_subprocess_limited _prepare_limited_spawn run_limited
+        _INTERPRETER_ENOENT_DELAYS _is_transient_interpreter_enoent
+        _retry_interpreter_enoent popen_limited
+        """.split()),
+    "kiro_crew.sandbox_spawn": tuple("""
+        corroborate_launcher_refusal credential_mask_applies spawn_delegates_masking
+        unconfined_live_agent_pid wrap_argv_async _SPAWN_SCRUB_ENV_PREFIXES scrub_env
+        agent_env_scrub_prefixes scrub_agent_denied_env scrub_agent_subprocess_env
+        sandboxed_spawn_argv shielded_prepare_off_loop sandboxed_spawn_argv_async
+        _CGROUP_SCOPE_BUS_ENV_KEYS cgroup_scope_bus_env
+        """.split()),
 }
 
-#: Moved names the facade binds again, by import from their owner, because code still in
-#: sandbox.py reads them as its own globals. The mirror holds the facade's binding and the
-#: owner's as one name, so a patch through the facade reaches both.
-_BOUND_HERE: frozenset[str] = frozenset("""
-    SandboxCeilingUnsealable _AGENT_DENIED_ENV_KEYS _CC_EXPOSE_FILES _CC_FILES _CREW_HIDDEN_DIRS
-    _CREW_HIDDEN_LEAVES _CREW_READONLY_LEAVES _CREW_READONLY_TARGETS _CREW_UNREADABLE_MASK_LEAVES
-    _DELEGATED_OVERLAP_LEAF_REASONS _IN_SANDBOX_LEVEL_VAR _IN_SANDBOX_MARKER
-    _POD_OS_HOME_GRANT_STORE_LEAVES _POD_OS_HOME_MASKED_SUBLEAVES _PYTHON_ENV_PREFIXES
-    _RELOCATED_CREW_HIDDEN_LEAVES _SANDBOX_MODE_ALIASES _SENSITIVE_ENV_PREFIXES _STANDARD_DIRS
-    _TIER_ORDINALS _clamp_sandbox_mode_to_floor _crew_home_alias_roots
-    _directory_ancestor_identities _floor_mandates_sandbox _governance_sandbox_floor
-    _literal_ancestor_guards _materialize_live_target_mask_target _materialize_maskable_dirs
-    _materialize_md_notebook_mask_targets _materialize_sealable_ceilings
-    _md_notebook_degraded_mask_dirs _mode_to_level _open_directory_descriptor
-    _reconcile_auth_store_staging_links _referent_identity _refuse_aliased_masked_leaves
-    _refuse_linked_models_leaf _refuse_multilinked_credential_leaves _relocated_crew_targets
-    _relocated_policy_cache_dirs _resolved_install_root_targets _resolved_kiro_agents_targets
-    _sandbox_policy _sweep_legacy_auth_store_temps _sweep_legacy_md_notebook_temps
-    _voice_runtime_ancestor_guards _voice_runtime_parent_paths _voice_runtime_sandbox_paths
-    _warn_aliased_strict_leaves effective_sandbox_mode
-    """.split())
+#: Moved names the facade binds again because code still in sandbox.py reads them as its
+#: own globals. None: every unit that read one has moved, so each moved name is
+#: forwarded, and the facade keeps only its BASE imports and the ``sandbox_plan`` aliases.
+_BOUND_HERE: frozenset[str] = frozenset()
 
 #: Carved owner -> the owners it imports. Explicit, so a new edge between owners is a
 #: decision; each edge points to an owner earlier in ``sandbox._CARVED_OWNERS`` (so the
@@ -250,11 +357,65 @@ _CARVED_IMPORTS: dict[str, frozenset[str]] = {
         }
     ),
     "kiro_crew.sandbox_workspace": frozenset({"kiro_crew.sandbox_leaves"}),
+    "kiro_crew.sandbox_argv": frozenset(
+        {
+            "kiro_crew.sandbox_aliases",
+            "kiro_crew.sandbox_launcher",
+            "kiro_crew.sandbox_leaves",
+            "kiro_crew.sandbox_mount_sweep",
+            "kiro_crew.sandbox_seals",
+            "kiro_crew.sandbox_seatbelt",
+            "kiro_crew.sandbox_staging",
+            "kiro_crew.sandbox_tiers",
+            "kiro_crew.sandbox_workspace",
+        }
+    ),
+    "kiro_crew.sandbox_delegation": frozenset(
+        {
+            "kiro_crew.sandbox_argv",
+            "kiro_crew.sandbox_precreate",
+            "kiro_crew.sandbox_tiers",
+        }
+    ),
+    "kiro_crew.sandbox_probe": frozenset({"kiro_crew.sandbox_tiers"}),
+    "kiro_crew.sandbox_unavailable": frozenset(
+        {
+            "kiro_crew.sandbox_argv",
+            "kiro_crew.sandbox_delegation",
+            "kiro_crew.sandbox_probe",
+            "kiro_crew.sandbox_tiers",
+        }
+    ),
+    "kiro_crew.sandbox_wrap": frozenset(
+        {
+            "kiro_crew.sandbox_argv",
+            "kiro_crew.sandbox_delegation",
+            "kiro_crew.sandbox_probe",
+            "kiro_crew.sandbox_seals",
+            "kiro_crew.sandbox_tiers",
+            "kiro_crew.sandbox_unavailable",
+        }
+    ),
+    "kiro_crew.sandbox_slice": frozenset({"kiro_crew.sandbox_cgroup"}),
+    "kiro_crew.sandbox_rlimit": frozenset({"kiro_crew.sandbox_workspace"}),
+    "kiro_crew.sandbox_spawn": frozenset(
+        {
+            "kiro_crew.sandbox_argv",
+            "kiro_crew.sandbox_cgroup",
+            "kiro_crew.sandbox_delegation",
+            "kiro_crew.sandbox_probe",
+            "kiro_crew.sandbox_rlimit",
+            "kiro_crew.sandbox_slice",
+            "kiro_crew.sandbox_tiers",
+            "kiro_crew.sandbox_unavailable",
+            "kiro_crew.sandbox_wrap",
+        }
+    ),
 }
 
 #: Every function in an owner that imports from the facade, and what it reads there.
 #: None does: the renderers read only the plan they are handed, and the live host the
-#: plan is made from is gathered in ``kiro_crew.sandbox`` itself.
+#: plan is made from is gathered in ``sandbox_argv``.
 _SEAM_IMPORTS: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
 
 
@@ -1017,16 +1178,15 @@ def test_a_patch_through_the_facade_round_trips_on_the_owner(owner: ModuleType, 
 
 
 def test_a_write_of_a_facade_name_stays_on_the_facade(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A name the facade binds itself -- a table or host fact the live plan host reads,
-    a module it imports -- is an ordinary attribute write, which that code then reads. A
-    name it binds that a carved owner binds too (a tier table) is written on both, and
-    never on a renderer."""
-    monkeypatch.setattr(sandbox, "_ssh_supports_accept_new", "stub")
-    assert vars(sandbox)["_ssh_supports_accept_new"] == "stub"
-    assert "_ssh_supports_accept_new" not in vars(sandbox_launcher)
-    assert not any("_ssh_supports_accept_new" in vars(m) for m in _CARVED.values())
+    """A name only the facade binds -- a ``sandbox_plan`` alias no owner reads -- is an
+    ordinary attribute write. A forwarded name (a tier table) is written on the owners
+    that hold it and not bound on the facade, and neither is ever written on a renderer."""
+    monkeypatch.setattr(sandbox, "_is_policy_cache_dir", "stub")
+    assert vars(sandbox)["_is_policy_cache_dir"] == "stub"
+    assert "_is_policy_cache_dir" not in vars(sandbox_launcher)
+    assert not any("_is_policy_cache_dir" in vars(m) for m in _CARVED.values())
     monkeypatch.setattr(sandbox, "_STANDARD_DIRS", ["stub"])
-    assert vars(sandbox)["_STANDARD_DIRS"] == ["stub"]
+    assert "_STANDARD_DIRS" not in vars(sandbox)
     assert vars(sandbox_tiers)["_STANDARD_DIRS"] == ["stub"]
     assert "_STANDARD_DIRS" not in vars(sandbox_launcher)
 
@@ -1175,6 +1335,34 @@ def test_the_owners_log_under_the_sandbox_name() -> None:
     check_owner_logger(sandbox, _OWNERS)
 
 
+#: Moved exception classes and their owners. Each keeps the facade's ``__module__``: an
+#: error chain renders a raised class as ``module.qualname`` (``subagent._describe_exception``)
+#: in tracebacks and the Subagents panel, so the owner's name must not leak into that text.
+_FACADE_NAMED_EXCEPTIONS: dict[str, ModuleType] = {
+    "SandboxCeilingUnsealable": sandbox_seals,
+    "BoundWorkspaceMismatch": sandbox_workspace,
+    "UnauditedSpawnRefused": sandbox_unavailable,
+    "SandboxUnavailableError": sandbox_unavailable,
+}
+
+
+@pytest.mark.parametrize("name", sorted(_FACADE_NAMED_EXCEPTIONS))
+def test_a_moved_exception_class_keeps_the_facade_module(name: str) -> None:
+    owner = _FACADE_NAMED_EXCEPTIONS[name]
+    cls = vars(owner)[name]
+    assert getattr(sandbox, name) is cls
+    assert cls.__module__ == sandbox.__name__
+    assert cls.__qualname__ == name
+
+
+def test_an_error_chain_names_the_class_by_the_facade_path() -> None:
+    from kiro_crew.subagent import _describe_exception
+
+    error = sandbox.SandboxUnavailableError("no backend confines", "none", "detail")
+    rendered = _describe_exception(error)
+    assert rendered == "kiro_crew.sandbox.SandboxUnavailableError: no backend confines"
+
+
 def _imported_modules(module: ModuleType) -> set[str]:
     """Every module *module* imports, at any depth of its body."""
     found: set[str] = set()
@@ -1251,11 +1439,12 @@ def test_every_plan_object_the_facade_binds_is_a_listed_alias() -> None:
     assert bound == set(_PLAN_ALIASES)
 
 
-#: Names a test patches through ``kiro_crew.sandbox`` that the facade AND an owner both
-#: bind, each importing its own, so the patch reaches only the facade's code. ``time`` is
-#: rebound for the agents-slice throttling probe, which stays here; the mount sweep's own
-#: clock is never faked through the facade. A new entry is a decision that the patch
-#: needs no forwarding.
+#: Names a test patches through ``kiro_crew.sandbox`` that the facade AND an unmirrored
+#: owner both bind, each importing its own, so the patch misses that owner. ``time`` is
+#: rebound for the agents-slice throttling probe in ``sandbox_slice``, which the mirror
+#: reaches; it is listed because ``sandbox_mount_sweep`` binds its own ``time``, and the
+#: sweep's clock is never faked through the facade. A new entry is a decision that the
+#: patch needs no forwarding.
 _SANDBOX_SHARED_BINDINGS_PATCHED: frozenset[str] = frozenset({"time"})
 
 
@@ -1354,7 +1543,7 @@ def test_a_patched_tmpfs_root_list_reaches_the_legacy_sweep(
 def test_the_facade_s_cleanup_pass_reaches_a_patched_sweep_seam(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``cleanup_stale_sandbox_profiles`` stays here and runs the moved keyed sweep,
+    """``cleanup_stale_sandbox_profiles`` (in ``sandbox_argv``) runs the moved keyed sweep,
     which reads the patched root list from its own module."""
     monkeypatch.setattr(sandbox, "_mount_source_candidate_roots", _raiser("keyed"))
     with pytest.raises(_Reached, match="keyed"):

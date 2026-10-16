@@ -29,7 +29,7 @@ not systemd's ``AppArmorProfile=`` alone.** Two other designs do not work:
    audit log shows that
    ``AppArmorProfile=`` labels only the literal top-level unit PID
    (``change_onexec`` "converted to stacking"). The gateway's sandbox probe
-   (``sandbox.py``'s ``_probe_child_sequence``) runs in a **different PID**
+   (``sandbox_probe.py``'s ``_probe_child_sequence``) runs in a **different PID**
    reached through the launcher's own exec chain, and that PID was still
    ``unconfined`` in the audit trail at the moment it called ``unshare()`` — the
    stacking never propagated that far down, reproducing identically across a

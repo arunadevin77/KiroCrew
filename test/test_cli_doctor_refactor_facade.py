@@ -271,7 +271,7 @@ _BASE_NAMES: dict[str, str] = {
     "unsandboxed_exec_declared": "func:kiro_crew.config.loader",
     "urllib": "module:urllib",
     "verify_vendored_libs": "func:kiro_crew.embeddings",
-    "warm_backend": "func:kiro_crew.sandbox",
+    "warm_backend": "func:kiro_crew.sandbox_wrap",
 }
 
 

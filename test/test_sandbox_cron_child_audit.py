@@ -1,6 +1,7 @@
 """``wrap_argv``'s synchronous SEL degrades must refuse inside a cron child.
 
-Every "SEL audit failed ... proceeding unaudited" site in ``sandbox.py`` is a
+Every "SEL audit failed ... proceeding unaudited" site in ``sandbox_wrap.py``,
+``sandbox_delegation.py`` and ``sandbox_unavailable.py`` is a
 deliberate availability-over-audit choice: refusing a spawn on an audit hiccup
 would brick built-in tooling, in-sandbox MCP calls and every agent subprocess on
 a backend-less host. That is right for the gateway and wrong for a detached cron
@@ -239,7 +240,7 @@ class TestNoReachableSiteIsLeftBehind:
             for path in src.rglob("*.py")
             if "refuse_unaudited_on_dead_fs(" in path.read_text(encoding="utf-8", errors="replace")
         ]
-        assert "sandbox.py" in callers
+        assert "sandbox_wrap.py" in callers
 
 
 def test_the_cron_marker_is_not_set_in_this_process():
