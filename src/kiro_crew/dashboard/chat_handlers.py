@@ -124,6 +124,7 @@ from kiro_crew.dashboard.chat_api.handover_drain import (  # noqa: F401
     _owed_prompts_lost_on_line,
     _persist_handover_tail,
     _report_lost_queued_prompts,
+    _teardown_drain_basis,
 )
 from kiro_crew.dashboard.chat_api.pending_context import (  # noqa: F401
     _build_pending_context_entry,
@@ -169,6 +170,7 @@ from kiro_crew.dashboard.chat_api.resume import (  # noqa: F401
     _redact_history_rows,
     _resume_refusal_response,
     _resume_session_identity,
+    _resume_slot_from_history_noted,
     api_chat_slot_resume,
     resume_slot_from_history,
 )
@@ -237,6 +239,7 @@ from kiro_crew.dashboard.chat_api.slot_lifecycle import (  # noqa: F401
     _NudgeRetireFailed,
     _pending_guarded_history_writes,
     _release_closed_execution,
+    _restore_original_after_failed_close,
     _restore_slot_nudge_loop,
     _retire_slot_nudge_loop,
     _slot_still_ours,
@@ -321,6 +324,8 @@ from kiro_crew.dashboard.chat_persistence import (  # noqa: F401
     _TRANSIENT_ROLES,
     COLOR_HEX_RE,
     _attach_variants,
+    _await_takeover_ordering_settled,
+    _build_message_entry,
     _coerce_requested_mode,
     _has_validated_effort_marker,
     _load_restore_cfg,
@@ -334,8 +339,12 @@ from kiro_crew.dashboard.chat_persistence import (  # noqa: F401
     _restore_model_fields,
     _restored_agent_name,
     _restored_mode,
+    _slot_closed_before,
+    _transfer_basis_to_worker,
     _validate_autocompact_pct,
+    append_window_rows,
     cap_effort_capability_levels,
+    drop_notes_authorized_elsewhere,
     get_reasoning_effort_ordered,
     get_reasoning_effort_values,
     pin_private_agent_store,
@@ -343,6 +352,7 @@ from kiro_crew.dashboard.chat_persistence import (  # noqa: F401
     release_prewarmed_session,
     remember_unknown_row_fields,
     save_slot_off_loop,
+    session_deletion_confirmed,
 )
 from kiro_crew.dashboard.chat_runner import (  # noqa: F401
     _context_usage_payload,
@@ -452,6 +462,11 @@ from kiro_crew.dashboard.slot_projection import (  # noqa: F401
     stop_declined_armed,
 )
 from kiro_crew.dashboard.slot_queue_repository import warn_if_not_durable  # noqa: F401
+from kiro_crew.dashboard.slot_registry import (  # noqa: F401
+    SlotRegistry,
+    TakeoverBasis,
+    TakeoverNote,
+)
 from kiro_crew.dashboard.slot_retention import (  # noqa: F401
     loop_slot_keys,
     select_idle_slot_keys,
@@ -480,8 +495,10 @@ from kiro_crew.dashboard.turn_dispatch import (  # noqa: F401
 )
 from kiro_crew.history import (  # noqa: F401
     HUMAN_TURN_META_KEY,
+    ConversationLog,
     carry_provenance,
     is_incognito_transcript,
+    transcript_stems,
 )
 from kiro_crew.history_projection import TranscriptRevisionChanged  # noqa: F401
 from kiro_crew.jsonl_util import OversizedRecord, SplitlinesBoundaryRecord  # noqa: F401

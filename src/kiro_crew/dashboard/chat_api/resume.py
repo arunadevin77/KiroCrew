@@ -22,10 +22,13 @@ if TYPE_CHECKING:
         DashboardState,
         ResumeOutcome,
         ResumeRefusal,
+        SlotRegistry,
+        TakeoverNote,
         _app_claim_refused,
         _app_resume_refusal,
         _app_slot_acquisition_recheck,
         _attach_variants,
+        _await_takeover_ordering_settled,
         _ChatSlot,
         _collapse_wire_rows,
         _has_validated_effort_marker,
@@ -37,6 +40,7 @@ if TYPE_CHECKING:
         _redact_meta_for_role,
         _restore_model_fields,
         _restored_agent_name,
+        _slot_closed_before,
         _sync_dashboard_slots,
         _unhide_folder,
         app_owns_transcript_meta,
@@ -763,6 +767,52 @@ async def resume_slot_from_history(
     containment: "Callable[[_ChatSlot], Awaitable[ResumeRefusal | None]] | None" = None,
     final_check: "Callable[[_ChatSlot], ResumeRefusal | None] | None" = None,
 ) -> ResumeOutcome:
+    """:func:`_resume_slot_from_history_noted`, retracting its note when it is refused.
+
+    The body notes its takeover before its own refusal checks (a session
+    already resuming elsewhere, a deletion, the app rechecks), so a resume
+    refused after noting has moved the key's teardown watch and stands behind
+    nothing. Retracting here on a refused outcome is what lets a teardown
+    holding a basis on the key restore its original instead of yielding the
+    key to a taker that gave up. Same contract as the body.
+    """
+    noted_key = _normalize_slot_key(name)
+    noted: dict[str, TakeoverNote | None] = {"note": None}
+
+    def _noted(note: TakeoverNote) -> None:
+        noted["note"] = note
+
+    outcome: ResumeOutcome | None = None
+    try:
+        outcome = await _resume_slot_from_history_noted(
+            state,
+            name=name,
+            history_key=history_key,
+            request_app=request_app,
+            caller_label=caller_label,
+            request_title=request_title,
+            containment=containment,
+            final_check=final_check,
+            on_noted=_noted,
+        )
+        return outcome
+    finally:
+        if noted["note"] is not None and (outcome is None or outcome.refusal is not None):
+            SlotRegistry.retract_same_key_takeover(state, noted_key, noted["note"])
+
+
+async def _resume_slot_from_history_noted(
+    state: "DashboardState",
+    *,
+    name: str,
+    history_key: str | None = None,
+    request_app: str = "",
+    caller_label: str = "",
+    request_title: str = "",
+    containment: "Callable[[_ChatSlot], Awaitable[ResumeRefusal | None]] | None" = None,
+    final_check: "Callable[[_ChatSlot], ResumeRefusal | None] | None" = None,
+    on_noted: "Callable[[TakeoverNote], None] | None" = None,
+) -> ResumeOutcome:
     """Load an archived (history) session back into a live slot.
 
     The request-free core behind ``POST /api/chat/slots/{slot}/resume``; the
@@ -963,6 +1013,68 @@ async def resume_slot_from_history(
                 409,
             )
         )
+
+    # Same-key takeover note, BEFORE the transcript read is dispatched. A
+    # truncating rewrite for this key can be mid-flight on a worker thread, and
+    # the read below serializes behind the per-session lock it holds — an
+    # unannounced resume would block through the file replace and then adopt
+    # the truncated window as the tab's live transcript. Marking the claim
+    # first makes the save's commit gate refuse instead (nothing written, the
+    # read finds the transcript the truncation never changed), while a claim
+    # that already committed stays committed and this resume knowingly reads
+    # the post-rewrite transcript. Fire-and-forget: no branch on the outcome.
+    # The transcript this resume is about to read rides along, for teardown
+    # writers whose linked file the map cannot connect to this key.
+    # A resume that begins AFTER the user closed this tab is reopening a closed
+    # tab, not taking it over: the close's tombstone already stands, so the
+    # close must commit its archive first and this read then finds the closed
+    # transcript, which this handler knowingly resumes (the compare-and-clear
+    # below). Marking the close's claim here would make its archive lose to a
+    # reopen issued after the close, and the close would yield the key to a
+    # resume that is not a replacement of anything. The note is skipped; the
+    # ordering wait below is not.
+    if _slot_closed_before(state, name, time.time()):
+        logger.debug(
+            "Resume of %s begins after the tab was closed; reading the closed "
+            "transcript rather than taking the key over",
+            name,
+        )
+    elif (
+        note := SlotRegistry.open_same_key_takeover_note(state, name, transcript=history_key)
+    ) is None:
+        # Refused at admission: the key's teardown watch already retains as many
+        # declared transcripts as one teardown admits (a bound on a
+        # request-controlled name), so nothing about this takeover was recorded
+        # and the read must not run. Retryable, like the unsettled ordering
+        # below: the watch retires when the saves holding it settle.
+        return ResumeOutcome(
+            refusal=ResumeRefusal(
+                "a save for this conversation is still settling; retry shortly",
+                "takeover_note_refused",
+                503,
+            )
+        )
+    elif on_noted is not None:
+        on_noted(note)
+    # The note decides the ordering; this wait makes the read honor it. An
+    # overtaken save is refused at its commit gate but still lands a popped
+    # slot's unsaved rows append-safely under its lock before releasing — the
+    # projection's cached/best-effort-locked reads can otherwise return
+    # pre-append bytes while that save is still inside its region. The claim
+    # retires only after the lock exits, appends included; bounded — and
+    # fail-CLOSED on expiry, because a resume that reads anyway hydrates the
+    # unsettled window whose missing tail a later rewrite silently deletes
+    # (see chat_persistence._await_takeover_ordering_settled). Retryable 503:
+    # the writer holding the ordering settles within its own lock deadline.
+    if SlotRegistry.takeover_ordering_pending(state, name):
+        if not await asyncio.to_thread(_await_takeover_ordering_settled, state, name):
+            return ResumeOutcome(
+                refusal=ResumeRefusal(
+                    "a save for this conversation is still settling; retry shortly",
+                    "takeover_ordering_unsettled",
+                    503,
+                )
+            )
 
     # Read the transcript BEFORE publishing the slot: this await would otherwise
     # expose an empty slot by name, and a concurrent append would land ahead of it.
