@@ -86,10 +86,13 @@ def test_every_resolved_transport_carries_the_flag():
     """
     import ast
     import inspect
+    import sys
 
     from kiro_crew.instances import ssh_tunnel_manager as mod
 
-    tree = ast.parse(inspect.getsource(mod))
+    tree = ast.parse(
+        "".join(inspect.getsource(sys.modules[name]) for name in (mod.__name__, *mod._OWNERS))
+    )
     built = [
         node
         for node in ast.walk(tree)

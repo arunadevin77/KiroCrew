@@ -136,6 +136,7 @@ after startup and a restart is still pending.
  |   |- validation.py       injection-safe ssh_host / remote_bin guards  |
  |   |- run_marker.py       <home>/run/gateway-<port>.bin launcher hint  |
  |   |- ssh_tunnel_manager  supervised ssh -N -L, probe, self-heal, refresh|
+ |   |- ssh_tunnel_manager_*  its owner modules (table below)            |
  |   +- diagnostics.py      ssh -> remote-dashboard -> local-forward ladder|
  +-----------------------------------------------------------------------+
         | ssh -N [-C] -L 127.0.0.1:<local>:127.0.0.1:<remote> <ssh_host>
@@ -159,6 +160,47 @@ Module responsibilities:
 | `ssh_tunnel_manager.py` | Supervises one tunnel child per instance — `ssh -N -L` or `aws ssm start-session` — with readiness wait, health probe, 2-tier self-heal, proactive token refresh, stored-token liveness probe, remote restart. One state machine, two forwarder shapes; the `fargate` method shares the SSM forwarder, and a headless crew mints nothing whatever its method (§16). An SSM child's stdout is captured and drained alongside stderr, because the close notice that names why a forward ended is printed there. |
 | `diagnostics.py` | Dependency-ordered failure probes; reports the first broken link. `diagnose_instance` (SSH ladder), `diagnose_instance_ssm` (SSM ladder) and `diagnose_instance_fargate` (ECS task ladder, §16). |
 | `handlers_instances.py` | Owner-only, enabled-gated, SEL-audited HTTP control plane. |
+
+`ssh_tunnel_manager.py` stays the import path, and `SshTunnelManager`'s behaviour lives in
+sibling `instances/ssh_tunnel_manager_*.py` owner modules, one responsibility each; new work
+goes to the owner of its responsibility. A member's body is a module-level function there
+whose first parameter is `self` (annotated `SshTunnelManager` for type checkers only, so
+`typing.get_type_hints` or `inspect.signature(eval_str=True)` on a bound member needs
+`SshTunnelManager` passed in through `localns`, and raises `NameError` without it), and
+the class binds it by name under one comment header per owner (`connect =
+_lifecycle.connect`, `staticmethod(...)` for a static method), ahead of `__init__`, the one
+member whose body stays in the class. Every member therefore stays an attribute of the one
+class: a patch of a method on the class or on an instance reaches every caller, a
+`SshTunnelManager.__new__` build works, and the manager's state stays on the instance. Each
+owner's docstring names the instance fields its members write and read. A bound member's
+`__qualname__` and `__module__` name its owner (no reader keys on them).
+
+A class an owner defines keeps `kiro_crew.instances.ssh_tunnel_manager` as its
+`__module__`, so a traceback and `gateway.log` name the path callers import it from.
+Introspection that follows `__module__` therefore resolves through the facade:
+`typing.get_type_hints` evaluates the class's annotations in the facade's namespace, which
+binds every name they spell (`TunnelState`, for `TunnelStatus`), and `inspect.getsource` on
+the class looks in `ssh_tunnel_manager.py`, which holds no class body, and raises `OSError`,
+so read a moved class's source from its owner module. The module-level helpers, constants and classes
+live in the owners: the facade keeps every import it had bound, and serves each moved
+definition from the owner that defines it, so a write through it reaches every owner binding
+the same object (`kiro_crew._facade_mirror`). Owners log under the
+`kiro_crew.instances.ssh_tunnel_manager` logger, import only owners listed before them in
+`_OWNERS`, and never import the facade at run time.
+`test/test_ssh_tunnel_manager_bindings.py` pins the member inventory, the binding and the
+reach.
+
+| Tunnel manager owner | Owns |
+|---|---|
+| `ssh_tunnel_manager_child_text.py` | the forwarder child's text contract: the loopback argv builders (`_build_ssh_tunnel_argv`, `_build_ssm_tunnel_argv`), the ssh and SSM stderr signals, the SSM stdout close-reason anchors (`_ssm_close_reason`), and the banner and stdout sanitizers |
+| `ssh_tunnel_manager_child.py` | supervising one forwarder child: `_SshTunnel` (spawn, readiness wait, health probe, stdout and stderr drains, exit errors, stop), `TunnelState`, `TunnelStatus` |
+| `ssh_tunnel_manager_peer.py` | requests over a connected crew's forward: resolving the forward and refusing one that moved, the far-end identity gate, the link-to-cookie exchange, `token_validates`, `proxy_request`, `send_session_bundle`, `peer_capability`, `peer_version`, `search_sessions_remote`, `ProxyRequestError` |
+| `ssh_tunnel_manager_transport.py` | reaching a crew and minting its credential: `_TransportParams`, `_Mint`, the per-transport timeouts, `_resolve_transport` and the chained resolver, the `/api/health` gateway-id probes (`_peer_identity`, `_peer_gateway_id`) and the cycle check, `_mint_for`, `_mint_through_parent` |
+| `ssh_tunnel_manager_ports.py` | who owns a local forward port: `_reserved_ports`, the lent-hop holds and `hop_ownership_violations`, the forwarder identity record, `_reclaim_orphan_forwarder` and `_verify_and_reclaim_forwarder` |
+| `ssh_tunnel_manager_tokens.py` | credential custody after a mint: `_store_token`, `_credential_forward_moved`, the proactive refresh loop, chained retirement, `get_token` and the TTL readers, and lending a credential to another pane (`mint_embed_token`) |
+| `ssh_tunnel_manager_lifecycle.py` | the manager-lock lifecycle: `connect`, `disconnect`, `_teardown_locked`, `reconfigure`, `shutdown`, the status readers, `apply_config`, `_persist_hint` |
+| `ssh_tunnel_manager_self_heal.py` | the two-tier self-heal: `_on_tunnel_exit`, `_recover_after`, `_rebuild`, `_recover`, `_mark_recovered` and the recovery tasks |
+| `ssh_tunnel_manager_remote_ops.py` | operations on a crew's own gateway: `diagnose`, `restart_remote`, `start_remote_update` and its version check |
 
 **The local forward port is allocated, not mirrored.** `connect()` takes a free
 loopback port from `PortAllocator` (from `tunnel_base_port`, skipping ports the
@@ -3274,7 +3316,7 @@ worth stating because those two fields arrive in the announcing pane's payload, 
 untrusted -- and an origin check cannot help, since the sender is the remote gateway the
 owner deliberately connected to and therefore holds the correct origin. What makes a
 forged value harmless is the branch, not a check on the value. In
-`ssh_tunnel_manager.py`: `_resolve_transport` returns `_resolve_chained_transport` as its
+`ssh_tunnel_manager_transport.py`: `_resolve_transport` returns `_resolve_chained_transport` as its
 FIRST branch whenever `via_instance_id` is set, that resolver builds its
 `_TransportParams` with `ssh_host=validate_ssh_host(parent.ssh_host)`, and the
 `via_instance_id` field's own declaration states the rule. The branch that reads

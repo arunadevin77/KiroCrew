@@ -27,6 +27,7 @@ import ast
 import asyncio
 import inspect
 import json
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -430,7 +431,12 @@ def test_no_direct_registry_write_in_async_frames() -> None:
         "get_last_active",
     }
     offenders: list[str] = []
-    for owner, call in _calls_in_async_frames(_module_tree(stm_mod)):
+    frames = [
+        found
+        for module in (stm_mod, *(sys.modules[name] for name in stm_mod._OWNERS))
+        for found in _calls_in_async_frames(_module_tree(module))
+    ]
+    for owner, call in frames:
         func = call.func
         if (
             isinstance(func, ast.Attribute)

@@ -115,7 +115,6 @@
 4478 src/kiro_crew/history_consolidation.py
 2128 src/kiro_crew/history_projection.py
 2038 src/kiro_crew/history_search.py
-6535 src/kiro_crew/instances/ssh_tunnel_manager.py
 4897 src/kiro_crew/kiro_prerequisite.py
 2007 src/kiro_crew/knowledge/ingestion.py
 3928 src/kiro_crew/llm_helpers.py

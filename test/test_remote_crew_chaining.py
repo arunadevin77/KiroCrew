@@ -2525,7 +2525,8 @@ class TestForgedHostIsNeverDialled:
         import pathlib as _p
 
         src = (
-            _p.Path(__file__).resolve().parents[1] / "src/kiro_crew/instances/ssh_tunnel_manager.py"
+            _p.Path(__file__).resolve().parents[1]
+            / "src/kiro_crew/instances/ssh_tunnel_manager_transport.py"
         ).read_text()
         fn = next(
             n
@@ -4032,10 +4033,16 @@ class TestChainedRepairPaths:
         import ast
         import pathlib
 
-        src = (
-            pathlib.Path(__file__).resolve().parents[1]
-            / "src/kiro_crew/instances/ssh_tunnel_manager.py"
-        ).read_text()
+        from kiro_crew.instances import ssh_tunnel_manager as mod
+
+        src = "".join(
+            (
+                pathlib.Path(__file__).resolve().parents[1]
+                / "src/kiro_crew/instances"
+                / f"{name.rpartition('.')[2]}.py"
+            ).read_text()
+            for name in (mod.__name__, *mod._OWNERS)
+        )
         tree = ast.parse(src)
 
         stores, deciders = [], []
@@ -4707,10 +4714,14 @@ class TestEveryPeerCallAwaitsItsCredential:
     @staticmethod
     def _manager_source() -> str:
         import inspect
+        import sys
 
         from kiro_crew.instances import ssh_tunnel_manager
 
-        return inspect.getsource(ssh_tunnel_manager)
+        return "".join(
+            inspect.getsource(sys.modules[name])
+            for name in (ssh_tunnel_manager.__name__, *ssh_tunnel_manager._OWNERS)
+        )
 
     def test_the_credential_builder_is_a_coroutine_function(self):
         import inspect
@@ -5144,10 +5155,14 @@ class TestAPeerRequestRefusesAForwardThatMovedUnderIt:
         pass every behavioural case here, since nothing in them moves a forward.
         """
         import inspect
+        import sys
 
         from kiro_crew.instances import ssh_tunnel_manager
 
-        source = inspect.getsource(ssh_tunnel_manager)
+        source = "".join(
+            inspect.getsource(sys.modules[name])
+            for name in (ssh_tunnel_manager.__name__, *ssh_tunnel_manager._OWNERS)
+        )
         helper = "self." + "_peer_headers_for" + "("
         resolve = "self." + "_peer_target" + "("
         lines = source.splitlines()

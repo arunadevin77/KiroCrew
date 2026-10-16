@@ -1495,7 +1495,7 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         "git_divergence.py::count_divergence_sync",
         "instances/diagnostics.py::_run_ok",
         "instances/diagnostics.py::_run_stdout",
-        "instances/ssh_tunnel_manager.py::start",
+        "instances/ssh_tunnel_manager_child.py::start",
         "instances/token_mint.py::mint_remote_token",
         "instances/token_mint.py::run_remote_kirocrew",
         # NOT a subprocess spawn: the AST heuristic matches ``asyncio.run`` in the

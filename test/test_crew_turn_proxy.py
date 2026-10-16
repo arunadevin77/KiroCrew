@@ -191,10 +191,14 @@ class TestAHeadlessCrewIsNotMintedFor:
         """Read from the source: the condition is what decides a live connect, and
         that seam is owned elsewhere, so the change is one condition per site."""
         import pathlib
+        import sys
 
         import kiro_crew.instances.ssh_tunnel_manager as mod
 
-        source = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+        source = "".join(
+            pathlib.Path(sys.modules[name].__file__).read_text(encoding="utf-8")
+            for name in (mod.__name__, *mod._OWNERS)
+        )
         assert source.count("not is_headless_provisioner(") == 2, (
             "both the connect mint and the self-heal prime must ask about the CREW; "
             "leaving one on the transport puts that path back where this one was"

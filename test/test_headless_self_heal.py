@@ -73,10 +73,14 @@ class TestTheHealingArmIsChosenByTheCrew:
 
     def test_the_tier_two_branch_asks_about_the_crew(self):
         import pathlib
+        import sys
 
         import kiro_crew.instances.ssh_tunnel_manager as mod
 
-        source = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+        source = "".join(
+            pathlib.Path(sys.modules[name].__file__).read_text(encoding="utf-8")
+            for name in (mod.__name__, *mod._OWNERS)
+        )
         assert (
             'if params.method == "fargate" or params.headless or params.is_chained:' in source
         ), "self-heal tier 2 still sends a headless crew down the re-mint arm"
@@ -168,10 +172,14 @@ class TestEverySiteThatAsksAboutTheCrewAsksTheRegistry:
     @staticmethod
     def _source() -> str:
         import pathlib
+        import sys
 
         import kiro_crew.instances.ssh_tunnel_manager as mod
 
-        return pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+        return "".join(
+            pathlib.Path(sys.modules[name].__file__).read_text(encoding="utf-8")
+            for name in (mod.__name__, *mod._OWNERS)
+        )
 
     def test_no_crew_question_is_left_on_the_transport_alone(self):
         source = self._source()
