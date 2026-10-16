@@ -8556,6 +8556,11 @@
       "quote": "Citar",
       "quote_hint": "Cita la selección en el redactor de esta conversación: tu respuesta va al chat principal"
     },
+    "lessonSaved": {
+      "saved": "Lección guardada: {{rule}}",
+      "updated": "Lección actualizada: {{rule}}",
+      "review": "Revisar lecciones"
+    },
     "selfChange": {
       "changed_display_name": "{{name}} cambió su nombre",
       "changed_description": "{{name}} actualizó su descripción",
