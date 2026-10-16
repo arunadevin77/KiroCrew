@@ -348,7 +348,12 @@ def _url_payload_command(n: int) -> str:
 #: spares an ordered alphabet and a data URI payload, the flag it sets, the one place pass 3
 #: reads it, and the two checks that tell those shapes from a key. No credential branch, gate
 #: verdict or other pass moved.
-_PACKAGE_LINE_BUDGET = 29_411
+#:
+#: Raised again, from 29,411, for the chat segment save: the link pass can hand
+#: back the addresses it replaced and the credential records take the per-delta
+#: ``defer_token_param``, so the save can check each value a streamed delta's
+#: redaction removed. No matcher moved.
+_PACKAGE_LINE_BUDGET = 29_420
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

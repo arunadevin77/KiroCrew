@@ -2881,6 +2881,8 @@ class _ChatSlot:
         "_closing",
         "credential_evidence",
         "segment_raw_text",
+        "segment_shown_sha",
+        "segment_removed",
         "segment_message_id",
         "key",
         "title",
@@ -3327,11 +3329,19 @@ class _ChatSlot:
         # ``security.credential_sources``.
         self.credential_evidence = CredentialEvidence()
         # The current segment's text as the model wrote it, before any
-        # redaction. The run loop redacts each streamed delta as it arrives,
-        # which removes a value whole-in-one-delta before the segment flush can
-        # describe it; the flush redacts THIS copy instead when it agrees with
-        # the redacted one. Memory only, never persisted, dropped at each flush.
+        # redaction. The run loop redacts each streamed delta on its own, which
+        # can leave pieces of a value a delta boundary cut; the flush saves THIS
+        # copy redacted as one text instead (``chat_runner._redact_segment``).
+        # Memory only, never persisted, dropped at each flush.
         self.segment_raw_text: str | None = ""
+        # The hash of the same segment as it streamed (each delta after its own
+        # redaction), and each value that redaction replaced, with its tag. The
+        # flush saves the raw copy redacted as one text only when the hash
+        # proves it is the copy of the streamed text, and keeps every one of
+        # these values out of it (``chat_runner._redact_segment``). Memory only,
+        # dropped with the raw copy.
+        self.segment_shown_sha = hashlib.sha256()
+        self.segment_removed: dict[str, str] = {}
         # The backend's id for the model message the current segment's text came
         # from (the last one seen). Written onto the segment's row as
         # ``meta["native_message_id"]`` at the flush, which drops it.

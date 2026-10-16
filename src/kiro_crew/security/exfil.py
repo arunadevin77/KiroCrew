@@ -1355,8 +1355,12 @@ def redact_exfiltration_urls_with_records(
     text: str,
     *,
     extra_exempt_hosts: frozenset[str] = frozenset(),
+    removed_out: list[tuple[str, str]] | None = None,
 ) -> tuple[str, list[str], list[dict]]:
     """Redact suspicious URLs and, in the SAME pass, describe each one.
+
+    ``removed_out``, when given, receives ``(address, placeholder)`` for every
+    address the pass replaced (memory only: never store, log or send it).
 
     ``extra_exempt_hosts`` joins the platform's exact-host exemption for this
     call: the hosts a reader allowed for one workspace from the dashboard
@@ -1415,9 +1419,12 @@ def redact_exfiltration_urls_with_records(
             continue
         warnings.append(warning)
         matched = match.group(0)
+        placeholder = f"{EXFILTRATION_REDACTION_TAG_PREFIX}{domain}]"
+        if removed_out is not None:
+            removed_out.append((matched, placeholder))
         # replace() rewrites every occurrence of this exact URL, and the loop can
         # revisit it, so the record set is keyed by the matched string.
-        result = result.replace(matched, f"{EXFILTRATION_REDACTION_TAG_PREFIX}{domain}]")
+        result = result.replace(matched, placeholder)
         if matched in seen:
             continue
         qmark = path_and_query.find("?")

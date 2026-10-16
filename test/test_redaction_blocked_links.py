@@ -538,9 +538,9 @@ class TestRecordsReachTheDisplayPath:
                 break
             body.append(ln)
         src = "\n".join(body)
-        assert "_redact_segment(slot, body)" in src
+        assert "_redact_segment(slot, turn.assistant_text)" in src
         assert "_segment_row_meta(slot, _blocked, _redactions)" in src
-        assert "redact_exfiltration_urls(body)" not in src
+        assert "redact_exfiltration_urls(" not in src
 
 
 class TestRecordsSurviveAReopenedSession:
