@@ -14,7 +14,7 @@ import { isLookPreviewFrame } from '../../utils/lookPreview'
 import { lookPreviewSlotDetail, lookPreviewSlots } from '../../utils/lookPreviewFixtures'
 import { resolveDefaultMemoryMode } from '../queryClient'
 import { TAB_ID } from '../tabId'
-import { takeSessionFolderNotice } from '../../lib/sessionFolderNotice'
+import { announceNotFiled, takeSessionFolderNotice } from '../../lib/sessionFolderNotice'
 import { activeLocale } from '../../i18n/format'
 import type { ClientTransport } from './transport'
 
@@ -131,7 +131,17 @@ export function createChatEndpoints({ post, put, del, patch, j, jAccepted, jfetc
         // No fresh session folder: the caller sets the project right after the
         // create, or opens a purpose-built chat that keeps the default project.
         ...(no_session_folder ? { no_session_folder: true } : {}),
-      }).then(j).then(takeSessionFolderNotice) as Promise<ChatSlot>
+      }).then(j).then(takeSessionFolderNotice).then((slot: ChatSlot) => {
+        // The session opened but was not filed into `folder_id` (the answered
+        // `folder_id` differs; the gateway logs why): every caller gets one
+        // warning, and the person sees the App shell's notice.
+        if (folder_id && slot?.key && slot.folder_id !== folder_id) {
+          // eslint-disable-next-line no-console -- the diagnostic record of a refused filing
+          console.warn('[createChatSlot] session opened outside its folder', slot.key, folder_id)
+          announceNotFiled({ key: slot.key, title: slot.title || title || '', folderId: folder_id })
+        }
+        return slot
+      }) as Promise<ChatSlot>
     },
     /** Inject silent background context into a slot — consumed on the next user
      * message. Used by the artifact companion chat to name the bound artifact so

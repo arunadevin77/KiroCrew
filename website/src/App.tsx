@@ -40,6 +40,7 @@ import { gcOrphanedStorage } from './utils/storageGc'
 import { useMetricsReadout, metricsSegment, MetricsCard, MetricsErrorNotice } from './shell/topbar/metricsReadout'
 import { Rocket, Bell, Code, RefreshCw, Package, Download, Hammer, XCircle, Check, AlertTriangle, X, Coins, Compass, LayoutGrid, Fullscreen, Menu, SquareTerminal, Bot, Smartphone, Search as SearchIcon, Plug, Unplug } from 'lucide-react'
 import { useFirstRunChapters, FirstRunChapters } from './shell/boot/firstRun'
+import { SessionNotFiledNotice } from './shell/SessionNotFiledNotice'
 import ErrorNotice from './components/ErrorNotice'
 import { PREVIEW_EXPAND_EVENT } from './components/WebPreviewPanel'
 import { useMobileConnect, MobileConnectDialog } from './shell/nav/mobileConnect'
@@ -2412,6 +2413,7 @@ export default function App() {
           <button onClick={() => dispatch(setAgentSwitchNotice(null))} aria-label={i18nT('app.dismiss')} className="text-muted hover:text-text leading-none p-0.5"><X className="lucide-inline w-4 h-4" /></button>
         </div>
       )}
+      <SessionNotFiledNotice />
 
       {/* Report a Problem — mounted by the nav rail's "Report issue" link. */}
       <ReportProblemModal open={reportProblemOpen} onClose={() => setReportProblemOpen(false)} />
