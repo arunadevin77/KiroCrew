@@ -1791,6 +1791,23 @@ class TestStopTurn:
         await mgr.close_all()
 
     @pytest.mark.asyncio
+    async def test_hard_stop_respawns_on_the_sessions_own_backend(self, cfg):
+        """A session started on a per-session backend is respawned on it, not
+        on the gateway default (a chat's backend pick survives a hard Stop)."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _, _ = await mgr.get_or_create("key1")
+        mgr.release("key1")
+        mgr._sessions["key1"].backend_override = "codex"
+        provider.cancel = AsyncMock(return_value="timeout")
+
+        with patch.object(mgr, "_eager_respawn", new_callable=AsyncMock) as mock_respawn:
+            await mgr.stop_turn("key1")
+            await asyncio.sleep(0)
+            mock_respawn.assert_awaited_once_with("key1", backend_override="codex")
+
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
     async def test_eager_respawn_failure_logged(self, cfg, caplog):
         """_eager_respawn swallows exceptions and logs at debug."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())

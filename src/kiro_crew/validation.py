@@ -4123,6 +4123,16 @@ SESSION_SET_MODEL_SCHEMA = ToolSchema(
     custom_validator=_validate_session_set_model,
 )
 
+SESSION_SET_BACKEND_SCHEMA = ToolSchema(
+    tool_name="session_set_backend",
+    fields=[
+        FieldSpec("target", str, required=True, max_len=MAX_SHORT_STRING),
+        # Not required: "" is the documented way back to the gateway default,
+        # and a required field refuses an empty string.
+        FieldSpec("backend", str, required=False, max_len=64),
+    ],
+)
+
 SESSION_RELOAD_SCHEMA = ToolSchema(
     tool_name="session_reload",
     fields=[
@@ -4523,6 +4533,7 @@ MCP_DASHBOARD_SCHEMAS: dict[str, ToolSchema] = {
     "session_retry": SESSION_RETRY_SCHEMA,
     "session_continue": SESSION_CONTINUE_SCHEMA,
     "session_set_model": SESSION_SET_MODEL_SCHEMA,
+    "session_set_backend": SESSION_SET_BACKEND_SCHEMA,
     "session_reload": SESSION_RELOAD_SCHEMA,
     "session_rename": SESSION_RENAME_SCHEMA,
     "session_generate_title": SESSION_GENERATE_TITLE_SCHEMA,

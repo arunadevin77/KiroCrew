@@ -2900,6 +2900,7 @@ class _ChatSlot:
         "_crew_log_pending_channel",
         "_reasoning_effort",
         "_effort_pick_gen",
+        "backend",
         "autocompact_pct",
         "turn_timeout_secs",
         "_turn_timeout_hydrated",
@@ -3248,6 +3249,10 @@ class _ChatSlot:
         # choice landed even when that choice returned to the level it saw.
         self._effort_pick_gen: int = 0
         self._reasoning_effort: str = ""
+        # The backend this chat runs on, spelled as a governance policy id
+        # (``"kiro"``, ``"codex"`` ...). "" = the gateway default. Read when the
+        # session is allocated (``chat_runner.slot_backend_override``).
+        self.backend: str = ""
         # Per-session auto-compact threshold override (percent). None = follow
         # the global session.autocompact_pct. Persisted with the slot and
         # re-seeded into the SessionManager after restore.
