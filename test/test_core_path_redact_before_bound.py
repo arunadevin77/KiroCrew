@@ -201,6 +201,7 @@ _SCANNED_MODULES = [
     # test_acp_client_tool_call_updates.py::test_credential_straddling_the_bound_is_still_redacted.
     "src/kiro_crew/acp/client.py",
     # The client's owner modules.
+    "src/kiro_crew/acp/client_class.py",
     "src/kiro_crew/acp/client_claude_seed.py",
     "src/kiro_crew/acp/client_claude_session.py",
     "src/kiro_crew/acp/client_lifecycle.py",
@@ -209,9 +210,11 @@ _SCANNED_MODULES = [
     "src/kiro_crew/acp/client_permissions.py",
     "src/kiro_crew/acp/client_seed_ownership.py",
     "src/kiro_crew/acp/client_spawn_env.py",
+    "src/kiro_crew/acp/client_start.py",
     "src/kiro_crew/acp/client_timeouts.py",
     "src/kiro_crew/acp/client_tool_events.py",
     "src/kiro_crew/acp/client_transport.py",
+    "src/kiro_crew/acp/client_turn.py",
     "src/kiro_crew/acp/client_turn_control.py",
     "src/kiro_crew/acp/client_usage.py",
     # The client's error formatter and classifiers, with their redactor calls.

@@ -185,7 +185,7 @@ def _emit_kiro_startup_metric(
     try:
         # circular import: importing get_recorder at module top would form a
         # config.loader -> ... -> metrics.provider -> config.loader cycle
-        # (same reason as the lazy import in acp/client.py's ensure_ready).
+        # (same reason as the lazy import in acp/client_start.py's ensure_ready).
         # Keep it lazy so provider is never loaded during config.loader's
         # import chain.
         from kiro_crew.metrics.provider import get_recorder
@@ -546,7 +546,7 @@ async def _start_kiro_runtime_impl(
                 # ``should_load`` permanently False — the file is never
                 # written for them — so every reopen would silently start a
                 # fresh session and drop the conversation. ``AcpClient``
-                # reads the same set for the same reason (client.py's
+                # reads the same set for the same reason (client_start.py's
                 # ``file_ok`` branch). KAS is named separately because it is
                 # NOT a member: adding it would change that client path too.
                 session_file = None

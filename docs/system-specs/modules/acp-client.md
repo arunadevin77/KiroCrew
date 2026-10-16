@@ -61,18 +61,24 @@ through it reaches every owner binding the same object (`kiro_crew._facade_mirro
 | `acp/client_tool_events.py` | tool-call frames: text chunk, tool call, update and refinement extraction with their provenance caches, the ACP-layer SEL audit record, the Pre/PostToolUse hook fires and the tool results read back from kiro-cli's session JSONL |
 | `acp/client_usage.py` | usage, metadata and compaction frames: usage and prompt-token updates, context-window metadata, claude and codex inline compaction and `wait_for_compaction` |
 | `acp/client_turn_control.py` | a turn controlled from outside it: kiro, claude, goose and opencode steers, cancel, slash commands and the turn-state queries callers poll |
+| `acp/client_start.py` | the session start: the spawn (kiro-cli's own arm, and every other host's plan through the launch tail both drivers share), the `initialize` handshake and its params, new, loaded, forked and substituted sessions, and `ensure_ready` |
+| `acp/client_turn.py` | the turn loop: sending the prompt, `_prompt_loop`, reading the prompt response, dispatching and processing frames, `send_message`, `send_message_stream` and `stream_events`, the tool-interrupted marker, OpenCode's deferred shell permission and the liveness consult |
+| `acp/client_class.py` | the class statement: the constructor, the properties, the class defaults, the member table that binds every owner's members, and the members that stay class-resident |
 | `acp/client_lifecycle.py` | the child after it is spawned: the stderr drain, process-tree tracking, kill, failed-start classification, state reset, the workspace and sandbox discards, re-binding a live process, and shutdown |
 
-`AcpClient` (its constructor, properties, class defaults and member table),
-`AcpRuntime` and `AcpSessionHandle` stay in their modules. `AcpClient` also keeps the
-three seed static methods that read the `AcpClient` global (`_settings_path_holds`,
-`_claim_pathname_if_ours`, `_restore_aside_without_clobber`), `is_process_alive` (the
-pid-reader ratchet counts its name) and, until the session-start owner lands,
-`_retire_liveness_state`. `acp/client.py` also keeps
-`_mise_which`, `_resolve_ssh_auth_sock` and `_resolve_spawn_env` (the spawn audit, the
-subprocess-encoding baseline and the cross-platform gate key them on this path),
-kiro-cli's own spawn arm, the session start, the turn loop, and whatever no owner row
-above names yet.
+The class statement sets `__module__ = "kiro_crew.acp.client"`, so reprs, pickles and
+`typing.get_type_hints` name the facade, and `acp/client.py` re-exports it:
+`kiro_crew.acp.client.AcpClient` is the same class object, and a patch of it reaches
+the class's own code. The class keeps the three seed static methods that read the
+`AcpClient` global (`_settings_path_holds`, `_claim_pathname_if_ours`,
+`_restore_aside_without_clobber`) and `is_process_alive` (the pid-reader ratchet counts
+its name). `AcpRuntime` and `AcpSessionHandle` stay in their modules. `acp/client.py`
+keeps `_mise_which`, `_resolve_ssh_auth_sock` and `_resolve_spawn_env` (the spawn audit,
+the subprocess-encoding baseline and the cross-platform gate key them on this path) and
+the compatibility facade. The session start reads `_resolve_spawn_env` as a global of
+its own module, which `acp/client.py` fills in right after defining it, because an
+owner never imports the facade; a patch through `kiro_crew.acp.client` reaches it
+through the mirror.
 
 New module-level code goes to the owner whose row above names its
 responsibility, not to `acp/client.py` or `acp/runtime.py`: stdio framing and
@@ -85,7 +91,7 @@ one host's launch knowledge to that host's adapter under `acp/harness/`. A moved
 name a test patches through its facade is
 forwarded in `_EXPORTS_BY_OWNER`, which `test_acp_refactor_facade.py` pins. New
 `AcpClient` behaviour goes to the client owner whose row names its responsibility,
-bound in the class under that owner's header, and a new timeout or turn budget to
+bound in the class (`acp/client_class.py`) under that owner's header, and a new timeout or turn budget to
 `acp/client_timeouts.py`.
 
 ## Native skill startup views

@@ -1454,7 +1454,7 @@ def read_effective_agent(source: object) -> str:
     :2408 passes the result into ``get_or_create``), so a slot set to ``default``
     can be served by ``kirocrew``. Recording the alias would attribute the turn
     to an agent that never ran. ``AcpClient`` stores what it was constructed with
-    on ``_agent`` (``acp/client.py:1270``), which is that resolved value — the
+    on ``_agent`` (``acp/client_class.py``, ``__init__``), which is that resolved value — the
     same "what actually ran" precedence used for the model. Never raises.
     """
     try:

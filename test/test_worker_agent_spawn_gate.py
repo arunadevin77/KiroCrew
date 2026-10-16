@@ -555,7 +555,7 @@ def test_the_harness_spawn_seam_is_reached_only_through_the_gated_owner():
                 continue
             invocations.append(f"{path.name}:{lineno}")
     assert sorted(name.split(":")[0] for name in invocations) == [
-        "client.py",
+        "client_start.py",
         "runtime.py",
     ], f"the spawn seam is invoked from an unexpected place: {invocations}"
     assert not any(issubclass(cls, HarnessAdapter) for cls in _PROCESS_ADAPTERS.values())

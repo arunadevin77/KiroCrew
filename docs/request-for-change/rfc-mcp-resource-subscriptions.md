@@ -152,7 +152,7 @@ carries the session key, the session type derived from it, the gateway process's
 sets the holder connection's caller from it (`src/kiro_crew/mcp_gateway/daemon/control.py`,
 `_caller_from_register` in `daemon/identity.py`). The session token does not need
 to survive a restart. It is minted per client in `AcpClient.__init__`
-(`mint_stub_session_token` in `claim.py`, called from `src/kiro_crew/acp/client.py`),
+(`mint_stub_session_token` in `claim.py`, called from `src/kiro_crew/acp/client_class.py`),
 so a session's kiro-cli started after a restart is a fresh client with a fresh
 token, and the daemon's token-to-caller bindings live only in the daemon process
 (`_TOKEN_BINDINGS` in `daemon/identity.py`) and are gone after a restart. What

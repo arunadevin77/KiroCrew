@@ -1792,7 +1792,7 @@ class TestDiscardReaping:
             # Model a real ACP provider: the tracked PID lives at
             # provider._client._pid AND the client records the pid's start
             # identity, exactly as AcpClient does after start
-            # (client.py: self._start_time = get_process_start_id(self._pid)).
+            # (client_start.py: self._start_time = get_process_start_id(self._pid)).
             # _sync_kill_provider verifies that recorded id against the live one
             # before signalling the root; a stand-in without it is refused as
             # unverifiable and the survivor would leak, which is not the
@@ -1830,7 +1830,7 @@ class TestDiscardReaping:
             # Mimic an ACP provider: the tracked PID lives at
             # provider._client._pid, and the client records that pid's start
             # identity the way AcpClient does after start
-            # (client.py: self._start_time = get_process_start_id(self._pid)).
+            # (client_start.py: self._start_time = get_process_start_id(self._pid)).
             # _sync_kill_provider re-verifies it before signalling the root.
             provider._client = SimpleNamespace(
                 _pid=proc.pid, _start_time=platform_compat.get_process_start_id(proc.pid)

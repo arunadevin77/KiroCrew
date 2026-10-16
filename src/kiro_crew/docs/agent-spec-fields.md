@@ -54,7 +54,7 @@ seam spawned (`src/kiro_crew/agent_sdk/provider_identity.py`,
 
 | Surface | Config | How the spec reaches it | Consequence |
 |---|---|---|---|
-| kiro-cli | `provider=acp`, `acp_backend="kiro"` | not at all — kiro-cli opens the file itself, named by `--agent <name>` on the spawn argv (`src/kiro_crew/acp/client.py`, `_spawn`) | the file IS the contract; an unknown key drops the whole spec |
+| kiro-cli | `provider=acp`, `acp_backend="kiro"` | not at all — kiro-cli opens the file itself, named by `--agent <name>` on the spawn argv (`src/kiro_crew/acp/client_start.py`, `_spawn`) | the file IS the contract; an unknown key drops the whole spec |
 | KAS | `provider=acp`, `acp_backend="kas"` (also the default when absent or `""`) | Crew parses it and projects it onto `_meta.kiro.customAgents` (`src/kiro_crew/acp/kas_agents.py`, `to_client_custom_agent`) | only fields with a wire slot survive |
 | Claude Code seam | `provider=claude_code` | not at all — nothing reads the spec | Crew injects the spec's effect into context itself (the `is_cc` branches) |
 | claude-agent-acp harness | `acp_backend="claude"` | not as a spec file — Crew projects field by field | `providers/mirrors/claude_code.py` is the per-field ruling; [How the other backends consume a spec](#how-the-other-backends-consume-a-spec) is the table |
@@ -96,7 +96,7 @@ answers are recorded.
 Four cases, and the difference between them is the whole answer:
 
 - **kiro-cli reads the file itself.** `--agent <name>` on the spawn argv
-  (`acp/client.py`, `_spawn`); Crew projects nothing. `registry.py` records it
+  (`acp/client_start.py`, `_spawn`); Crew projects nothing. `registry.py` records it
   as kind `native`.
 - **KAS gets a wire projection.** Crew parses the spec and sends it as
   `_meta.kiro.customAgents` (`acp/kas_agents.py`, `to_client_custom_agent`).
@@ -193,7 +193,7 @@ narrows a change to the authored file but cannot close one made and restored ins
 the spawn window, which is why a prepared view is preferred.
 
 1. Delivered ONLY when Crew governs the session's permission surface
-   (`_permission_surface_governed` in `acp/client.py`): Crew authored
+   (`_permission_surface_governed` in `acp/client_class.py`): Crew authored
    `<work_dir>/.claude/settings.local.json`, validated that file's current bytes
    as a byte-identical live sibling seed, or left a project-owned copy out of the
    session's setting sources. That file is this session's permission surface, and
@@ -881,7 +881,7 @@ fence requirement, the JSON-twin precedence, and which backends run the form.
 | the per-harness field rulings, and which backend has a mirror at all | `src/kiro_crew/providers/mirrors/` (`base.py`, `registry.py`, `identity.py`, `claude_code.py`, `codex.py`, `opencode.py`, `goose.py`) |
 | where a mirror runs at session establishment | `src/kiro_crew/acp/runtime.py` (`AcpRuntime._mirrored_session_mcp`), `src/kiro_crew/acp/client_mcp_array.py` (`AcpClient._resolve_session_mcp_servers`) |
 | `allowedTools` → `permissions` | `src/kiro_crew/acp/kas_permissions.py` |
-| `--agent` on the spawn argv, the freshness gate | `src/kiro_crew/acp/client.py` |
+| `--agent` on the spawn argv, the freshness gate | `src/kiro_crew/acp/client_start.py`, `src/kiro_crew/acp/client_spawn_env.py` |
 | `excludedTools` for Tool Search | `src/kiro_crew/agent_sdk/tool_search.py` |
 | the provider and backend axes | `src/kiro_crew/agent_sdk/provider_identity.py`, `src/kiro_crew/agent_sdk/backend_identity.py` |
 | Template pane GET / PATCH | `src/kiro_crew/dashboard/agent_admin/agent_detail.py` |

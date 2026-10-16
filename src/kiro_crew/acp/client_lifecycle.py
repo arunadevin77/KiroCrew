@@ -11,14 +11,15 @@ and a patch of the method on the class or on an instance reaches every caller.
 Instance fields written: ``_background_launches``, ``_bound_workspace_fd``, ``_buffer``,
 ``_cancel_grace_secs``, ``_cancel_ts``, ``_cancelled``, ``_channel_id``,
 ``_child_pids``, ``_claude_settings_authored``, ``_claude_settings_claim_unrevoked``,
-``_claude_settings_shared``, ``_claude_settings_written``, ``_fork_request``,
-``_kill_sent``, ``_last_activity``, ``_last_stop_reason``, ``_mcp_ref_spec``,
-``_mcp_report``, ``_mcp_report_frame_floor``, ``_oauth_emitted_servers``,
-``_opencode_denies_in_force``, ``_opencode_denies_unenforced``,
-``_opencode_native_mounts``, ``_pending_oauth_requests``,
-``_permission_surface_share_validated``, ``_pi_mcp_handoff``, ``_pi_mcp_server_names``,
-``_pid``, ``_process``, ``_process_instance``, ``_process_tree_confirmed_dead``,
-``_prompt_or_tool_seen``, ``_resume_session_id``, ``_resumed``, ``_sandbox_cleanup``,
+``_claude_settings_shared``, ``_claude_settings_written``, ``_consult_future``,
+``_fork_request``, ``_kill_sent``, ``_last_activity``, ``_last_stop_reason``,
+``_liveness_oracle``, ``_mcp_ref_spec``, ``_mcp_report``, ``_mcp_report_frame_floor``,
+``_oauth_emitted_servers``, ``_opencode_denies_in_force``,
+``_opencode_denies_unenforced``, ``_opencode_native_mounts``,
+``_pending_oauth_requests``, ``_permission_surface_share_validated``,
+``_pi_mcp_handoff``, ``_pi_mcp_server_names``, ``_pid``, ``_process``,
+``_process_instance``, ``_process_tree_confirmed_dead``, ``_prompt_or_tool_seen``,
+``_resume_session_id``, ``_resumed``, ``_sandbox_cleanup``,
 ``_session_harness_deny_rules``, ``_session_id``, ``_session_key``,
 ``_session_mcp_cache``, ``_session_mcp_snapshot``, ``_session_mcp_unhonoured``,
 ``_spawn_start_token``, ``_spawn_work_dir``, ``_spec_denied_tools``,
@@ -48,6 +49,7 @@ from kiro_crew.acp.client_timeouts import (
     _CANCEL_GRACE_SECS,
     _SUPPRESSED_STDERR_SUMMARY_INTERVAL_SECS,
 )
+from kiro_crew.acp.liveness import LivenessOracle, _consume_future_exception
 from kiro_crew.acp.mcp_session_report import McpSessionReport
 from kiro_crew.acp.runtime_process_tree import ChildRecord
 from kiro_crew.acp.transport_errors import (
@@ -953,3 +955,38 @@ async def shutdown(self: AcpClient) -> None:
             await self._discard_claude_settings_seed()
         finally:
             self._reset_state()  # untracks all PIDs (root + children)
+
+
+def _retire_liveness_state(self: AcpClient) -> None:
+    """Release the tracked consult and swap in a fresh, configured oracle.
+
+    Both boundaries that drop a movement baseline — turn start in
+    ``_prompt_loop`` under ``_turn_lock``, and process reset — retire rather
+    than ``reset()``,
+    and both must retire the future TOGETHER with the oracle. Their lifetimes
+    cannot diverge: if only the oracle were replaced, a walk wedged during the
+    previous turn would answer every later poll with "prior consult still in
+    flight", so the new turn never samples its own process and the 90s cutoff
+    completes it early — the truncation this gate exists to prevent.
+
+    Releasing the future costs at most one abandoned worker per boundary
+    instead of per silent read, which is the bound this gate is actually for.
+    A walk submitted through ``_consult_liveness_model_wait`` already carries a
+    retrieval callback from submission time, so its eventual exception is
+    consumed even though nobody awaits it any more; the consume/attach here
+    additionally covers a future that did not come from that path.
+
+    ``fresh()`` carries the configuration over: a default-constructed
+    replacement would silently repoint a caller-supplied /proc root, clock or
+    sampling interval. ``getattr`` because the low-level PID lifecycle tests
+    build clients with ``__new__``.
+    """
+    prior_consult = getattr(self, "_consult_future", None)
+    self._consult_future = None
+    if prior_consult is not None:
+        if prior_consult.done():
+            _consume_future_exception(prior_consult)
+        else:
+            prior_consult.add_done_callback(_consume_future_exception)
+    retiring = getattr(self, "_liveness_oracle", None)
+    self._liveness_oracle = retiring.fresh() if retiring is not None else LivenessOracle()

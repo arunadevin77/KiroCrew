@@ -205,7 +205,7 @@ def test_acp_client_keeps_its_own_comparison() -> None:
         "acp/client.py now imports the agent_sdk helper; that inverts the "
         "acp -> agent_sdk layering. If this is intended, remove this test."
     )
-    assert _constant_comparisons(SRC / "acp" / "client.py"), (
+    assert _constant_comparisons(SRC / "acp" / "client_class.py"), (
         "acp/client.py no longer compares the constant itself; if its check "
         "moved, this test is stale"
     )

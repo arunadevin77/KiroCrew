@@ -718,7 +718,7 @@ class TestAcpRuntimeLoadSession:
         monkeypatch.setattr(rt, "_send_and_await", _fake_send)
         await rt.load_session("/k/sid.json", "sid", cwd="/w", agent="kirocrew")
 
-        # Mirror of AcpClient's kiro-branch load_params (client.py step 2).
+        # Mirror of AcpClient's kiro-branch load_params (client_start.py step 2).
         # Direct managed tools retain per-session caller attribution on resume;
         # the pooled case is covered by test_load_session_redeclares_pooled_stubs.
         servers = captured["mcpServers"]

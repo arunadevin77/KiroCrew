@@ -428,9 +428,8 @@ def test_the_dispatch_path_flags_the_notice_chunk_it_forwards() -> None:
     Pinned in source because the yield sits inside a very long async generator,
     and the regression is exactly the flag going missing from the call.
     """
-    src = (
-        pathlib.Path(__file__).resolve().parents[1] / "src" / "kiro_crew" / "acp" / "client.py"
-    ).read_text(encoding="utf-8")
+    acp_dir = pathlib.Path(__file__).resolve().parents[1] / "src" / "kiro_crew" / "acp"
+    src = "".join(p.read_text(encoding="utf-8") for p in sorted(acp_dir.glob("client*.py")))
     assert re.search(
         r"yield AcpEvent\(\s*kind=kind,\s*text=chunk,\s*control_notice=_notice_chunk\b", src
     ), "the forwarded chunk must carry the notice flag"
