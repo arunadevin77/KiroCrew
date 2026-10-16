@@ -4249,6 +4249,26 @@ class DashboardConfig:
             "here. Suffixes and wildcards are not matched.",
         ),
     )
+    bitbucket_server_hosts: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Bitbucket Server Hosts",
+            "Exact hostnames (optionally host:port) of Bitbucket Server or "
+            "Bitbucket Data Center instances whose pull-request URLs the "
+            "Changes panel and session source links may read, read-only, over "
+            "the instance's REST API. Empty = none (deny-by-default): a "
+            "/projects/KEY/repos/SLUG/pull-requests/N URL is only fetched when "
+            "its host is an exact member of this list. Suffixes and wildcards "
+            "are not matched, and bitbucket.org is never a Bitbucket Server "
+            "host. A host that is also listed in gitlab_hosts, jira_hosts or "
+            "github_hosts is refused. The gateway sends an HTTP access token "
+            "only to the listed host it belongs to: the vault secret "
+            "BITBUCKET_SERVER_TOKEN serves a single listed host, and "
+            "BITBUCKET_SERVER_TOKEN_<HEX> (the host's hex encoding, as the "
+            "panel's setup message names it) serves one host of several. "
+            "Without a token the read is anonymous.",
+        ),
+    )
     jira_auth: list[JiraAuthEntry] = field(
         default_factory=list,
         metadata=_meta(
@@ -6840,6 +6860,35 @@ def _coerce_github_hosts(raw: object, *, claimed: Iterable[str] = ()) -> list[st
             logger.warning(
                 "dashboard.github_hosts entry %r is also listed in gitlab_hosts or "
                 "jira_hosts; it is ignored as a GitHub Enterprise host",
+                host,
+            )
+            continue
+        out.append(host)
+    return out
+
+
+#: Bitbucket Cloud hosts. Cloud has its own API and is never a Server instance.
+_BITBUCKET_CLOUD_HOSTS = frozenset({"bitbucket.org", "www.bitbucket.org", "api.bitbucket.org"})
+
+
+def _coerce_bitbucket_server_hosts(raw: object, *, claimed: Iterable[str] = ()) -> list[str]:
+    """Coerce the Bitbucket Server allowlist to clean ``host[:port]`` entries.
+
+    Entries follow the self-hosted GitLab grammar (see :func:`_coerce_gitlab_hosts`),
+    ports included, because Server commonly listens on a non-default port. A
+    Bitbucket Cloud host is dropped: Cloud speaks a different API. ``claimed``
+    holds the hosts another provider allowlist already owns; such an entry is
+    refused with a warning so this list never changes how those resolve.
+    """
+    taken = set(claimed)
+    out: list[str] = []
+    for host in _coerce_gitlab_hosts(raw):
+        if host in _BITBUCKET_CLOUD_HOSTS:
+            continue
+        if host in taken:
+            logger.warning(
+                "dashboard.bitbucket_server_hosts entry %r is also listed in gitlab_hosts, "
+                "jira_hosts or github_hosts; it is ignored as a Bitbucket Server host",
                 host,
             )
             continue

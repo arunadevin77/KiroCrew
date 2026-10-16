@@ -622,6 +622,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     jiraSourceHosts,
     jiraSourceHostsRef,
     githubSourceHostsRef,
+    bitbucketServerSourceHostsRef,
     panelSources,
     panelIssues,
     selectedSourceUrl,
@@ -1245,7 +1246,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     sidebarOnScreen, flyoutTriggerRef, flyoutSurfaceRef, flyoutEligible, flyout, expandFrom, expandSidebar,
   } = useSessionsDrawer({
     embedded, embedMode, dispatch, navigate, navigationType, location, isMobile, filteredSlots, activeSlot, splitMode, crewWindow, activityOpen, showActionError, githubSourceHostsRef, hasBrowserTab,
-    hasLiveAppTab, jiraSourceHostsRef, search, selectSource, setRevealedSources, sourceHostsRef, tabsCtl, drawerPopRef, chatFolders, setSidebarPinned, sidebarPinned, sidebarPinnedRef,
+    hasLiveAppTab, jiraSourceHostsRef, bitbucketServerSourceHostsRef, search, selectSource, setRevealedSources, sourceHostsRef, tabsCtl, drawerPopRef, chatFolders, setSidebarPinned, sidebarPinned, sidebarPinnedRef,
     sidebarAutoHidden, toggleAct,
   })
   const flyoutSwitch = useCallback((key: string) => {

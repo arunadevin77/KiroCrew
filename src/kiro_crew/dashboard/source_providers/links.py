@@ -188,14 +188,82 @@ def _jira_ref(host: str, path: str) -> SourceRef:
     return SourceRef("jira", normalized, host, "", project_key, int(number_text), kind="issue")
 
 
+# Bitbucket Server keeps a pull request at
+# ``<context>/projects/KEY/repos/SLUG/pull-requests/N``, optionally followed by
+# the UI tab the link was copied from. Split on "/" and matched from the end, so
+# no pattern backtracks over an operator-chosen context path.
+_BITBUCKET_SERVER_TABS = frozenset({"overview", "diff", "commits", "builds"})
+# A URL path separator, the same on every OS.
+_URL_PATH_SEPARATOR = "/"
+_BITBUCKET_SERVER_KEY_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,127}")
+_BITBUCKET_SERVER_SLUG_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
+_BITBUCKET_SERVER_CONTEXT_SEGMENT_RE = re.compile(r"[A-Za-z0-9._~-]{1,64}")
+_BITBUCKET_SERVER_URL_HINT = (
+    "Expected a Bitbucket Server URL like "
+    "https://<host>/projects/KEY/repos/repo/pull-requests/123."
+)
+
+
+def _bitbucket_server_ref(host: str, path: str) -> SourceRef:
+    """Build a Bitbucket Server ``SourceRef`` for an already-authorized host.
+
+    ``owner`` is the project key, ``repo`` the repository slug, and ``project``
+    the instance's context path (``""`` at the root, ``/bitbucket`` behind a
+    reverse proxy), so two instances sharing one host keep distinct identities
+    and every REST call is built under the same context path the link used.
+    The canonical URL drops the UI tab suffix.
+    """
+    segments = path.split(_URL_PATH_SEPARATOR)
+    if len(segments) > 1 and segments[-1].lower() in _BITBUCKET_SERVER_TABS:
+        segments = segments[:-1]
+    if (
+        len(segments) < 7
+        or segments[0] != ""
+        or segments[-6] != "projects"
+        or segments[-4] != "repos"
+        or segments[-2] != "pull-requests"
+    ):
+        raise ValueError(_BITBUCKET_SERVER_URL_HINT)
+    key, slug, number_text = segments[-5], segments[-3], segments[-1]
+    context = segments[1:-6]
+    if (
+        not _BITBUCKET_SERVER_KEY_RE.fullmatch(key)
+        or not _BITBUCKET_SERVER_SLUG_RE.fullmatch(slug)
+        or slug in {".", ".."}
+        or not (number_text.isascii() and number_text.isdigit() and len(number_text) <= 15)
+        or int(number_text) <= 0
+        or len(context) > 8
+        or any(
+            segment in {".", ".."} or not _BITBUCKET_SERVER_CONTEXT_SEGMENT_RE.fullmatch(segment)
+            for segment in context
+        )
+    ):
+        raise ValueError(_BITBUCKET_SERVER_URL_HINT)
+    number = int(number_text)
+    prefix = "".join(f"/{segment}" for segment in context)
+    canonical_path = f"{prefix}/projects/{key}/repos/{slug}/pull-requests/{number}"
+    normalized = urlunparse(("https", host, canonical_path, "", "", ""))
+    return SourceRef(
+        contract.BITBUCKET_SERVER_PROVIDER,
+        normalized,
+        host,
+        key,
+        slug,
+        number,
+        project=prefix,
+        kind="change",
+    )
+
+
 def parse_source_url(raw_url: str) -> SourceRef:
     """Validate and normalize a supported pull/merge-request or issue URL.
 
     Public GitHub and gitlab.com are always accepted. A GitHub Enterprise or
     self-managed GitLab instance is accepted only when its exact ``host[:port]``
     appears in the operator's ``dashboard.github_hosts`` or
-    ``dashboard.gitlab_hosts`` allowlist, so browser input can never choose which
-    instance the credential-bearing CLI talks to.
+    ``dashboard.gitlab_hosts`` allowlist, and a Bitbucket Server pull request only
+    when its host is in ``dashboard.bitbucket_server_hosts``, so browser input can
+    never choose which instance a credential-bearing read talks to.
     Exact parsed-host checks prevent URLs that merely mention a trusted host in
     their path, query, or userinfo from reaching a provider CLI.
 
@@ -235,6 +303,11 @@ def parse_source_url(raw_url: str) -> SourceRef:
         return _github_ref(candidate, path)
     if host and candidate in hosts._allowed_gitlab_hosts():
         return _gitlab_ref(candidate, path)
+    # Bitbucket Server has no public default host, so it is recognized only
+    # through its allowlist. Config load refuses a host listed under two
+    # providers, so placing it after GitHub Enterprise and GitLab is a backstop.
+    if host and candidate in hosts._allowed_bitbucket_server_hosts():
+        return _bitbucket_server_ref(candidate, path)
 
     # Jira: Atlassian Cloud (``*.atlassian.net``) is recognized automatically --
     # the suffix is Atlassian-operated, so it identifies the product the way
@@ -258,8 +331,9 @@ def parse_source_url(raw_url: str) -> SourceRef:
         "Only github.com pull requests and issues (or those on a GitHub Enterprise "
         "host listed in dashboard.github_hosts), gitlab.com merge requests and "
         "issues, merge requests or issues on a GitLab host listed in "
-        "dashboard.gitlab_hosts, and Jira issues on *.atlassian.net or a host "
-        "listed in dashboard.jira_hosts are supported."
+        "dashboard.gitlab_hosts, pull requests on a Bitbucket Server host listed "
+        "in dashboard.bitbucket_server_hosts, and Jira issues on *.atlassian.net "
+        "or a host listed in dashboard.jira_hosts are supported."
     )
 
 

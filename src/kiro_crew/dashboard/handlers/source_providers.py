@@ -322,6 +322,9 @@ _OWNED_NAMES: dict[str, tuple[str, ...]] = {
         "_resolve_jira_token_from_vault",
         "SecretVault",
     ),
+    # Holds no name callers reach through this module; listed so the handler
+    # loads it, which installs the Bitbucket Server provider into the seam.
+    "bitbucket_server": (),
     "chip_status": (
         "_check_cache",
         "_CHECK_CACHE_MAX",

@@ -109,6 +109,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "gitlab_hosts",
             "jira_hosts",
             "github_hosts",
+            "bitbucket_server_hosts",
             "social_share_enabled",
             "decisions_enabled",
             "model_picker_hidden_models",
@@ -675,6 +676,8 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             # And for GitHub Enterprise: github.com is always recognized, any
             # other GitHub host only when the operator listed it.
             "github_hosts": list(cfg.dashboard.github_hosts),
+            # And for Bitbucket Server, which has no public default host at all.
+            "bitbucket_server_hosts": list(cfg.dashboard.bitbucket_server_hosts),
             # Read-only: the per-file upload ceiling (`dashboard.upload_max_mb`).
             # Both composers pre-check against it and name it in their refusal;
             # the upload handlers enforce it again server-side.

@@ -2,8 +2,8 @@
 
 The validated refs every entry point hands around, the full-change payload a
 provider returns, the protocol a downstream edition implements to add a provider,
-and the errors each layer raises. Only types and the URL bound live here, so
-every sibling can import this module and it imports none of them.
+and the errors each layer raises. Only types, the URL bound and a core provider id
+live here, so every sibling can import this module and it imports none of them.
 """
 
 from __future__ import annotations
@@ -23,6 +23,11 @@ from typing import Any, Protocol, TypedDict
 logger = logging.getLogger("kiro_crew.dashboard.handlers.source_providers")
 
 _MAX_URL_LENGTH = 2048
+
+#: The provider id of Bitbucket Server / Data Center pull requests. A core
+#: provider served through the registered-provider dispatch (see ``plugins``),
+#: so it is named here where every layer that routes on it can read it.
+BITBUCKET_SERVER_PROVIDER = "bitbucket_server"
 
 
 class SourceProviderError(RuntimeError):

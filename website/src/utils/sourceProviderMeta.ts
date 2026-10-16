@@ -81,9 +81,22 @@ const GITLAB_META: SourceProviderMeta = {
   capabilities: { checks: true, mergeState: true, resolveThreads: true, comment: true },
 }
 
+const BITBUCKET_SERVER_META: SourceProviderMeta = {
+  id: 'bitbucket_server',
+  displayName: 'Bitbucket Server',
+  refLabel: n => i18nT('components.pullRequestPanel.pr_number', { number: n }),
+  numberLabel: n => `#${n}`,
+  logo: null,
+  pullRequestWording: true,
+  // Read-only: the gateway serves the overview, files, comments and build
+  // status, and refuses every write for this provider.
+  capabilities: { checks: true, mergeState: false, resolveThreads: false, comment: false },
+}
+
 const BUILTIN_META: Readonly<Record<string, SourceProviderMeta>> = {
   github: GITHUB_META,
   gitlab: GITLAB_META,
+  bitbucket_server: BITBUCKET_SERVER_META,
 }
 
 /** Fail-closed defaults for a provider nothing has described: label it the way
