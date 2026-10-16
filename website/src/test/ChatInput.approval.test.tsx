@@ -183,7 +183,7 @@ describe('ChatInput approval flow', () => {
     const store = createTestStore(stateWithApproval())
     renderWithProviders(<ChatInput {...defaultProps} />, { store })
     fireEvent.click(screen.getByText('Trust'))
-    const timed = screen.getAllByRole('menuitem').find(b => b.textContent?.startsWith('Trust “ls /tmp” for an hour'))!
+    const timed = screen.getAllByRole('menuitem').find(b => b.textContent?.startsWith('Trust ls /tmp for an hour'))!
     fireEvent.click(timed)
     await waitFor(() => {
       expect(api.approveChatSlot).toHaveBeenCalledWith(
