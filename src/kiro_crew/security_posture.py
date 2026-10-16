@@ -2517,6 +2517,13 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         "slack/gateway_runtime/turn_approvals.py",
         "slack/gateway_runtime/update_apply.py",
         "slack/gateway_runtime/update_schedule.py",
+        # The owners composed into discord/transport_dispatch.py's class: they redact the
+        # spawn-approval prompt, the !compact result and the transcript's failure row, and
+        # that facade (no redactor call of its own) stays the registered "Discord direct
+        # send" sink for all of it, adding no egress path.
+        "discord/transport_dispatch_commands.py",
+        "discord/transport_dispatch_ledger.py",
+        "discord/transport_dispatch_spawn_approval.py",
         # Redaction of a LOG line or a diagnostic URL/token, not agent output on
         # its way to a user. These match the (deliberately broad) redactor regex
         # in the drift guard but are not egress paths.
