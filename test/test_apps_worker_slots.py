@@ -18,7 +18,7 @@ from kiro_crew.apps.worker_slots import (
     worker_trust_scope,
 )
 from kiro_crew.dashboard import chat_runner
-from kiro_crew.testing.wait import async_wait_until
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 
 class _Slot:
@@ -163,7 +163,7 @@ async def test_waiting_acquire_gets_the_slot_once_released():
     await asyncio.sleep(0)
     assert not waiter.done()
     await first.release()
-    second = await asyncio.wait_for(waiter, 5)
+    second = await await_until(waiter, what="the released worker slot")
     assert second.slot.key == "demo-2"
     await second.release()
 
@@ -190,7 +190,7 @@ async def test_raising_the_limit_wakes_a_waiter():
     )
     await asyncio.sleep(0)
     set_worker_slot_limit("demo", 2)
-    second = await asyncio.wait_for(waiter, 5)
+    second = await await_until(waiter, what="the raised worker-slot limit")
     await second.release()
     await first.release()
 
