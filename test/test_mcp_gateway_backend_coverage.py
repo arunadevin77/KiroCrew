@@ -579,6 +579,823 @@ class TestForwardFromStub:
         assert _frames(backend)[0]["params"] == {}
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("length", [4, 300], ids=["short-token", "long-token"])
+    async def test_a_cancelled_call_keeps_a_shared_progress_token_ambiguous(
+        self, length: int
+    ) -> None:
+        """s1 and s2 call a tool with the same progress token, and s1 cancels. The
+        cancelled call stays pending, marked, with its whole token, so the server's
+        late progress for that token still has two owners and reaches neither
+        stub, whatever the token's length."""
+        backend = _make_backend()
+        inboxes = [await backend.attach_stub(stub) for stub in ("s1", "s2")]
+        token = "t" * length
+        for stub, req_id in (("s1", 5), ("s2", 6)):
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": req_id, "method": "tools/call",
+                "params": {"name": "slow", "_meta": {"progressToken": token}},
+            })
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 5},
+        })
+        await backend._route_backend_line(_line({
+            "jsonrpc": "2.0", "method": "notifications/progress",
+            "params": {"progressToken": token, "progress": 1},
+        }))
+        assert all(inbox.empty() for inbox in inboxes), (
+            "the cancelled call's progress reached a stub"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_hung_backend_whose_only_call_was_cancelled_is_recycled(self) -> None:
+        """s1 cancels its only call, then the backend stops answering pings. The
+        cancelled call still says a request is outstanding, so the two-condition
+        rule recycles the backend as it would for any other old request."""
+        backend = _make_backend()
+        await backend.attach_stub("s1")
+        await backend.forward_from_stub("s1", {"method": "tools/call", "id": 5})
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 5},
+        })
+        now = time.monotonic() + backend_mod.HEARTBEAT_TIMEOUT_SECS + 1
+        backend._last_ping_response_mono = now - backend_mod.PING_STALE_SECS - 1
+        assert await backend._heartbeat_once(now) == "wedged"
+        assert "ping stale" in backend._dead_reason
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_first_subscribe_hands_its_verdict_to_the_parked_rider(
+        self,
+    ) -> None:
+        """Cancelling the subscribe that took a URI's lease must not strand the
+        stub parked behind it: the cancel is not forwarded, and the server's
+        verdict settles the lease under the rider's id, never the canceller's."""
+        backend = _make_backend()
+        inbox1 = await backend.attach_stub("s1")
+        inbox2 = await backend.attach_stub("s2")
+        for stub, req_id in (("s1", 1), ("s2", 9)):
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": req_id, "method": "resources/subscribe",
+                "params": {"uri": "file:///shared.txt"},
+            })
+        fid = next(f for f, p in backend._pending_requests.items() if p.resource_uri)
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        assert [f for f in _frames(backend) if f.get("method") == "notifications/cancelled"] == []
+        await backend._route_backend_line(_line({"jsonrpc": "2.0", "id": fid, "result": {}}))
+        assert await _drain(inbox2) == {"jsonrpc": "2.0", "id": 9, "result": {}}
+        assert inbox1.empty()
+        assert backend._lease_awaiting_grant == set()
+        assert backend._resource_subscriptions == {"file:///shared.txt": {"s2"}}
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_subscribe_does_not_age_a_healthy_backend_into_the_ceiling(
+        self,
+    ) -> None:
+        """s1 takes a URI's lease with a subscribe, s2 parks behind it, and s1
+        cancels. The server answers every subscribe it was not asked to cancel,
+        as one that honours MCP cancellation does. The verdict settles the lease
+        for s2, so a backend still answering pings is not recycled past the hard
+        ceiling."""
+        backend = _make_backend()
+        await backend.attach_stub("s1")
+        inbox2 = await backend.attach_stub("s2")
+        for stub, req_id in (("s1", 1), ("s2", 9)):
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": req_id, "method": "resources/subscribe",
+                "params": {"uri": "file:///shared.txt"},
+            })
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        cancelled = {
+            f["params"]["requestId"] for f in _frames(backend)
+            if f.get("method") == "notifications/cancelled"
+        }
+        for frame in _frames(backend):
+            if frame.get("method") == "resources/subscribe" and frame["id"] not in cancelled:
+                await backend._route_backend_line(
+                    _line({"jsonrpc": "2.0", "id": frame["id"], "result": {}})
+                )
+        later = time.monotonic() + backend_mod.HARD_WEDGE_CEILING_SECS + 1
+        backend._last_ping_response_mono = later
+        assert await backend._heartbeat_once(later) == "alive"
+        assert await _drain(inbox2) == {"jsonrpc": "2.0", "id": 9, "result": {}}
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_subscribe_the_server_never_answers_still_ages_out(
+        self,
+    ) -> None:
+        """A server that never answers the lease-taking subscribe still trips the
+        wedge ceiling after its client cancels, so the recycle answers the parked
+        rider instead of leaving it waiting for the backend's whole lifetime."""
+        backend = _make_backend()
+        await backend.attach_stub("s1")
+        await backend.attach_stub("s2")
+        for stub, req_id in (("s1", 1), ("s2", 9)):
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": req_id, "method": "resources/subscribe",
+                "params": {"uri": "file:///shared.txt"},
+            })
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        assert [p.stub_uuid for p in backend._pending_requests.values()] == ["s2"]
+        later = time.monotonic() + backend_mod.HARD_WEDGE_CEILING_SECS + 1
+        backend._last_ping_response_mono = later
+        assert await backend._heartbeat_once(later) == "wedged"
+
+    @pytest.mark.asyncio
+    async def test_a_late_grant_for_a_cancelled_subscribe_is_released_not_forwarded(
+        self,
+    ) -> None:
+        """With no rider, a grant that arrives after the cancel is used only to
+        release the lease upstream; the stub that cancelled gets no reply."""
+        backend = _make_backend()
+        inbox1 = await backend.attach_stub("s1")
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 1, "method": "resources/subscribe",
+            "params": {"uri": "file:///watched.txt"},
+        })
+        fid = next(f for f, p in backend._pending_requests.items() if p.resource_uri)
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        await backend._route_backend_line(_line({"jsonrpc": "2.0", "id": fid, "result": {}}))
+        assert inbox1.empty()
+        assert backend._resource_subscriptions == {}
+        assert backend._lease_awaiting_grant == set()
+        release = [f for f in _frames(backend) if f.get("method") == "resources/unsubscribe"]
+        assert len(release) == 1
+
+    @pytest.mark.asyncio
+    async def test_backend_gone_after_a_cancelled_first_subscribe_answers_every_rider(
+        self,
+    ) -> None:
+        """The rider that took over the cancelled subscribe and the rider still
+        parked behind it are each answered under their own id when the backend
+        goes away; the stub that cancelled is owed nothing and gets nothing."""
+        backend = _make_backend()
+        inbox1 = await backend.attach_stub("s1")
+        inbox2 = await backend.attach_stub("s2")
+        inbox3 = await backend.attach_stub("s3")
+        for stub, req_id in (("s1", 1), ("s2", 9), ("s3", 7)):
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": req_id, "method": "resources/subscribe",
+                "params": {"uri": "file:///shared.txt"},
+            })
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        await backend._broadcast_backend_gone("test: process exited")
+        second, third = await _drain(inbox2), await _drain(inbox3)
+        assert second["id"] == 9 and "error" in second
+        assert third["id"] == 7 and "error" in third
+        assert inbox1.empty()
+        assert backend._lease_awaiting_grant == set()
+        assert backend._lease_pending_riders == {}
+
+    @pytest.mark.asyncio
+    async def test_the_wedge_recycle_answers_the_rider_of_a_cancelled_subscribe(
+        self,
+    ) -> None:
+        """The cancelled subscribe the server never answers ages into the wedge
+        ceiling, and the recycle that follows answers the rider holding it."""
+        backend = _make_backend()
+        await backend.attach_stub("s1")
+        inbox2 = await backend.attach_stub("s2")
+        for stub, req_id in (("s1", 1), ("s2", 9)):
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": req_id, "method": "resources/subscribe",
+                "params": {"uri": "file:///shared.txt"},
+            })
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        later = time.monotonic() + backend_mod.HARD_WEDGE_CEILING_SECS + 1
+        backend._last_ping_response_mono = later
+        assert await backend._heartbeat_once(later) == "wedged"
+        verdict = await _drain(inbox2)
+        assert verdict["id"] == 9 and "error" in verdict
+        assert backend._lease_awaiting_grant == set()
+
+    @pytest.mark.asyncio
+    async def test_a_rider_parked_behind_a_replayed_subscribe_still_settles(
+        self,
+    ) -> None:
+        """A subscription replayed after a restart is the gateway's own request,
+        owned by the release sentinel, so no client cancel can match it; the
+        stub that parked behind it is answered with the server's verdict."""
+        backend = _make_backend()
+        await backend.attach_stub("s1")
+        inbox2 = await backend.attach_stub("s2")
+        await backend.replay_resource_subscriptions("s1", ["file:///shared.txt"])
+        await backend.forward_from_stub("s2", {
+            "jsonrpc": "2.0", "id": 9, "method": "resources/subscribe",
+            "params": {"uri": "file:///shared.txt"},
+        })
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        assert [p.stub_uuid for p in backend._pending_requests.values()] == [
+            backend_mod._RELEASE_STUB_SENTINEL
+        ]
+        await _settle_lease(backend)
+        assert await _drain(inbox2) == {"jsonrpc": "2.0", "id": 9, "result": {}}
+        assert backend._resource_subscriptions == {"file:///shared.txt": {"s1", "s2"}}
+        assert backend._lease_awaiting_grant == set()
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_final_unsubscribe_releases_and_drains_the_replacements(
+        self,
+    ) -> None:
+        """A cancelled final unsubscribe is not dropped: its release settles,
+        the stub that sent it stops being routed, nothing is replied to it, and
+        the subscribe parked behind the release takes the lease afresh."""
+        backend = _make_backend()
+        inbox1 = await backend.attach_stub("s1")
+        inbox2 = await backend.attach_stub("s2")
+        uri = "file:///shared.txt"
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 1, "method": "resources/subscribe",
+            "params": {"uri": uri},
+        })
+        await _settle_lease(backend)
+        await _drain(inbox1)
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 2, "method": "resources/unsubscribe",
+            "params": {"uri": uri},
+        })
+        await backend.forward_from_stub("s2", {
+            "jsonrpc": "2.0", "id": 9, "method": "resources/subscribe",
+            "params": {"uri": uri},
+        })
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 2},
+        })
+        assert [f for f in _frames(backend) if f.get("method") == "notifications/cancelled"] == []
+        await _settle_lease(backend)
+        assert inbox1.empty()
+        assert "s1" not in backend._resource_subscriptions.get(uri, set())
+        await _settle_lease(backend)
+        assert await _drain(inbox2) == {"jsonrpc": "2.0", "id": 9, "result": {}}
+        assert backend._resource_subscriptions == {uri: {"s2"}}
+        assert backend._lease_awaiting_grant == set()
+        assert backend._lease_awaiting_release == set()
+
+    @pytest.mark.asyncio
+    async def test_a_stub_cannot_resubscribe_over_its_own_cancelled_unsubscribe(
+        self,
+    ) -> None:
+        """Identity backend: a stub that cancels its own unsubscribe and
+        resubscribes while the release is still in flight is refused, as it is
+        when the unsubscribe is uncancelled. The release still settles, and it
+        takes the stub's grant caller with it, so the next subscribe starts
+        clean."""
+        backend = _make_backend()
+        backend.supports_caller_identity = True
+        caller = CallerContext(session_key="dashboard:1")
+        inbox1 = await backend.attach_stub("s1")
+        uri = "file:///watched.txt"
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 1, "method": "resources/subscribe",
+            "params": {"uri": uri},
+        }, caller=caller)
+        await _settle_lease(backend)
+        granted = await _drain(inbox1)
+        assert (granted["id"], granted["result"]) == (1, {})
+        assert backend._grant_callers == {(uri, "s1"): caller}
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 2, "method": "resources/unsubscribe",
+            "params": {"uri": uri},
+        }, caller=caller)
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 2},
+        })
+        upstream_before = len(_frames(backend))
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 3, "method": "resources/subscribe",
+            "params": {"uri": uri},
+        }, caller=caller)
+        assert len(_frames(backend)) == upstream_before, (
+            "the resubscribe was forwarded upstream past the in-flight guard"
+        )
+        refused = await _drain(inbox1)
+        assert refused["id"] == 3
+        assert "still in flight" in refused["error"]["message"]
+        await _settle_lease(backend)
+        assert inbox1.empty()
+        assert backend._grant_callers == {}
+        assert "s1" not in backend._resource_subscriptions.get(uri, set())
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 4, "method": "resources/subscribe",
+            "params": {"uri": uri},
+        }, caller=caller)
+        await _settle_lease(backend)
+        regranted = await _drain(inbox1)
+        assert (regranted["id"], regranted["result"]) == (4, {})
+        assert backend._resource_subscriptions == {uri: {"s1"}}
+        assert backend._grant_callers == {(uri, "s1"): caller}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "given_up", ["cancelled-subscribe", "retracted-subscribe", "cancelled-unsubscribe"]
+    )
+    async def test_a_resubscribe_behind_a_release_of_its_own_is_parked_then_granted(
+        self, given_up: str
+    ) -> None:
+        """Identity-less backend: s1 gives a lease request up, and a release
+        sent for s1 is in flight: the release of the late grant of a subscribe
+        s1 cancelled or retracted, or s1's own final unsubscribe, which s1
+        cancelled. s1 resubscribes meanwhile. The resubscribe is parked behind
+        the release, not refused; once the release settles, a fresh subscribe
+        takes the lease and its grant answers s1."""
+        backend = _make_backend()
+        inbox1 = await backend.attach_stub("s1")
+        uri = "file:///watched.txt"
+
+        async def send(req_id: int, method: str) -> None:
+            await backend.forward_from_stub("s1", {
+                "jsonrpc": "2.0", "id": req_id, "method": method,
+                "params": {"uri": uri},
+            })
+
+        async def cancel(req_id: int) -> None:
+            await backend.forward_from_stub("s1", {
+                "method": "notifications/cancelled", "params": {"requestId": req_id},
+            })
+
+        await send(1, "resources/subscribe")
+        if given_up == "cancelled-unsubscribe":
+            await _settle_lease(backend)
+            granted = await _drain(inbox1)
+            assert (granted["id"], granted["result"]) == (1, {})
+            await send(2, "resources/unsubscribe")
+            await cancel(2)
+        else:
+            if given_up == "cancelled-subscribe":
+                await cancel(1)
+            else:
+                await send(2, "resources/unsubscribe")
+                retracted, left = await _drain(inbox1), await _drain(inbox1)
+                assert retracted["id"] == 1 and "error" in retracted
+                assert left == {"jsonrpc": "2.0", "id": 2, "result": {}}
+            # The late grant routes nobody, so it is released.
+            await _settle_lease(backend)
+        assert backend._lease_awaiting_release == {uri}
+        upstream_before = len(_frames(backend))
+        await send(3, "resources/subscribe")
+        assert inbox1.empty(), "the resubscribe was refused, not parked behind the release"
+        assert len(_frames(backend)) == upstream_before
+        await _settle_lease(backend)
+        await _settle_lease(backend)
+        assert await _drain(inbox1) == {"jsonrpc": "2.0", "id": 3, "result": {}}
+        assert inbox1.empty()
+        assert backend._resource_subscriptions == {uri: {"s1"}}
+        assert backend._lease_awaiting_grant == set()
+        assert backend._lease_awaiting_release == set()
+
+    @pytest.mark.asyncio
+    async def test_a_resubscribe_cannot_overtake_its_own_cancelled_unsubscribe_of_an_untracked_uri(
+        self,
+    ) -> None:
+        """Identity-less backend: s1 unsubscribes a URI nothing tracks, which is
+        forwarded with no release flag up, cancels it, and resubscribes before
+        the server answers it. The server applies frames in the order they were
+        written and answers a subscribe at once, so a resubscribe forwarded
+        beside the unsubscribe would be granted first and then unrouted by the
+        unsubscribe's success while the server holds the subscription. It is
+        refused instead, as when the unsubscribe is not cancelled; once that
+        settles, a resubscribe is granted and routed."""
+        backend = _make_backend()
+        inbox1 = await backend.attach_stub("s1")
+        uri = "file:///watched.txt"
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 1, "method": "resources/unsubscribe",
+            "params": {"uri": uri},
+        })
+        stray = next(f for f, p in backend._pending_requests.items() if p.resource_uri)
+        assert backend._lease_awaiting_release == set()
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 2, "method": "resources/subscribe",
+            "params": {"uri": uri},
+        })
+        # The unsubscribe was written first and removes nothing; a subscribe
+        # written after it takes the subscription and is answered before it.
+        held = False
+        for frame in _frames(backend):
+            if frame.get("method") == "resources/subscribe":
+                held = True
+                await backend._route_backend_line(
+                    _line({"jsonrpc": "2.0", "id": frame["id"], "result": {}}))
+        await backend._route_backend_line(_line({"jsonrpc": "2.0", "id": stray, "result": {}}))
+        routed = "s1" in backend._resource_subscriptions.get(uri, set())
+        assert routed == held, (
+            "the unsubscribe's answer unrouted a grant that had landed before it"
+        )
+        refused = await _drain(inbox1)
+        assert refused["id"] == 2
+        assert "still in flight" in refused["error"]["message"]
+        assert inbox1.empty()
+        await backend.forward_from_stub("s1", {
+            "jsonrpc": "2.0", "id": 3, "method": "resources/subscribe",
+            "params": {"uri": uri},
+        })
+        await _settle_lease(backend)
+        regranted = await _drain(inbox1)
+        assert (regranted["id"], regranted["result"]) == (3, {})
+        assert backend._resource_subscriptions == {uri: {"s1"}}
+
+    @staticmethod
+    async def _serve_lease_frames_in_order(
+        backend: Backend,
+        held: set[tuple[str, str]],
+        answered: set[str],
+        *,
+        refuse: frozenset[str] = frozenset(),
+        hold: frozenset[str] = frozenset(),
+        garble: frozenset[str] = frozenset(),
+        frames: Optional[int] = None,
+    ) -> None:
+        """Act as an identity server: apply and answer every subscribe and
+        unsubscribe the gateway wrote, in write order, holding one
+        subscription per URI and caller and releasing by caller. A forward id
+        in ``refuse`` is answered with an error and changes nothing; one in
+        ``hold`` is not answered, so the answers after it overtake it; one in
+        ``garble`` is applied but answered with neither result nor error; with
+        ``frames`` the server stops after that many answers."""
+        for _ in range(20 if frames is None else frames):
+            frame = next(
+                (
+                    f for f in _frames(backend)
+                    if f.get("method") in ("resources/subscribe", "resources/unsubscribe")
+                    and f.get("id") is not None and f["id"] not in answered
+                    and f["id"] not in hold
+                ),
+                None,
+            )
+            if frame is None:
+                return
+            answered.add(frame["id"])
+            key = (
+                frame["params"]["uri"],
+                json.dumps(frame["params"].get("_meta"), sort_keys=True),
+            )
+            reply: dict[str, Any] = {"jsonrpc": "2.0", "id": frame["id"], "result": {}}
+            if frame["id"] in refuse:
+                reply = {
+                    "jsonrpc": "2.0", "id": frame["id"],
+                    "error": {"code": -32603, "message": "refused"},
+                }
+            elif frame["method"] == "resources/subscribe":
+                held.add(key)
+            else:
+                held.discard(key)
+            if frame["id"] in garble:
+                reply = {"id": frame["id"]}
+            await backend._route_backend_line(_line(reply))
+        if frames is None:
+            raise AssertionError("the gateway kept writing lease frames")
+
+    @staticmethod
+    def _assert_routed_stubs_are_held(
+        backend: Backend, uri: str, held: set[tuple[str, str]]
+    ) -> None:
+        """Every stub the gateway routes for ``uri`` has its caller's
+        subscription on the server."""
+        for stub in sorted(backend._resource_subscriptions.get(uri, set())):
+            caller = backend._grant_callers[(uri, stub)]
+            meta = _inject_caller_meta({"params": {}}, caller)["params"]["_meta"]
+            assert (uri, json.dumps(meta, sort_keys=True)) in held, (
+                f"{stub} is routed for the URI, but the server holds no "
+                "subscription for its caller: a release landed after its grant"
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("how", "second", "waits"),
+        [
+            ("cancel", "s1", True),
+            ("cancel", "s2", True),
+            ("detach", "s2", True),
+            ("cancel", "s3", False),
+        ],
+        ids=["same-stub-retry", "same-session-stub", "after-detach", "other-session"],
+    )
+    async def test_a_resubscribe_cannot_overtake_the_release_of_an_unwanted_identity_grant(
+        self, how: str, second: str, waits: bool
+    ) -> None:
+        """Identity backend: a subscribe the gateway took over (its stub
+        cancelled it or detached) is released by caller if granted, so a later
+        subscribe as the same caller waits until that grant and its release
+        settle; otherwise the release lands after the new grant and removes it
+        on the server while the stub stays routed. s1 and s2 share a session
+        (one caller); s3 is another session's and is not held."""
+        backend = _make_backend()
+        backend.supports_caller_identity = True
+        uri = "file:///watched.txt"
+        callers = {"s1": "dashboard:1", "s2": "dashboard:1", "s3": "dashboard:2"}
+        inboxes = {stub: await backend.attach_stub(stub) for stub in callers}
+
+        async def subscribe(stub: str, req_id: int) -> None:
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": req_id, "method": "resources/subscribe",
+                "params": {"uri": uri},
+            }, caller=CallerContext(session_key=callers[stub]))
+
+        await subscribe("s1", 1)
+        if how == "cancel":
+            await backend.forward_from_stub("s1", {
+                "method": "notifications/cancelled", "params": {"requestId": 1},
+            })
+        else:
+            await backend.detach_stub("s1")
+        upstream_before = len(_frames(backend))
+        await subscribe(second, 2)
+        forwarded_at_once = len(_frames(backend)) > upstream_before
+        held: set[tuple[str, str]] = set()
+        answered: set[str] = set()
+        await self._serve_lease_frames_in_order(backend, held, answered)
+        self._assert_routed_stubs_are_held(backend, uri, held)
+        if waits:
+            assert not forwarded_at_once
+            refused = await _drain(inboxes[second])
+            assert refused["id"] == 2
+            assert "still settling" in refused["error"]["message"]
+            assert inboxes[second].empty()
+            await subscribe(second, 3)
+            await self._serve_lease_frames_in_order(backend, held, answered)
+        assert forwarded_at_once is not waits
+        granted = await _drain(inboxes[second])
+        assert (granted["id"], granted["result"]) == (3 if waits else 2, {})
+        assert backend._resource_subscriptions == {uri: {second}}
+        self._assert_routed_stubs_are_held(backend, uri, held)
+        if second != "s1":
+            assert inboxes["s1"].empty(), "the stub that gave its subscribe up was answered"
+
+    async def _two_stubs_of_one_session_subscribe(
+        self, backend: Backend, uri: str
+    ) -> tuple[dict[str, "asyncio.Queue[bytes]"], CallerContext]:
+        backend.supports_caller_identity = True
+        caller = CallerContext(session_key="dashboard:1")
+        inboxes = {stub: await backend.attach_stub(stub) for stub in ("s1", "s2")}
+        for stub, req_id in (("s1", 1), ("s2", 2)):
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": req_id, "method": "resources/subscribe",
+                "params": {"uri": uri},
+            }, caller=caller)
+        return inboxes, caller
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("how", "refused"),
+        [("cancel", False), ("detach", False), ("retract", False), ("cancel", True)],
+        ids=["cancel", "detach", "retract", "sibling-refused"],
+    )
+    async def test_a_release_waits_for_a_same_session_subscribe_already_in_flight(
+        self, how: str, refused: bool
+    ) -> None:
+        """Identity backend: s1 and s2 of one session both subscribe a URI, then s1
+        gives its subscribe up (a cancel, a detach, or an unsubscribe that retracts
+        it). s2's subscribe was on the wire before that, so nothing can hold it;
+        the release s1's grant would trigger waits for s2's verdict instead. A grant
+        needs no release: s2 stays routed and the server holds the caller's one
+        subscription. A refusal sends the release then, once."""
+        backend = _make_backend()
+        uri = "file:///watched.txt"
+        inboxes, caller = await self._two_stubs_of_one_session_subscribe(backend, uri)
+        sibling = next(f for f, p in backend._pending_requests.items() if p.stub_uuid == "s2")
+        if how == "cancel":
+            await backend.forward_from_stub("s1", {
+                "method": "notifications/cancelled", "params": {"requestId": 1},
+            })
+        elif how == "detach":
+            await backend.detach_stub("s1")
+        else:
+            await backend.forward_from_stub("s1", {
+                "jsonrpc": "2.0", "id": 3, "method": "resources/unsubscribe",
+                "params": {"uri": uri},
+            }, caller=caller)
+        held: set[tuple[str, str]] = set()
+        await self._serve_lease_frames_in_order(
+            backend, held, set(), refuse=frozenset({sibling} if refused else ())
+        )
+        self._assert_routed_stubs_are_held(backend, uri, held)
+        releases = [f for f in _frames(backend) if f.get("method") == "resources/unsubscribe"]
+        verdict = await _drain(inboxes["s2"])
+        assert verdict["id"] == 2
+        if refused:
+            assert "error" in verdict
+            assert backend._resource_subscriptions.get(uri, set()) == set()
+            assert held == set(), "the subscription s1's grant took is still held"
+            assert len(releases) == 1, f"{len(releases)} releases for one subscription"
+        else:
+            assert verdict["result"] == {}
+            assert backend._resource_subscriptions == {uri: {"s2"}}
+            assert held, "the server holds nothing for the caller s2 is routed for"
+            assert releases == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("verdict", ["granted", "refused"])
+    async def test_a_release_left_to_a_subscribe_that_is_then_given_up_is_sent_once(
+        self, verdict: str
+    ) -> None:
+        """The release s1's cancelled grant triggers is left to s2's subscribe, and
+        s2 then cancels that subscribe too. The gateway owns it now, so its grant,
+        or its refusal while s1's grant is still held, releases the caller's one
+        subscription once: nobody is routed and nothing is held."""
+        backend = _make_backend()
+        uri = "file:///watched.txt"
+        inboxes, _caller = await self._two_stubs_of_one_session_subscribe(backend, uri)
+        sibling = next(f for f, p in backend._pending_requests.items() if p.stub_uuid == "s2")
+        held: set[tuple[str, str]] = set()
+        answered: set[str] = set()
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        await self._serve_lease_frames_in_order(backend, held, answered, frames=1)
+        await backend.forward_from_stub("s2", {
+            "method": "notifications/cancelled", "params": {"requestId": 2},
+        })
+        await self._serve_lease_frames_in_order(
+            backend, held, answered,
+            refuse=frozenset({sibling} if verdict == "refused" else ()),
+        )
+        releases = [f for f in _frames(backend) if f.get("method") == "resources/unsubscribe"]
+        assert len(releases) == 1, f"{len(releases)} releases for one subscription"
+        assert backend._resource_subscriptions.get(uri, set()) == set()
+        assert held == set()
+        assert inboxes["s1"].empty() and inboxes["s2"].empty()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("subscribers", "overtake"),
+        [(("s1", "s3", "s2"), False), (("s1", "s2", "s3"), True)],
+        ids=["in-write-order", "s3-answered-before-s2"],
+    )
+    async def test_another_sessions_routed_stub_does_not_hold_back_an_owed_release(
+        self, subscribers: tuple[str, ...], overtake: bool
+    ) -> None:
+        """Identity backend: s1 and s2 of one session and s3 of another subscribe a
+        URI. s1 cancels, so the release its grant would send is left to s2's
+        subscribe; s3 is granted and routed, then s2 cancels too. s2's grant sends
+        that release once: s3's subscription is another caller's, so it does not
+        hold the release back, and the server keeps only s3's. The server answers in
+        write order when s3 subscribes between s1 and s2, and answers s3 before s2
+        when s3 subscribes last."""
+        backend = _make_backend()
+        backend.supports_caller_identity = True
+        uri = "file:///watched.txt"
+        sessions = {"s1": "dashboard:1", "s2": "dashboard:1", "s3": "dashboard:2"}
+        inboxes = {stub: await backend.attach_stub(stub) for stub in sessions}
+        for req_id, stub in enumerate(subscribers, start=1):
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": req_id, "method": "resources/subscribe",
+                "params": {"uri": uri},
+            }, caller=CallerContext(session_key=sessions[stub]))
+        sibling = next(f for f, p in backend._pending_requests.items() if p.stub_uuid == "s2")
+        held: set[tuple[str, str]] = set()
+        answered: set[str] = set()
+        await backend.forward_from_stub("s1", {
+            "method": "notifications/cancelled", "params": {"requestId": 1},
+        })
+        await self._serve_lease_frames_in_order(
+            backend, held, answered, hold=frozenset({sibling} if overtake else ()), frames=2
+        )
+        await backend.forward_from_stub("s2", {
+            "method": "notifications/cancelled",
+            "params": {"requestId": subscribers.index("s2") + 1},
+        })
+        await self._serve_lease_frames_in_order(backend, held, answered)
+        releases = [f for f in _frames(backend) if f.get("method") == "resources/unsubscribe"]
+        assert backend._resource_subscriptions == {uri: {"s3"}}
+        self._assert_routed_stubs_are_held(backend, uri, held)
+        assert len(held) == 1, "the server still holds a subscription nobody is routed for"
+        assert len(releases) == 1, f"{len(releases)} releases for one subscription"
+        granted = await _drain(inboxes["s3"])
+        assert (granted["id"], granted["result"]) == (subscribers.index("s3") + 1, {})
+        assert inboxes["s1"].empty() and inboxes["s2"].empty()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("how", "garbled"),
+        [("cancel", False), ("detach", False), ("cancel", True), ("detach", True)],
+        ids=["cancel-granted", "detach-granted", "cancel-unusable", "detach-unusable"],
+    )
+    async def test_a_taken_over_grant_is_released_beside_another_sessions_stub(
+        self, how: str, garbled: bool
+    ) -> None:
+        """Identity backend: s3 of one session is subscribed and routed. s1 of another
+        session subscribes, then cancels or detaches before the answer. The server
+        takes s1's subscribe and answers it with a grant, or with a reply carrying
+        neither result nor error. Nobody of s1's session wants it, so it is released
+        once; s3's subscription is another caller's and does not hold that back. The
+        server ends holding only s3's subscription."""
+        backend = _make_backend()
+        backend.supports_caller_identity = True
+        uri = "file:///watched.txt"
+        inboxes = {stub: await backend.attach_stub(stub) for stub in ("s1", "s3")}
+        held: set[tuple[str, str]] = set()
+        answered: set[str] = set()
+        for stub, session in (("s3", "dashboard:2"), ("s1", "dashboard:1")):
+            await backend.forward_from_stub(stub, {
+                "jsonrpc": "2.0", "id": 1, "method": "resources/subscribe",
+                "params": {"uri": uri},
+            }, caller=CallerContext(session_key=session))
+            if stub == "s3":
+                await self._serve_lease_frames_in_order(backend, held, answered)
+        taken = next(f for f, p in backend._pending_requests.items() if p.stub_uuid == "s1")
+        if how == "cancel":
+            await backend.forward_from_stub("s1", {
+                "method": "notifications/cancelled", "params": {"requestId": 1},
+            })
+        else:
+            await backend.detach_stub("s1")
+        await self._serve_lease_frames_in_order(
+            backend, held, answered, garble=frozenset({taken} if garbled else ())
+        )
+        releases = [f for f in _frames(backend) if f.get("method") == "resources/unsubscribe"]
+        assert backend._resource_subscriptions == {uri: {"s3"}}
+        self._assert_routed_stubs_are_held(backend, uri, held)
+        assert len(held) == 1, "the server still holds a subscription nobody is routed for"
+        assert len(releases) == 1, f"{len(releases)} releases for one subscription"
+        granted = await _drain(inboxes["s3"])
+        assert (granted["id"], granted["result"]) == (1, {})
+        assert inboxes["s1"].empty()
+
+    @pytest.mark.asyncio
+    async def test_a_release_waits_for_a_same_caller_replay_in_flight(self) -> None:
+        """Identity backend, pooled respawn: A and B replay one URI as one caller and
+        C as another. A detaches, and the server answers C, then A, then B. A's grant
+        has nobody to route, and its release is left to B's replay, still in flight;
+        B's grant then routes B, so nothing is released. Every routed stub has its
+        caller's subscription on the server."""
+        backend = _make_backend()
+        backend.supports_caller_identity = True
+        uri = "file:///watched.txt"
+        p_caller = CallerContext(session_key="dashboard:1")
+        q_caller = CallerContext(session_key="dashboard:2")
+        for stub in ("A", "B", "C"):
+            await backend.attach_stub(stub)
+        for stub, caller in (("A", p_caller), ("B", p_caller), ("C", q_caller)):
+            await backend.replay_resource_subscriptions(stub, [uri], caller=caller)
+        replay = {p.replay_stub: f for f, p in backend._pending_requests.items()}
+        await backend.detach_stub("A")
+        held: set[tuple[str, str]] = set()
+        answered: set[str] = set()
+        serve = self._serve_lease_frames_in_order
+        await serve(backend, held, answered, hold=frozenset({replay["A"], replay["B"]}), frames=1)
+        await serve(backend, held, answered, hold=frozenset({replay["B"]}), frames=1)
+        await serve(backend, held, answered, frames=1)
+        await serve(backend, held, answered)
+        releases = [f for f in _frames(backend) if f.get("method") == "resources/unsubscribe"]
+        assert backend._resource_subscriptions == {uri: {"B", "C"}}
+        self._assert_routed_stubs_are_held(backend, uri, held)
+        assert len(held) == 2, "the server holds a subscription nobody is routed for"
+        assert not releases, f"{len(releases)} releases while B is routed"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["taken-over", "scoped-replay"])
+    async def test_a_release_waits_for_a_same_caller_subscribe_that_routes_nobody(
+        self, kind: str
+    ) -> None:
+        """Identity backend: s1 of one session is subscribed and routed. A subscribe
+        of the same caller for the URI that will route nobody is in flight: s2's,
+        which s2 cancelled (taken-over), or s2's respawn replay, scoped to release on
+        its grant by an eviction (scoped-replay). s1 detaches. Its release is left to
+        that subscribe, whose grant sends it, so the server gets one release for the
+        one subscription and ends holding nothing."""
+        backend = _make_backend()
+        backend.supports_caller_identity = True
+        uri = "file:///watched.txt"
+        caller = CallerContext(session_key="dashboard:1")
+        for stub in ("s1", "s2"):
+            await backend.attach_stub(stub)
+        held: set[tuple[str, str]] = set()
+        answered: set[str] = set()
+        subscribe = {"jsonrpc": "2.0", "method": "resources/subscribe", "params": {"uri": uri}}
+        await backend.forward_from_stub("s1", {**subscribe, "id": 1}, caller=caller)
+        await self._serve_lease_frames_in_order(backend, held, answered)
+        assert backend._resource_subscriptions == {uri: {"s1"}}
+        if kind == "taken-over":
+            await backend.forward_from_stub("s2", {**subscribe, "id": 2}, caller=caller)
+            await backend.forward_from_stub("s2", {
+                "method": "notifications/cancelled", "params": {"requestId": 2},
+            })
+        else:
+            await backend.replay_resource_subscriptions("s2", [uri], caller=caller)
+            await backend.evict_stub_subscriptions("s2")
+        await backend.detach_stub("s1")
+        await self._serve_lease_frames_in_order(backend, held, answered)
+        releases = [f for f in _frames(backend) if f.get("method") == "resources/unsubscribe"]
+        assert uri not in backend._resource_subscriptions
+        assert not held, "the server still holds a subscription nobody is routed for"
+        assert len(releases) == 1, f"{len(releases)} releases for one subscription"
+
+    @pytest.mark.asyncio
     async def test_broken_pipe_marks_backend_gone(self) -> None:
         backend = _make_backend()
         cast(Any, backend.stdin).write.side_effect = BrokenPipeError("epipe")

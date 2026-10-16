@@ -486,6 +486,7 @@ class Backend:
     attach_stub = _backend_stubs.attach_stub
     detach_stub = _backend_stubs.detach_stub
     _next_forward_id = _backend_stubs._next_forward_id
+    _hand_off_lease_request = _backend_stubs._hand_off_lease_request
     forward_from_stub = _backend_stubs.forward_from_stub
     served_tool_surface = _backend_stubs.served_tool_surface
     carry_served_tool_surface = _backend_stubs.carry_served_tool_surface
@@ -497,12 +498,14 @@ class Backend:
     cancel_in_flight_for_stub = _backend_stubs.cancel_in_flight_for_stub
     # The ``resources/subscribe`` lease broker of a shared ``Backend``: ``kiro_crew.mcp_gateway.backend_leases``.
     evict_stub_subscriptions = _backend_leases.evict_stub_subscriptions
+    _identity_lease_transition_unsettled = _backend_leases._identity_lease_transition_unsettled
     _handle_resource_subscription = _backend_leases._handle_resource_subscription
     _on_resource_subscription_response = _backend_leases._on_resource_subscription_response
     resource_subscription_uris = _backend_leases.resource_subscription_uris
     replay_resource_subscriptions = _backend_leases.replay_resource_subscriptions
     _stub_subscription_count = _backend_leases._stub_subscription_count
     _drain_replacement_subscribes = _backend_leases._drain_replacement_subscribes
+    _defer_identity_release = _backend_leases._defer_identity_release
     _release_upstream_subscriptions = _backend_leases._release_upstream_subscriptions
     _resource_update_targets = _backend_leases._resource_update_targets
     # The MCP ``initialize`` handshake of a ``Backend``: ``kiro_crew.mcp_gateway.backend_handshake``.
