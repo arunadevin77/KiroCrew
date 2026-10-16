@@ -791,6 +791,8 @@ class TestPrTimelineComesFromThreads(unittest.TestCase):
                     "body": "Looks good.",
                     "author_association": None,
                     "reactions": None,
+                    # The thread's id: a reply is posted into the thread.
+                    "thread_id": "1",
                 }
             ],
         )

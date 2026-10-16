@@ -2529,6 +2529,41 @@
           "source_native": "native",
           "source_inferred": "inferred",
           "open_here": "{{sigil}}{{number}} をここで開く"
+        },
+        "timelineComposer": {
+          "title": "コメントを追加",
+          "placeholder": "コメントを入力",
+          "replying_in_thread": "{{author}} が始めたスレッドに返信中",
+          "cancel_reply": "スレッドへの返信をキャンセル",
+          "comment_now": "コメント",
+          "reply_now": "返信",
+          "add_to_batch": "まとめて送信に追加",
+          "add_to_batch_hint": "このコメントを保留し、後で他のコメントとまとめて送信します",
+          "batch_full": "まとめて送信できるのは最大 {{max}} 件です",
+          "pending_heading": "保留中のコメント",
+          "new_comment": "コメント",
+          "edit": "編集",
+          "remove": "削除",
+          "discard_all": "すべて破棄",
+          "confirm_discard": "もう一度クリックして破棄",
+          "submit_batch": "まとめて送信",
+          "native_hint": "1 件のレビューとして公開されます",
+          "sequential_hint": "順番に投稿し、最初の失敗で停止します",
+          "batch_partial": "{{total}} 件中 {{posted}} 件を投稿しました。残りは保留中です: {{error}}",
+          "shortcut_hint": "Ctrl/⌘+Enter でコメント",
+          "shortcut_hint_batch": "Ctrl/⌘+Enter でまとめて送信に追加",
+          "reply": "返信",
+          "reply_in_thread_hint": "このスレッドに返信",
+          "quote_reply_hint": "このコメントを引用して新しいコメントを書く",
+          "cancel": "キャンセル",
+          "reply_placeholder": "{{author}} に返信…",
+          "reply_label": "{{author}} に返信",
+          "pending_badge": "保留中の返信"
+        },
+        "threads": {
+          "show_earlier_other": "以前の返信を {{count}} 件表示",
+          "replied_in_thread": "{{author}} が {{root}} のスレッドに返信しました",
+          "jump_to_reply": "この返信をスレッドで表示"
         }
       },
       "connectPanel": {

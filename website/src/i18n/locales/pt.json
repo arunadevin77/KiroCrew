@@ -2561,6 +2561,43 @@
           "source_native": "native",
           "source_inferred": "inferred",
           "open_here": "Abrir {{sigil}}{{number}} aqui"
+        },
+        "timelineComposer": {
+          "title": "Adicionar um comentário",
+          "placeholder": "Deixe um comentário",
+          "replying_in_thread": "Respondendo na conversa iniciada por {{author}}",
+          "cancel_reply": "Cancelar a resposta na conversa",
+          "comment_now": "Comentar",
+          "reply_now": "Responder",
+          "add_to_batch": "Adicionar ao lote",
+          "add_to_batch_hint": "Guardar este comentário e enviá-lo depois com os outros",
+          "batch_full": "Um lote comporta no máximo {{max}} comentários",
+          "pending_heading": "Comentários pendentes",
+          "new_comment": "Comentário",
+          "edit": "Editar",
+          "remove": "Remover",
+          "discard_all": "Descartar tudo",
+          "confirm_discard": "Clique novamente para descartar",
+          "submit_batch": "Enviar lote",
+          "native_hint": "Publicado como uma única revisão",
+          "sequential_hint": "Publicados em ordem; para na primeira falha",
+          "batch_partial": "{{posted}} de {{total}} publicados. O restante continua pendente: {{error}}",
+          "shortcut_hint": "Ctrl/⌘+Enter para comentar",
+          "shortcut_hint_batch": "Ctrl/⌘+Enter para adicionar ao lote",
+          "reply": "Responder",
+          "reply_in_thread_hint": "Responder nesta conversa",
+          "quote_reply_hint": "Citar este comentário em um novo comentário",
+          "cancel": "Cancelar",
+          "reply_placeholder": "Responder a {{author}}…",
+          "reply_label": "Responder a {{author}}",
+          "pending_badge": "Resposta pendente"
+        },
+        "threads": {
+          "show_earlier_one": "Mostrar {{count}} resposta anterior",
+          "show_earlier_many": "Mostrar {{count}} respostas anteriores",
+          "show_earlier_other": "Mostrar {{count}} respostas anteriores",
+          "replied_in_thread": "{{author}} respondeu no tópico de {{root}}",
+          "jump_to_reply": "Ver esta resposta no tópico"
         }
       },
       "connectPanel": {

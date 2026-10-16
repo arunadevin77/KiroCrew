@@ -58,6 +58,8 @@ from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.github_runner import apply_session_bus_address
 from kiro_crew.sel import sel
 
+from . import comment_batch
+from . import gitlab_comments as _comments
 from . import gitlab_normalization as _normalization
 from . import gitlab_transport as _transport
 from .errors import (
@@ -72,6 +74,7 @@ from .errors import RepoUrlError as RepoUrlError  # noqa: F401 — public re-exp
 from .errors import (
     sanitize_cli_stderr,
 )
+from .gitlab_comments import post_comment_batch, reply_to_comment_thread  # noqa: F401 — public API
 
 # Historical aliases, mirroring github_client so provider-agnostic callers can
 # use either module interchangeably (see errors.py for why these are aliases).
@@ -800,7 +803,7 @@ def _assemble_timeline(
     fetch. The issue timeline ignores the second element.
     """
     base = f"projects/{project_path(owner, repo)}/{kind}/{int(number)}"
-    notes = _rows(_glab_api(f"{base}/notes?order_by=created_at&sort=asc", host=host, timeout=timeout, paginate=True))
+    notes = _comments.discussion_notes(_glab_api, base, host=host, timeout=timeout)
     events: list[dict] = [e for e in (_norm_note(n) for n in notes) if e is not None]
 
     try:
@@ -864,6 +867,7 @@ def list_pr_timeline(
                 "path": position.get("new_path") or position.get("old_path"),
                 "line": position.get("new_line") or position.get("old_line"),
                 "url": None,
+                "thread_id": comment_batch.thread_id_or_none(note.get("discussion_id")),
             }
         )
     # A positioned note was already emitted as a plain "comment" by the shared

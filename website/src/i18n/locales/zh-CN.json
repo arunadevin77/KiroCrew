@@ -2441,6 +2441,41 @@
           "source_native": "native",
           "source_inferred": "inferred",
           "open_here": "在此打开 {{sigil}}{{number}}"
+        },
+        "timelineComposer": {
+          "title": "添加评论",
+          "placeholder": "发表评论",
+          "replying_in_thread": "正在回复 {{author}} 发起的讨论串",
+          "cancel_reply": "取消讨论串回复",
+          "comment_now": "评论",
+          "reply_now": "回复",
+          "add_to_batch": "加入批量",
+          "add_to_batch_hint": "暂存此评论，稍后与其他评论一起提交",
+          "batch_full": "一批最多 {{max}} 条评论",
+          "pending_heading": "待提交的评论",
+          "new_comment": "评论",
+          "edit": "编辑",
+          "remove": "移除",
+          "discard_all": "全部丢弃",
+          "confirm_discard": "再次点击以丢弃",
+          "submit_batch": "提交批量",
+          "native_hint": "作为一次评审发布",
+          "sequential_hint": "按顺序发布；遇到第一次失败即停止",
+          "batch_partial": "已发布 {{posted}}/{{total}} 条。其余仍待提交：{{error}}",
+          "shortcut_hint": "Ctrl/⌘+Enter 发表评论",
+          "shortcut_hint_batch": "Ctrl/⌘+Enter 加入批量",
+          "reply": "回复",
+          "reply_in_thread_hint": "在此讨论串中回复",
+          "quote_reply_hint": "在新评论中引用此评论",
+          "cancel": "取消",
+          "reply_placeholder": "回复 {{author}}…",
+          "reply_label": "回复 {{author}}",
+          "pending_badge": "待提交的回复"
+        },
+        "threads": {
+          "show_earlier_other": "显示较早的 {{count}} 条回复",
+          "replied_in_thread": "{{author}} 在 {{root}} 的讨论串中回复",
+          "jump_to_reply": "在讨论串中查看此回复"
         }
       },
       "connectPanel": {

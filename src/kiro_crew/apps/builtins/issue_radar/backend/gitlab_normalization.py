@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from .comment_batch import thread_id_or_none
+
 
 def _rows(data: object) -> list[dict]:
     """Coerce an API response into a list of dictionaries."""
@@ -213,6 +215,10 @@ def norm_note(note: dict, *, patterns: tuple[tuple[str, str], ...]) -> dict | No
             "body": body,
             "author_association": None,
             "reactions": None,
+            # The discussion the note belongs to, which is what a reply is posted
+            # into. The timeline reader reads discussions, not bare notes, because
+            # the notes endpoint does not say which discussion a note is in.
+            "thread_id": thread_id_or_none(note.get("discussion_id")),
         }
 
     low = body.lower()

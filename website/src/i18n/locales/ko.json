@@ -2529,6 +2529,41 @@
           "source_native": "native",
           "source_inferred": "inferred",
           "open_here": "{{sigil}}{{number}} 여기서 열기"
+        },
+        "timelineComposer": {
+          "title": "댓글 추가",
+          "placeholder": "댓글을 남겨 주세요",
+          "replying_in_thread": "{{author}}님이 시작한 스레드에 답글 작성 중",
+          "cancel_reply": "스레드 답글 취소",
+          "comment_now": "댓글 달기",
+          "reply_now": "답글",
+          "add_to_batch": "일괄 전송에 추가",
+          "add_to_batch_hint": "이 댓글을 보류했다가 나중에 다른 댓글과 함께 보냅니다",
+          "batch_full": "일괄 전송은 최대 {{max}}개 댓글까지 가능합니다",
+          "pending_heading": "보류 중인 댓글",
+          "new_comment": "댓글",
+          "edit": "편집",
+          "remove": "삭제",
+          "discard_all": "모두 버리기",
+          "confirm_discard": "버리려면 한 번 더 클릭",
+          "submit_batch": "일괄 전송",
+          "native_hint": "하나의 리뷰로 게시됩니다",
+          "sequential_hint": "순서대로 게시하며 첫 실패에서 멈춥니다",
+          "batch_partial": "{{total}}개 중 {{posted}}개를 게시했습니다. 나머지는 보류 중입니다: {{error}}",
+          "shortcut_hint": "Ctrl/⌘+Enter로 댓글 달기",
+          "shortcut_hint_batch": "Ctrl/⌘+Enter로 일괄 전송에 추가",
+          "reply": "답글",
+          "reply_in_thread_hint": "이 스레드에 답글",
+          "quote_reply_hint": "이 댓글을 인용해 새 댓글 작성",
+          "cancel": "취소",
+          "reply_placeholder": "{{author}}에게 답글…",
+          "reply_label": "{{author}}에게 답글",
+          "pending_badge": "대기 중인 답글"
+        },
+        "threads": {
+          "show_earlier_other": "이전 답글 {{count}}개 보기",
+          "replied_in_thread": "{{author}}님이 {{root}}님의 스레드에 답글을 남겼습니다",
+          "jump_to_reply": "스레드에서 이 답글 보기"
         }
       },
       "connectPanel": {

@@ -399,6 +399,11 @@ export interface TimelineEvent {
   path?: string | null
   line?: number | null
   url?: string | null
+  // comment / review_comment — the opaque reply handle (GitHub: root inline review
+  // comment id; GitLab: discussion id; Azure DevOps: PR thread id). Absent or null
+  // when the comment cannot be replied to in a thread, e.g. a GitHub conversation
+  // comment; the timeline then falls back to a quote-reply.
+  thread_id?: string | null
 }
 
 export interface IssueDetailResponse {
@@ -557,6 +562,25 @@ export interface PrReviewResponse {
   id: number | null
   state: string | null
   submitted_at: string | null
+}
+
+/** One comment of a timeline batch: a new top-level comment, or a reply into the
+ * thread `thread_id` names. */
+export interface CommentBatchItem {
+  body: string
+  thread_id: string | null
+}
+
+/** `POST /comments`. `posted` lists the items that reached the forge by their index
+ * in the request; `failed` names the first item that did not (later items were not
+ * attempted). */
+export interface CommentBatchResponse {
+  owner: string
+  repo: string
+  number: number
+  target: 'issue' | 'pull'
+  posted: { index: number; id: number | string | null; url: string | null }[]
+  failed: { index: number; error: string } | null
 }
 
 export interface PrCommentResponse {
@@ -1646,6 +1670,21 @@ export const issueRadarApi = {
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...repoBody(ref), number, body }),
+    })
+    if (!r.ok) throw new Error(await parseErrorBody(r))
+    return r.json()
+  },
+
+  /** Post timeline comments and replies on one issue or pull request. A single
+   * comment is a batch of one. */
+  postComments: async (
+    ref: RepoRef, number: number, target: 'issue' | 'pull', items: CommentBatchItem[],
+  ): Promise<CommentBatchResponse> => {
+    const r = await fetch(`${API}/comments`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...repoBody(ref), number, target, items }),
     })
     if (!r.ok) throw new Error(await parseErrorBody(r))
     return r.json()
