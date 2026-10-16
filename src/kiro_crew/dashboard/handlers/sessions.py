@@ -4036,9 +4036,11 @@ async def _clear_history_rows(
         failed,
         len(undeletable),
     )
+    # ``ok`` means nothing clearable was left behind: an undeletable row stays on
+    # disk exactly as a failed one does, so either one makes the clear partial.
     return web.json_response(
         {
-            "ok": failed == 0,
+            "ok": failed == 0 and not undeletable,
             "cleared": count,
             "skipped": skipped,
             "failed": failed,

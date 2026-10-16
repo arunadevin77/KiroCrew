@@ -9,7 +9,7 @@ import { useStore } from 'react-redux'
 import { useAppDispatch, useAppSelector } from '../store'
 import type { RootState } from '../store'
 import { useConnected } from '../hooks/useConnected'
-import { fetchHistory, deleteHistorySession, switchSlot } from '../store/chatSlice'
+import { fetchHistory, deleteHistorySession, switchSlot, clearHistorySessions } from '../store/chatSlice'
 import { api } from '../api/client'
 import { computeRecentRank, clampTintCount } from '../utils/recencyTint'
 import { useDndSensors } from '../hooks/useDndSensors'
@@ -734,7 +734,7 @@ function ChatSidebar({
   // allowlist names; the render owners call these.
   const deleteFolderWithConfirm = (folder: ChatFolder) => { if (confirm(i18nT('pages.chatSidebar.delete_folder_confirm', { name: folder.name }))) deleteFolderMutation.mutate(folder.id) }
   const deleteColumnWithConfirm = (columnId: string) => { if (confirm(i18nT('pages.chatSidebar.delete_this_column'))) deleteColumnMutation.mutate(columnId) }
-  const clearClosedSessionsWithConfirm = async () => { if (confirm(i18nT('pages.chatSidebar.clear_closed_sessions_active_tabs_and_pinned_ses'))) { await api.clearSessions(); dispatch(fetchHistory(false)) } }
+  const clearClosedSessionsWithConfirm = async () => { if (confirm(i18nT('pages.chatSidebar.clear_closed_sessions_active_tabs_and_pinned_ses'))) { await dispatch(clearHistorySessions()); dispatch(fetchHistory(false)) } }
   const deleteHistorySessionWithConfirm = (key: string) => { if (confirm(i18nT('pages.chatSidebar.are_you_sure_you_want_to_delete_this_history_ses'))) dispatch(deleteHistorySession(key)) }
 
   // Everything the render owners draw from, built after the last hook call. The

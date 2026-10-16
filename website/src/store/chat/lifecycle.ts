@@ -252,6 +252,46 @@ export const deleteHistorySession = createAsyncThunk<
   },
 )
 
+/** The Older Sessions "Delete all". It rejects with a value in BOTH failure
+ *  shapes, so the same `undeletableHistory` notice narrates them: a refused
+ *  request (`api.clearSessions` throws on any non-2xx, nothing was deleted),
+ *  and a 200 whose body says `ok: false` because some rows stayed on disk.
+ *  Titles are read from `history` HERE, before the refresh drops the rows
+ *  that did go. */
+export const clearHistorySessions = createAsyncThunk<
+  void,
+  void,
+  { rejectValue: HistoryDeleteRefusal }
+>(
+  'chat/clearHistorySessions',
+  async (_, { getState, rejectWithValue }) => {
+    let body: unknown
+    try {
+      body = await api.clearSessions()
+    } catch (e) {
+      const errBody = (e as { body?: unknown } | null)?.body
+      const code = parseErrorCode(typeof errBody === 'string' ? errBody : undefined) ?? ''
+      const report = findReport(e instanceof Error ? e.message : '')
+      const refusal: HistoryDeleteRefusal = { key: '', title: '', code, bulk: { left: null, cleared: 0, rows: [] } }
+      return rejectWithValue(report ? { ...refusal, report } : refusal)
+    }
+    const outcome = (body ?? {}) as { ok?: unknown; cleared?: unknown; failed?: unknown; undeletable?: unknown }
+    if (outcome.ok !== false) return
+    const history = (getState() as { chat: ChatState }).chat.history
+    const undeletable = Array.isArray(outcome.undeletable) ? outcome.undeletable : []
+    // Every entry counts as left behind; only one with an id can be named.
+    const rows = undeletable.flatMap(row => {
+      const { id, code } = (row ?? {}) as { id?: unknown; code?: unknown }
+      if (typeof id !== 'string' || !id) return []
+      const title = history.find(s => s.key === id)?.title ?? ''
+      return [{ key: id, title, code: typeof code === 'string' ? code : '' }]
+    })
+    const failed = typeof outcome.failed === 'number' && outcome.failed > 0 ? outcome.failed : 0
+    const cleared = typeof outcome.cleared === 'number' && outcome.cleared > 0 ? outcome.cleared : 0
+    return rejectWithValue({ key: '', title: '', code: '', bulk: { left: failed + undeletable.length, cleared, rows } })
+  },
+)
+
 export const historyNoticeReducers = {
   /** Dismiss the unresumable-surface notice (#5925). Deliberately does NOT
    *  clear `lastResumeRequestId`: that ordering token belongs to the resume
@@ -451,6 +491,14 @@ export function addLifecycleCases(builder: ActionReducerMapBuilder<ChatState>): 
     .addCase(deleteHistorySession.rejected, (state, action) => {
       // The row is deliberately NOT filtered out: the gateway kept the file,
       // so the sidebar must keep the row. Only the notice changes.
+      if (action.payload) state.undeletableHistory = action.payload
+    })
+    // "Delete all" shares the notice: a new attempt clears the last one, and a
+    // refused or partial clear sets it. The caller refetches history either way.
+    .addCase(clearHistorySessions.pending, (state) => {
+      state.undeletableHistory = null
+    })
+    .addCase(clearHistorySessions.rejected, (state, action) => {
       if (action.payload) state.undeletableHistory = action.payload
     })
 }

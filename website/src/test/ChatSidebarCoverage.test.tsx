@@ -671,10 +671,29 @@ describe('ChatSidebar — Older Sessions pane', () => {
 
   it('clears all closed sessions behind a confirmation', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    renderSidebar({ history: HISTORY })
+    const { store } = renderSidebar({ history: HISTORY })
     openHistory()
     fireEvent.click(screen.getByText('Delete all'))
     await waitFor(() => expect(mocks.clearSessions).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.sessions).toHaveBeenCalled())
+    expect(store.getState().chat.undeletableHistory).toBeNull()
+    confirmSpy.mockRestore()
+  })
+
+  // The gateway answers a partial clear with 200 and `ok: false`. A handler
+  // that only awaits the call reads that as success; the shortfall must reach
+  // the shared refused-delete notice.
+  it('reports a Delete all that left sessions behind', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mocks.clearSessions.mockResolvedValueOnce({
+      ok: false, cleared: 1, skipped: 0, failed: 2, undeletable: [],
+    })
+    const { store } = renderSidebar({ history: HISTORY })
+    openHistory()
+    fireEvent.click(screen.getByText('Delete all'))
+    await waitFor(() => expect(store.getState().chat.undeletableHistory).toEqual({
+      key: '', title: '', code: '', bulk: { left: 2, cleared: 1, rows: [] },
+    }))
     confirmSpy.mockRestore()
   })
 

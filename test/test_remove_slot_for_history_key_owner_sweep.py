@@ -534,7 +534,8 @@ class TestALinkedKeyMustNameItsOwnTranscript:
         resp = await api_sessions_clear(request)
 
         body = json.loads(resp.body.decode("utf-8"))
-        assert (resp.status, body["ok"], body["cleared"], body["skipped"]) == (200, True, 0, 0)
+        # A row left on disk makes the clear partial, so ``ok`` is false.
+        assert (resp.status, body["ok"], body["cleared"], body["skipped"]) == (200, False, 0, 0)
         assert body["undeletable"] == [{"id": history_key, "code": CRON_OWNERSHIP_UNKNOWN_CODE}]
         assert f"delete_session:{history_key}" not in log.calls
         assert CronService(base_dir=tmp_path).get_job(job.id).session_key == channel_key

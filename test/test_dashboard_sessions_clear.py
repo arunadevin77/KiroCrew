@@ -272,7 +272,7 @@ async def test_none_metadata_does_not_crash() -> None:
 
     assert status == 200
     assert body == {
-        "ok": True,
+        "ok": False,
         "cleared": 1,
         "skipped": 0,
         "failed": 0,
@@ -337,7 +337,7 @@ async def test_skips_session_when_metadata_raises() -> None:
 
     assert status == 200
     assert body == {
-        "ok": True,
+        "ok": False,
         "cleared": 1,
         "skipped": 0,
         "failed": 0,
@@ -512,7 +512,7 @@ async def test_skips_session_with_transient_unreadable_metadata() -> None:
     assert k_pinned not in deleted, "Pinned session with unreadable metadata was deleted!"
     assert deleted == [k_normal]
     assert body == {
-        "ok": True,
+        "ok": False,
         "cleared": 1,
         "skipped": 0,
         "failed": 0,

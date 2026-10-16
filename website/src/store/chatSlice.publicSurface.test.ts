@@ -56,6 +56,7 @@ const ACTION_CREATORS = [
 ]
 
 const THUNKS: Record<string, string> = {
+  clearHistorySessions: 'chat/clearHistorySessions',
   createSlot: 'chat/createSlot',
   deleteHistorySession: 'chat/deleteHistorySession',
   deleteSlot: 'chat/deleteSlot',
