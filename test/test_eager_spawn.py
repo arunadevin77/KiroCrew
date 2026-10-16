@@ -811,6 +811,12 @@ class TestProjectSetWiring:
         state = MagicMock(spec=DashboardState)
         state._slots = {slot.key: slot}
         state.push_slots_update = MagicMock()
+        # The arm guard probes the live session before arming the
+        # deferred reset; sessions is an instance attr spec= does not
+        # synthesize. A live provider makes the arm condition hold, so this
+        # test still exercises the eager-spawn wiring it is about.
+        state.sessions = MagicMock()
+        state.sessions.get_provider = MagicMock(return_value=object())
         app = web.Application()
         app["state"] = state
         app.router.add_post("/api/chat/slots/{slot}/project", api_chat_slot_project)

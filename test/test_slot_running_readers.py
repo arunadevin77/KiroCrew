@@ -145,6 +145,11 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("chat_api/turn_stop.py", "api_chat_slot_interrupt"),
                 ("chat_api/slot_model.py", "api_chat_slot_model"),
                 ("chat_api/slot_note.py", "api_chat_slot_note"),
+                # The project route arms a deferred reset when a start carrying
+                # the old cwd is already in flight; slot.running (the
+                # reservation) catches a cold-starting turn no provider has
+                # registered yet.
+                ("chat_api/session_relaunch.py", "api_chat_slot_project"),
                 ("chat_api/slot_effort.py", "api_chat_slot_reasoning_effort"),
                 # Reload refuses a reserved slot or sibling alias through
                 # _switch_target_busy, as the session_reload verb does.
