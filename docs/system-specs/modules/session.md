@@ -1971,16 +1971,35 @@ it sends nothing. Sequence:
    step 4 can return (`acked`, `timeout`, `error`, `no_turn`). This is
    fail-closed on purpose: on an unacknowledged outcome the dashboard warns that
    the session must not resume until idle, and a successor that runs anyway
-   still gets the cancelled prompt and partial output re-injected.
+   still gets the cancelled prompt and partial output re-injected. When the
+   dashboard retires the session instead (below), the flag goes with it.
 4. Send `session/cancel` via `provider.cancel(wait_ack_timeout=...)` on the exact
    provider object read in step 1, and return its outcome.
 
-Unlike `stop_turn()`, no outcome leads to `reset()`, a hard kill, or an eager
-respawn; an unacknowledged cancel leaves the runtime as it is. The caller bounds
+Unlike `stop_turn()`, `cancel_owned_turn` itself never leads to `reset()`, a hard
+kill, or an eager respawn. The reset belongs to the dashboard turn runner:
+`_run_chat` resets the session in its `finally` (the conversation survives, the
+next message starts a new runtime through `session/load`) when the ceiling's
+timer fired and the native stop ended `timeout`, `no_turn` or `error`
+(`turn_dispatch.ceiling_cut_unacknowledged()`), and when the ACP transport ends
+the turn with `stop_reason="timeout"`. An `acked` stop, or no owned native turn
+to stop, keeps the runtime. The caller bounds
 the whole call at `max(0.1, agent.soft_stop_budget_secs) + 0.5` seconds and maps
 an overrun to `timeout` and an exception to `error`. A Stop or shutdown that
 arrives while that bounded window is open waits for it to settle, and the turn
 then ends with the timeout error rather than a plain cancellation.
+
+The ceiling's cut is the wrapper's own observation, not a clock reading:
+`_bounded_turn` keeps one `_TurnCut` record per guarded turn, published in a
+context variable, and only its timer marks it fired, recording the native stop's
+outcome before it cancels the turn's task. An outside cancel the wrapper handles
+first (a closed tab, the idle sweep, shutdown) disarms the timer, so a turn that
+cancel ended is never read as the ceiling's and keeps its session. The
+transport-timeout arm saves the reply streamed so far as the interrupted reply,
+with the footer a finished reply gets, appends a notice that the turn hit its
+time limit, and sends the reply and then the notice through the end-of-turn legs
+to the linked surfaces (Slack, a channel such as Telegram) and their audience
+fences.
 
 ### Interrupted-turn context restore
 

@@ -328,6 +328,52 @@ class TestTimeoutCard:
         assert row["route"].startswith("/settings/chat/advanced")
 
 
+class TestCeilingCutPredicates:
+    """What the turn reads from the ceiling's record, outcome by outcome.
+
+    Both providers answer ``"no_turn"`` before ``cancel_session`` /
+    ``handle.cancel`` when they have no active native turn, and ``None`` is
+    ``cancel_owned_turn`` declining or no native cancel wired. ``"no_turn"`` is
+    unacknowledged, since nothing confirmed the turn's prompt ended; ``None`` is
+    a ceiling with no owned native turn of its own to retire.
+    """
+
+    @pytest.mark.parametrize(
+        "outcome, unacknowledged",
+        [
+            (None, False),
+            ("no_turn", True),
+            ("timeout", True),
+            ("error", True),
+            ("acked", False),
+        ],
+    )
+    def test_the_record_reads_as_unacknowledged(self, outcome, unacknowledged) -> None:
+        cut = td._TurnCut()
+        cut.fired = True
+        cut.native_cancel_outcome = outcome
+        previous = td._TURN_CUT.get()
+        td._TURN_CUT.set(cut)
+        try:
+            assert td.ceiling_cut_unacknowledged() is unacknowledged
+        finally:
+            td._TURN_CUT.set(previous)
+
+    def test_a_timer_that_never_fired_is_not_a_cut(self) -> None:
+        cut = td._TurnCut()
+        cut.native_cancel_outcome = "timeout"
+        previous = td._TURN_CUT.get()
+        td._TURN_CUT.set(cut)
+        try:
+            assert td.ceiling_cut_unacknowledged() is False
+        finally:
+            td._TURN_CUT.set(previous)
+
+    def test_outside_a_guarded_turn_is_not_a_cut(self) -> None:
+        assert td._TURN_CUT.get() is None
+        assert td.ceiling_cut_unacknowledged() is False
+
+
 class TestFinishTurnTask:
     @pytest.mark.asyncio
     async def test_cancel_before_first_loop_step_closes_the_unclaimed_turn(self) -> None:
