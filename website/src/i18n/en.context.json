@@ -754,6 +754,7 @@
     "pages.chatPage.short_name_started": "Date label on each row of the list below pages.chatPage.short_name_also_names, after the session title and its key. {{date}} is the date that chat session was created (started), already formatted. It is contrasted with the sidebar, which shows each session's last-activity time, so translate 'started' as 'began / was created', not 'last active' or 'updated'. Use the same wording as the '(started {{date}})' in short_name_also_names.",
     "apps.codeReviewSage.components.reportView.moved_to": "Code Review Sage report row, muted line next to the severity pills, shown only under a band filter after a dismissal changed the row's band: the row now belongs to the named band ({{band}} is the translated band label, e.g. \"Worth a glance\") but its POSITION in the list is kept until the user changes the band filter.",
     "pages.chatSidebar.broadcast_preset_all": "Broadcast message panel: a quick pick that sends the message to every open session; a short label followed by a live count.",
-    "pages.chatSidebar.broadcast_tag": "Broadcast message panel: label of the dropdown that narrows recipients to sessions carrying one sidebar tag (a session label, not a version tag)."
+    "pages.chatSidebar.broadcast_tag": "Broadcast message panel: label of the dropdown that narrows recipients to sessions carrying one sidebar tag (a session label, not a version tag).",
+    "components.crashNotice.native_log_off": "Red notice inside the desktop crash banner, shown while the app's detailed log file is switched off; 'session' means one run of the desktop app since it started, not a chat session, and 'the log' is that detailed log file, not the crash records."
   }
 }

@@ -20,7 +20,8 @@
  * in-memory: main.js scans once per app session, so a new launch with no new
  * crash produces `newCount: 0` and nothing renders anyway.
  *
- * The renderer is told a COUNT and nothing else — not even a timestamp. Paths,
+ * The renderer is told a COUNT and, only while Chromium's file log is off for
+ * this launch, one cause code from a fixed set. Never a timestamp. Paths,
  * filenames and exception codes stay in the main process (see `crashNoticeSummary` in
  * electron/crash-collector.js) — the reveal action is a main-process gesture
  * that names no path, so this component never holds one.
@@ -40,8 +41,31 @@ import { i18nT } from '../i18n/t'
  */
 const crashReportsAPI = (): CrashReportsAPI | undefined => window.crashReportsAPI
 
+/**
+ * The cause behind a kept-off file log, as one plain sentence.
+ *
+ * The codes are the closed set `NATIVE_LOG_OFF_REASONS` in
+ * electron/native-logging.js, and none of them reaches the screen: a reporter
+ * cannot act on `replace-failed`, but can pass on "could not be replaced". Each
+ * case spells its catalog key in full so the key-reference gate can see it
+ * (a built key would look dead). Anything outside the set reads as the
+ * not-recorded sentence, the same fallback the main process applies.
+ */
+function nativeLogOffCause(reason: string): string {
+  switch (reason) {
+    case 'unsupported-fs': return i18nT('components.crashNotice.native_log_off_cause_unsupported_fs')
+    case 'not-a-regular-file': return i18nT('components.crashNotice.native_log_off_cause_not_regular_file')
+    case 'unreadable': return i18nT('components.crashNotice.native_log_off_cause_unreadable')
+    case 'replace-failed': return i18nT('components.crashNotice.native_log_off_cause_replace_failed')
+    case 'error': return i18nT('components.crashNotice.native_log_off_cause_error')
+    case 'rotate-failed': return i18nT('components.crashNotice.native_log_off_cause_rotate_failed')
+    default: return i18nT('components.crashNotice.native_log_off_cause_unknown')
+  }
+}
+
 export default function CrashReportNotice() {
   const [count, setCount] = useState(0)
+  const [nativeLogOff, setNativeLogOff] = useState<string | null>(null)
   const [dismissed, setDismissed] = useState(false)
   const [revealError, setRevealError] = useState<string | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
@@ -76,7 +100,11 @@ export default function CrashReportNotice() {
     // gateway shares this preload), and that is a correct outcome, not an error
     // worth putting on screen.
     void api.get()
-      .then(summary => { if (alive) setCount(summary.newCount) })
+      .then(summary => {
+        if (!alive) return
+        setCount(summary.newCount)
+        setNativeLogOff(summary.nativeLogOff ?? null)
+      })
       .catch(() => {})
     return () => { alive = false }
   }, [])
@@ -109,6 +137,29 @@ export default function CrashReportNotice() {
                 which only exist for keys registered in i18n/pluralKeys.json. */}
             {i18nT('components.crashNotice.diagnostics_were_saved_locally', { n: count })}
           </div>
+          {/* The previous log could not be redacted or rotated, so the file sink
+              stays off for this launch: a failed outcome, shown as an error.
+              The text is the reporter's words, not the code's: what is not being
+              recorded, what that means for the rest of the session, what to say
+              when reporting, then a "Technical detail" line carrying the cause
+              as a plain sentence. It claims only what the main process knows,
+              that the sink is off for THIS launch: the crash counted above
+              happened in an earlier one, so nothing is said about whether the
+              file on disk covers it. The raw code and the log's filename stay
+              out of it, and the line goes to the agent with the hand-off.
+              `askAgent` is on: this banner holds no unsaved input for the
+              hand-off to lose, and the agent can look into the cause. `below`
+              keeps the hand-off out of a side column, so the sentence keeps the
+              banner's width at 320px. */}
+          {nativeLogOff && (
+            <ErrorNotice
+              message={`${i18nT('components.crashNotice.native_log_off')}\n${nativeLogOffCause(nativeLogOff)}`}
+              askAgent
+              actionPlacement="below"
+              className="mt-2"
+              testId="crash-notice-native-log-off"
+            />
+          )}
         </div>
         <button
           type="button"
