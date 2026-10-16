@@ -189,7 +189,7 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 # The idle sweep never picks or pops a slot holding a reservation.
                 ("slot_retention.py", "_still_idle_check"),
                 ("slot_retention.py", "select_idle_slot_keys"),
-                ("state.py", "_ChatSlot.enqueue_or_run_prompt"),
+                ("state_parts/chat_slot.py", "_ChatSlot.enqueue_or_run_prompt"),
                 ("ws.py", "_handle_slot_focused"),
             }
         },
@@ -209,7 +209,7 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("responsive_chat.py", "_steer_ready"),
                 ("slot_projection.py", "SlotProjection.to_dict"),
                 ("slot_registry.py", "SlotRegistry.running_session_keys"),
-                ("state.py", "_ChatSlot.running"),
+                ("state_parts/chat_slot.py", "_ChatSlot.running"),
             }
         },
         **{
@@ -241,5 +241,5 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
         ("handlers/messaging.py", "api_send_message"),
         ("handlers/taskrunner.py", "api_taskrunner_to_chat"),
         ("openai_compat.py", "api_completions"),
-        ("state.py", "_ChatSlot.enqueue_or_run_prompt"),
+        ("state_parts/chat_slot.py", "_ChatSlot.enqueue_or_run_prompt"),
     }
