@@ -882,6 +882,15 @@ def _slack_link_nonce(state: "DashboardState", session_key: str) -> str:
 # Native kiro-cli subagent reconnect policy. The slot state, writer, and replay
 # path all import these bounds so retention cannot drift between modules.
 NATIVE_SUBAGENT_OUTPUT_TAIL = 40_000
+#: Said once per snapshot of a native card whose run crossed the call bound
+#: (``native_subagent_cards.NATIVE_SUBAGENT_CALLS_MAX``) -- on the running
+#: snapshot's tail here and on the finished card's result in the runner -- as
+#: the roster names its overflow: a truncated tail otherwise reads exactly like
+#: a run that never named those calls.
+NATIVE_SUBAGENT_CALLS_OVERFLOW_FEED_LINE = (
+    "\u2026(this run made more tool calls than the card keeps names for; "
+    "later outputs are filed under \u2192 Unnamed tool call)\n"
+)
 NATIVE_SUBAGENT_OUTPUT_HARD = 80_000
 NATIVE_SUBAGENT_DONE_RESULT_CAP = 8_000
 NATIVE_SUBAGENT_DONE_TRUNC_MARKER = "…(earlier output truncated)\n"
@@ -8091,11 +8100,17 @@ class DashboardState:
                         }
                     )
                 else:
+                    # A run past the call bound says so once per snapshot, as
+                    # the finished card's result does: a truncated tail otherwise
+                    # reads like a run that never named those calls.
+                    tail = native_subagent_output_tail(output.get(card_id, []))
+                    if info.get("calls_refused"):
+                        tail += NATIVE_SUBAGENT_CALLS_OVERFLOW_FEED_LINE
                     running.append(
                         {
                             **base,
                             "done": False,
-                            "streaming": native_subagent_output_tail(output.get(card_id, [])),
+                            "streaming": tail,
                             "last_tool": str(info.get("last_tool") or ""),
                             "started": float(info.get("started") or now),
                         }
