@@ -43,7 +43,7 @@ def _search_loop(text: str) -> list[tuple[int, int]]:
 
 
 def _linear_loop(text: str) -> list[tuple[int, int]]:
-    spans, pos, starts = [], 0, [-1, -1, -1]
+    spans, pos, starts = [], 0, [-1, -1, -1, -2]
     while (m := redaction._credential_search(text, pos, starts)) is not None:
         spans.append(m.span())
         pos = max(m.end(), m.start() + 1)

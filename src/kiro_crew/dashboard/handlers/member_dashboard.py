@@ -319,7 +319,7 @@ def _bound_package_slug(member: str) -> str:
 
 
 async def _run(fn: Callable[[], Any]) -> Any:
-    """Run a store call off the event loop. Every call here is file IO."""
+    """Run a blocking call off the event loop: file IO, or work over a whole page."""
     return await asyncio.to_thread(fn)
 
 
@@ -585,7 +585,8 @@ async def _serve(request: web.Request, slug: str, member: str, slot: str | None)
             return web.json_response(
                 {"error": "nothing is staged to preview", "code": "no_preview"}, status=404
             )
-        body = _safe_body(staged.wire())
+        # Off the loop: the scrub reads the whole stored page. See `_safe_body`.
+        body = await _run(lambda: _safe_body(staged.wire()))
         # The CURRENT version, not a new one, because staging wrote none. A reader that
         # saw this number move would believe the page had been installed.
         body["preview"] = True
@@ -624,7 +625,7 @@ async def _serve(request: web.Request, slug: str, member: str, slot: str | None)
             # ordinary state of a build whose registry ships no default. The frame's
             # own empty state IS the answer here, and it needs no html.
             renderable = False
-    body = _safe_body(record.wire())
+    body = await _run(lambda: _safe_body(record.wire()))
     # STALE belongs here with LIVE and EMPTY: `_state_of` calls a stale copy complete
     # and still renderable -- what it cannot do is be compared against or refreshed
     # from its source, which is what the frame's stale band says. A copy served
@@ -783,6 +784,9 @@ def _safe_body(body: dict[str, Any]) -> dict[str, Any]:
     ``html`` and ``manifest`` are the two keys carrying the stored template, and the
     body carries both RAW beside the composed page. Scrubbing only the composed one
     would leave the same credential one key away in the same response.
+
+    Called through :func:`_run`: the scrub reads the whole page, which can be as large
+    as :data:`kiro_crew.dashboard_frame.MAX_PAGE_BYTES`.
     """
     if isinstance(body.get("html"), str):
         body["html"] = _template_text_safe(body["html"])
@@ -1885,7 +1889,9 @@ async def _serve_package(
     # credential pasted into the page's own markup in the response one key away.
     safe_page = dict(package)
     safe_view = dict(package.get("view") or {})
-    safe_view["html"] = _template_text_safe(safe_view.get("html") or "")
+    # OFF THE EVENT LOOP: the scrub runs every redactor over the whole page, which takes
+    # a few hundred milliseconds for a page near the frame's ceiling.
+    safe_view["html"] = await _run(lambda: _template_text_safe(safe_view.get("html") or ""))
     safe_page["view"] = safe_view
     try:
         # DECIDED BEFORE THE PAGE IS COMPOSED, because it changes what is composed.
@@ -1911,7 +1917,10 @@ async def _serve_package(
             session_key=grant_key,
             decision=decision,
         )
-        html = member_dashboard_fields.render_package_page(safe_page, read, scripts=scripts)
+        # Off the loop for the scrub's reason: framing checks and copies the whole page.
+        html = await _run(
+            lambda: member_dashboard_fields.render_package_page(safe_page, read, scripts=scripts)
+        )
     except Exception as exc:
         await _run(page.disarm)
         pages.pop(key, None)

@@ -60,8 +60,16 @@ _TOKEN_TTL_SECS = 900
 
 #: Bounds on the stash. A widget is typically a few KB; the cap is generous
 #: enough for a large artifact and small enough that the ceiling is bounded.
+#:
+#: ``_MAX_BYTES`` is the most ONE document may be and the most ALL of them may be
+#: together. It is sized for a large dashboard document: a page at
+#: ``dashboard_frame.MAX_PAGE_BYTES`` (3 MiB), the 20 or so KB the host adds around it,
+#: and a data island of 4 MiB, which is 64 fields of one crew-log entry (64 KiB) each.
+#: 8 MiB takes that with about 1 MiB left for others in flight. An island has no bound
+#: of its own, so a composed document over 8 MiB is refused outright (413), and a retry
+#: cannot change that.
 _MAX_ENTRIES = 64
-_MAX_BYTES = 4 * 1024 * 1024
+_MAX_BYTES = 8 * 1024 * 1024
 
 #: Per-process, so tokens do not survive a restart. That is intentional: the
 #: stash does not either, and the frame re-mints on mount.

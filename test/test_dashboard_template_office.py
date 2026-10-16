@@ -128,7 +128,7 @@ class TestItLoads:
         assert len(manifest.fields) <= MAX_FIELDS
 
     def test_the_page_is_well_under_the_hosts_document_cap(self, html: str) -> None:
-        """A megabyte is the host's ceiling; a page near it is a page the frame fights."""
+        """Far under the host's 3 MiB page ceiling, which a shipped page should never near."""
         assert len(html.encode("utf-8")) < 1_000_000
 
     def test_only_the_drafts_and_steps_maps_are_agentic(self, loaded: tuple[Any, str]) -> None:

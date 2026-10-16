@@ -348,7 +348,13 @@ def _url_payload_command(n: int) -> str:
 #: spares an ordered alphabet and a data URI payload, the flag it sets, the one place pass 3
 #: reads it, and the two checks that tell those shapes from a key. No credential branch, gate
 #: verdict or other pass moved.
-_PACKAGE_LINE_BUDGET = 29_411
+#:
+#: Raised again, from 29,411, for the PEM private-key scan: a header that no END marker
+#: follows is matched without the full-block tail, which reads to the end of the text and
+#: made a text that repeats the header quadratic. 56 lines are the new ``pem_scan`` module
+#: (the spellings and the last-END-marker lookup) and 25 the choice between the two
+#: patterns in ``_credential_search``. No credential branch, match or pass moved.
+_PACKAGE_LINE_BUDGET = 29_492
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

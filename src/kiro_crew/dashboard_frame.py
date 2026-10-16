@@ -61,12 +61,22 @@ logger = logging.getLogger(__name__)
 
 #: The size ceiling for one template page, in bytes of UTF-8.
 #:
-#: dsh-visualize's own ``maxFragmentBytes`` default, taken rather than invented:
-#: the brief asks for its default and the number is a considered one -- a page with
-#: an inlined chart library's worth of markup fits, while a runaway generation does
-#: not. Measured in BYTES, not characters, so a multi-byte page cannot pass at
-#: several times the ceiling the document is assembled under.
-MAX_PAGE_BYTES: Final[int] = 1_000_000
+#: 3 MiB, because a hand-written page that inlines a client-side library -- a 3D
+#: renderer, a diagram engine -- together with its own scene code runs to a few MB of
+#: layout with no data in it. Measured in BYTES, not characters, so a multi-byte page
+#: cannot pass at several times the ceiling.
+#:
+#: Measured on the PAGE, before :func:`compose` wraps it. What composing adds -- about
+#: 17 KB of host markup and bootstrap, plus the data island -- is held where the whole
+#: document is: the browser wraps the composed body in its own head (``buildSrcdoc`` in
+#: ``website/src/lib/widgetSrcdoc.ts``, a few KB more) and mints it through
+#: :mod:`kiro_crew.dashboard.handlers.sandbox_doc`, which holds up to 8 MiB across all
+#: the documents in flight at once. That is room for a page at this ceiling, what
+#: composing and the browser add around it, and a data island of 4 MiB
+#: (``MAX_MODEL_FIELDS`` fields of ``MAX_ENTRY_BYTES`` each), with about 1 MiB over;
+#: ``test_a_dashboard_page_at_the_frames_ceiling_fits_one_document`` pins it. An island
+#: has no bound of its own, so a composed document over 8 MiB is refused at the mint.
+MAX_PAGE_BYTES: Final[int] = 3 * 1024 * 1024
 
 #: Origins a page may load static resources from.
 #:
@@ -1077,11 +1087,30 @@ def compose(html: str, read: Mapping[str, Any], title: str = "") -> str:
 #: A text binding on an element with NO nested markup, which is every valid one: the
 #: bootstrap fills a binding by setting ``textContent``, so an element holding tags is
 #: not a text cell and is left alone rather than rewritten.
+#:
+#: This runs on every page served without the script, with the GIL held, and a page may
+#: now be :data:`MAX_PAGE_BYTES`. A pattern that re-reads text it has already read is
+#: quadratic there and would stop the gateway for hours, so each start tag is read
+#: once, three ways:
+#:
+#: * the tag name is possessive, so a name such as ``a-`` is not re-cut at every ``-``
+#:   when what follows does not match;
+#: * the first binding attribute is committed (the atomic group), so a start tag that
+#:   repeats the attribute, or whose element never closes with its own tag, is not
+#:   searched again for a later one;
+#: * both runs around the attribute stop at ``<`` as well as ``>``, so a start tag is
+#:   never searched past the next tag. Stopping at ``>`` alone lets every ``<a`` in a
+#:   page with no ``>`` after it scan to the end of the page.
+#:
+#: What this changes: a literal ``<`` inside a start tag ends the search, so such a
+#: cell keeps the author's own text; and a hyphenated tag name is read whole, so
+#: ``<my-el ...>`` is closed only by ``</my-el>`` and never by ``</my>``, which is how a
+#: browser reads it too.
 _SIMPLE_BINDING_CELL = re.compile(
-    r"(<(?P<tag>[a-zA-Z][\w-]*)\b[^>]*?"
+    r"(<(?P<tag>[a-zA-Z][\w-]*+)(?>[^<>]*?"
     + BINDING_ATTRIBUTE
-    + r"\s*=\s*(?:\"(?P<dq>[^\"]*)\"|'(?P<sq>[^']*)'|(?P<bare>[^\s\"'>=`]+))"
-    + r"[^>]*>)(?P<body>[^<]*)(?P<close></(?P=tag)\s*>)"
+    + r"\s*=\s*(?:\"(?P<dq>[^\"]*)\"|'(?P<sq>[^']*)'|(?P<bare>[^\s\"'>=`]+)))"
+    + r"[^<>]*>)(?P<body>[^<]*)(?P<close></(?P=tag)\s*>)"
 )
 
 

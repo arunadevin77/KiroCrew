@@ -297,6 +297,60 @@ async def test_an_unlocked_crewmate_still_gets_its_package(wired: Any) -> None:
     assert PAGE in body["rendered_html"]
 
 
+def _page_at_the_ceiling() -> str:
+    """A page of exactly the frame's ceiling: :data:`PAGE` plus an inlined script."""
+    from kiro_crew import dashboard_frame
+
+    head, tail = PAGE + "<script>", "</script>"
+    return head + "x" * (dashboard_frame.MAX_PAGE_BYTES - len(head) - len(tail)) + tail
+
+
+def _store_page(wired: Any, page: str) -> None:
+    """Make *page* the applied package's page, through the package's own validator."""
+    raw = json.loads(dp.dump_package(_package()))
+    raw["view"] = {"html": page}
+    wired.store.content = dp.dump_package(dp.validate_package(raw))
+
+
+@pytest.mark.asyncio
+async def test_a_page_at_the_frames_ceiling_is_served_through_the_frame(wired: Any) -> None:
+    """The biggest page a package may hold is drawn, not refused at the frame."""
+    page = _page_at_the_ceiling()
+    _store_page(wired, page)
+    status, body = await _call(md.api_member_dashboard, _request(wired.app, "GET", PATH))
+    assert status == 200, body
+    assert body["html"] == page
+    assert page in body["rendered_html"]
+
+
+@pytest.mark.asyncio
+async def test_the_page_is_scrubbed_and_framed_off_the_event_loop(
+    wired: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both steps read the whole page, which takes hundreds of milliseconds near the
+    ceiling: on the loop, that pause lands on every other session's chat."""
+    import threading
+
+    loop_thread = threading.current_thread()
+    calls: list[tuple[str, bool]] = []
+    scrub, frame = md._template_text_safe, mdf.render_package_page
+
+    def _scrub(text: str) -> str:
+        calls.append(("scrub", threading.current_thread() is loop_thread))
+        return scrub(text)
+
+    def _frame(*args: Any, **kwargs: Any) -> str:
+        calls.append(("frame", threading.current_thread() is loop_thread))
+        return frame(*args, **kwargs)
+
+    monkeypatch.setattr(md, "_template_text_safe", _scrub)
+    monkeypatch.setattr(mdf, "render_package_page", _frame)
+    status, _body = await _call(md.api_member_dashboard, _request(wired.app, "GET", PATH))
+    assert status == 200
+    assert {name for name, _ in calls} == {"scrub", "frame"}
+    assert not [name for name, on_loop in calls if on_loop], calls
+
+
 @pytest.mark.asyncio
 async def test_the_route_arms_the_live_page(wired: Any) -> None:
     await _call(md.api_member_dashboard, _request(wired.app, "GET", PATH))

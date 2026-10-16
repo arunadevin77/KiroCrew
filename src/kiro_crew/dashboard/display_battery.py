@@ -40,6 +40,7 @@ from kiro_crew.security.redaction import redact_credentials
 RULE_SOURCES: tuple[str, ...] = (
     "dashboard/display_battery.py",
     "security/redaction.py",
+    "security/pem_scan.py",
     "security/redaction_switch.py",
     "security/exfil.py",
     "credential_patterns.py",

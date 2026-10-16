@@ -21,6 +21,12 @@ import pytest
 from kiro_crew import agent_panel, dashboard_frame
 
 
+def _page_of(size: int) -> str:
+    """A page of exactly *size* bytes of UTF-8: markup around one inlined script."""
+    head, tail = '<div id="scene"></div><script>', "</script>"
+    return head + "x" * (size - len(head) - len(tail)) + tail
+
+
 class TestThePageContract:
     def test_an_empty_page_is_refused(self) -> None:
         with pytest.raises(dashboard_frame.PageError) as caught:
@@ -42,8 +48,19 @@ class TestThePageContract:
             dashboard_frame.validate_page(page)
         assert caught.value.code == "page_too_large"
 
-    def test_the_cap_is_dsh_visualizes_own_default(self) -> None:
-        assert dashboard_frame.MAX_PAGE_BYTES == 1_000_000
+    def test_the_cap_holds_a_page_that_inlines_a_library(self) -> None:
+        """3 MiB: a client-side library and the page's own scene code, inlined."""
+        assert dashboard_frame.MAX_PAGE_BYTES == 3 * 1024 * 1024
+
+    def test_a_page_exactly_at_the_cap_is_accepted(self) -> None:
+        page = _page_of(dashboard_frame.MAX_PAGE_BYTES)
+        assert dashboard_frame.validate_page(page) == dashboard_frame.MAX_PAGE_BYTES
+
+    def test_one_byte_over_the_cap_is_refused_naming_the_cap(self) -> None:
+        with pytest.raises(dashboard_frame.PageError) as caught:
+            dashboard_frame.validate_page(_page_of(dashboard_frame.MAX_PAGE_BYTES + 1))
+        assert caught.value.code == "page_too_large"
+        assert f"over the {dashboard_frame.MAX_PAGE_BYTES}-byte limit" in str(caught.value)
 
 
 class TestTheFramesSecurityPolicy:

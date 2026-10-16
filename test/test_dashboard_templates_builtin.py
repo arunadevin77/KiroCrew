@@ -503,7 +503,7 @@ class TestEveryBuiltinSurvivesPreviewAndApply:
 
     THE BUG this closes. ``MAX_INSTANCE_HTML_BYTES`` was its own number, 64 KiB, while
     ``dashboard_frame.MAX_PAGE_BYTES`` -- the ceiling the document that renders the page
-    is actually assembled under -- is 1,000,000. ``project-report`` is over 147,000
+    is actually assembled under -- was far larger. ``project-report`` is over 147,000
     bytes and is ``DEFAULT_TEMPLATE_ID``, so preview refused it with "over the
     65536-byte ceiling": a crewmate that adopted any other page could never come back
     to the one every crewmate starts on, and the only way to see the default was never
@@ -586,6 +586,29 @@ class TestEveryBuiltinSurvivesPreviewAndApply:
         with pytest.raises(instance.InstanceRefused) as refused:
             instance._check(raw, over)
         assert str(instance.MAX_INSTANCE_HTML_BYTES) in str(refused.value)
+
+    def test_a_page_exactly_at_the_shared_ceiling_is_kept_and_one_byte_more_is_not(
+        self,
+    ) -> None:
+        """The ceiling's own boundary, on the check preview, apply and rollback all run.
+
+        A shipped page padded to exactly the frame's ceiling is a page an operator can
+        put in a template folder: it previews and applies. One byte past it is refused
+        with the ceiling named.
+        """
+        directory = _dirs()[0]
+        raw = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        html = (directory / "template.html").read_text(encoding="utf-8")
+        frame = "<!--  -->"
+        room = instance.MAX_INSTANCE_HTML_BYTES - len((html + frame).encode("utf-8"))
+        at = html + "<!-- " + "x" * room + " -->"
+        assert len(at.encode("utf-8")) == instance.MAX_INSTANCE_HTML_BYTES
+        assert instance._check(raw, at) == raw
+        with pytest.raises(instance.InstanceRefused) as refused:
+            instance._check(raw, html + "<!-- " + "x" * (room + 1) + " -->")
+        said = str(refused.value)
+        assert f"is {instance.MAX_INSTANCE_HTML_BYTES + 1} bytes" in said
+        assert f"over the {instance.MAX_INSTANCE_HTML_BYTES}-byte ceiling" in said
 
     def test_rollback_reaches_the_default_again_after_switching_away(self) -> None:
         """THE READER'S OWN JOURNEY, which is where the bug was felt.

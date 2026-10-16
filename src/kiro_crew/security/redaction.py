@@ -36,6 +36,7 @@ from collections import Counter
 from collections.abc import Callable, Iterator
 from typing import NamedTuple
 
+import kiro_crew.security.pem_scan as pem_scan
 from kiro_crew.credential_patterns import AWS_KEY_ID, JWT_MULTI_SEGMENT
 from kiro_crew.security.redaction_switch import bare_secret_pass_enabled, credential_pass_bypassed
 
@@ -117,9 +118,9 @@ _CREDENTIAL_PATTERNS = re.compile(
     #      the full-block cap). Because the lookahead consumes nothing, TWO+
     #      consecutive blank lines still terminate the run — trailing prose is
     #      preserved (no over-redaction).
-    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    f"|{pem_scan.HEADER}"
     r"(?:"
-    r"[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"
+    f"{pem_scan.FULL_BLOCK}"
     r"|(?:\r?\n(?:Proc-Type:[^\n]*|DEK-Info:[^\n]*|[A-Za-z0-9+/=]+(?=\r?\n|\Z)"
     r"|(?=\r?\n[A-Za-z0-9+/=])))*"
     r")"
@@ -304,10 +305,21 @@ _TELEGRAM_AT_RE = re.compile(_TELEGRAM_BRANCH)
 # branch re-walks a digit run from every digit in it. A later digit has fewer digits
 # before the same ``:``, so only the run's first digit can win; `_sans_jwt_start`
 # checks the one exception, a run that begins before the scan position.
+#
+# It also drops the PEM full-block tail. A header starts a match whether or not an
+# END marker follows (the truncated tail beside it can be empty), so every start is
+# unchanged, and the tail would send each header with no END after it to the end of
+# the text: quadratic over a text that repeats the header. See `pem_scan`.
 _CREDENTIAL_STARTS_SANS_JWT = re.compile(
-    _CREDENTIAL_PATTERNS_SANS_JWT.pattern.replace(
+    _CREDENTIAL_PATTERNS_SANS_JWT.pattern.replace(f"{pem_scan.FULL_BLOCK}|", "", 1).replace(
         f"|{_TELEGRAM_BRANCH}", f"|(?<![0-9]){_TELEGRAM_BRANCH}", 1
     )
+)
+
+# `_CREDENTIAL_PATTERNS` for a PEM header that no END marker follows: only the
+# truncated tail is left to try there.
+_CREDENTIAL_PATTERNS_NO_PEM_BLOCK = re.compile(
+    _CREDENTIAL_PATTERNS.pattern.replace(f"{pem_scan.FULL_BLOCK}|", "", 1)
 )
 
 
@@ -381,14 +393,27 @@ def _credential_search(text: str, pos: int, starts: list[int]) -> re.Match[str] 
     The leftmost match starts at the earlier of the leftmost JWT-branch start and the
     leftmost start of every other branch, and ``match`` there applies the alternation's
     own branch order. *starts* caches both starts, and the JWT start's run end, across
-    calls with a rising *pos*.
+    calls with a rising *pos*; its last slot is the start of the text's last PEM END
+    marker, ``-2`` until first needed.
+
+    At a PEM header the full-block tail needs an END marker starting at or after the
+    header's end, so the last marker alone says whether one exists. When none does,
+    the match is made without that tail: it would fail only after reading to the end
+    of the text, once per header, and the result is the same.
     """
     if starts[0] < pos:
         starts[0] = _sans_jwt_start(text, pos)
     if starts[1] < pos:
         starts[1], starts[2] = _next_jwt_branch_start(text, pos, starts[2])
     first = min(starts[0], starts[1])
-    return _CREDENTIAL_PATTERNS.match(text, first) if first <= len(text) else None
+    if first > len(text):
+        return None
+    if text.startswith(pem_scan.HEADER_PREFIX, first):
+        if starts[3] == -2:
+            starts[3] = pem_scan.last_end_start(text)
+        if pem_scan.has_no_end_after(text, first, starts[3]):
+            return _CREDENTIAL_PATTERNS_NO_PEM_BLOCK.match(text, first)
+    return _CREDENTIAL_PATTERNS.match(text, first)
 
 
 def _credential_matches(text: str) -> Iterator[re.Match[str]]:
@@ -399,7 +424,7 @@ def _credential_matches(text: str) -> Iterator[re.Match[str]]:
     second ``eyJ`` stays a credential: rejecting it would rescan that header once per ``eyJ``.
     """
     pos = 0
-    starts = [-1, -1, -1]
+    starts = [-1, -1, -1, -2]
     while (m := _credential_search(text, pos, starts)) is not None:
         header = m.group().split(".", 1)[0]
         if (

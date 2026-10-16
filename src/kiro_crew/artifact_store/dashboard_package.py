@@ -55,22 +55,37 @@ if TYPE_CHECKING:  # pragma: no cover - a type-only import, so no cycle at run t
 #: of a prose document to this kind would store content no reader can parse.
 DASHBOARD_KIND = "dashboard"
 
-#: Hard cap on a stored package, well under the artifact content cap. A package
-#: is layout: a figure this size is already a sign that values leaked into it.
-MAX_PACKAGE_BYTES = 256 * 1024
+#: Cap on an agent-written ``view.html`` page, in bytes of UTF-8.
+#:
+#: The FRAME's own ceiling, :data:`kiro_crew.dashboard_frame.MAX_PAGE_BYTES`, so a page
+#: a package can hold is always a page the frame will draw. Mirrored rather than
+#: imported, because this module is on the artifact write path and must stay cheap to
+#: import; ``test_the_page_cap_is_the_frames_own`` pins the two equal.
+#:
+#: The cap bounds what a page COSTS to store, send and draw. It does not detect values
+#: baked into the layout: a page that inlines a client-side library is several MB with
+#: no data in it, so size cannot tell the two apart. The structural rules are what keep
+#: values out: every field names its source, every binding must be a declared field,
+#: the controller pushes only declared fields, and value-shaped keys are refused.
+MAX_VIEW_HTML_BYTES = 3 * 1024 * 1024
+
+#: Hard cap on a stored package, in bytes of its STORED form, well under the artifact
+#: content cap.
+#:
+#: Sized so a page at :data:`MAX_VIEW_HTML_BYTES` fits once escaped. The stored form is
+#: JSON, which writes a quote, a backslash or a line break in the page as two bytes, so
+#: the page can take up to twice its own size there (other control characters escape
+#: longer, and HTML has no use for them). The 128 KiB on top is the room for the rest
+#: of the package -- model, theme and structure -- as a page had beside it before. The
+#: whole package is still measured against this one number, so a model and theme near
+#: their own caps can need more, and then the refusal below names the limit. This cap
+#: also bounds the decode, which runs before any validator. The reader applies the same
+#: number to a stored package, so the cap can be raised but not lowered while packages
+#: written under a larger one are still stored: those would stop loading.
+MAX_PACKAGE_BYTES = 2 * MAX_VIEW_HTML_BYTES + 128 * 1024
 
 MAX_MODEL_FIELDS = 64
 MAX_VIEW_BLOCKS = 48
-#: Cap on an agent-written ``view.html`` page, in bytes of UTF-8.
-#:
-#: Half the package cap, so the page cannot be the whole package and leave no room for
-#: the model that says what may be pushed into it. Well under
-#: :data:`kiro_crew.dashboard_frame.MAX_PAGE_BYTES`, which bounds what the FRAME will
-#: compose: a page can arrive at that host from a shipped template directory, where a
-#: megabyte of inlined markup is somebody's reviewed work, while a page this size
-#: inside a stored package is the signal the whole kind exists to avoid -- values
-#: baked into layout.
-MAX_VIEW_HTML_BYTES = 128 * 1024
 MAX_THEME_TOKENS = 64
 MAX_THEME_CSS_BYTES = 32 * 1024
 #: Cap on a human-readable string inside the package (a label, a title, a unit).
@@ -696,8 +711,8 @@ def _validate_view_html(raw: Any, declared_fields: Mapping[str, Any]) -> str:
         raise _refuse(
             "view.html",
             f"is {size} bytes, over the {MAX_VIEW_HTML_BYTES}-byte limit for a page -- "
-            "a page this large usually has values baked into it, which belong in the "
-            "crew log and reach the page through the fold / bus / controller path",
+            "inline less into it, and keep values out of it: they belong in the crew "
+            "log and reach the page through the fold / bus / controller path",
         )
     # The frame's own refusals, asked here so the author meets them at save time rather
     # than seeing a page that renders wrong. Imported lazily: this module is imported by
@@ -986,8 +1001,8 @@ def _decode_package(content: str) -> Any:
         raise _refuse("package", f"is not valid JSON: {exc}") from None
     except RecursionError:
         # The byte cap above bounds a package's SIZE, not its DEPTH, and the two
-        # come apart: a quarter-megabyte of ``[`` is small enough to pass the cap
-        # and deep enough that the decoder runs out of stack. ``RecursionError``
+        # come apart: a few thousand ``[`` are small enough to pass the cap and
+        # deep enough that the decoder runs out of stack. ``RecursionError``
         # is a ``RuntimeError``, so the ``ValueError`` arm does not see it, and
         # letting it escape turns a refusable package into a 500 at every caller
         # that answers an ``ArtifactValidationError`` with a 400.

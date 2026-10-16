@@ -879,12 +879,18 @@ class TestRejectInvalid:
         with pytest.raises(ArtifactValidationError, match="must be an object"):
             store.create(name="Bad", kind="dashboard", content="[]")
 
-    def test_the_byte_cap_applies_to_the_stored_form_not_the_submitted_text(self, store) -> None:
+    def test_the_byte_cap_applies_to_the_stored_form_not_the_submitted_text(
+        self, store, monkeypatch
+    ) -> None:
         # Indentation is added by the store, so a layout can arrive under the
         # cap and be written over it. The caps that matter are the ones measured
         # on the bytes a write actually puts on disk, because an oversized
         # package is one this module's own reader refuses: the page would come
         # back blank with nothing refused at write time.
+        #
+        # The cap is SET between the two forms of one layout below. The real one
+        # is sized for a page that inlines a library, which no block layout comes
+        # near, and the property asked here is which form the cap is measured on.
         types = {
             f"f{i:05d}": {
                 "type": "enum",
@@ -900,9 +906,11 @@ class TestRejectInvalid:
             for i in range(dp.MAX_VIEW_BLOCKS)
         ]
         submitted = json.dumps(package(types=types, blocks=blocks), separators=(",", ":"))
-        # Every per-part cap is satisfied and the submitted text is under the
+        stored = dp.dump_package(dp.parse_package(submitted))
+        monkeypatch.setattr(dp, "MAX_PACKAGE_BYTES", len(submitted.encode("utf-8")))
+        # Every per-part cap is satisfied and the submitted text is at the
         # package cap, so nothing upstream of the serializer can refuse this.
-        assert len(submitted.encode("utf-8")) <= dp.MAX_PACKAGE_BYTES
+        assert len(stored.encode("utf-8")) > dp.MAX_PACKAGE_BYTES
         with pytest.raises(ArtifactValidationError, match="bytes once stored"):
             store.create(name="Indented over", kind="dashboard", content=submitted)
         # The revert path ends in the same serializer, so it refuses it too.

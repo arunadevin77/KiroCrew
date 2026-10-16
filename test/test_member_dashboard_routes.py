@@ -247,6 +247,54 @@ async def test_a_preview_read_with_nothing_staged_is_a_404_the_tab_can_name():
         assert (await resp.json())["code"] == "no_preview"
 
 
+def _template_at_the_ceiling() -> str:
+    """A second template whose page is exactly the frame's ceiling. Returns the page."""
+    from kiro_crew import dashboard_frame
+
+    head, tail = PAGE + "<script>", "</script>"
+    page = head + "x" * (dashboard_frame.MAX_PAGE_BYTES - len(head) - len(tail)) + tail
+    directory = catalog.builtin_dir() / "big-board"
+    directory.mkdir()
+    manifest = _manifest(id="big-board", title="Big board")
+    (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (directory / "template.html").write_text(page, encoding="utf-8")
+    return page
+
+
+async def test_a_template_page_at_the_frames_ceiling_previews_applies_and_draws(monkeypatch):
+    """The template-folder path at the ceiling, end to end, with the scrub off the loop.
+
+    The read scrubs the stored page before it answers, and near the ceiling that takes
+    hundreds of milliseconds -- so it runs off the event loop, where the pause would
+    otherwise land on every other session's chat.
+    """
+    import threading
+
+    page = _template_at_the_ceiling()
+    loop_thread = threading.current_thread()
+    on_loop: list[bool] = []
+    scrub = routes._safe_body
+
+    def _scrub(body):
+        on_loop.append(threading.current_thread() is loop_thread)
+        return scrub(body)
+
+    monkeypatch.setattr(routes, "_safe_body", _scrub)
+    async with _client() as client:
+        instance.stage_preview(SLUG, template_id="big-board")
+        resp = await client.get(_q("", preview="1"))
+        assert resp.status == 200, await resp.text()
+        preview = await resp.json()
+        instance.apply_preview(SLUG)
+        resp = await client.get(_q(""))
+        assert resp.status == 200, await resp.text()
+        live = await resp.json()
+    assert preview["preview"] is True and page in preview["rendered_html"]
+    assert live["state"] == "live" and page in live["rendered_html"]
+    assert live["template"] == {"id": "big-board", "version": 1}
+    assert on_loop == [False, False]
+
+
 # --------------------------------------------------------------------------
 # adopt, edit, rollback
 # --------------------------------------------------------------------------

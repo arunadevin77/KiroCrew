@@ -322,7 +322,9 @@ pair passed at staging, but staging and applying are two cycles with a person be
 them, and the parity rule is about the pair being committed.
 
 **One size ceiling, and it is the frame's.** `MAX_INSTANCE_HTML_BYTES` reads
-`dashboard_frame.MAX_PAGE_BYTES` rather than stating a number of its own. A page passes
+`dashboard_frame.MAX_PAGE_BYTES` (3 MiB) rather than stating a number of its own. The
+`MAX_RETAINED_VERSIONS` (20) versions one crewmate keeps therefore hold at most 60 MiB
+of pages. A page passes
 two size checks -- this store's before it becomes a version, and the frame's before the
 document that renders it is assembled -- and two independent numbers meant the store
 could refuse a page the frame would happily draw. It did: `project-report` is over

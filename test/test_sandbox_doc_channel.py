@@ -359,6 +359,33 @@ async def test_a_minted_document_is_served_once_and_then_gone() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_dashboard_page_at_the_frames_ceiling_fits_one_document() -> None:
+    """The frame measures the PAGE; this stash holds the whole DOCUMENT built from it.
+
+    The dashboard tab mints its frame through here, so a page the frame accepts must
+    also be a document this stash takes with a large data island beside it. The page
+    sits at ``dashboard_frame.MAX_PAGE_BYTES`` and is composed with an island of
+    ``MAX_MODEL_FIELDS`` fields of ``MAX_ENTRY_BYTES`` each, 4 MiB: one crew-log entry
+    in every field. An island has no bound of its own, so this is a size the stash is
+    built for, not the most a page can be given. The browser wrapper around the
+    document (``buildSrcdoc``: a few KB) is allowed 64 KiB.
+    """
+    from kiro_crew import dashboard_frame
+    from kiro_crew.artifact_store.dashboard_package import MAX_MODEL_FIELDS
+    from kiro_crew.crew_log.schema import MAX_ENTRY_BYTES
+
+    head, tail = '<div id="scene"></div><script>', "</script>"
+    page = head + "x" * (dashboard_frame.MAX_PAGE_BYTES - len(head) - len(tail)) + tail
+    fields = {f"series_{i}": "y" * MAX_ENTRY_BYTES for i in range(MAX_MODEL_FIELDS)}
+    read = dashboard_frame.read_payload(fields)
+    document = dashboard_frame.compose_body(page, read) + "<!--" + "w" * (64 * 1024) + "-->"
+    assert len(document.encode("utf-8")) > 4 * 1024 * 1024, "the old 4 MiB stash would refuse it"
+    doc_id, token = await _mint(document)
+    served = await sd.serve_sandbox_doc(_serve_req(doc_id, token))
+    assert served.body == document.encode("utf-8")
+
+
+@pytest.mark.asyncio
 async def test_the_served_response_carries_the_sandbox_headers() -> None:
     """Asserted on the RESPONSE, not on the source line that sets it."""
     doc_id, token = await _mint("<p>hi</p>")

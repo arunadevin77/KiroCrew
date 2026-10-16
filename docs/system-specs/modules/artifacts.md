@@ -1270,10 +1270,17 @@ the page's shape in the canonicaliser:
   policy, so a document tag in the field is refused — by
   `dashboard_frame.validate_page`, called here so the author meets the frame's
   own refusals at save time rather than seeing a page that renders wrong.
-  Non-empty, and at most `MAX_VIEW_HTML_BYTES` (128 KiB) of UTF-8 — a page past
-  that usually has values baked in, which belong in the crew log and reach the
-  page through the fold / bus / controller path. Every field the page binds with
-  a `data-dashboard-field` attribute must be declared in `model.types`, because
+  Non-empty, and at most `MAX_VIEW_HTML_BYTES` (3 MiB) of UTF-8 — the frame's own
+  `dashboard_frame.MAX_PAGE_BYTES`, so a page a package can hold is one the frame
+  draws. That cap bounds what a page costs to store, send and draw. It does not
+  detect values baked into the layout (a page that inlines a client-side library
+  is several MB with no data in it, so size cannot tell the two apart); the
+  model, the binding check below and the push allowlist are what keep pushed
+  values on declared sources. The stored package is capped at
+  `MAX_PACKAGE_BYTES`, twice the page cap plus 128 KiB, because its JSON writes
+  a quote, a backslash or a line break in the page as two bytes. Every field
+  the page binds with a `data-dashboard-field` attribute must be declared in
+  `model.types`, because
   the model is also the list of fields the controller will push: a name only the
   page knows is a cell nothing ever fills. A name read only through
   `window.kirocrew.subscribe` is not scanned for — the attribute is static text
@@ -1420,7 +1427,11 @@ to this kind would store content no reader can parse.
   take the whole page down with it) and a sandboxed `srcdoc` frame blank-renders
   on WebKit, so a plain document URL is the only form that loads everywhere. The
   authed `POST /api/sandbox-doc` stashes the html the caller already holds and
-  returns the URL; the path credential is client-bound with a short TTL, and the
+  returns the URL. The stash holds at most 8 MiB (`_MAX_BYTES`) across the
+  documents in flight, which is room for a dashboard page at its frame cap and a
+  4 MiB data island; a composed document over it is refused with a 413, and a data
+  island has no bound of its own. The path credential is client-bound with a
+  short TTL, and the
   response pins `Content-Security-Policy: sandbox` so the document keeps an
   opaque origin even when opened top-level. The sandbox flags match what the
   embedding frame already grants. The header also sets `connect-src 'none'`,
