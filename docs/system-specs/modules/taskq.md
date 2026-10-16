@@ -73,6 +73,36 @@ After a restart, the generic reconciler marks interrupted runner rows
 `awaiting_adapter` until the owning TaskRunner or workflow adoption sweep settles
 or resumes them; that marker is recovery hand-off, not their normal dispatch path.
 
+The subagent glue is one class, `_TaskqBridgeMixin`, and
+`subagent_manager/admission/taskq_bridge.py` is its import path. The class body keeps
+the store handle and its settings, the exclusion sets the reads and the refill share,
+the store's open / re-open / boot dispatch, and a run's own writes (the best-effort
+write path `_post_store_write` / `track_store_task`, the marks, a refused row's
+`failed`, the terminal settle). Every other member is a module-level function of one
+of the owners below whose first parameter is `self`; the class binds it under the same
+name (`staticmethod` for one with no `self`), so `self.<name>`,
+`SpawnAdmissionCoordinator.<name>` and a class-level patch reach it as they reach a
+method written in the class. The facade re-exports every module-level name an owner
+took (`UNKNOWN_PENDING`, `QUEUED_LISTING_CAP`, `_read_queued_rows`, …), and no owner
+imports it at run time. A bound member reports its owner module as `__module__` and
+its bare name as `__qualname__` (`taskq_refill_window`, not
+`_TaskqBridgeMixin.taskq_refill_window`); nothing reads either beyond the names the
+stall diagnostics print for loop callbacks. New work of a kind an owner holds goes to
+that owner; a new kind is a new sibling module named `taskq_bridge_<role>.py` next to
+the others, never a package (the admission scans read the package's top level only),
+and is listed in `test_taskq_bridge_bindings.py`. A member a sibling mixin declares as
+a typing stub, and a member that a function with a narrowing closure calls through
+`self`, stay `def`s of the class body: mypy checks multiple inheritance, and narrows
+inside nested functions, only against methods.
+
+| Owner | Holds |
+|---|---|
+| `admission/taskq_bridge_accept.py` | a waiting spawn's row: `taskq_accept`, `taskq_build_record`, `taskq_accept_record`, and each defer the gate writes for it (`taskq_defer`, `taskq_defer_posted`, `await_pending_defer`, `park_defer`, `finish_parked_defer`) |
+| `admission/taskq_bridge_expiry.py` | the max wait of a memory deferral (`agent.subagent_queue_max_wait_secs`) and the expiry reports it owes: the sweep, the report, the owed-mark clear, the replay |
+| `admission/taskq_bridge_reads.py` | reads of accepted work with no run yet: the overflow counts, the chip's count, the pending ids a stop cancels, the queued listing and by-id lookup, a wave's batch membership |
+| `admission/taskq_bridge_window.py` | the bounded dispatch window: `taskq_should_window`, the lane-fair refill, eviction, hydration (`_window_entry`), the refill's wake and lane balance, the retired-stage stop |
+| `admission/taskq_bridge_cancel.py` | cancelling rows that have not started (`taskq_cancel_queued` and its async, bulk and posted forms) and the claimed-unstarted probe |
+
 ## Schema (v1, the only shape any build has written)
 
 ```sql
@@ -128,7 +158,7 @@ entry did; it is written nowhere else.
 from the row alone", and the pump respawns a recovered row by forwarding those
 params verbatim — so anything in there is replayed after a restart, on nobody's
 renewed say-so. Two keys are therefore process-local and dropped at build time
-(`taskq_bridge.taskq_build_record`): `_agent_prevalidated`, an off-loop agent check
+(`taskq_bridge_accept.taskq_build_record`): `_agent_prevalidated`, an off-loop agent check
 whose app could be disabled by the time the row starts, and `approval_mode`, whose
 `"auto"` skips the spawn gate AND pre-approves the run's tools. A recovered row
 faces the gate its caller faced. `scope_ref` still RECORDS both, which is why the
@@ -1585,7 +1615,7 @@ theirs, not the class's:
   `await` the way `waiting_input` did, because its wake is the admission resume
   grant and never `WaitLedger.wake` — the call that moves only a row the store
   already holds in a WAITING state.
-- `taskq_defer_posted`'s `store.defer` (`admission/taskq_bridge.py`): the boolean
+- `taskq_defer_posted`'s `store.defer` (`admission/taskq_bridge_accept.py`): the boolean
   is discarded because `_post_store_write` hands back the TASK, not the result, and
   a refused defer is the benign direction. `defer` only moves `next_run_at`, so a
   refusal leaves the row exactly as claimable as it already was and the pump refills

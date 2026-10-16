@@ -1826,7 +1826,7 @@ async def callback(job):
             # Six sites: three in gate.py (the spawn queue append, the
             # ClaimPoint reserve-then-commit running-count increment, the
             # registered start's running-count increment), the window refill
-            # append in taskq_bridge.py, the resume reservation in waits.py,
+            # append in taskq_bridge_window.py, the resume reservation in waits.py,
             # and the approval-released start's queue append in pump.py
             # (``_admit_released_start_impl``: a start whose spawn prompt
             # resolved re-enters the queue to be metered into startup).
