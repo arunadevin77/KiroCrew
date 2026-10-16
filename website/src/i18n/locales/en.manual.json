@@ -5597,6 +5597,10 @@
         "yolo_elsewhere": "YOLO covers every session on {{name}}. Change it on the crew's own dashboard.",
         "mode_unknown": "Couldn't read the approval mode on {{name}}. Trying again…",
         "update_in_remote_crew": "Update {{name}} in Remote Crew"
+      },
+      "noticeCard": {
+        "provider_backlog_one": "{{count}} earlier provider notice was dropped. Only the latest {{limit}} queued notices are shown.",
+        "provider_backlog_other": "{{count}} earlier provider notices were dropped. Only the latest {{limit}} queued notices are shown."
       }
     },
     "chatPage": {

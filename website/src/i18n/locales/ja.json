@@ -11159,7 +11159,8 @@
       },
       "noticeCard": {
         "blocked": "ブロック済み",
-        "warning": "警告"
+        "warning": "警告",
+        "provider_backlog_other": "以前のプロバイダー通知 {{count}} 件が破棄されました。キュー内の最新 {{limit}} 件の通知のみ表示されます。"
       },
       "compactionCard": {
         "after_turn": "コンテキスト {{pct}}（自動圧縮のしきい値 {{limit}} を超過）— このターンの終了後にチャットを要約します",

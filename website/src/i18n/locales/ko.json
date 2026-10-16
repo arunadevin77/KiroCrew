@@ -11159,7 +11159,8 @@
       },
       "noticeCard": {
         "blocked": "차단됨",
-        "warning": "경고"
+        "warning": "경고",
+        "provider_backlog_other": "이전 제공업체 알림 {{count}}개가 삭제되었습니다. 대기 중인 최신 알림 {{limit}}개만 표시됩니다."
       },
       "compactionCard": {
         "after_turn": "컨텍스트 {{pct}}, 자동 압축 임계값 {{limit}} 초과 — 이 턴이 끝나면 채팅이 요약됩니다",

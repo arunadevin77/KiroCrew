@@ -11321,7 +11321,9 @@
       },
       "noticeCard": {
         "blocked": "Blockiert",
-        "warning": "Warnung"
+        "warning": "Warnung",
+        "provider_backlog_one": "{{count}} frühere Anbieterbenachrichtigung wurde verworfen. Nur die letzten {{limit}} Benachrichtigungen in der Warteschlange werden angezeigt.",
+        "provider_backlog_other": "{{count}} frühere Anbieterbenachrichtigungen wurden verworfen. Nur die letzten {{limit}} Benachrichtigungen in der Warteschlange werden angezeigt."
       },
       "compactionCard": {
         "after_turn": "Kontext bei {{pct}}, über dem Schwellenwert für automatische Verdichtung von {{limit}} – der Chat wird nach diesem Zug zusammengefasst",

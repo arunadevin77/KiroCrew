@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar
 
 from kiro_crew import platform_compat
 from kiro_crew.acp import runtime_process_tree, seed_provenance
-from kiro_crew.acp._dispatch import BackgroundLaunchRecord
+from kiro_crew.acp._dispatch import BackgroundLaunchRecord, SessionNoticeState
 from kiro_crew.acp.client_spawn_env import KIRO_CLI_BIN
 from kiro_crew.acp.client_timeouts import (
     _CANCEL_GRACE_SECS,
@@ -689,6 +689,7 @@ def _reset_state(self: AcpClient) -> None:
     # grace — on behalf of work that is already dead. "Never reset per
     # turn" (see __init__) is a statement about turns, not processes.
     self._background_launches = BackgroundLaunchRecord()
+    self._session_notices = SessionNoticeState()
     # The adapter's cumulative cost counter is in-process: a replacement
     # process restarts it at zero, so the delta baseline must restart with
     # it or spend up to the old total is silently dropped — the monotonic

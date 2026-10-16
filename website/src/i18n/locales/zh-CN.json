@@ -11159,7 +11159,8 @@
       },
       "noticeCard": {
         "blocked": "已拦截",
-        "warning": "警告"
+        "warning": "警告",
+        "provider_backlog_other": "已丢弃 {{count}} 条较早的提供方通知。仅显示最新的 {{limit}} 条排队通知。"
       },
       "compactionCard": {
         "after_turn": "上下文已达 {{pct}}，超过 {{limit}} 自动压缩阈值，本轮次结束后将汇总对话",

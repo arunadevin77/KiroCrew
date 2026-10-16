@@ -11483,7 +11483,10 @@
       },
       "noticeCard": {
         "blocked": "Bloqué",
-        "warning": "Avertissement"
+        "warning": "Avertissement",
+        "provider_backlog_one": "{{count}} notification précédente du fournisseur a été supprimée. Seules les {{limit}} dernières notifications en attente sont affichées.",
+        "provider_backlog_other": "{{count}} notifications précédentes du fournisseur ont été supprimées. Seules les {{limit}} dernières notifications en attente sont affichées.",
+        "provider_backlog_many": "{{count}} notifications précédentes du fournisseur ont été supprimées. Seules les {{limit}} dernières notifications en attente sont affichées."
       },
       "compactionCard": {
         "after_turn": "Contexte à {{pct}}, au-delà du seuil de compactage automatique de {{limit}} — la conversation sera résumée à la fin de ce tour",

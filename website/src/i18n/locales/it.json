@@ -11483,7 +11483,10 @@
       },
       "noticeCard": {
         "blocked": "Bloccato",
-        "warning": "Avviso"
+        "warning": "Avviso",
+        "provider_backlog_one": "È stato scartato {{count}} avviso precedente del fornitore. Vengono mostrati solo gli ultimi {{limit}} avvisi in coda.",
+        "provider_backlog_other": "Sono stati scartati {{count}} avvisi precedenti del fornitore. Vengono mostrati solo gli ultimi {{limit}} avvisi in coda.",
+        "provider_backlog_many": "Sono stati scartati {{count}} avvisi precedenti del fornitore. Vengono mostrati solo gli ultimi {{limit}} avvisi in coda."
       },
       "compactionCard": {
         "after_turn": "Contesto al {{pct}}, oltre la soglia di compattazione automatica del {{limit}}: la chat verrà riassunta al termine di questo turno",

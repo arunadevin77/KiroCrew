@@ -765,6 +765,11 @@ class StreamRedactor:
         commit, self._buf = self._buf[:i], self._buf[i:]
         return self._redact_window(commit)
 
+    @property
+    def pending_text(self) -> str:
+        """Uncommitted raw text; retain across display-only segment boundaries."""
+        return self._buf
+
     def flush(self) -> str:
         """Redact and return the buffered remainder; clears the buffer."""
         if self._discarding:

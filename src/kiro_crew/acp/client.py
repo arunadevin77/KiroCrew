@@ -87,6 +87,7 @@ from kiro_crew.acp._dispatch import (  # noqa: F401
     MAX_ACTIVE_TOOL_CALLS,
     BackgroundLaunchRecord,
     InFlightIdSet,
+    SessionNoticeState,
     _dumps_degraded,
     _loggable_request_id,
     _measure_tool_output,
@@ -372,6 +373,7 @@ from kiro_crew.acp.types import (  # noqa: F401
     AcpPromptStats,
     JsonRpcMessage,
     JsonRpcRequest,
+    acp_client_capabilities,
     effort_config_option_id,
     effort_config_option_value,
     model_registry_namespace,
@@ -908,6 +910,7 @@ class AcpClient:
         # per spawn, cleared with the process. See ``process_instance``.
         self._process_instance: str = ""
         self._session_id: str | None = None
+        self._session_notices = SessionNoticeState()
         self._next_id = 1
         self._buffer: deque[JsonRpcMessage] = deque(maxlen=100)
         self._mcp_notifications: list[JsonRpcMessage] = []
@@ -2304,7 +2307,7 @@ class AcpClient:
         return {
             "protocolVersion": protocol_version,
             "clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
-            "clientCapabilities": ACP_CLIENT_CAPABILITIES,
+            "clientCapabilities": acp_client_capabilities(self.backend),
         }
 
     async def _fork_session(
@@ -3563,6 +3566,8 @@ class AcpClient:
         self._steering_turn_req = None if extract_agent_from_result else req_id
 
         async for action, msg in self._prompt_loop(req_id, timeout):
+            for notice in self._session_notices.take_pending(self._session_id or ""):
+                yield notice
             if action != "update":
                 logger.debug(
                     "ACP event: method=%s id=%s action=%s",
@@ -3685,6 +3690,9 @@ class AcpClient:
                 # Answered before the turn's own terminal: kept for the settle.
                 self._steer_turn.answers[msg.id] = (msg, False)
             elif action == "update":
+                session_notice = self._session_notices.accept(msg, self._session_id or "")
+                if session_notice is not None:
+                    yield session_notice
                 self._track_usage_update(msg)
                 self._note_background_launch(msg)
                 _steer_echo = self._steer_echo_event(msg)
