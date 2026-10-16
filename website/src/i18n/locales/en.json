@@ -5944,6 +5944,17 @@
       "moreCols": "more columns",
       "fewerRows": "fewer rows",
       "moreRows": "more rows"
+    },
+    "sendFolderToInstanceSubmenu": {
+      "nothing_to_send": "No sessions to send",
+      "progress": "{{done}} of {{total}}",
+      "resend_all": "Click to send another copy of all {{total}}",
+      "retry_failed": "Click to resend the {{count}} that failed",
+      "sent_all": "Sent: {{count}}",
+      "sent_some": "{{sent}} of {{total}} sent",
+      "sent_transcript_only": "Sent: {{sent}} ({{count}} transcript only)",
+      "skipped_private_one": "{{count}} incognito or temporary session is not sent",
+      "skipped_private_other": "{{count}} incognito or temporary sessions are not sent"
     }
   },
   "hooks": {

@@ -10195,6 +10195,18 @@
       "config_unavailable": "Não foi possível ler as configurações do painel",
       "config_unavailable_detail": "Recarregue a página para tentar novamente ou peça ao agente para verificar.",
       "load_failed": "Não foi possível carregar uma parte do painel. Recarregue a página para tentar novamente."
+    },
+    "sendFolderToInstanceSubmenu": {
+      "nothing_to_send": "Nenhuma sessão para enviar",
+      "progress": "{{done}} de {{total}}",
+      "resend_all": "Clique para enviar outra cópia das {{total}}",
+      "retry_failed": "Clique para reenviar as {{count}} que falharam",
+      "sent_all": "Enviado: {{count}}",
+      "sent_some": "{{sent}} de {{total}} enviadas",
+      "sent_transcript_only": "Enviado: {{sent}} ({{count}} apenas transcrição)",
+      "skipped_private_many": "{{count}} sessões anônimas ou temporárias não são enviadas",
+      "skipped_private_one": "{{count}} sessão anônima ou temporária não é enviada",
+      "skipped_private_other": "{{count}} sessões anônimas ou temporárias não são enviadas"
     }
   },
   "hooks": {
