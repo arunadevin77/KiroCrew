@@ -2,8 +2,8 @@
 
 ``VectorMemoryStore.migrate_from_markdown`` imports Global V1's ``lessons.jsonl``
 and ``workspace/memory`` Markdown, and ``promote_episodic_patterns`` turns a
-cluster of repeated episodes into one semantic fact. Both keep their writes on the
-store; this module only reads the sources: it parses legacy files in the order
+cluster of repeated episodes into one semantic fact. Both keep their writes in
+``bulk_ingest``; this module only reads the sources: it parses legacy files in the order
 the migration writes them (the Markdown through the ``MemoryFiles`` the store
 resolves and passes in), clusters episode vectors, and infers a fact's key and
 value from episode text. Nothing here opens the database.

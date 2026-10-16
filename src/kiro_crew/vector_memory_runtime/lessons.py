@@ -5,8 +5,8 @@ A lesson is a ``lesson.*`` semantic row whose value is either the mapping
 below reads both without guessing. The readers here decide which rows count as
 lesson population, which reach a prompt and in which tier and order, which rows
 a contradiction sweep or a delete may address, and they fetch through the
-store's locked helpers. The write path, ``VectorMemoryStore.write_lesson``, stays
-on the store and uses the same codec.
+store's locked helpers. The write path, ``VectorMemoryStore.write_lesson``, lives
+in ``lesson_write`` and uses the same codec.
 """
 
 from __future__ import annotations

@@ -581,6 +581,7 @@ custom-rules:
       - "src/kiro_crew/context_assembly/**/*.py"
       - "src/kiro_crew/memory.py"
       - "src/kiro_crew/vector_memory.py"
+      - "src/kiro_crew/vector_memory_*.py"
       - "src/kiro_crew/vector_memory_runtime/**/*.py"
       - "src/kiro_crew/suggestions.py"
       - "src/kiro_crew/tips.py"

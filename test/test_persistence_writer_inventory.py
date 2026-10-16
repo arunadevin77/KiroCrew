@@ -89,12 +89,14 @@ EXEMPT = {
     # Store-internal writes. The storage layer is deliberately NOT the gate (see
     # the module docstring): these are reached from the classified entry points
     # or from an explicit migration/import the user asked for.
-    "vector_memory.py::write_lesson": "storage primitive",
-    "vector_memory.py::write_episodic": "storage primitive (bool wrapper of write_episodic_outcome)",
-    "vector_memory.py::seed_item_if_absent": "storage primitive",
-    "vector_memory.py::import_memory": "explicit user-initiated import",
-    "vector_memory.py::migrate_from_markdown": "explicit one-shot migration",
-    "vector_memory.py::promote_episodic_patterns": "explicit dashboard action",
+    "vector_memory_runtime/lesson_write.py::write_lesson": "storage primitive",
+    "vector_memory_runtime/episodic_write.py::write_episodic": (
+        "storage primitive (bool wrapper of write_episodic_outcome)"
+    ),
+    "vector_memory_member.py::seed_item_if_absent": "storage primitive",
+    "vector_memory_runtime/bulk_ingest.py::import_memory": "explicit user-initiated import",
+    "vector_memory_runtime/bulk_ingest.py::migrate_from_markdown": "explicit one-shot migration",
+    "vector_memory_runtime/bulk_ingest.py::promote_episodic_patterns": "explicit dashboard action",
     # A one-shot, user-initiated import (merge-only, never tombstones).
     "onboarding_import.py::_write_instruction": "user-initiated one-shot import",
     "onboarding_import.py::_write_memory": "user-initiated one-shot import",

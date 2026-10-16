@@ -3166,7 +3166,7 @@ async def _run_task(args: argparse.Namespace) -> None:
     # Vector memory (structured semantic store)
 
     vector_memory = VectorMemoryStore(embedding_dim=cfg.memory.embedding_dim, config=cfg)
-    # CALLER CONTRACT (vector_memory.py): async callers offload init() — it is
+    # CALLER CONTRACT (vector_memory_lifecycle.py): async callers offload init() — it is
     # blocking file IO end to end (sqlite connect, migrations, lockdown pass)
     # and would stall the loop.
     await asyncio.to_thread(vector_memory.init)

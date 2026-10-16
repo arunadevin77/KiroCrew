@@ -4,8 +4,8 @@ Validation (key shape, allowlist, confidence, decoded emptiness, size, encoding
 and injection screening), the reject audit, the insert-if-absent and delete
 writes, facet stamping, and every reader that ranks or renders facts and
 preferences for a prompt. The conflict-resolving write transaction,
-``VectorMemoryStore._write_semantic``, stays on the store because member
-consolidation joins it; ``write_value`` validates and routes into it.
+``VectorMemoryStore._write_semantic``, lives in ``vector_memory_semantic_write`` because
+member consolidation joins it; ``write_value`` validates and routes into it.
 """
 
 from __future__ import annotations

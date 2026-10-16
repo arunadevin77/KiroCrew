@@ -86,8 +86,9 @@ an edited or shortened prefix refuses acknowledgement. Receipts are not pruned.
   mode tightening. It carries routing data; ordinary auth remains independent.
 - `memory_stores.py` resolves configured store paths and explicit member creation.
   `members.py` owns persisted member IDs and manual member documents.
-- `memory_schema.py` defines the authoritative member tables. `vector_memory.py`
-  owns exclusive creation, strict open and the store's one connection and lock.
+- `memory_schema.py` defines the authoritative member tables.
+  `vector_memory_member.py` owns exclusive creation and strict open, and
+  `VectorMemoryStore` (`vector_memory.py`) the store's one connection and lock.
   Learned reads/writes, FTS and vectors run on that connection, split between the
   store and the `vector_memory_runtime/` modules it delegates to (see
   [Store composition](#store-composition-vector_memorypy-and-vector_memory_runtime));
@@ -639,30 +640,22 @@ Structured memory system backed by SQLite + FAISS + in-process embeddings (vendo
 `VectorMemoryStore` is the one owner of a store's SQLite connection and its
 `_db_lock`. The class keeps:
 
-- the store lifecycle (`init`, `close`, `reconfigure`, lineage binding, owner-only
-  file lockdown) and the member-database operations;
-- the history files and their FTS index (`append_history`, `read_history_entries`,
-  `read_editable_history`, `replace_today_history`, `search_memory`,
-  `rebuild_memory_index`, `consolidation_receipt`);
-- record revisions and the eligibility filter (`_record_mutation`,
-  `with_record_metadata`, `_eligible_rows`);
-- the facet and event-log readers (`count_by_facet`, `list_by_facets`,
-  `get_events`), event rotation (`rotate_events`), the `_log_event` and
-  `memory_meta` helpers and the read counters;
-- the episodic list, cap, delete and restore paths, the per-row embed calls
-  (`embed_episodic`, `embed_lesson`), `get_semantic`, the statistics readers
-  (`memory_stats`, `get_rejection_stats`), the embedding-space guards and the
-  invalidation of both resident scoring sets;
-- the write paths whose source the read-only guards pin to `vector_memory.py`:
-  `_write_semantic` with its consolidation branches, `write_episodic` and
-  `write_episodic_outcome`, `write_lesson`, `apply_consolidation`, `import_memory`,
-  and the writer loops of `migrate_from_markdown`, `promote_episodic_patterns` and
-  `seed_item_if_absent`.
+- the instance state every collaborator reads, built in `__init__`, and the lineage
+  binding (`_bind_lineage`);
+- `reconfigure`, the locked fetch helpers and read counters, the properties,
+  `get_semantic`, `_cosine_sim` and the derived-vector transaction `_vector_commit`.
 
 The other rules live in
-the modules of `kiro_crew.vector_memory_runtime`. Each store method keeps its name
-and signature and delegates to the function that owns the rule (`set_semantic` to
-`semantic.write_value`, for example):
+collaborator modules, and each member keeps its name and signature. Most delegate in
+one line to the runtime function that owns the rule (`set_semantic` to
+`semantic.write_value`, for example). The rest are bound: the class attribute IS
+the owner module's function, moved verbatim from the class body, which takes the
+store as `self` (annotated `self: VectorMemoryStore`) where a delegated rule takes it as
+`store`, and no module mixes the two; the class lists the bound members under one
+header per owner. A bound member reports its owner module as `__module__` and its bare
+function name as `__qualname__` (`write_lesson`, not `VectorMemoryStore.write_lesson`);
+nothing reads either. New code for a member goes to the module that owns it. In
+`kiro_crew.vector_memory_runtime`:
 
 | Module | Owns |
 |---|---|
@@ -676,6 +669,23 @@ and signature and delegates to the function that owns the rule (`set_semantic` t
 | `recall` | `recall`, its single-inference retry, and the bounded evidence payload |
 | `migration` | Legacy `lessons.jsonl` parsing, Markdown parsing through the `MemoryFiles` the store resolves, the episode clustering promotion uses, and promotion's key inference (`infer_semantic_key`) |
 | `text_scoring` | Stemming, the row-token memo, keyword and hybrid scores, MMR, the dense-script keyword floor and the list-search predicate |
+| `write_outcomes` | What a write reports: `SemanticRejectCode`, `LessonWriteOutcome`, `EpisodicWriteOutcome` and `LessonWriteResult`, which keep `kiro_crew.vector_memory` as their `__module__` |
+| `lesson_write` | `write_lesson` (refusal screens, the scope-local dedup scan and its authority pre-pass, deferred supersede, the lesson vector) and `embed_lesson` |
+| `episodic_write` | `write_episodic` and `write_episodic_outcome` (screens, dedup, capacity, the FAISS add; the facade's `_injection_audit_snippet` redacts the injection-refusal snippet), forget, restore, cap eviction and row reads |
+| `bulk_ingest` | The writer loops of `migrate_from_markdown`, `import_memory` and `promote_episodic_patterns` |
+| `store_bookkeeping` | Record revisions and eligibility (`_record_mutation`, `with_record_metadata`, `_eligible_rows`), the `memory_events` audit trail (`_log_event`, `get_events`, `rotate_events`, `get_rejection_stats`) and the `memory_meta` helpers |
+| `derived_state` | Vector-space currency (the embedding token and the config guard a managed vector is published under) and the invalidation of both resident scoring sets |
+
+Beside the facade, and bound the same way, live the owners a runtime module may not
+be: the code that opens the connection, and the code that names a relation only the
+crew lineage has:
+
+| Module | Owns |
+|---|---|
+| `vector_memory_lifecycle` | `init`, `_init_database`, `close`, owner-only file lockdown, and the V1 schema (`_SCHEMA_V1`, `_migrate_v2`, `_MEMORY_META_TABLE`, `_MIGRATIONS`) |
+| `vector_memory_member` | Member-database provisioning and admission identity (`create_member_database`, `read_member_database_identity`, `open_member_database`, `declared_store`), the history files and their FTS index, `consolidation_receipt`, `apply_consolidation` and `seed_item_if_absent` |
+| `vector_memory_semantic_write` | `_write_semantic` with its consolidation branches |
+| `vector_memory_inventory` | `get_episodic_list`, the facet readers (`list_by_facets`, `count_by_facet`) and `memory_stats` |
 
 A runtime function that works on a store takes it as its first argument. Every
 statement it runs, its commits and its `memory_meta` and `memory_events` writes
@@ -699,15 +709,19 @@ it through the owner module (`_text_scoring._MMR_MAX_POOL`,
 owner reaches every caller. `lessons` keeps one copy on purpose, `_stem_one`, because a test
 patches it apart from `text_scoring._stem_one`; a class is imported by name, since
 a patch of a class lands on the object every binding shares.
-`vector_memory.py` imports every runtime module when it loads and still
-binds every name it defined or imported from another `kiro_crew` module, and the
-runtime modules log on the `kiro_crew.vector_memory` logger.
+`vector_memory.py` imports every owner module when it loads and still
+binds every name it defined or imported from another `kiro_crew` module, and every
+owner logs on the `kiro_crew.vector_memory` logger.
 `test/test_vector_memory_composition_contract.py` pins that surface, the seams and
 the one-binding rule for a name two modules read, the import and logger rules and the through-the-store call
 rule, and re-applies the source guards that scan
 `vector_memory.py` by name — the lineage relation and kind-guard checks, the
 facet-in-view check, the redaction-sink and md5 checks — to every runtime module,
 each with a planted violation proving the re-applied check can fail.
+`test/test_vector_memory_owners.py` pins the bound members (each is its owner's
+function, the inventory is frozen per owner, none needs the class body), applies the
+same placement and seam rules to the owners beside the facade, and pins where the
+injection-refusal snippet is redacted.
 
 ### Live reconfiguration (`VectorMemoryStore.reconfigure`)
 
@@ -762,8 +776,9 @@ a column the `WHERE` clause excluded), while a concurrent FAISS `add` during a
 `search` can corrupt the C++ index outright. `self._db_lock` (a reentrant
 `threading.RLock`, so a locked method may call another locked method)
 serializes every statement on that connection. The structural regression guard
-scans `vector_memory.py` and every `vector_memory_runtime` module (where the store
-is the `store` parameter), recognizes explicit lock scopes and `_vector_commit`,
+scans `vector_memory.py`, the owners beside it and every `vector_memory_runtime`
+module (where the store is `self` in a bound owner function and `store` in a
+delegated rule), recognizes explicit lock scopes and `_vector_commit`,
 checks the latter's actual `ExitStack.enter_context(_db_lock)` acquisition, and
 fails if that acquisition is removed. Its negative fixtures retain checks before acquisition, after scope
 exit, on failed admission and in deferred nested functions. Generation rechecks
@@ -789,8 +804,8 @@ The critical sections that matter most:
 
 An async caller offloads every operation that can reach `_db_lock`, including
 `close()`, so contention never stalls the event loop. The source gate derives
-the ordinary method set from the store call graph, following each delegate into
-the runtime function that implements it, pins that set, and separately tracks
+the ordinary method set from the store call graph, following each delegate and each
+bound member into the owner function that implements it, pins that set, and separately tracks
 constructor-bound receivers for the generic lifecycle names `init` and `close`.
 
 **The lock is never held across an embedding call.** An embed on a loaded model
@@ -820,8 +835,8 @@ carve facets, with v1's relation names re-presented over it as views. **Every ot
 file, above all `config_dir()/"memory.db"`, is the v1 lineage**, frozen at
 `schema_version` `{1, 2, 3}` with `semantic_memory` and `episodic_memories` as real
 tables. Two lineages, one engine: no cutover, no dual write, no backfill, and no
-`CONTRACT_VERSION` bump. `memory_schema.py` owns the crew lineage; `vector_memory.py`
-keeps owning v1's `_MIGRATIONS`.
+`CONTRACT_VERSION` bump. `memory_schema.py` owns the crew lineage;
+`vector_memory_lifecycle.py` owns v1's `_MIGRATIONS`, which `vector_memory` re-exports.
 
 **`memory_events` and `memory_meta` have ONE definition, and it is not per-lineage.**
 They are the only product tables the engine reaches with no relation indirection —
@@ -886,7 +901,7 @@ never becomes a second, divergent notion of what a lesson is.
 
 **`semantic_memory` and `episodic_memories` survive as READ-ONLY VIEWS presenting v1's
 exact columns in v1's exact order.** The read statements naming them in the
-engine (`vector_memory.py` and `vector_memory_runtime/`) are therefore unchanged, and `SELECT *` still hands `sqlite3.Row`
+engine (`vector_memory.py`, its `vector_memory_*.py` owners and `vector_memory_runtime/`) are therefore unchanged, and `SELECT *` still hands `sqlite3.Row`
 the columns the engine expects. Splitting by `kind` is also what keeps the vector scorers
 partitioned by RELATION: episodic blobs are L2-normalized at write and semantic and
 lesson blobs are not, and three of the four places that score a stored blob take a bare
@@ -984,8 +999,8 @@ indexes.
 twice over.** It names `memory_items`, a relation only the crew lineage has, so the same
 literal inside the engine would be a statement that raises on every v1 file — which is
 exactly what `test_memory_lineage_drift`'s "every relation the module names exists in both
-lineages" refuses for `vector_memory.py`, and the composition contract refuses for the
-`vector_memory_runtime` modules. And it keeps the one place a facet NAME is spliced into SQL beside
+lineages" refuses for `vector_memory.py` and its owners, and the composition contract
+refuses for the `vector_memory_runtime` modules. And it keeps the one place a facet NAME is spliced into SQL beside
 the dataclass those names come from.
 
 **Names come from an allowlist derived from the dataclass; values are bound.**

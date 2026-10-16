@@ -35,7 +35,8 @@ raises ``Cannot add a column to a view`` — loud, and before any write.
 The views are READ-ONLY, deliberately
 -------------------------------------
 ``semantic_memory`` and ``episodic_memories`` survive as views so the read statements in
-``vector_memory.py`` and ``vector_memory_runtime/`` run byte-identically, and so the four vector
+``vector_memory.py``, its ``vector_memory_*.py`` owners and ``vector_memory_runtime/`` run
+byte-identically, and so the four vector
 scorers stay partitioned by RELATION: episodic blobs are L2-normalized at write
 and semantic/lesson blobs are not, three scorers take a bare dot product, and one
 undivided ``embedding`` column would put un-normalized rows in front of them. The

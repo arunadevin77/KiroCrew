@@ -221,6 +221,11 @@ _SCANNED_MODULES = [
     "src/kiro_crew/mcp_tools/control.py",
     "src/kiro_crew/mcp_tools/spawn.py",
     "src/kiro_crew/vector_memory.py",
+    # The owners bound into the vector memory store beside its facade.
+    "src/kiro_crew/vector_memory_inventory.py",
+    "src/kiro_crew/vector_memory_lifecycle.py",
+    "src/kiro_crew/vector_memory_member.py",
+    "src/kiro_crew/vector_memory_semantic_write.py",
     "src/kiro_crew/knowledge/agent_fetch.py",
     "src/kiro_crew/slack/gateway.py",
     "src/kiro_crew/telegram/renderer.py",

@@ -862,10 +862,9 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
         # Imported here, not at module scope: ``vector_memory`` pulls
         # snowballstemmer plus the optional numpy/faiss imports (measured 175ms
         # and ~200 modules) and this enum is the module's ONLY use of it, on one
-        # error branch. The enum itself belongs in ``vector_memory_constants``
-        # (the dependency-free split-out this module's other constants already
-        # live in), but relocating it would edit ``vector_memory.py``; deferring
-        # the import keeps the cost off the import path without that change.
+        # error branch. The enum lives in ``vector_memory_runtime/write_outcomes.py``
+        # and its public path is ``vector_memory``; deferring the import keeps the
+        # cost off the import path.
         from kiro_crew.vector_memory import SemanticRejectCode
 
         sk = request.headers.get("X-Session-Key", "")

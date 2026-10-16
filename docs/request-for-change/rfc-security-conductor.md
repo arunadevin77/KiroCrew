@@ -107,7 +107,7 @@ The pattern facts were measured at `e992b7771`; the shipped-state facts were re-
   `scripts/`.
 - **SQLite is this repository's established store for durable agent knowledge**, which is the pattern
   the findings ledger mirrors. `src/kiro_crew/memory.py` keeps `memory_index.db` beside the workspace
-  config; `src/kiro_crew/vector_memory.py` keeps `memory.db` in WAL mode behind a `schema_version`
+  config; `src/kiro_crew/vector_memory_lifecycle.py` keeps `memory.db` in WAL mode behind a `schema_version`
   table and a `_MIGRATIONS` ladder; `src/kiro_crew/knowledge/store.py` owns its own database with
   `CREATE TABLE IF NOT EXISTS` DDL and one connection per thread. All three import SQLite through the
   `src/kiro_crew/_sqlite_compat.py` shim rather than the stdlib module directly, and `data_home()` in

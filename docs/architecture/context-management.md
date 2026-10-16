@@ -685,7 +685,7 @@ per-member permission control; both exist today, in the forms above.
 | Marker and fence scrubs of untrusted text | `src/kiro_crew/context_assembly/markers.py`, `src/kiro_crew/context.py` (`_neutralize_structural_markers`) |
 | Replay and recall projection | `src/kiro_crew/context_assembly/replay.py`, `src/kiro_crew/context.py` (`build_session_replay`, `_recall_rows`) |
 | Memory block contents | `src/kiro_crew/memory.py` (`get_context`, `activity_index`, `get_activity_context`) |
-| Lessons | `src/kiro_crew/learn.py`, `src/kiro_crew/vector_memory.py` (`write_lesson`), `src/kiro_crew/vector_memory_runtime/lessons.py` (the lesson readers, ranking and tiered rendering) |
+| Lessons | `src/kiro_crew/learn.py`, `src/kiro_crew/vector_memory_runtime/lesson_write.py` (`write_lesson`), `src/kiro_crew/vector_memory_runtime/lessons.py` (the lesson readers, ranking and tiered rendering) |
 | Skill index, pinned bodies, discovery | `src/kiro_crew/skill_runtime/delivery.py` (`get_context`), `src/kiro_crew/skills.py` (`load_skill`) |
 | Trigger matching, and its model-picked override | `src/kiro_crew/trigger_match.py`, `src/kiro_crew/skills.py` (`get_triggered_skills`), `src/kiro_crew/skill_runtime/delivery.py` (`split_triggered`, `trigger_hint`), `src/kiro_crew/decisions/points/skills_select.py` |
 | Which agents get skills | `src/kiro_crew/context.py` (`_skills_injection_plan`), `src/kiro_crew/agent_discovery.py` (`agent_skill_globs`, `expand_skill_uri`) |
