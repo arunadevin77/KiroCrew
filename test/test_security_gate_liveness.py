@@ -348,7 +348,14 @@ def _url_payload_command(n: int) -> str:
 #: spares an ordered alphabet and a data URI payload, the flag it sets, the one place pass 3
 #: reads it, and the two checks that tell those shapes from a key. No credential branch, gate
 #: verdict or other pass moved.
-_PACKAGE_LINE_BUDGET = 29_411
+#:
+#: Raised again, from 29,411, for ``rm_floor``: the argv floor that reads a
+#: recursive-force ``rm`` in any flag or home spelling against the root or home dir
+#: itself, cut on the shared ``_iter_shell_chars`` and unquoted with the shared
+#: ``_shell_tokens`` (no quote reader of its own), skipping comments and heredoc
+#: bodies and walking each ``$(…)`` body on its own, and its gated branch at the
+#: end of ``is_denied``. No pattern moved.
+_PACKAGE_LINE_BUDGET = 29_670
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
