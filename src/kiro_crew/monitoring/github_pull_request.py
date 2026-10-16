@@ -97,7 +97,9 @@ _MAX_SUBJECTS_PER_QUERY = 25
 # interpolated into a query document. Every one of those travels as a typed
 # GraphQL variable instead.
 _ALIAS_RE = re.compile(r"^s(\d+)$")
-_PR_CORE_SELECTION = "number state isDraft headRefOid mergeable mergeStateStatus reviewDecision"
+_PR_CORE_SELECTION = (
+    "number state isDraft headRefOid mergeable mergeStateStatus reviewDecision author{login}"
+)
 _ROLLUP_SELECTION = """
 headRefOid
 commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:PAGE_SIZE,after:$CURSOR){
@@ -118,7 +120,11 @@ reviewThreads(first:PAGE_SIZE,after:$CURSOR){
 _PR_COMMENTS_SELECTION = """
 comments(first:PAGE_SIZE,after:$CURSOR){
   pageInfo{hasNextPage endCursor}
-  nodes{body}
+  nodes{body author{login __typename}}
+}
+reviews(first:PAGE_SIZE,after:$REVIEW_CURSOR){
+  pageInfo{hasNextPage endCursor}
+  nodes{body state author{login __typename}}
 }
 """.replace("PAGE_SIZE", str(_PR_COMMENT_PAGE_SIZE)).strip()
 # GitHub meters GraphQL in points and REST in requests, and the two budgets are
@@ -228,10 +234,22 @@ class GitHubPullRequestResponse:
     checks_complete: bool
     unresolved_review_threads: int
     review_threads_complete: bool
-    #: Digest over the PR-level (issue) comment bodies, or "" when there are none
-    #: or the comment read was incomplete. Set after the supplemental comment
-    #: read via ``replace``; the primary-only and REST paths leave it empty.
+    #: Login of the PR author, used only to exclude self-authored activity.
+    author_login: str
+    #: Digests over all comment bodies and eligible human comment/review activity.
+    #: Empty digests mean no activity or an incomplete/unattributed read.
     pr_comment_body_digest: str = ""
+    pr_human_comment_digest: str = ""
+    pr_human_review_digest: str = ""
+
+
+@dataclass(frozen=True)
+class _PRCommentDigests:
+    """Bounded digests retained from the PR comments and reviews connections."""
+
+    bodies: str = ""
+    human_comments: str = ""
+    human_reviews: str = ""
 
 
 GitHubPullRequestProbeResult = PullRequestProbeResult
@@ -416,7 +434,8 @@ class GitHubPullRequestProvider:
         graphql_live = [member for member in live if member.raw not in degraded]
         checks = self._checks(gh, host, graphql_live, heads)
         threads = self._review_threads(gh, host, graphql_live)
-        comments = self._pr_comments(gh, host, graphql_live)
+        authors = {member.raw: facts[member.raw].author_login for member in graphql_live}
+        comments = self._pr_comments(gh, host, graphql_live, authors)
         rest_checks = self._checks_rest(
             gh,
             host,
@@ -435,7 +454,9 @@ class GitHubPullRequestProvider:
             unresolved, threads_complete, threads_error = (
                 (0, False, None) if member.raw in degraded else threads[member.raw]
             )
-            comment_digest = "" if member.raw in degraded else comments[member.raw]
+            comment_digests = (
+                _PRCommentDigests() if member.raw in degraded else comments[member.raw]
+            )
             if threads_error is ProviderErrorKind.RATE_LIMITED:
                 # Thread resolution is the ONE signal REST cannot express, so a
                 # refused thread read is reported as an incomplete COUNT rather
@@ -449,7 +470,9 @@ class GitHubPullRequestProvider:
                 checks_complete=checks_complete,
                 unresolved_review_threads=unresolved,
                 review_threads_complete=threads_complete,
-                pr_comment_body_digest=comment_digest,
+                pr_comment_body_digest=comment_digests.bodies,
+                pr_human_comment_digest=comment_digests.human_comments,
+                pr_human_review_digest=comment_digests.human_reviews,
             )
             results[member.raw] = _build_result(
                 response,
@@ -860,71 +883,142 @@ class GitHubPullRequestProvider:
         gh: str,
         host: str,
         members: Sequence[_BatchSubject],
-    ) -> dict[str, str]:
-        """Digest each subject's PR-level (issue) comment bodies in shared pages.
+        author_logins: Mapping[str, str],
+    ) -> dict[str, _PRCommentDigests]:
+        """Digest PR comments and reviews, retaining only bounded fingerprints.
 
-        Mirrors :meth:`_review_threads` in paging shape -- page size 100, the same
-        page cap, cursor de-duplication and fail-closed handling -- but reports
-        ONLY a digest. PR-level comment completeness has no bearing on
-        review-readiness classification, so a refused, malformed or capped read is
-        never a provider error and never forces a retry: it simply yields "" and
-        emits no condition (fail-closed). The digest is over ALL comment bodies,
-        human and bot alike, because a human editing a comment in place is exactly
-        as invisible to a count and as load-bearing as a bot rewriting a verdict;
-        filtering by author would encode "only bots matter", which is false. Known
-        bounded cost: the tick after the owning session posts its own comment, the
-        digest moves once and wakes once, then dedupes.
+        The all-comment body digest remains unchanged so bot verdict comments
+        rewritten in place still wake ACTIONABLE watches. Separate digests include
+        only ``User`` authors other than the PR author, and can wake a pending
+        review-only watch. Missing author data fails closed for those activity
+        digests without weakening the legacy body digest.
         """
         bodies: dict[str, list[str]] = {member.raw: [] for member in members}
-        complete: dict[str, bool] = dict.fromkeys((m.raw for m in members), True)
+        human_comments: dict[str, list[str]] = {member.raw: [] for member in members}
+        human_reviews: dict[str, list[str]] = {member.raw: [] for member in members}
+        comments_complete: dict[str, bool] = dict.fromkeys((m.raw for m in members), True)
+        comments_authors_complete: dict[str, bool] = dict.fromkeys((m.raw for m in members), True)
+        reviews_complete: dict[str, bool] = dict.fromkeys((m.raw for m in members), True)
+        reviews_authors_complete: dict[str, bool] = dict.fromkeys((m.raw for m in members), True)
+        comments_done: dict[str, bool] = dict.fromkeys((m.raw for m in members), False)
+        reviews_done: dict[str, bool] = dict.fromkeys((m.raw for m in members), False)
         pending = list(members)
-        cursors: dict[str, str] = {}
-        seen_cursors: dict[str, set[str]] = {member.raw: set() for member in members}
+        comment_cursors: dict[str, str] = {}
+        review_cursors: dict[str, str] = {}
+        seen_comment_cursors: dict[str, set[str]] = {m.raw: set() for m in members}
+        seen_review_cursors: dict[str, set[str]] = {m.raw: set() for m in members}
         for _ in range(_PR_COMMENT_MAX_PAGES):
             if not pending:
                 break
             document, argv_tail = _batch_document(
                 pending,
                 _PR_COMMENTS_SELECTION,
-                cursors=cursors,
+                cursors=comment_cursors,
+                review_cursors=review_cursors,
             )
             payload, _group_failure = self._graphql(gh, host, document, argv_tail)
             if payload is None:
                 for member in pending:
-                    complete[member.raw] = False
+                    comments_complete[member.raw] = False
+                    reviews_complete[member.raw] = False
+                    comments_done[member.raw] = True
+                    reviews_done[member.raw] = True
                 break
             round_errors = _subject_errors(payload, pending)
             advancing: list[_BatchSubject] = []
             for index, member in enumerate(pending):
+                raw = member.raw
                 node = _alias_pull_request(payload, index)
-                if node is None:
-                    complete[member.raw] = False
+                if node is None or raw in round_errors:
+                    comments_complete[raw] = False
+                    reviews_complete[raw] = False
+                    comments_done[raw] = True
+                    reviews_done[raw] = True
                     continue
-                try:
-                    page_bodies, nodes_complete, has_next, cursor = _pr_comment_page(node)
-                except (KeyError, TypeError, ValueError):
-                    complete[member.raw] = False
-                    continue
-                bodies[member.raw].extend(page_bodies)
-                if member.raw in round_errors or not nodes_complete:
-                    complete[member.raw] = False
-                    continue
-                if not has_next or cursor is None:
-                    continue
-                if cursor in seen_cursors[member.raw]:
-                    complete[member.raw] = False
-                    continue
-                seen_cursors[member.raw].add(cursor)
-                cursors[member.raw] = cursor
-                advancing.append(member)
+                author_login = author_logins.get(raw, "")
+                if not comments_done[raw]:
+                    try:
+                        page = _pr_comment_activity_page(node, author_login)
+                    except (KeyError, TypeError, ValueError):
+                        comments_complete[raw] = False
+                        comments_authors_complete[raw] = False
+                        comments_done[raw] = True
+                    else:
+                        page_bodies, page_humans, nodes_ok, authors_ok, has_next, cursor, end = page
+                        bodies[raw].extend(page_bodies)
+                        human_comments[raw].extend(page_humans)
+                        if not nodes_ok:
+                            comments_complete[raw] = False
+                            comments_authors_complete[raw] = False
+                            comments_done[raw] = True
+                        else:
+                            comments_authors_complete[raw] &= authors_ok
+                            if has_next and cursor is not None:
+                                if cursor in seen_comment_cursors[raw]:
+                                    comments_complete[raw] = False
+                                    comments_authors_complete[raw] = False
+                                    comments_done[raw] = True
+                                else:
+                                    seen_comment_cursors[raw].add(cursor)
+                                    comment_cursors[raw] = cursor
+                            else:
+                                comments_done[raw] = True
+                                if end is not None:
+                                    comment_cursors[raw] = end
+                if not reviews_done[raw]:
+                    try:
+                        page = _pr_review_activity_page(node, author_login)
+                    except (KeyError, TypeError, ValueError):
+                        reviews_complete[raw] = False
+                        reviews_authors_complete[raw] = False
+                        reviews_done[raw] = True
+                    else:
+                        page_humans, nodes_ok, authors_ok, has_next, cursor, end = page
+                        human_reviews[raw].extend(page_humans)
+                        if not nodes_ok:
+                            reviews_complete[raw] = False
+                            reviews_authors_complete[raw] = False
+                            reviews_done[raw] = True
+                        else:
+                            reviews_authors_complete[raw] &= authors_ok
+                            if has_next and cursor is not None:
+                                if cursor in seen_review_cursors[raw]:
+                                    reviews_complete[raw] = False
+                                    reviews_authors_complete[raw] = False
+                                    reviews_done[raw] = True
+                                else:
+                                    seen_review_cursors[raw].add(cursor)
+                                    review_cursors[raw] = cursor
+                            else:
+                                reviews_done[raw] = True
+                                if end is not None:
+                                    review_cursors[raw] = end
+                if not comments_done[raw] or not reviews_done[raw]:
+                    advancing.append(member)
             pending = advancing
         for member in pending:
-            # The page cap was reached with more pages still advertised: an
-            # incomplete read, so no digest.
-            complete[member.raw] = False
+            raw = member.raw
+            if not comments_done[raw]:
+                comments_complete[raw] = False
+            if not reviews_done[raw]:
+                reviews_complete[raw] = False
         return {
-            member.raw: (
-                _pr_comment_body_digest(bodies[member.raw]) if complete[member.raw] else ""
+            member.raw: _PRCommentDigests(
+                bodies=(
+                    _pr_comment_body_digest(bodies[member.raw])
+                    if comments_complete[member.raw]
+                    else ""
+                ),
+                human_comments=(
+                    _pr_comment_body_digest(human_comments[member.raw])
+                    if comments_complete[member.raw] and comments_authors_complete[member.raw]
+                    else ""
+                ),
+                human_reviews=(
+                    _pr_comment_body_digest(human_reviews[member.raw])
+                    if reviews_complete[member.raw] and reviews_authors_complete[member.raw]
+                    else ""
+                ),
             )
             for member in members
         }
@@ -1063,6 +1157,12 @@ def _normalize_response(
     review_decision = raw["reviewDecision"]
     if review_decision is not None and not isinstance(review_decision, str):
         raise ValueError("GitHub pull request response is malformed")
+    author = raw.get("author")
+    if not isinstance(author, Mapping):
+        author = raw.get("user")
+    author_login = author.get("login") if isinstance(author, Mapping) else ""
+    if not isinstance(author_login, str):
+        author_login = ""
     return GitHubPullRequestResponse(
         target=target,
         state=_normalize_pr_state(raw["state"]),
@@ -1074,6 +1174,7 @@ def _normalize_response(
         checks_complete=checks_complete,
         unresolved_review_threads=unresolved_review_threads,
         review_threads_complete=review_threads_complete,
+        author_login=author_login,
     )
 
 
@@ -1246,12 +1347,12 @@ def _normalize_checks(raw: object) -> tuple[GitHubCheck, ...]:
 
 
 def _bounded_checks(checks: tuple[GitHubCheck, ...]) -> tuple[tuple[GitHubCheck, ...], bool]:
-    """Bound each live state bucket without letting one state consume the others."""
+    """Bound state buckets; only truncated verdict-bearing rows mark incompleteness."""
     bounded: list[GitHubCheck] = []
     complete = True
     for state in PULL_REQUEST_CHECK_FIELDS:
         matching = [check for check in checks if check.state == state]
-        if len(matching) > MAX_MONITOR_CHECK_IDENTITIES_PER_BUCKET:
+        if state != "passed" and len(matching) > MAX_MONITOR_CHECK_IDENTITIES_PER_BUCKET:
             complete = False
         bounded.extend(matching[:MAX_MONITOR_CHECK_IDENTITIES_PER_BUCKET])
     # The displaced bucket does NOT report the board incomplete when it grows: a
@@ -1413,6 +1514,7 @@ def _rest_primary_node(raw: Mapping[str, Any]) -> dict[str, Any]:
         "mergeable": _REST_MERGEABLE[mergeable] if isinstance(mergeable, bool) else "UNKNOWN",
         "mergeStateStatus": _rest_enum(raw.get("mergeable_state")),
         "reviewDecision": _REST_ABSENT_REVIEW_DECISION,
+        "user": raw.get("user"),
     }
 
 
@@ -1446,6 +1548,7 @@ def _batch_document(
     members: Sequence[_BatchSubject],
     selection: str,
     cursors: Mapping[str, str] | None = None,
+    review_cursors: Mapping[str, str] | None = None,
 ) -> tuple[str, list[str]]:
     """Build one document over many subjects, passing every value as a variable.
 
@@ -1454,11 +1557,10 @@ def _batch_document(
     repository, number and cursor travel as typed GraphQL variables. So a hostile
     repository name is a value the server binds, never syntax this function emits.
 
-    A selection carrying the ``$CURSOR`` placeholder is paginated, and each
-    subject gets its own cursor variable -- one document therefore advances
-    subjects that are on different pages of their own connections.
+    Each paginated connection gets a per-subject cursor variable, so one document
+    can advance comments and reviews independently across subjects.
     """
-    paginated = "$CURSOR" in selection
+    paginated = "$CURSOR" in selection or "$REVIEW_CURSOR" in selection
     declarations: list[str] = []
     blocks: list[str] = []
     argv: list[str] = []
@@ -1466,11 +1568,18 @@ def _batch_document(
         declarations.extend((f"$o{index}:String!", f"$r{index}:String!", f"$n{index}:Int!"))
         body = selection
         if paginated:
-            declarations.append(f"$c{index}:String")
-            body = selection.replace("$CURSOR", f"$c{index}")
-            cursor = (cursors or {}).get(member.raw)
-            if cursor is not None:
-                argv.extend(("-f", f"c{index}={cursor}"))
+            if "$CURSOR" in body:
+                declarations.append(f"$c{index}:String")
+                body = body.replace("$CURSOR", f"$c{index}")
+                cursor = (cursors or {}).get(member.raw)
+                if cursor is not None:
+                    argv.extend(("-f", f"c{index}={cursor}"))
+            if "$REVIEW_CURSOR" in body:
+                declarations.append(f"$v{index}:String")
+                body = body.replace("$REVIEW_CURSOR", f"$v{index}")
+                review_cursor = (review_cursors or {}).get(member.raw)
+                if review_cursor is not None:
+                    argv.extend(("-f", f"v{index}={review_cursor}"))
         blocks.append(
             f"s{index}:repository(owner:$o{index},name:$r{index})"
             f"{{pullRequest(number:$n{index}){{{body}}}}}"
@@ -1586,6 +1695,8 @@ def _build_result(
             unresolved_review_threads=response.unresolved_review_threads,
             review_threads_complete=response.review_threads_complete,
             pr_comment_body_digest=response.pr_comment_body_digest,
+            pr_human_comment_digest=response.pr_human_comment_digest,
+            pr_human_review_digest=response.pr_human_review_digest,
         ),
         previous_observation=previous_observation,
         response=response,
@@ -1773,6 +1884,114 @@ def _pr_comment_page(node: Mapping[str, Any]) -> tuple[list[str], bool, bool, st
         fingerprints.append(_body_fingerprint(body))
     has_next, cursor = _page_cursor(comments.get("pageInfo"))
     return fingerprints, nodes_complete, has_next, cursor
+
+
+def _pr_comment_activity_page(
+    node: Mapping[str, Any],
+    pr_author_login: str,
+) -> tuple[list[str], list[str], bool, bool, bool, str | None, str | None]:
+    """Read body and human-activity fingerprints from one issue-comment page."""
+    comments = node["comments"]
+    nodes, has_next, cursor, end = _activity_connection_page(comments, "comments")
+    bodies: list[str] = []
+    humans: list[str] = []
+    nodes_complete = True
+    authors_complete = True
+    for comment in nodes:
+        if not isinstance(comment, Mapping) or not isinstance(comment.get("body"), str):
+            nodes_complete = False
+            authors_complete = False
+            continue
+        body = comment["body"]
+        if body:
+            bodies.append(_body_fingerprint(body))
+        fingerprint, actor_complete = _human_activity_fingerprint(
+            comment.get("author"), pr_author_login, kind="comment", body=body
+        )
+        authors_complete &= actor_complete
+        if fingerprint is not None:
+            humans.append(fingerprint)
+    return bodies, humans, nodes_complete, authors_complete, has_next, cursor, end
+
+
+def _pr_review_activity_page(
+    node: Mapping[str, Any],
+    pr_author_login: str,
+) -> tuple[list[str], bool, bool, bool, str | None, str | None]:
+    """Read one page of review submissions, including body edits and verdicts."""
+    reviews = node["reviews"]
+    nodes, has_next, cursor, end = _activity_connection_page(reviews, "reviews")
+    humans: list[str] = []
+    nodes_complete = True
+    authors_complete = True
+    for review in nodes:
+        if (
+            not isinstance(review, Mapping)
+            or not isinstance(review.get("body"), str)
+            or not isinstance(review.get("state"), str)
+        ):
+            nodes_complete = False
+            authors_complete = False
+            continue
+        fingerprint, actor_complete = _human_activity_fingerprint(
+            review.get("author"),
+            pr_author_login,
+            kind="review",
+            body=review["body"],
+            state=review["state"],
+        )
+        authors_complete &= actor_complete
+        if fingerprint is not None:
+            humans.append(fingerprint)
+    return humans, nodes_complete, authors_complete, has_next, cursor, end
+
+
+def _activity_connection_page(
+    raw: object,
+    label: str,
+) -> tuple[list[object], bool, str | None, str | None]:
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"GitHub pull request {label} are malformed")
+    nodes = raw.get("nodes")
+    if not isinstance(nodes, list):
+        raise ValueError(f"GitHub pull request {label} are malformed")
+    has_next, cursor = _page_cursor(raw.get("pageInfo"))
+    page_info = raw.get("pageInfo")
+    end_cursor = page_info.get("endCursor") if isinstance(page_info, Mapping) else None
+    if end_cursor is not None and (not isinstance(end_cursor, str) or not end_cursor):
+        raise ValueError("GitHub pagination is malformed")
+    return nodes, has_next, cursor, end_cursor
+
+
+def _human_activity_fingerprint(
+    actor: object,
+    pr_author_login: str,
+    *,
+    kind: str,
+    body: str,
+    state: str = "",
+) -> tuple[str | None, bool]:
+    """Fingerprint eligible human activity without retaining provider prose."""
+    if not isinstance(actor, Mapping):
+        return None, False
+    login = actor.get("login")
+    actor_type = actor.get("__typename")
+    if not isinstance(login, str) or not login or not isinstance(actor_type, str) or not actor_type:
+        return None, False
+    if not pr_author_login:
+        return None, False
+    if (
+        actor_type != "User"
+        or login.casefold().endswith("[bot]")
+        or login.casefold() == pr_author_login.casefold()
+    ):
+        return None, True
+    payload = json.dumps(
+        [kind, login.casefold(), state, _body_fingerprint(body)],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest(), True
 
 
 def _pr_comment_body_digest(fingerprints: list[str]) -> str:
