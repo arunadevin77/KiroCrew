@@ -92,6 +92,23 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
 
 class TestPostRecorded(_Base):
+    async def test_runtime_start_failure_does_not_report_a_durability_failure(self):
+        run: dict = {"run_id": "run-a", "posting": True, "changes": []}
+        pool = unittest.mock.Mock()
+        pool.begin_batch = unittest.mock.AsyncMock(side_effect=OSError("missing executable"))
+        with (
+            unittest.mock.patch.object(routes.review_pool, "get_pool", return_value=pool),
+            unittest.mock.patch.object(routes.review_pool, "make_sync_dispatch"),
+            unittest.mock.patch.object(routes, "_save_runs", new=unittest.mock.AsyncMock()),
+            unittest.mock.patch.object(routes, "_release_claims"),
+        ):
+            with self.assertRaisesRegex(OSError, "missing executable"):
+                await routes._post_comments_bg("run-a", run)
+        self.assertFalse(run["posting"])
+        self.assertIn("runtime could not start", run["post_error"])
+        self.assertNotIn("durability", run["post_error"])
+        pool.end_batch.assert_not_called()
+
     async def test_publishes_the_redacted_envelope_not_model_text(self):
         results.write_result(_record(), self.root, "run-a")
         seen: list = []
@@ -286,6 +303,98 @@ class TestSelectivePosting(_Base):
         self.assertEqual(len(seen), 1)
         self.assertGreaterEqual(len(seen[0]), 2)
 
+    async def test_legacy_keys_keep_the_confirmed_ledger_and_full_draft_union(self):
+        for keys in (["finding:0"], ["finding:1"], None):
+            for edited in (False, True):
+                with self.subTest(keys=keys, edited=edited):
+                    record = _record()
+                    record["posted_keys"] = ["finding:0"]
+                    record["pending_comments"] = D.pipeline.build_pending_comments(record)[:1]
+                    record["github_review_payload"] = D.pipeline.build_github_review_payload(record)
+                    if edited:
+                        record["findings"][0] = dict(record["findings"][0], observation="changed")
+                    results.write_result(record, self.root, "run-a")
+                    seen = []
+
+                    def dispatch(task, timeout):
+                        seen.append(results.read_result("CR-1", self.root, "run-a"))
+                        return {"ok": True}
+
+                    out = D.post_recorded(
+                        "CR-1", "https://github.com/o/r/pull/1", keys=keys,
+                        dispatch=dispatch, confirm=_confirmed, root=self.root, run_id="run-a",
+                    )
+                    self.assertTrue(out["post_ok"], out)
+                    if keys == ["finding:0"]:
+                        self.assertEqual(seen, [])
+                        self.assertEqual(out["posted_keys"], ["finding:0"])
+                        continue
+                    self.assertEqual(len(seen), 1)
+                    saved = seen[0]
+                    self.assertIn("finding:0", saved["delivery_intent"]["selected_keys"])
+                    self.assertNotIn("predecessor", saved["delivery_intent"])
+                    expected = D.pipeline.build_github_review_payload(dict(
+                        record, pending_comments=[e for e in D.pipeline.build_pending_comments(record)
+                                                  if e["key"] in saved["delivery_intent"]["selected_keys"]],
+                    ))
+                    self.assertEqual(saved["github_review_payload"], expected)
+
+    async def test_a_partial_legacy_batch_retry_does_not_repost_the_completed_change(self):
+        first = _record(red=1, yellow=0)
+        first["pending_comments"] = D.pipeline.build_pending_comments(first)
+        first["github_review_payload"] = D.pipeline.build_github_review_payload(first)
+        first["posted_keys"] = [entry["key"] for entry in first["pending_comments"]]
+        first["posted_review_id"] = "70"
+        results.write_result(first, self.root, "run-a")
+        results.write_result(_record("CR-2", red=1, yellow=0), self.root, "run-a")
+        run = {"changes": ["https://github.com/o/r/pull/1", "https://github.com/o/r/pull/2"],
+               "change_ids": ["CR-1", "CR-2"]}
+        calls = []
+
+        def dispatch(task, timeout=0):
+            calls.append(task)
+            return {"ok": True}
+
+        with unittest.mock.patch.object(store, "app_root", return_value=self.root):
+            self.assertEqual(routes._pending_comment_count("run-a", run), 2)
+        for cid, link in zip(run["change_ids"], run["changes"]):
+            out = D.post_recorded(cid, link, dispatch=dispatch, confirm=_confirmed,
+                                  root=self.root, run_id="run-a")
+            self.assertTrue(out["post_ok"], out)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("https://github.com/o/r/pull/2", calls[0])
+        self.assertNotIn("delivery_intent", results.read_result("CR-1", self.root, "run-a"))
+
+    async def test_a_changed_finding_is_not_suppressed_by_its_posted_key(self):
+        results.write_result(_record(), self.root, "run-a")
+        D.post_recorded(
+            "CR-1", "https://github.com/o/r/pull/1", keys=["finding:0"],
+            dispatch=self._poster(), confirm=_confirmed, root=self.root, run_id="run-a",
+        )
+        record = results.read_result("CR-1", self.root, "run-a")
+        record["findings"][0] = dict(record["findings"][0], observation="changed")
+        results.write_result(record, self.root, "run-a")
+        dispatch = unittest.mock.Mock(return_value={"ok": True})
+        out = D.post_recorded(
+            "CR-1", "https://github.com/o/r/pull/1", keys=["finding:0"],
+            dispatch=dispatch, confirm=_confirmed, root=self.root, run_id="run-a",
+        )
+        self.assertTrue(out["post_ok"], out)
+        dispatch.assert_called_once()
+        saved = results.read_result("CR-1", self.root, "run-a")
+        self.assertIn("changed", saved["github_review_payload"]["comments"][0]["body"])
+
+    async def test_later_replacements_keep_the_earlier_selections(self):
+        results.write_result(_record(), self.root, "run-a")
+        for index in range(3):
+            D.post_recorded(
+                "CR-1", "https://github.com/o/r/pull/1", keys=[f"finding:{index}"],
+                dispatch=self._poster(), confirm=_confirmed, root=self.root, run_id="run-a",
+            )
+        saved = results.read_result("CR-1", self.root, "run-a")
+        self.assertEqual(saved["delivery_intent"]["selected_keys"],
+                         ["finding:0", "finding:1", "finding:2"])
+
     async def test_a_poster_that_delivered_nothing_records_nothing(self):
         # The poster's written-back count is the ONLY evidence of delivery; a
         # spawn returning cleanly proves nothing. Recording keys on that would
@@ -359,7 +468,6 @@ class TestRecordsSurviveForPosting(_Base):
         self.assertIsNotNone(results.read_result("CR-1", self.root, "run-a"))
 
     async def test_records_are_cleared_once_they_have_been_delivered(self):
-        import json
         cfg = store.data_dir(self.root) / "config.json"
         cfg.write_text(json.dumps({"review": {"auto_post": True}}),
                        encoding="utf-8")
@@ -998,8 +1106,26 @@ class TestConfirmedCountIsAuthoritative(unittest.TestCase):
         rec = results.read_result("CR-1", self.root, "run-a") or {}
         self.assertEqual(rec.get("posted_comments"), out["expected_units"], rec)
 
+    def test_a_lost_response_does_not_redispatch_a_confirmed_finding(self):
+        results.write_result(_record(), self.root, "run-a")
+        calls = []
+
+        def dispatch(task, timeout=0):
+            calls.append(task)
+            rec = results.read_result("CR-1", self.root, None) or {}
+            rec["posted_comments"] = 1
+            results.write_result(rec, self.root, None)
+            return {"ok": False, "error": "POST accepted; response lost"}
+
+        for _ in range(2):
+            D.post_recorded(
+                "CR-1", "https://github.com/o/r/pull/1", keys=["finding:0"],
+                dispatch=dispatch, confirm=lambda *args: "92",
+                root=self.root, run_id="run-a")
+        self.assertEqual(len(calls), 1)
+
     def test_an_unconfirmed_delivery_still_reports_the_posters_number(self):
-        """Unconfirmed, the poster's report is all there is -- a partial stays visible."""
+        """A reported count remains visible without establishing delivery."""
         from sage_lib import results
 
         results.write_result(_record(red=1, yellow=2), self.root, "run-a")
@@ -1015,6 +1141,98 @@ class TestConfirmedCountIsAuthoritative(unittest.TestCase):
                          run_id="run-a")
         self.assertFalse(out["post_ok"], out)
         self.assertEqual(out["posted_comments"], 1)
+        self.assertEqual(out["posted_keys"], [])
+        self.assertEqual(out["posted_review_id"], "")
+        self.assertFalse(out["design_comment_posted"])
+        rec = results.read_result("CR-1", self.root, "run-a") or {}
+        self.assertTrue(rec["post_partial"])
+        self.assertEqual(rec["posted_comments"], 1)
+        self.assertEqual(rec["delivery_intent"]["state"], "indeterminate")
+        summary = {"result_recorded": True}
+        D.apply_post_outcome(summary, out)
+        self.assertFalse(D._all_delivered([summary]))
+        self.assertIsNone(results.read_result("CR-1", self.root, None))
+
+    def test_invalid_reported_counts_do_not_establish_delivery(self):
+        count: object
+        for run_id in ("run-a", None):
+            for count in (None, -1, True, "1", 1.5, [], {}):
+                with self.subTest(run_id=run_id, count=count):
+                    results.write_result(_record(), self.root, run_id)
+
+                    def dispatch(task, timeout=0):
+                        rec = results.read_result("CR-1", self.root, None) or {}
+                        rec["posted_comments"] = count
+                        results.write_result(rec, self.root, None)
+                        return {"ok": True}
+
+                    out = D.post_recorded(
+                        "CR-1", "https://github.com/o/r/pull/1", dispatch=dispatch,
+                        confirm=_unconfirmed, root=self.root, run_id=run_id)
+                    self.assertFalse(out["post_ok"])
+                    self.assertEqual(out["posted_comments"], 0)
+                    self.assertEqual(out["posted_keys"], [])
+                    rec = results.read_result("CR-1", self.root, run_id) or {}
+                    self.assertFalse(rec.get("post_partial"))
+                    self.assertEqual(rec["delivery_intent"]["state"], "indeterminate")
+
+    def test_an_unconfirmed_retry_does_not_inherit_a_reported_count(self):
+        results.write_result(_record(), self.root, "run-a")
+
+        def dispatch(task, timeout=0):
+            rec = results.read_result("CR-1", self.root, None) or {}
+            rec["posted_comments"] = 1
+            results.write_result(rec, self.root, None)
+            return {"ok": True}
+
+        first = D.post_recorded(
+            "CR-1", "https://github.com/o/r/pull/1", dispatch=dispatch,
+            confirm=_unconfirmed, root=self.root, run_id="run-a")
+        self.assertEqual(first["posted_comments"], 1)
+        intent = results.read_result("CR-1", self.root, "run-a")["delivery_intent"]
+        with unittest.mock.patch.object(
+                D, "_probe_delivery", return_value=(D.DeliveryProbe.ABSENT, "", "")):
+            second = D.post_recorded(
+                "CR-1", "https://github.com/o/r/pull/1",
+                dispatch=lambda *args: {"ok": True}, confirm=_unconfirmed,
+                root=self.root, run_id="run-a")
+        self.assertEqual(second["posted_comments"], 0)
+        self.assertFalse(second["post_ok"])
+        rec = results.read_result("CR-1", self.root, "run-a")
+        self.assertFalse(rec.get("post_partial"))
+        self.assertEqual(rec["delivery_intent"]["operation_id"], intent["operation_id"])
+
+    def test_a_failed_poster_count_is_visible_without_a_partial_success_flag(self):
+        results.write_result(_record(), self.root, "run-a")
+
+        def dispatch(task, timeout=0):
+            rec = results.read_result("CR-1", self.root, None) or {}
+            rec["posted_comments"] = 1
+            rec.update(posted_keys=["forged"], posted_review_id="forged",
+                       design_comment_posted=True, delivery_intent={"state": "confirmed"},
+                       github_review_payload={"body": "forged", "comments": []})
+            results.write_result(rec, self.root, None)
+            return {"ok": False, "error": "response lost"}
+
+        out = D.post_recorded(
+            "CR-1", "https://github.com/o/r/pull/1", dispatch=dispatch,
+            confirm=_unconfirmed, root=self.root, run_id="run-a")
+        self.assertEqual(out["posted_comments"], 1)
+        self.assertFalse(out["post_ok"])
+        self.assertEqual(out["post_error"], "response lost")
+        self.assertEqual(out["posted_keys"], [])
+        self.assertEqual(out["posted_review_id"], "")
+        self.assertFalse(out["design_comment_posted"])
+        saved = results.read_result("CR-1", self.root, "run-a")
+        self.assertFalse(saved.get("post_partial"))
+        self.assertEqual(saved["delivery_intent"]["state"], "indeterminate")
+        self.assertNotIn("forged", saved["github_review_payload"]["body"])
+
+    def test_poster_prompt_reports_only_an_advisory_count(self):
+        prompt = D.build_post_task("https://github.com/o/r/pull/1")
+        self.assertIn("updating ONLY `posted_comments`", prompt)
+        self.assertIn("Do NOT modify any other field", prompt)
+        self.assertIn("This count is advisory", prompt)
 
 
 class TestPostedReviewIdRecorded(unittest.TestCase):
@@ -1083,14 +1301,14 @@ class TestPaginationContract(unittest.TestCase):
             if "/comments" in path:
                 return [{"path": "src/a.py", "line": 4, "body": "widens scope"}]
             return [{"id": 7, "state": "PENDING", "commit_id": "abc123",
-                     "body": "[code-review-sage] summary"}]
+                     "user": {"login": "sage-bot"},
+                     "body": "[code-review-sage] summary\n\n" + D._operation_marker("a" * 32)}]
 
         payload = {"body": "[code-review-sage] summary", "commit_id": "abc123",
                    "comments": [{"path": "src/a.py", "line": 4, "side": "RIGHT",
                                  "body": "widens scope"}]}
         with unittest.mock.patch.object(discovery, "run_gh_json", run_gh_json):
-            self.assertTrue(
-                D._draft_confirmed("https://github.com/o/r/pull/1", payload))
+            self.assertTrue(TestDeliveryProbeCoordinates()._probe(payload))
 
         # reviews, the pull request's (head, base) pinned before the comments
         # are read, and the comments; no `/files` read, every line is resolved.
@@ -1104,10 +1322,55 @@ class TestPaginationContract(unittest.TestCase):
                 self.assertEqual(call["jq"], ".[]", call)
 
 
-class TestDraftConfirmed(unittest.TestCase):
+class TestDeliveryProbeCoordinates(unittest.TestCase):
     """The read-back has to identify the draft, not merely count it."""
 
     LINK = "https://github.com/o/r/pull/1"
+
+    def test_multiple_hunks_preserve_positions_and_reject_deleted_lines(self):
+        patch = "@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -10,2 +10,3 @@\n j\n+K\n k"
+        payload = self._payload()
+        payload["comments"][0]["line"] = 11
+        comment = {"path": "src/a.py", "line": None, "side": None,
+                   "position": 7, "body": "widens scope"}
+        self.assertEqual(self._confirm(self._review(), [comment], payload,
+                                       self._files(patch)), "7")
+        comment["position"] = 2
+        self.assertFalse(self._confirm(self._review(), [comment], payload,
+                                       self._files(patch)))
+
+    def test_explicit_side_is_part_of_payload_identity(self):
+        got = [{"path": "src/a.py", "line": 4, "side": "LEFT", "body": "widens scope"}]
+        self.assertFalse(self._confirm(self._review(), got))
+
+    def test_submitted_reviews_still_require_payload_and_account(self):
+        got = [{"path": "src/a.py", "line": 4, "side": "RIGHT", "body": "widens scope"}]
+        for state in ("COMMENTED", "APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            with self.subTest(state=state):
+                reviews = self._review()
+                reviews[0]["state"] = state
+                self.assertEqual(self._confirm(reviews, got), "7")
+                reviews[0]["user"]["login"] = "another-account"
+                self.assertFalse(self._confirm(reviews, got))
+                reviews[0]["user"]["login"] = "sage-bot"
+                reviews[0]["body"] += " changed"
+                self.assertFalse(self._confirm(reviews, got))
+
+    def test_enterprise_pending_coordinates_pin_every_read_to_the_host(self):
+        self.LINK = "https://acme.ghe.com/o/r/pull/1"
+        got = [{"path": "src/a.py", "line": None, "side": None,
+                "position": 4, "body": "widens scope"}]
+        stub = self._stub(self._review(), got, self._files())
+
+        def github(path, **kwargs):
+            self.assertEqual(kwargs.get("host"), "acme.ghe.com")
+            return stub(path, **kwargs)
+        with (
+            unittest.mock.patch.object(discovery, "run_gh_json", github),
+            unittest.mock.patch.object(D.adapters.store, "read_config_quiet",
+                                       return_value={"github_hosts": ["acme.ghe.com"]}),
+        ):
+            self.assertEqual(self._probe(self._payload()), "7")
 
     def _payload(self, body="[code-review-sage] summary", commit="abc123"):
         return {
@@ -1120,7 +1383,7 @@ class TestDraftConfirmed(unittest.TestCase):
 
     def _stub(self, reviews, comments, files=None, head="abc123",
               base="base1"):
-        """Answer the `gh api` reads `_draft_confirmed` makes: reviews, one
+        """Answer the `gh api` reads the delivery probe makes: reviews, one
         review's comments, and (for a PENDING draft) the pull request itself
         and its files."""
         def run_gh_json(path, jq=None, *, paginate=False, host=None):
@@ -1136,7 +1399,9 @@ class TestDraftConfirmed(unittest.TestCase):
         return run_gh_json
 
     def _review(self, body="[code-review-sage] summary", commit="abc123"):
-        return [{"id": 7, "state": "PENDING", "body": body, "commit_id": commit}]
+        return [{"id": 7, "state": "PENDING",
+                 "body": body + "\n\n" + D._operation_marker("a" * 32),
+                 "user": {"login": "sage-bot"}, "commit_id": commit}]
 
     # One hunk starting at new line 1 with no removed lines, so new line N
     # sits at diff position N.
@@ -1150,7 +1415,17 @@ class TestDraftConfirmed(unittest.TestCase):
         with unittest.mock.patch.object(
                 discovery, "run_gh_json",
                 self._stub(reviews, comments, files, head)):
-            return D._draft_confirmed(self.LINK, payload or self._payload())
+            return self._probe(payload or self._payload())
+
+    def _probe(self, payload):
+        operation_id = "a" * 32
+        wire = D._outbound_payload(payload, operation_id)
+        intent = {"operation_id": operation_id, "target": self.LINK,
+                  "revision": payload["commit_id"],
+                  "payload_digest": D._payload_digest(wire)}
+        with unittest.mock.patch.object(D, "_authenticated_login", return_value="sage-bot"):
+            status, review_id, _ = D._probe_delivery(self.LINK, intent, wire)
+        return review_id if status is D.DeliveryProbe.FOUND else ""
 
     def test_confirms_the_draft_that_was_sent(self):
         got = [{"path": "src/a.py", "line": 4, "body": "widens scope"}]
@@ -1201,6 +1476,16 @@ class TestDraftConfirmed(unittest.TestCase):
         self.assertFalse(
             self._confirm(self._review(), no_position, files=self._files()))
 
+    def test_pending_shape_rejects_invalid_positions_without_coercion(self):
+        positions: tuple[object, ...] = (None, "4", 4.0, True, [], {}, 0, -1, 99)
+        with unittest.mock.patch.object(D, "_diff_positions", return_value={"src/a.py": {4: 4}}):
+            for position in positions:
+                with self.subTest(position=position):
+                    comment = {"path": "src/a.py", "position": position, "body": "widens scope"}
+                    self.assertIsNone(D._remote_payload(
+                        self._review()[0], [comment], host="github.com", owner="o",
+                        repo="r", number=1, pinned=("abc123", "base1")))
+
     def test_pending_shape_refuses_when_the_diff_cannot_place_the_anchor(self):
         """No patch for the file (binary or too large), or a diff read that
         fails, leaves the anchor unprovable, so the draft stays unconfirmed."""
@@ -1211,12 +1496,12 @@ class TestDraftConfirmed(unittest.TestCase):
 
         def failing(path, jq=None, *, paginate=False, host=None):
             if path.endswith("/files"):
-                raise RuntimeError("gh timed out")
+                raise discovery.GhError("gh timed out")
             if path.endswith("/pulls/1"):
                 return [{"head": {"sha": "abc123"}, "base": {"sha": "base1"}}]
             return got if "/comments" in path else self._review()
         with unittest.mock.patch.object(discovery, "run_gh_json", failing):
-            self.assertFalse(D._draft_confirmed(self.LINK, self._payload()))
+            self.assertFalse(self._probe(self._payload()))
 
     def test_pending_shape_refuses_when_the_head_moved_during_posting(self):
         """`/files` serves the CURRENT head's diff. A push that lands while the
@@ -1248,7 +1533,7 @@ class TestDraftConfirmed(unittest.TestCase):
                 return [{"head": {"sha": next(heads)}, "base": {"sha": "base1"}}]
             return self._review()
         with unittest.mock.patch.object(discovery, "run_gh_json", run_gh_json):
-            self.assertFalse(D._draft_confirmed(self.LINK, self._payload()))
+            self.assertFalse(self._probe(self._payload()))
 
     def test_pending_shape_refuses_a_head_that_only_matches_after_the_files_read(self):
         """The head is checked BEFORE `/files` too: a head that reads as
@@ -1273,7 +1558,7 @@ class TestDraftConfirmed(unittest.TestCase):
                          "base": {"sha": "base1"}}]
             return self._review()
         with unittest.mock.patch.object(discovery, "run_gh_json", run_gh_json):
-            self.assertFalse(D._draft_confirmed(self.LINK, self._payload()))
+            self.assertFalse(self._probe(self._payload()))
 
     def test_pending_shape_refuses_a_base_retarget_with_the_head_unchanged(self):
         """`/files` is the diff between the CURRENT base and head, so a base
@@ -1312,12 +1597,12 @@ class TestDraftConfirmed(unittest.TestCase):
         for name, base_at in cases.items():
             with self.subTest(name), unittest.mock.patch.object(
                     discovery, "run_gh_json", reads(base_at)):
-                self.assertFalse(D._draft_confirmed(self.LINK, self._payload()))
+                self.assertFalse(self._probe(self._payload()))
         # The same reads with the base held still confirm, so the refusals
         # above are the base moving and nothing else.
         with unittest.mock.patch.object(
                 discovery, "run_gh_json", reads(lambda seen: "base1")):
-            self.assertEqual(D._draft_confirmed(self.LINK, self._payload()), "7")
+            self.assertEqual(self._probe(self._payload()), "7")
 
     def test_pending_shape_still_refuses_a_different_path_or_body(self):
         """Position checking widens nothing else: path and body still identify."""

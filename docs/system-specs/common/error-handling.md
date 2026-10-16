@@ -8,6 +8,43 @@
 2. Error strings at CLI boundaries (never expose tracebacks to users)
 3. Graceful degradation — partial output returned on timeout
 
+## Sage interrupted posting recovery
+
+Registry loading clears interrupted posting flags without rewriting result
+records. Prepared, attempting and indeterminate intents all trigger GitHub
+reconciliation on the next explicit post. A new run clears only a PENDING
+review containing the exact `[code-review-sage]` watermark, even when the prior
+run has cleaned up its records; unmarked and submitted reviews stay untouched.
+An interrupted saved operation never clears an unrelated pending review by
+watermark, even if it appears after reconciliation. Only an exactly verified
+recorded predecessor may be deleted. With no such predecessor, a blocking draft
+stops the post and preserves the complete saved selection for retry.
+A runtime startup failure reports that the reviewer runtime could not start;
+it does not claim a delivery-intent write failed. Intent persistence failures after the pool
+starts still require reconciliation before posting again. The poster puts the
+operation marker on its own final line so delivery read-back can compare the
+marker-free body with the recorded payload. Predecessor bodies stay in the staged
+record, outside the poster prompt. Its final read-back compares raw comment
+anchors, including pending-review positions, with that staged receipt.
+
+The poster may update only the staged record's `posted_comments` count. A
+nonnegative integer is retained for display when delivery is unconfirmed; an
+invalid count displays as zero. A clean poster turn with a positive unconfirmed
+count retains `post_partial`. Neither field confirms delivery, selects posted
+keys, identifies a review, or permits cleanup. Each dispatch resets these
+reporting fields, and confirmed counts come from the driver-owned payload.
+
+If a human submits the predecessor while a replacement is interrupted, recovery
+first proves the replacement absent and verifies the predecessor's account and
+payload. It keeps the full saved selection and operation ID, removing only the
+predecessor deletion instruction before dispatch. Unreadable or conflicting
+remote evidence prevents dispatch; an already delivered replacement is adopted
+without posting again. The same reconciliation applies immediately before a
+fresh replacement dispatch. Legacy records without a delivery intent retain
+their existing `posted_keys` ledger: completed changes are skipped on a partial
+batch retry, and a new selection rebuilds the full draft union. These legacy
+keys cannot detect a draft edited or deleted after confirmation.
+
 ## Exception Hierarchy
 
 Two independent families. `AcpError` covers protocol and prompt-level failures;
