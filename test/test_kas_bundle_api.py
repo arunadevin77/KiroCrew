@@ -92,7 +92,11 @@ async def test_status_reports_an_installed_engine_and_the_switch(cfg, monkeypatc
     monkeypatch.setattr(kas_bundle, "installed_bundle", lambda **k: installed)
     body = _body(await handler.api_kas_bundle_status(_FakeRequest()))
     assert body["enabled"] is True
-    assert body["installed"] == {"version": KAS_PIN_VERSION, "node_version": "22.23.3"}
+    assert body["installed"] == {
+        "version": KAS_PIN_VERSION,
+        "node_version": "22.23.3",
+        "bundled": False,
+    }
     # No path, no host detail: the panel needs the version and nothing else.
     assert str(tmp_path) not in json.dumps(body)
 

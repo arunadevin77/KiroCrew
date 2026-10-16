@@ -1638,7 +1638,8 @@ def _report_kas_bundle(issues: list[str]) -> None:
         print("               Fix: kirocrew kas install   (or set agent.kas_bundle false)")
         issues.append("agent.kas_bundle is on but no KAS engine bundle is installed")
         return
-    print(f"  bundle:      ✅ KAS {installed.version}, Node {installed.node_version or '?'}")
+    where = " (built into the app)" if installed.bundled else ""
+    print(f"  bundle:      ✅ KAS {installed.version}, Node {installed.node_version or '?'}{where}")
     print(f"  spawn:       {' '.join(kas_bundle.bundle_spawn_argv(installed))}")
     print("  auth owner:  Kiro Crew vault (the only owner on this route)")
     try:

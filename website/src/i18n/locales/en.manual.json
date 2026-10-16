@@ -8772,7 +8772,9 @@
       "kasBundleCard": {
         "toggle_label": "Use the built-in KAS engine",
         "toggle_description": "Runs the KAS engine version this {{productName}} release was tested with, with no separate kiro-cli install. Signs in with the Kiro account above. Switching takes effect when {{productName}} restarts.",
-        "installed": "Built-in engine {{version}} installed",
+        "installed": "KAS engine {{version}} (installed by you)",
+        "installed_bundled": "KAS engine {{version}} (included with the app)",
+        "off_note": "Off: KAS runs through kiro-cli until you turn on the switch above.",
         "saved_restart_pending": "Saved. {{productName}} is still running the previous engine route; it switches when you restart it: Settings → About → Restart gateway.",
         "not_installed": "Built-in engine {{version}} is not installed yet.",
         "install": "Install KAS engine",

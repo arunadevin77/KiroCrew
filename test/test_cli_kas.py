@@ -3,7 +3,9 @@
 What is pinned, per subcommand:
 
 * ``install``: the pinned version installs from a local ``--from`` directory and from
-  a manifest fetched over the URL; a manifest that does not hash to the pin, or any
+  a manifest fetched over the URL; a version the data home already holds is a
+  success with no fetch (``--force`` replaces it, a copy that does not read back
+  still reaches the installer); a manifest that does not hash to the pin, or any
   other version, is refused without ``--unpinned``; an unreadable or malformed local
   manifest is a one-line refusal; an installer error is a one-line refusal; the
   closing advice names the route's state (on / off) and the override env when the
@@ -299,6 +301,84 @@ class TestInstallFromUrl:
         monkeypatch.setattr(kas_bundle, "fetch_manifest", lambda *a, **k: pytest.fail("fetched"))
         assert cli_kas.kas_cmd(self._args(version="0.99.0")) == 1
         assert f"this release pins KAS {_PIN}; pass --unpinned" in capsys.readouterr().err
+
+
+class TestInstallWhenAlreadyInstalled:
+    """A re-run (``install.sh --kas`` on an upgrade) is a success, not a refusal."""
+
+    def _args(self, **over) -> argparse.Namespace:
+        base = dict(
+            kas_action="install", from_dir=None, version=None, url=None, unpinned=False, force=False
+        )
+        base.update(over)
+        return argparse.Namespace(**base)
+
+    @pytest.fixture
+    def present(self, tmp_path, monkeypatch):
+        asked: list = []
+
+        def fake_installed_bundle(*, root=None, version=None):
+            asked.append((root, version))
+            return _installed(tmp_path / "engines", version or _PIN)
+
+        monkeypatch.setattr(kas_bundle, "kas_engines_root", lambda: tmp_path / "engines")
+        monkeypatch.setattr(kas_bundle, "installed_bundle", fake_installed_bundle)
+        return asked
+
+    def test_the_pinned_engine_on_disk_succeeds_without_a_fetch(
+        self, cfg, present, tmp_path, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(kas_bundle, "fetch_manifest", lambda *a, **k: pytest.fail("fetched"))
+        monkeypatch.setattr(kas_bundle, "install_bundle", lambda *a, **k: pytest.fail("installed"))
+        assert cli_kas.kas_cmd(self._args()) == 0
+        # Only the data home's own root is asked, never the app's staged copy.
+        assert present == [(tmp_path / "engines", _PIN)]
+        out = capsys.readouterr().out
+        assert f"✅ KAS {_PIN} is already installed at {tmp_path / 'engines' / _PIN}" in out
+        assert "kirocrew config set agent.kas_bundle true" in out
+
+    def test_from_a_directory_the_installed_pin_is_not_reinstalled(
+        self, cfg, present, local_source, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(kas_bundle, "install_bundle", lambda *a, **k: pytest.fail("installed"))
+        assert cli_kas.kas_cmd(self._args(from_dir=str(local_source))) == 0
+        assert "is already installed" in capsys.readouterr().out
+
+    def test_force_still_replaces_it(self, cfg, host, present, tmp_path, monkeypatch, capsys):
+        seen: dict = {}
+        monkeypatch.setattr(
+            kas_bundle,
+            "fetch_manifest",
+            lambda base, *, version, sha256: (kas_bundle.parse_manifest(_manifest_doc()), "u"),
+        )
+
+        def fake_install(manifest, *, source, force, on_progress):
+            seen.update(force=force)
+            return _installed(tmp_path / "engines")
+
+        monkeypatch.setattr(kas_bundle, "install_bundle", fake_install)
+        assert cli_kas.kas_cmd(self._args(force=True)) == 0
+        assert present == []
+        assert seen == {"force": True}
+        assert "already installed" not in capsys.readouterr().out
+
+    def test_a_directory_that_does_not_read_back_still_reaches_the_installer(
+        self, cfg, host, tmp_path, monkeypatch
+    ):
+        # A damaged copy is not "installed": the installer's own refusal names --force.
+        monkeypatch.setattr(kas_bundle, "kas_engines_root", lambda: tmp_path / "engines")
+        monkeypatch.setattr(kas_bundle, "installed_bundle", lambda **k: None)
+        monkeypatch.setattr(
+            kas_bundle,
+            "fetch_manifest",
+            lambda base, *, version, sha256: (kas_bundle.parse_manifest(_manifest_doc()), "u"),
+        )
+
+        def refuse(*a, **k):
+            raise kas_bundle.KasBundleError("already installed (use --force to replace it)")
+
+        monkeypatch.setattr(kas_bundle, "install_bundle", refuse)
+        assert cli_kas.kas_cmd(self._args()) == 1
 
 
 class TestStatus:

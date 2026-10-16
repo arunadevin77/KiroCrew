@@ -144,6 +144,7 @@ _MOVED: dict[str, tuple[str, ...]] = {
     "kiro_crew.sandbox_tiers": tuple("""
         _resolved_kiro_agents_targets _PACKAGED_INSTALL_DIR_NAMES install_root_targets_for
         _install_root_targets_with _install_root_targets_cached _resolved_install_root_targets
+        _bundled_kas_targets_cached
         _gateway_package_dir _APP_BACKEND_OWNED_LEAVES app_backend_visible_targets
         crew_home_visible_spellings carveout_chain_has_planted_link
         carveout_shadowed_by_foreign_mask _STRICT_DIRS _STANDARD_DIRS _CC_DIRS _resolves_to

@@ -13090,7 +13090,9 @@
       "kasBundleCard": {
         "toggle_label": "内蔵の KAS エンジンを使う",
         "toggle_description": "この {{productName}} リリースでテスト済みの KAS エンジンを実行します。kiro-cli を別途インストールする必要はありません。上の Kiro アカウントでサインインします。切り替えは {{productName}} の再起動後に反映されます。",
-        "installed": "内蔵エンジン {{version}} をインストール済み",
+        "installed": "KAS エンジン {{version}}（自分でインストール）",
+        "installed_bundled": "KAS エンジン {{version}}（アプリに同梱）",
+        "off_note": "オフ：上のスイッチをオンにするまで、KAS は kiro-cli 経由で動きます。",
         "saved_restart_pending": "保存しました。{{productName}} はまだ以前のエンジン経路で動作しています。再起動すると切り替わります：設定 → 情報 → ゲートウェイを再起動。",
         "not_installed": "内蔵エンジン {{version}} はまだインストールされていません。",
         "install": "KAS エンジンをインストール",

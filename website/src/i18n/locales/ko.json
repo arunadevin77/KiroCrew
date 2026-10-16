@@ -13090,7 +13090,9 @@
       "kasBundleCard": {
         "toggle_label": "내장 KAS 엔진 사용",
         "toggle_description": "이 {{productName}} 릴리스에서 테스트한 KAS 엔진 버전을 실행합니다. kiro-cli를 따로 설치할 필요가 없습니다. 위의 Kiro 계정으로 로그인합니다. 전환은 {{productName}}을(를) 다시 시작하면 적용됩니다.",
-        "installed": "내장 엔진 {{version}} 설치됨",
+        "installed": "KAS 엔진 {{version}}(직접 설치함)",
+        "installed_bundled": "KAS 엔진 {{version}}(앱에 포함)",
+        "off_note": "꺼짐: 위 스위치를 켤 때까지 KAS는 kiro-cli를 통해 실행됩니다.",
         "saved_restart_pending": "저장했습니다. {{productName}}은(는) 아직 이전 엔진 경로로 실행 중이며, 다시 시작하면 전환됩니다: 설정 → 정보 → 게이트웨이 다시 시작.",
         "not_installed": "내장 엔진 {{version}}이(가) 아직 설치되지 않았습니다.",
         "install": "KAS 엔진 설치",

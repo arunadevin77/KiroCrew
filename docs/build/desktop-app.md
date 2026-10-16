@@ -203,6 +203,62 @@ for.
 the app then detects a system kiro-cli exactly as before. The Windows installer
 grows by about 190 MB before outer installer compression.
 
+
+### Bundled KAS engine — the `agent.kas_bundle` route with no download
+
+By default (`BUNDLE_KAS=1`), the build stages the KAS engine bundle this release
+PINS (`src/kiro_crew/acp/kas_pin.py`: `KAS_PIN_VERSION` and
+`KAS_PIN_MANIFEST_SHA256`) into the app's resources, so the built-in engine
+route runs with nothing to download and no kiro-cli at all. The staging IS the
+backend's own installer, `acp.kas_bundle.install_bundle`, run from the
+just-built backend tree's interpreter: the manifest's bytes are checked against
+the pin before parsing, every artifact is sha256+size-pinned by that manifest,
+tar extraction uses `filter="data"`, the staged Node answers `--version` on the
+build host, and the tree is published with one rename. The result is
+byte-for-byte what `kirocrew kas install` lays down under the data home, read
+back at build time through the same reader the gateway uses
+(`installed_bundle(root=…)`), so a tree the reader would reject is a build
+error, not a refusal on the user's first prompt.
+
+Layout mirrors the backend trees. A universal macOS build stages one root per
+architecture, `backend-dist/kas-arm64/` and `backend-dist/kas-x64/` (Node ships
+no universal binary; the engine's own JS is shared), a single-arch build stages
+`backend-dist/kas/`. Each root holds `<version>/{bundle,node,install.json}` plus
+a `BUNDLED-VERSION` file beside the version directory. The Electron shell
+(`gateway-env.js`, `bundledKasEnvironment`) reads that file and the install
+record beside it, and exports the root as `KIROCREW_BUNDLED_KAS_DIR` — the
+arch-suffixed root first, the unsuffixed one second, never a root for another
+architecture. It runs nothing at boot: the route is off by default, the build
+already probed the staged Node, and a copy that cannot run on this machine
+fails at session spawn, only for a user who turned the switch on. A build
+without the payload or a source checkout exports nothing, and the backend then
+sees only the data home, exactly as an unbundled build does.
+The two values the shell joins onto the staged tree, the version and the
+record's `node_bin`, must be relative and free of `.`/`..`/empty segments
+(`staysWithinStagedTree`); and because that record chooses a program the shell
+and the gateway run outside any sandbox, the backend seals the exported root
+read-only for every sandboxed child, the same seal as its own packaged install
+tree (`sandbox_tiers._resolved_install_root_targets`; the rules are in the
+[security spec](../system-specs/modules/security.md)).
+
+The backend (`acp.kas_bundle.installed_bundle`) reads the exported root as a
+SECOND root after the data home's `engines/kas`: an operator's own `kirocrew kas
+install` (or a `--unpinned` test install) wins over the copy the app was built
+with, the same precedence `KIROCREW_KIRO_BIN` has over the bundled kiro-cli.
+`kirocrew kas status` and `kirocrew doctor` say which one answered (`built into
+the app`), the status payload carries `installed.bundled`, and the Settings card
+names where each copy came from: "KAS engine … (included with the app)" for the
+app's copy, "KAS engine … (installed by you)" for the data home's.
+
+Bundling the engine does not turn the route on: `agent.kas_bundle` keeps its
+default (off) on every platform while the route is in shadow testing, and the
+app still ships the bundled kiro-cli for the relay route. Nothing in the build,
+the installer or the shell flips the switch; that stays the user's own step. `BUNDLE_KAS=0 make desktop` opts a build out (the payload is ~55 MB
+compressed, ~370 MB extracted per architecture); the switch then needs
+`kirocrew kas install` first, exactly as a pip install does. `KAS_BUNDLE_URL`
+names another manifest host (a mirror serving the same bytes; the pin refuses
+anything else).
+
 ### macOS opt-out and Linux — host-arch-only builds
 
 `UNIVERSAL=0 make desktop` (and every Linux build) produces an installer for

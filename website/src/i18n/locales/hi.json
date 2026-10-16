@@ -13303,7 +13303,9 @@
       "kasBundleCard": {
         "toggle_label": "बिल्ट-इन KAS इंजन इस्तेमाल करो",
         "toggle_description": "KAS इंजन का वह वर्शन चलाता है जिसे इस {{productName}} रिलीज़ के साथ टेस्ट किया गया था, बिना अलग से kiro-cli इंस्टॉल किए। ऊपर दिए Kiro खाते से साइन इन करता है। बदलाव {{productName}} के रीस्टार्ट होने पर लागू होता है।",
-        "installed": "बिल्ट-इन इंजन {{version}} इंस्टॉल है",
+        "installed": "KAS इंजन {{version}} (तुमने इंस्टॉल किया)",
+        "installed_bundled": "KAS इंजन {{version}} (ऐप में शामिल)",
+        "off_note": "बंद: ऊपर का स्विच चालू करने तक KAS kiro-cli से चलता है।",
         "saved_restart_pending": "सेव हो गया। {{productName}} अभी भी पुराने इंजन रूट पर चल रहा है; रीस्टार्ट करने पर बदलेगा: सेटिंग्स → परिचय में गेटवे पुनरारंभ वाला बटन।",
         "not_installed": "बिल्ट-इन इंजन {{version}} अभी इंस्टॉल नहीं है।",
         "install": "KAS इंजन इंस्टॉल करो",

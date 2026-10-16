@@ -8,6 +8,7 @@
 #   4. Stage the dashboard into the package's static dir
 #   5. Prune caches/tests/unused stdlib to shrink the bundle
 #   6. Stage a pinned, sha256-verified kiro-cli into backend-dist/kiro-cli/
+#   6b. Stage the pinned KAS engine bundle into backend-dist/kas[-<arch>]/
 #   7. Package the desktop app with electron-builder -> DMG / AppImage / NSIS
 #
 # The result is a double-clickable app that embeds the whole Python backend +
@@ -39,6 +40,7 @@
 #   SKIP_FRONTEND=1 bash packaging/...         # reuse an already-staged dist
 #   SKIP_ELECTRON=1 bash packaging/...         # stop after the backend binary
 #   BUNDLE_KIRO_CLI=0 bash packaging/...       # ship without the bundled kiro-cli
+#   BUNDLE_KAS=0 bash packaging/...            # ship without the bundled KAS engine
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -1427,6 +1429,95 @@ if [ "${BUNDLE_KIRO_CLI:-1}" = "1" ]; then
   fetch_kiro_cli
 else
   log "BUNDLE_KIRO_CLI=0: app ships without a bundled kiro-cli"
+fi
+
+# --- 3d. Bundled KAS engine --------------------------------------------------
+# Stages the KAS engine bundle this release PINS (src/kiro_crew/acp/kas_pin.py:
+# KAS_PIN_VERSION + KAS_PIN_MANIFEST_SHA256) into the app's resources, so the
+# `agent.kas_bundle` route runs with no download and no kiro-cli at all. The
+# staging IS the backend's own installer (acp.kas_bundle.install_bundle, run
+# from the just-built backend tree): manifest bytes checked against the pin
+# before parsing, every artifact sha256+size-pinned by that manifest, tar
+# filter="data", a `node --version` probe on THIS host, one atomic publish --
+# the same code `kirocrew kas install` runs, so the staged tree is byte-for-byte
+# what an install would lay down and the backend reads it with the same reader.
+#
+# Layout mirrors the backend trees: one root per architecture on a universal
+# macOS build (backend-dist/kas-arm64/, backend-dist/kas-x64/: Node ships no
+# universal binary, the engine's own JS is shared), backend-dist/kas/ otherwise.
+# Each root holds <version>/{bundle,node,install.json} plus a BUNDLED-VERSION
+# provenance file beside it, which the Electron shell reads to know which
+# version directory's record to check (gateway-env.js, bundledKasEnvironment)
+# before it exports KIROCREW_BUNDLED_KAS_DIR. The backend ranks the data home's own
+# install ahead of this root, so `kirocrew kas install` keeps working in the app.
+#
+# BUNDLE_KAS=0 opts a build out; the switch then needs `kirocrew kas install`
+# first, exactly as a pip install does. Fetches from KAS_BUNDLE_URL (default:
+# the project's CDN); no per-user cache -- the artifacts are ~55 MB per arch and
+# the manifest digest is the pin, so nothing stale can be reused by mistake.
+#   $1 = backend tree (its python runs the installer)   $2 = dest root
+#   $3 = platform.system() name   $4 = platform.machine() name
+stage_kas_bundle() {
+  local tree="$1" dest="$2" system="$3" machine="$4" py
+  if [ -x "$tree/bin/python3.12" ]; then
+    py="$tree/bin/python3.12"
+  elif [ -x "$tree/python.exe" ]; then
+    py="$tree/python.exe"
+  else
+    echo "ERROR: no interpreter under $tree to run the KAS bundle installer" >&2
+    exit 1
+  fi
+  rm_rf_resilient "$dest"
+  mkdir -p "$dest"
+  # Paths and names reach Python via argv, never string splicing. -I (isolated):
+  # no user site, no PYTHONPATH, no PYTHON* env, so `kiro_crew` resolves to the
+  # backend this build just installed and nothing else on the build host.
+  "$py" -I - "$dest" "$system" "$machine" "${KAS_BUNDLE_URL:-}" <<'PY'
+import sys
+from pathlib import Path
+
+from kiro_crew.acp import kas_bundle
+from kiro_crew.acp.kas_pin import KAS_PIN_MANIFEST_SHA256, KAS_PIN_VERSION
+from kiro_crew.config.sections import KAS_BUNDLE_DEFAULT_URL
+
+dest, system, machine, base = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+base = base or KAS_BUNDLE_DEFAULT_URL
+print(f"    KAS {KAS_PIN_VERSION} for {system}/{machine} from {base}")
+manifest, url = kas_bundle.fetch_manifest(
+    base, version=KAS_PIN_VERSION, sha256=KAS_PIN_MANIFEST_SHA256
+)
+installed = kas_bundle.install_bundle(
+    manifest, source=url, root=dest, system=system, machine=machine
+)
+# Re-read through the same reader the gateway will use: a tree the reader
+# rejects is a build error here, not a refusal on the user's first prompt.
+again = kas_bundle.installed_bundle(root=dest, version=KAS_PIN_VERSION)
+assert again is not None and again.acp_server == installed.acp_server, "staged tree does not read back"
+(dest / "BUNDLED-VERSION").write_text(KAS_PIN_VERSION + "\n", encoding="utf-8")
+print(f"    engine: {installed.acp_server.relative_to(dest)}")
+print(f"    node:   {installed.node_bin.relative_to(dest)} (v{installed.node_version})")
+PY
+  kiro_cli_layout_gate "$dest"
+  echo "    staged KAS bundle -> backend-dist/$(basename "$dest")/ ($(du -sh "$dest" 2>/dev/null | cut -f1))"
+}
+
+if [ "${BUNDLE_KAS:-1}" = "1" ]; then
+  log "Staging the pinned KAS engine bundle…"
+  if [ "$UNIVERSAL" = "1" ]; then
+    stage_kas_bundle "$ELECTRON_DIR/backend-dist/kirocrew-backend-arm64" "$ELECTRON_DIR/backend-dist/kas-arm64" Darwin arm64
+    stage_kas_bundle "$ELECTRON_DIR/backend-dist/kirocrew-backend-x64" "$ELECTRON_DIR/backend-dist/kas-x64" Darwin x86_64
+  else
+    case "$OS" in
+      darwin)  KAS_SYSTEM=Darwin ;;
+      windows) KAS_SYSTEM=Windows ;;
+      *)       KAS_SYSTEM=Linux ;;
+    esac
+    KAS_MACHINE="$BUILD_ARCH"
+    [ "$KAS_MACHINE" = "aarch64" ] && KAS_MACHINE="arm64"
+    stage_kas_bundle "$ELECTRON_DIR/backend-dist/kirocrew-backend" "$ELECTRON_DIR/backend-dist/kas" "$KAS_SYSTEM" "$KAS_MACHINE"
+  fi
+else
+  log "BUNDLE_KAS=0: app ships without a bundled KAS engine"
 fi
 
 # --- 4. Package the desktop app with electron-builder -----------------------

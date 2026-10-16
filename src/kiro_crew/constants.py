@@ -53,6 +53,14 @@ KIROCREW_SPAWN_HOME_ENV = "KIROCREW_SPAWN_HOME"
 KIROCREW_SANDBOX_TOOL_ENV = "KIROCREW_SANDBOX_TOOL"
 KIROCREW_SANDBOX_TOOL_VALUE = "1"
 
+#: The desktop app's staged KAS engine root, exported by the Electron shell when
+#: the build staged the pinned engine for this architecture
+#: (``website/electron/gateway-env.js``, ``bundledKasEnvironment``). Lives here
+#: rather than in ``acp.kas_bundle`` because ``sandbox`` seals the directory it
+#: names (:func:`sandbox_tiers._resolved_install_root_targets`) and must not import the
+#: ACP tree to learn the env name.
+BUNDLED_KAS_DIR_ENV = "KIROCREW_BUNDLED_KAS_DIR"
+
 # Canonical truthy set for boolean environment variables (KIROCREW_NO_JAIL,
 # KIROCREW_DEV_MODE, …).  Use ``env_flag_enabled`` rather than ``bool(os.environ
 # .get(...))`` — a bare bool() treats ``"0"``/``"false"`` as truthy, which for a

@@ -12,7 +12,10 @@
  *   boot-only, and nothing says so before a save;
  * - a status poll that fails while an earlier status is still cached is reported,
  *   so stale progress never reads as current;
- * - a status read that fails with nothing cached offers Retry, which re-reads.
+ * - a status read that fails with nothing cached offers Retry, which re-reads;
+ * - the copy the desktop app shipped (`installed.bundled`) is named as such;
+ * - an installed engine under an OFF switch says it is not in use, and the note
+ *   goes away once the switch is on.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
@@ -56,7 +59,7 @@ const BASE: KasBundleStatus = {
 
 const INSTALLED: KasBundleStatus = {
   ...BASE,
-  installed: { version: '0.66.33', node_version: '22.23.3' },
+  installed: { version: '0.66.33', node_version: '22.23.3', bundled: false },
 }
 
 function toggle(): HTMLElement {
@@ -82,17 +85,44 @@ describe('KasBundleCard', () => {
   it('lets the switch be turned on once installed, through the config PATCH', async () => {
     kasBundleStatus.mockResolvedValue(INSTALLED)
     renderWithProviders(<KasBundleCard />)
-    await screen.findByText('Built-in engine 0.66.33 installed')
+    await screen.findByText('KAS engine 0.66.33 (installed by you)')
     expect(screen.queryByTestId('kas-bundle-install')).toBeNull()
     expect(toggle()).not.toHaveAttribute('aria-disabled')
     fireEvent.click(toggle())
     await waitFor(() => expect(patchConfig).toHaveBeenCalledWith('agent.kas_bundle', true))
   })
 
+  it('names the copy the desktop app shipped, so "installed" never reads as "mine"', async () => {
+    // The app's own copy (BUNDLE_KAS) answers only while nothing is installed under
+    // the data home; the card says which copy it is rather than showing one line for both.
+    kasBundleStatus.mockResolvedValue({
+      ...INSTALLED,
+      installed: { version: '0.66.33', node_version: '22.23.3', bundled: true },
+    })
+    renderWithProviders(<KasBundleCard />)
+    await screen.findByText('KAS engine 0.66.33 (included with the app)')
+    expect(screen.queryByText('KAS engine 0.66.33 (installed by you)')).toBeNull()
+    expect(toggle()).not.toHaveAttribute('aria-disabled')
+  })
+
+  it('says an installed engine is not in use while the switch is off, and only then', async () => {
+    kasBundleStatus.mockResolvedValue(INSTALLED)
+    const { unmount } = renderWithProviders(<KasBundleCard />)
+    await screen.findByText('KAS engine 0.66.33 (installed by you)')
+    expect(screen.getByTestId('kas-bundle-off-note')).toHaveTextContent(
+      'Off: KAS runs through kiro-cli until you turn on the switch above.',
+    )
+    unmount()
+    kasBundleStatus.mockResolvedValue({ ...INSTALLED, enabled: true })
+    renderWithProviders(<KasBundleCard />)
+    await screen.findByText('KAS engine 0.66.33 (installed by you)')
+    expect(screen.queryByTestId('kas-bundle-off-note')).toBeNull()
+  })
+
   it('reports a saved switch as pending a restart, and only after the save', async () => {
     kasBundleStatus.mockResolvedValue(INSTALLED)
     renderWithProviders(<KasBundleCard />)
-    await screen.findByText('Built-in engine 0.66.33 installed')
+    await screen.findByText('KAS engine 0.66.33 (installed by you)')
     expect(screen.queryByTestId('kas-bundle-restart-pending')).toBeNull()
     fireEvent.click(toggle())
     const pending = await screen.findByTestId('kas-bundle-restart-pending')
@@ -146,7 +176,7 @@ describe('KasBundleCard', () => {
     renderWithProviders(<KasBundleCard />)
     await screen.findByText('Could not read the KAS engine status.')
     fireEvent.click(screen.getByTestId('kas-bundle-retry'))
-    await screen.findByText('Built-in engine 0.66.33 installed')
+    await screen.findByText('KAS engine 0.66.33 (installed by you)')
     expect(kasBundleStatus).toHaveBeenCalledTimes(2)
   })
 

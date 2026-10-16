@@ -90,6 +90,19 @@ def _progress_printer():
     return _on_progress
 
 
+def _already_installed(version: str, force: bool) -> kas_bundle.InstalledKasBundle | None:
+    """The data home's working copy of *version*, unless ``--force`` asked to replace it.
+
+    Only ``engines/kas`` is asked, never the desktop app's staged copy: that one is
+    not where this command writes, so it does not make an install here redundant.
+    A directory at the version's name that does not read back as an engine is not
+    an answer either; ``install_bundle`` then refuses it and names ``--force``.
+    """
+    if force:
+        return None
+    return kas_bundle.installed_bundle(root=kas_bundle.kas_engines_root(), version=version)
+
+
 def _install(args: argparse.Namespace) -> int:
     from kiro_crew.config.loader import KiroCrewConfig
 
@@ -130,6 +143,9 @@ def _install(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            present = _already_installed(manifest.version, args.force)
+            if present is not None:
+                return _report_installed(present, already=True)
             source = str(source_dir)
         else:
             version = args.version or KAS_PIN_VERSION
@@ -140,6 +156,11 @@ def _install(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            # Asked before any fetch, so re-running `install.sh --kas` on a machine
+            # that already has the engine succeeds offline too.
+            present = _already_installed(version, args.force)
+            if present is not None:
+                return _report_installed(present, already=True)
             base = args.url or KiroCrewConfig.load().agent.kas_bundle_url
             print(f"Fetching manifest for KAS {version} from {base} ...")
             manifest, manifest_url = kas_bundle.fetch_manifest(
@@ -160,8 +181,19 @@ def _install(args: argparse.Namespace) -> int:
     except kas_bundle.KasBundleError as exc:
         print(f"❌ {exc}", file=sys.stderr)
         return 1
+    return _report_installed(installed, already=False)
 
-    print(f"✅ KAS {installed.version} installed at {installed.root}")
+
+def _report_installed(installed: kas_bundle.InstalledKasBundle, *, already: bool) -> int:
+    from kiro_crew.config.loader import KiroCrewConfig
+
+    if already:
+        print(
+            f"✅ KAS {installed.version} is already installed at {installed.root} "
+            "(use --force to replace it)"
+        )
+    else:
+        print(f"✅ KAS {installed.version} installed at {installed.root}")
     if installed.version != pinned_version():
         print(
             f"   (not the version the harness runs, {pinned_version()}; set "
@@ -203,7 +235,8 @@ def _status(_args: argparse.Namespace) -> int:
     if installed is None:
         print(f"installed:     KAS {runs} is not installed  (run `kirocrew kas install`)")
         return 0 if not cfg.kas_bundle else 1
-    print(f"installed:     KAS {installed.version}, Node {installed.node_version or '?'}")
+    where = "  (built into the app)" if installed.bundled else ""
+    print(f"installed:     KAS {installed.version}, Node {installed.node_version or '?'}{where}")
     print(f"  engine: {installed.acp_server}")
     print(f"  node:   {installed.node_bin}")
     return 0

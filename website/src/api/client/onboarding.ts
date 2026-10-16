@@ -129,8 +129,12 @@ export interface KasBundleStatus {
   pinned_version: string
   /** The version the harness runs: the pin, unless the gateway's environment overrides it. */
   runs_version: string
-  /** The installed engine at `runs_version`, or null when it is not installed. */
-  installed: { version: string; node_version: string } | null
+  /**
+   * The installed engine at `runs_version`, or null when it is not installed.
+   * `bundled` is true when it is the copy built into the desktop app rather than
+   * one `kirocrew kas install` laid down under the data home.
+   */
+  installed: { version: string; node_version: string; bundled: boolean } | null
   /** True while an install started from this gateway is running. */
   installing: boolean
   /** Bytes fetched so far by the running install; `total` is 0 before the first byte. */

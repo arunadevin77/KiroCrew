@@ -8038,6 +8038,7 @@ if TYPE_CHECKING:  # the forwarded names, visible to type checkers and IDEs
         _PACKAGED_INSTALL_DIR_NAMES,
         _SANDBOX_MODE_FALLBACK,
         _STRICT_DIRS,
+        _bundled_kas_targets_cached,
         _clamp_sandbox_mode,
         _gateway_package_dir,
         _install_root_targets_cached,

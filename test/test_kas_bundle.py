@@ -460,8 +460,73 @@ class TestInstall:
         installed.acp_server.unlink()
         assert kas_bundle.installed_bundle(root=root, version="0.66.33") is None
 
+    @pytest.mark.parametrize("field", ["node_bin", "acp_server"])
+    @pytest.mark.parametrize(
+        "entry", ["/usr/bin/env", "C:\\evil\\node.exe", "\\rooted\\node", "../outside", "a/../../b"]
+    )
+    def test_a_record_entry_outside_its_root_reads_as_not_installed(
+        self, source_dir, tmp_path, field, entry
+    ):
+        # ``home / "/abs"`` is ``/abs``: an absolute entry would make the gateway run a
+        # program the record merely names, so the per-spawn reader refuses it.
+        root = tmp_path / "root"
+        installed = _install(source_dir, root)
+        record_path = installed.root / "install.json"
+        record = json.loads(record_path.read_text())
+        record[field] = entry
+        record_path.write_text(json.dumps(record))
+        assert kas_bundle.installed_bundle(root=root, version="0.66.33") is None
+
 
 # ── argv and the spawn route ───────────────────────────────────────────────────
+
+
+class TestBundledRoot:
+    """The desktop app's staged copy (KIROCREW_BUNDLED_KAS_DIR) is a SECOND root:
+    asked only when the data home has nothing at the pin, so an operator's own
+    install always wins, and flagged so status and doctor can say where it came from."""
+
+    def test_unset_or_blank_is_not_bundled(self, monkeypatch):
+        monkeypatch.delenv(kas_bundle.BUNDLED_KAS_DIR_ENV, raising=False)
+        assert kas_bundle.bundled_kas_root() is None
+        monkeypatch.setenv(kas_bundle.BUNDLED_KAS_DIR_ENV, "   ")
+        assert kas_bundle.bundled_kas_root() is None
+        monkeypatch.setenv(kas_bundle.BUNDLED_KAS_DIR_ENV, "/r")
+        assert kas_bundle.bundled_kas_root() == Path("/r")
+
+    def test_the_bundled_copy_answers_when_the_data_home_is_empty(
+        self, source_dir, tmp_path, monkeypatch
+    ):
+        app_root = tmp_path / "app" / "kas"
+        _install(source_dir, app_root)
+        monkeypatch.setenv("KIROCREW_HOME", str(tmp_path / "home"))
+        monkeypatch.setenv(kas_bundle.BUNDLED_KAS_DIR_ENV, str(app_root))
+        found = kas_bundle.installed_bundle(version="0.66.33")
+        assert found is not None
+        assert found.bundled is True
+        assert found.root == app_root / "0.66.33"
+
+    def test_the_data_home_install_wins_over_the_bundled_copy(
+        self, source_dir, tmp_path, monkeypatch
+    ):
+        app_root = tmp_path / "app" / "kas"
+        _install(source_dir, app_root)
+        home = tmp_path / "home"
+        _install(source_dir, home / "engines" / "kas")
+        monkeypatch.setenv("KIROCREW_HOME", str(home))
+        monkeypatch.setenv(kas_bundle.BUNDLED_KAS_DIR_ENV, str(app_root))
+        found = kas_bundle.installed_bundle(version="0.66.33")
+        assert found is not None
+        assert found.bundled is False
+        assert found.root == home / "engines" / "kas" / "0.66.33"
+
+    def test_an_explicit_root_never_consults_the_bundled_copy(
+        self, source_dir, tmp_path, monkeypatch
+    ):
+        app_root = tmp_path / "app" / "kas"
+        _install(source_dir, app_root)
+        monkeypatch.setenv(kas_bundle.BUNDLED_KAS_DIR_ENV, str(app_root))
+        assert kas_bundle.installed_bundle(root=tmp_path / "empty", version="0.66.33") is None
 
 
 class TestArgv:
