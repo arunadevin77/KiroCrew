@@ -838,7 +838,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     refusedPress, setRefusedPress, showRefusedPress,
   } = useRefusedPress()
   const {
-    send,
+    send, composerSend,
   } = useComposerSend({
     mode, dispatch, slots, connected, activeSlot, knowledgeFetchRef, slotRunning, drafts, fileDrafts, pasteDrafts, saveDrafts, sessionRefDrafts, activeSlotRef, composerSlotRef, composerMountedRef,
     setInput, inputRef, sendingRef, pendingAgentRef, pendingAgentKindRef, setPendingAgent, pendingModelRef, setPendingModel, pendingProjectRef, setPendingProject, setActionError, showActionError,
@@ -2318,7 +2318,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               // (typing, paste, undo, picker inserts), never for a parent-driven
               // seed -- so it is the signal that arms the prefill hint's expiry.
               onChange={composerUserEdit}
-              onSend={() => send()}
+              onSend={composerSend}
               terminalCommands={activeSlot && !currentSlot ? 'pending' : currentSlot?.executor === 'remote' ? 'remote' : 'local'}
               canSteer={composerBusy}
               onSteer={steer}

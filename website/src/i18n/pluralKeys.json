@@ -278,5 +278,14 @@
   "commandCenter.crewMain.subagent_tiny",
   "commandCenter.crewMain.tokens",
   "commandCenter.crewMain.approvals_open",
-  "components.fileRenderers.json_string_show_all"
+  "components.fileRenderers.json_string_show_all",
+  "components.promptStash.badge",
+  "components.promptStash.stashed",
+  "components.promptStash.stashed_touch",
+  "components.promptStash.restored",
+  "components.promptStash.menu_restore_desc",
+  "components.promptStash.menu_restore_desc_touch",
+  "components.promptStash.clear_others",
+  "components.promptStash.clear_others_confirm",
+  "components.promptStash.cleared_others"
 ]
