@@ -1226,6 +1226,25 @@ class _TaskqBridgeMixin(ManagerComponent):
             store, f"fail {agent_id}", store.finish, agent_id, _taskq.FAILED, error=reason
         )
 
+    @staticmethod
+    def _release_taken_start(store: "_taskq.TaskStore", agent_id: str, generation: int) -> bool:
+        """Give back a start the claimer took but did not carry to registration.
+
+        One generation-fenced ``starting -> retry_wait`` write with no due time,
+        so the row is claimable again at once. A row that has moved on (cancelled,
+        requeued, or settled by another owner) is refused by the fence or the
+        transition table and left alone. Safe on the writer thread.
+        """
+        from kiro_crew import taskq as _taskq
+
+        return store.transition(
+            agent_id,
+            _taskq.RETRY_WAIT,
+            generation=generation,
+            next_run_at=None,
+            detail={"released": "start not carried to registration"},
+        )
+
     def taskq_settle(self, info: SubagentInfo, *, row_settled: bool = False) -> None:
         """Write the run's terminal state from its record; fenced by generation.
 
@@ -1606,26 +1625,63 @@ class _TaskqBridgeMixin(ManagerComponent):
         Waiting means accepted with no run yet, the definition the overflow
         count uses: claimable rows, and ``admitted`` rows nothing has
         registered -- a claim the pump is still awaiting, or a retained one.
-        Stop all cancels exactly these ids, and the claimer's post-claim
-        re-read refuses a row cancelled here, so a claimed row never starts
-        after the stop.
+        Stop all cancels exactly these ids, and the claimer's generation-fenced
+        ``admitted -> starting`` write is refused for a row cancelled here, so a
+        claimed row never starts after the stop. A claim retained across a
+        store outage whose row is ``starting`` (``_retained_claims``) is waiting
+        work too, with no run and no claimer in flight, so its id is named here
+        as well.
         """
         from kiro_crew import taskq as _taskq
 
         store = self.taskq_store()
         if store is None or not parent_session_key:
             return []
+        exclude = self.taskq_excluded_ids()
+        registered = list(self._manager._agents)
         try:
             rows = store.list_pending(
                 _taskq.KIND_SUBAGENT,
                 session_key=parent_session_key,
-                exclude_ids=self.taskq_excluded_ids(),
+                exclude_ids=exclude,
                 include_admitted=True,
-                exclude_admitted_ids=list(self._manager._agents),
+                exclude_admitted_ids=registered,
             )
+            ids = [r.id for r in rows]
+            retained = self._retained_claim_ids_for(parent_session_key)
+            if retained:
+                ids += self._retained_starting_ids(store, retained, [*ids, *exclude, *registered])
         except _taskq.TaskStoreUnavailable:
             return []
-        return [r.id for r in rows]
+        return ids
+
+    def _retained_claim_ids_for(self, parent_session_key: str) -> list[str]:
+        """Ids of *parent_session_key*'s claims held in ``_retained_claims``.
+
+        Loop-owned state: read on the loop, and handed to the store read."""
+        return [
+            agent_id
+            for agent_id, entry in list(self._manager._retained_claims.items())
+            if entry[0].parent_session_key == parent_session_key
+        ]
+
+    @staticmethod
+    def _retained_starting_ids(
+        store: "_taskq.TaskStore", retained_ids: Sequence[str], skip: Collection[str]
+    ) -> list[str]:
+        """Each of *retained_ids* not in *skip* whose row is ``starting``.
+
+        A store job that reads no manager state: the ids come from the loop."""
+        from kiro_crew import taskq as _taskq
+
+        found: list[str] = []
+        for agent_id in retained_ids:
+            if agent_id in skip:
+                continue
+            rec = store.get(agent_id)
+            if rec is not None and rec.state == _taskq.STARTING:
+                found.append(agent_id)
+        return found
 
     async def taskq_pending_ids_for_async(
         self, parent_session_key: str, *, include_window: bool = False
@@ -1664,11 +1720,23 @@ class _TaskqBridgeMixin(ManagerComponent):
                 include_admitted=not include_window,
                 exclude_admitted_ids=registered,
             )
+            ids = [r.id for r in rows]
+            # The default reading names a retained claim's ``starting`` row too.
+            # The retained ids are read here, on the loop, after the pending
+            # read, and handed to the store job.
+            retained = [] if include_window else self._retained_claim_ids_for(parent_session_key)
+            if retained:
+                ids += await store.run(
+                    self._retained_starting_ids,
+                    store,
+                    retained,
+                    [*ids, *exclude, *registered, *self._manager._agents],
+                )
         except _taskq.TaskStoreUnavailable:
             if include_window:
                 raise
             return []
-        return [r.id for r in rows]
+        return ids
 
     def _live_run_ids(self) -> list[str]:
         """Ids with a live run in this process: the registry answers for them.
@@ -2385,14 +2453,21 @@ class _TaskqBridgeMixin(ManagerComponent):
         return False
 
     def taskq_cancel_queued(
-        self, agent_id: str, *, allow_admitted: bool = True
+        self, agent_id: str, *, allow_admitted: bool = True, retained: bool = False
     ) -> dict[str, Any] | None:
         """Cancel a persisted row that has not started; returns its params for the report.
 
+        *retained* says *agent_id* is a claim held in ``_retained_claims``, read by
+        the caller on the loop: such a claim has no run and no claimer in flight,
+        so with ``allow_admitted`` its ``starting`` row is this process's unstarted
+        work exactly like a retained ``admitted`` one, and is cancelled too.
+
         ``allow_admitted=False`` refuses a row that has been CLAIMED but not started.
         Stop-all leaves it True: the user pressed Stop, and a claimed-not-started row is
-        work they asked to end; the claimer's post-claim re-read (``claim_and_start``)
-        refuses a row cancelled here. A parent-end teardown passes False: a row in that
+        work they asked to end; the claimer's ``admitted -> starting`` compare-and-set
+        (``claim_and_start``) is refused for a row cancelled here, and a row it has
+        already moved is ``starting``, which this path leaves to the live reap. A
+        parent-end teardown passes False: a row in that
         window may be carrying a decision a person made (a spawn approval is the visible
         case), which a teardown has no standing to revoke on their behalf. Refusing
         leaves the row to the incarnation that owns it.
@@ -2403,8 +2478,8 @@ class _TaskqBridgeMixin(ManagerComponent):
         so a row a drain claimed and started in between answers None here and the
         caller falls through to the live reap -- never a ``cancelled`` row with a
         running spawn under it. A row claimed but not started (``admitted``) is
-        still this path's: the spawn re-reads the state before it registers and
-        stops there.
+        still this path's: the spawn's own start write is fenced on the
+        generation this cancel bumps, so it is refused and stops there.
 
         The cancel is deliberately NOT fenced on the read's generation. A claim, a
         requeue or a wake can bump the generation while the row stays unstarted
@@ -2427,6 +2502,8 @@ class _TaskqBridgeMixin(ManagerComponent):
             unstarted = _taskq.CLAIMABLE
             if allow_admitted:
                 unstarted = unstarted | frozenset({_taskq.ADMITTED})
+                if retained:
+                    unstarted = unstarted | frozenset({_taskq.STARTING})
             if rec.state not in unstarted:
                 return None
             previous = store.cancel(agent_id, reason="user_stop", only_from=unstarted)
@@ -2440,7 +2517,7 @@ class _TaskqBridgeMixin(ManagerComponent):
         return params
 
     def taskq_cancel_queued_each(
-        self, agent_ids: Sequence[str]
+        self, agent_ids: Sequence[str], retained_ids: Collection[str] = ()
     ) -> dict[str, dict[str, Any] | None | Exception]:
         """:meth:`taskq_cancel_queued` for every id, as ONE call: a bulk stop's store phase.
 
@@ -2448,11 +2525,15 @@ class _TaskqBridgeMixin(ManagerComponent):
         None for one that was not, or the exception its cancel raised. Caught per
         id, so one row's error neither cancels nor skips the rest -- the caller
         reports the rows that were cancelled and then raises the error.
+        *retained_ids* are the ids held in ``_retained_claims``, snapshotted on
+        the loop by :meth:`taskq_post_cancel_queued`.
         """
         outcomes: dict[str, dict[str, Any] | None | Exception] = {}
         for agent_id in agent_ids:
             try:
-                outcomes[agent_id] = self.taskq_cancel_queued(agent_id)
+                outcomes[agent_id] = self.taskq_cancel_queued(
+                    agent_id, retained=agent_id in retained_ids
+                )
             except Exception as exc:  # noqa: BLE001 - handed back per row, raised by the caller
                 outcomes[agent_id] = exc
         return outcomes
@@ -2469,15 +2550,18 @@ class _TaskqBridgeMixin(ManagerComponent):
         call returns, so the caller may drop the rows' window entries before it
         awaits the answer. Inline, the pump's own store calls are inline too and
         are not ordered behind a writer-thread job, so the cancels have to have
-        landed before this returns.
+        landed before this returns. Which ids are retained claims is read here,
+        on the caller's thread, and handed to the job.
         """
         store = self.taskq_store()
         if store is None or not agent_ids:
             return {}
+        held = self._manager._retained_claims
+        retained_ids = frozenset(agent_id for agent_id in agent_ids if agent_id in held)
         try:
             _asyncio.get_running_loop()
         except RuntimeError:
-            return self.taskq_cancel_queued_each(agent_ids)
+            return self.taskq_cancel_queued_each(agent_ids, retained_ids)
         if not type(self).pump_off_loop:
-            return self.taskq_cancel_queued_each(agent_ids)
-        return store.post(self.taskq_cancel_queued_each, list(agent_ids))
+            return self.taskq_cancel_queued_each(agent_ids, retained_ids)
+        return store.post(self.taskq_cancel_queued_each, list(agent_ids), retained_ids)
