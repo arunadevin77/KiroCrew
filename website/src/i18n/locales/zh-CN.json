@@ -2431,6 +2431,9 @@
           "repository_settings": "仓库设置",
           "gitlab_groups": "GitLab 群组"
         },
+        "timelineComposer": {
+          "clear": "清除"
+        },
         "depsSection": {
           "title": "依赖关系",
           "blocked_by": "被阻塞于",

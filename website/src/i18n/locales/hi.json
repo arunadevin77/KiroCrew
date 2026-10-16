@@ -2491,6 +2491,9 @@
           "repository_settings": "रिपॉज़िटरी सेटिंग",
           "gitlab_groups": "GitLab समूह"
         },
+        "timelineComposer": {
+          "clear": "साफ़ करो"
+        },
         "depsSection": {
           "title": "निर्भरताएँ",
           "blocked_by": "इसके कारण अवरुद्ध",

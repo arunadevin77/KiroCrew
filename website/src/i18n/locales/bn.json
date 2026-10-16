@@ -2491,6 +2491,9 @@
           "repository_settings": "রিপোজিটরি সেটিংস",
           "gitlab_groups": "GitLab গ্রুপ"
         },
+        "timelineComposer": {
+          "clear": "সাফ করো"
+        },
         "depsSection": {
           "title": "নির্ভরতা",
           "blocked_by": "যার কারণে অবরুদ্ধ",

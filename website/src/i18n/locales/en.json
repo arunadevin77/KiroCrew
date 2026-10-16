@@ -1436,6 +1436,9 @@
           "repository_settings": "Repository settings",
           "gitlab_groups": "GitLab groups"
         },
+        "timelineComposer": {
+          "clear": "Clear"
+        },
         "depsSection": {
           "title": "Dependencies",
           "blocked_by": "Blocked by",

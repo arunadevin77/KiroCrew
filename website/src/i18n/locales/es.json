@@ -2551,6 +2551,9 @@
           "repository_settings": "Ajustes del repositorio",
           "gitlab_groups": "Grupos de GitLab"
         },
+        "timelineComposer": {
+          "clear": "Borrar"
+        },
         "depsSection": {
           "title": "Dependencias",
           "blocked_by": "Bloqueado por",

@@ -2580,6 +2580,9 @@
           "repository_settings": "Repository-Einstellungen",
           "gitlab_groups": "GitLab-Gruppen"
         },
+        "timelineComposer": {
+          "clear": "Leeren"
+        },
         "depsSection": {
           "title": "Abhängigkeiten",
           "blocked_by": "Blockiert durch",
