@@ -147,6 +147,9 @@ import { SidePanelDockHost, SidePanelGlyph } from '../components/SidePanelGlyph'
 
 import SlotTagPopover from '../components/SlotTagPopover'
 import { TagPopoverProvider } from '../hooks/useTagPopover'
+import { MergeBackDialogProvider } from '../hooks/useMergeBackDialog'
+import MergeBackDialogHost from '../components/MergeBackDialogHost'
+import { useOpenMergedFork } from './chat/useOpenMergedFork'
 
 import { AnimatePresence, motion } from 'framer-motion'
 import DetailPanel from '../components/DetailPanel'
@@ -1228,12 +1231,15 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     setHighlightTs,
     handleJumpToPinnedMessage,
   })
+  // Opens the fork a merge card names: switched to when open, reopened from
+  // History when not. One identity for the transcript renderer memo.
+  const openMergedFork = useOpenMergedFork()
   const {
     activeSlotTitle, renderMessage, renderTurnItem, renderFarmItem,
   } = useTranscriptRendering({
     embedded, mode, popout, filteredSlots, connected, activeSlot, voiceRecoverySlot, appToolCallIds, mcpAppPanel, messages, messagesRef, slotRunning, toolDisclosure, setToolDisclosureFor, slotState,
     activityOpen, slotHasMore, slotOldestIndex, cursorIsForActiveSlot, loadingOlder, chatConfig, activeSlotRemoteBound, automationId, setAutomationOpen, handleArtifactOpen, handleFileOpen,
-    handleFolderOpen, handleOpenDiff, handleSubagentPanelOpen, sessionTitles, handleFork, highlightTs, selectSessionTab, linkPreviewsOn, socialShareOn, connectionsUiOn, planTaskId, showRefusedPress,
+    handleFolderOpen, handleOpenDiff, handleSubagentPanelOpen, sessionTitles, handleFork, highlightTs, selectSessionTab, openMergedFork, linkPreviewsOn, socialShareOn, connectionsUiOn, planTaskId, showRefusedPress,
     approve, dismissApproval, revealAppInPanel, lastTextIdx, regenerating, handleRegenerate, continuable, continuing, freshSession, handleContinue, handleFreshSession, interrupted,
     openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openModelPickerFromError, openTurnLimitSetting, quoteWholeMessage, handleAsk, handleQuote, handleEditResend, editLast, farmPassRef,
     handleEditConsumed, renderUserContentCb, transcriptHot, toggleAct, handleSpeak, handleApplyPlan, renderedDisplayItems, stableMsgKey, handleLoadEarlier, isPinned, handleJumpToQuote,
@@ -1290,6 +1296,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         right, so every panel glyph on this page resolves against that. */}
     <SidePanelDockHost value={!!activitySlot}>
     <TagPopoverProvider>
+    {/* Merge into parent is offered exactly where a fork is (the `onFork` gate
+        below): the dashboard and a popped-out window, not the embedded panes. */}
+    <MergeBackDialogProvider enabled={!embedded || !!popout}>
     {/* Self-hosted Jira allowlist for every markdown anchor in the page --
         message bodies, previews, and panels alike -- so a pasted Jira URL
         chips identically wherever it renders. Cloud URLs need no provider. */}
@@ -1553,6 +1562,8 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       {/* Per-slot tag picker — a single connected popover, opened from any session
           menu (sidebar row or header) via the ChatPage-scoped TagPopover context. */}
       <SlotTagPopover />
+      {/* Merge a fork into its parent -- one dialog, opened from any session menu. */}
+      <MergeBackDialogHost />
       <ComposerDraftSync store={composerDraft} inputRef={inputRef} onCommit={onComposerDraftCommit} />
 
       {/* Chat pane */}
@@ -2767,6 +2778,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     </ClosedSessionCtx.Provider>
     </SidebarFolderCtx.Provider>
     </JiraHostsCtx.Provider>
+    </MergeBackDialogProvider>
     </TagPopoverProvider>
     </SidePanelDockHost>
     </RowDisclosureProvider>
