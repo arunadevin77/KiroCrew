@@ -214,6 +214,7 @@ and every other concern has one owner under `components/markdown/`.
 | `markdown/streamingEffects.ts` | the streaming tail's glow, reveal and caret |
 | `markdown/linkBoundaryRepair.ts` | the source-level link repairs gated on remark's own parse: CJK autolink boundaries and refused link destinations |
 | `markdown/elements.tsx` | the restyle-only element overrides and the sanitizer-derived attribute forwarding they share (`sp` / `spa`) |
+| `markdown/typography.ts` | the heading, list, table-cell and inline-run class strings `markdown/elements.tsx` and the Office preview's `OfficeBlockList` (`FileRenderers.tsx`) both render; `markdownTypographyParity.test.tsx` pins the two surfaces to it |
 | `markdown/InlineCode.tsx`, `markdown/copyFeedback.tsx` | the inline-code chips (path, session, work item, sidebar folder (`FolderChip`), copy) and the copy outcome every chip shares |
 | `markdown/MarkdownTable.tsx` | a table, its Markdown / CSV copy row, and the Widen / Narrow toggle |
 | `markdown/useMarkdownTableColumns.tsx` | resizable table columns (the second `ColumnResizer` consumer) |
@@ -225,7 +226,10 @@ and every other concern has one owner under `components/markdown/`.
 Imports run one way. The facade imports the owners, and nothing under
 `components/markdown/` imports the facade: a module that did would receive the
 stub in every spec that mocks the renderer. Consumers keep importing from the
-facade for the same reason. Three things must stay in the facade's own text: the
+facade for the same reason. The one exception is `markdown/typography.ts`, which
+`FileRenderers.tsx` imports directly: it is plain data with no imports of its
+own, and reading it through the facade would hand the Office preview the
+renderer's stub in every spec that mocks the renderer. Three things must stay in the facade's own text: the
 seven remark/rehype package imports (`test/test_source_providers.py` pins that
 set against the backend converter), `import '../utils/hljs'`
 (`hljsCoreOnly.test.ts`), and the two lines the i18n added-line gate counts, in
