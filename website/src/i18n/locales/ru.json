@@ -11401,6 +11401,7 @@
         "reject": "Отклонить",
         "rejected": "Отклонено",
         "resolved": "Обработано",
+        "no_record": "Нет записи",
         "resolving": "Разрешение…",
         "resolving_2": "разрешение...",
         "resource_type_issue": "Задача",
@@ -11836,7 +11837,9 @@
         "waiting_to_start_queued_behind_the_concurrency_l": "Ожидает запуска — в очереди из-за лимита параллельности",
         "stop_failed": "Не удалось остановить субагента {{name}}",
         "stop_all_failed": "Не удалось остановить субагентов",
-        "retry_failed_error": "Не удалось повторить {{count}} из неудавшихся субагентов"
+        "retry_failed_error": "Не удалось повторить {{count}} из неудавшихся субагентов",
+        "checking_whether_it_started": "Проверяем, запустился ли он…",
+        "liveness_check_failed": "Не удалось проверить, запустился ли он. Повторная попытка…"
       },
       "subagentQueued": {
         "low_memory": "ожидание запуска — требуется {{required}} свободной памяти, сейчас свободно {{available}}; освободи память, чтобы продолжить",

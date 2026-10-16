@@ -2423,6 +2423,51 @@ An incremental progress frame **creates** the panel entry when the client holds 
 
 **Tool-call timeline (#13628).** `sseSubagentTool` and `sseSubagentBatchUpdate` also append each frame's `tool` to the card's `toolCalls` list (`recordToolCall`, newest last, capped at `SUBAGENT_TOOL_CALLS_CAP` = 50), and the Subagents panel renders it as a "Tool calls" list beside the output instead of the single overwritten `lastTool` line. Both `subagent_tool` fire sites in `subagent_manager/run.py` carry the call's redacted `tool_call_id`. A gated call fires twice with the same id (once from `EVENT_TOOL_CALL`, once from the permission request), so a frame naming the newest entry's id replaces that entry rather than listing the call twice; a frame with a different id is a new call even when `tool_count` did not move, which is the case for a backend child's permission request (counted only at approval). A frame with an id that follows an entry with none (the row a replay seeds from `last_tool`) is likewise a new call. A frame with no id falls back to the count (an unmoved count is the newest call's second frame). The list is client-side and live only: it holds what this browser saw since its last connect: a reconnect runs `clearSubagentsForSnapshot` before the replay, so a running card's timeline restarts from the snapshot's `last_tool`, and a card read back from disk after the run has none. A frame with neither id nor `tool_count` (native kiro-cli cards, which `_native_subagent_sync` re-broadcasts on every `list_update`) whose title equals the newest entry is the same activity and is not listed again. It can also be incomplete, because the cap drops old calls and the scale coalescer (`subagent_scale.py`) merges frames latest-wins above its threshold; the card states `toolCount − toolCalls.length` as "N earlier calls not shown" rather than implying the list is the whole run. That count sits in the "Tool calls" heading, outside the scrolling list, because the list follows the newest call and a row at its top would scroll out of view on exactly the long, capped runs it describes; the key is a registered plural (`pluralKeys.json`), so languages that inflect for one take their singular form. Every row drops kiro-cli's `Running: ` title prefix: it is false on a finished call, and the live row is already marked by its spinner, accent colour and `aria-current`. Once rows sit above the scroll box the inner scroller's top edge fades (a `mask-image` gradient on the bare `<ol>`, inside the solid box, so the box itself never fades) and the clipped row reads as more content rather than a fault. Persisting the timeline, expandable per-call input/result, and per-card token figures are not part of this; the Usage page's exclusion of subagent rows is the metrics spec's recorded rule.
 
+A dashboard approval refusal and process liveness are separate facts. A terminal
+approval response (expired/already decided) immediately removes decision controls,
+but remains conservatively active because another browser may already have approved
+and launched the same id. A reconnect that finds a spawn approval gone with no known
+outcome records the same verdict. The client immediately reconciles against
+`GET /api/spawn`, matching the record by run id alone (a nested, cron- or channel-born
+run's `parent` is not its tab key): a non-terminal record promotes the card to
+running/tool once `awaiting_approval` is false, a terminal record adopts its `outcome`,
+and an absent record retires the card as stopped. A row
+still marked `awaiting_approval` is the manager's cleanup race, not proof of execution,
+so it remains unresolved for the next poll. The progress bar's 30-second sweep that
+ends phantom cards (a live card with no live inventory row) matches live rows by run id
+too, never by `parent`: a parent filter would mark a launched nested or cron-born run
+failed on the poll after it was settled, and "Dismiss done" would then DELETE, which
+cancels the still-running task. The reducer compares the slot, subagent id,
+and refused approval id before applying the response, so a live spawn frame or a fresh
+approval id that arrives during the request cannot be overwritten. A failed inventory
+read leaves liveness unresolved and the existing progress-bar poll retries it; the
+failure is reported as an error notice in the composer and on the progress bar, never
+swallowed. The composer's is a notice of its own beside the refusal, never in its
+place: the read fails just after the refusal is shown, and one shared notice would
+leave no surface reporting the refusal. The composer drops it after the 8s its
+other notices last, or sooner once that card settles; the progress bar clears its own on the next successful
+read, or once no gone approval is left, however it settled. A refused poll with no
+gone card waiting stays silent, as #8743 decided for the phantom-card sweep. Concurrent
+reads for several gone cards (a batch refusal, a reconnect, the Subagents tab opening)
+share the one `GET /api/spawn` in flight. Pending
+approval counts remain cleared while composer busy state, running counts, tip
+suppression, and Reload blocking stay conservative until reconciliation.
+The gone verdict belongs to the pending phase only: a real `subagent_spawn` or tool
+frame moves the card to running/tool without clearing the marker, so neither it nor
+the retired verdict (terminal `stopped` only) may classify a live card; a tool frame
+also clears the retired marker, so a launched run that later ends `stopped` reads as
+stopped, never as retired. The failed
+approval request is reported once, as an error notice on the surface that sent it: the
+composer, or the activity card whose button was pressed. Every other surface shows only
+neutral status: the progress bar states each unresolved row as a liveness check, and a
+gone approval found on reconnect was never pressed, so no surface reports an error for
+it. The activity card of an unresolved gone approval reads "Checking whether it
+started…"; a retired card reads "No record". An absent inventory row proves only that
+the gateway holds no record of the id: the run never launched, or it is no longer
+retained (`evict_completed_agents` past `MAX_RETAINED_AGENTS` finished runs, a panel
+dismissal, a gateway restart). A retired card is not tallied as stopped, shows no run
+usage, and "Dismiss done" clears it locally without a DELETE.
+
 
 ### Model Provenance (#3582)
 

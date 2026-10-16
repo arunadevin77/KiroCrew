@@ -2,7 +2,7 @@ import type { NavigateFunction } from 'react-router-dom'
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import { toolDisclosureKey } from '../transcriptRenderers'
 import { useAppSelector } from '../../../store'
-import { selectComposerBusy, selectProjectChipLocked, pendingQuestionFor, type FollowupItem } from '../../../store/chatSlice'
+import { selectComposerBusy, selectProjectChipLocked, selectSlotSubagentsActive, pendingQuestionFor, type FollowupItem } from '../../../store/chatSlice'
 import type { TurnItem } from '../types'
 import { messageRowKey } from '../ChatPageMessageContent'
 import { devWatchMessages, inspectorOn, devLog } from '../../../dev/scrollInspector'
@@ -164,7 +164,7 @@ export function useActiveSlotState({
     // Active subagents render the progress bar in the same above-composer
     // zone the floating tip occupies — the tip always yields: never crowd
     // the queue/subagent surfaces.
-    Object.values(s.chat.subagents).some(a => a.status === 'running' || a.status === 'tool' || a.status === 'pending') ||
+    (!!s.chat.activeSlot && selectSlotSubagentsActive(s, s.chat.activeSlot)) ||
     // Workflow runs render WorkflowProgressBar in the same band — but only
     // runs belonging to THIS slot show a bar here, so filter by ownership or
     // a terminal run parked in another slot would suppress tips everywhere
