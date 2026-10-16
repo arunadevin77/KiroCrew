@@ -11322,6 +11322,8 @@
         "needs_earlier_history_count_many": "Seleziona per caricare la cronologia precedente: restano {{count}} messaggi precedenti",
         "needs_earlier_history_count_other": "Seleziona per caricare la cronologia precedente: restano {{count}} messaggi precedenti",
         "share_message": "Condividi come immagine",
+        "fork_with_history": "Dirama con i messaggi precedenti",
+        "fork_without_earlier_messages": "Dirama senza i messaggi precedenti",
         "copy_failed": "Copia non riuscita",
         "quote_message": "Cita messaggio"
       },

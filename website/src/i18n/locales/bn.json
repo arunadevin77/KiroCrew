@@ -11161,6 +11161,8 @@
         "needs_earlier_history_count_one": "আগের ইতিহাস লোড করতে নির্বাচন করুন — আরও {{count}}টি পুরোনো বার্তা বাকি আছে",
         "needs_earlier_history_count_other": "আগের ইতিহাস লোড করতে নির্বাচন করুন — আরও {{count}}টি পুরোনো বার্তা বাকি আছে",
         "share_message": "ছবি হিসেবে শেয়ার করুন",
+        "fork_with_history": "আগের বার্তা সহ ফর্ক করো",
+        "fork_without_earlier_messages": "আগের বার্তা ছাড়া ফর্ক করো",
         "copy_failed": "কপি ব্যর্থ হয়েছে",
         "quote_message": "বার্তা উদ্ধৃত করো"
       },

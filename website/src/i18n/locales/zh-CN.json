@@ -11000,6 +11000,8 @@
         "needs_active_chat": "此对话完成打开后可用",
         "needs_earlier_history_count_other": "选择以加载更早的历史记录 — 还剩 {{count}} 条更早的消息",
         "share_message": "分享为图片",
+        "fork_with_history": "带更早的消息分叉",
+        "fork_without_earlier_messages": "不带更早的消息分叉",
         "copy_failed": "复制失败",
         "quote_message": "引用消息"
       },
