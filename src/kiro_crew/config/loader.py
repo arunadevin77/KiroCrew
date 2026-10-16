@@ -477,6 +477,13 @@ CRED_FEISHU_APP_ID = "FEISHU_APP_ID"  # Feishu custom-app id (developer console)
 CRED_FEISHU_APP_SECRET = "FEISHU_APP_SECRET"
 CRED_JIRA_API_TOKEN = "JIRA_API_TOKEN"  # Jira Cloud/Server API token (resolved from .env)
 CRED_WAKATIME_API_KEY = "WAKATIME_API_KEY"  # vault-only; never loaded from .env
+# WakaTime OAuth credentials, vault-only for the same reason as the API key: a
+# value in .env reaches an agent subprocess through the environment, and the
+# spawn scrub only strips names it knows. The client ID and token expiry are
+# NOT secrets and live in config.wakatime instead.
+CRED_WAKATIME_OAUTH_CLIENT_SECRET = "WAKATIME_OAUTH_CLIENT_SECRET"
+CRED_WAKATIME_OAUTH_ACCESS_TOKEN = "WAKATIME_OAUTH_ACCESS_TOKEN"
+CRED_WAKATIME_OAUTH_REFRESH_TOKEN = "WAKATIME_OAUTH_REFRESH_TOKEN"
 CRED_AZURE_DEVOPS_EXT_PAT = "AZURE_DEVOPS_EXT_PAT"
 CRED_BITBUCKET_EMAIL = "BITBUCKET_EMAIL"
 CRED_BITBUCKET_API_TOKEN = "BITBUCKET_API_TOKEN"
