@@ -27,6 +27,7 @@ import TrustAppModal, {
 } from '../components/appstore/TrustAppModal'
 import { isRegistrySourced, normalizeRegistryApp, type RegistryApp } from '../components/appstore/types'
 import AppSource from '../components/appstore/AppSource'
+import { consentTierFor } from '../components/appstore/registryTier'
 import { recordEvent } from '../rum'
 import { useTheme } from '../hooks/useTheme'
 import { DOUBLE_TAP_MS, DOUBLE_TAP_SLOP, DOUBLE_TAP_ZOOM, usePinchZoom } from '../hooks/usePinchZoom'
@@ -630,7 +631,7 @@ export default function AppDetailPage() {
     enabled: !!app?._registry && app.origin !== 'local',
   })
   const sourceNames = [...(registriesData?.pinned || []), ...(registriesData?.registries || [])]
-    .map(r => ({ name: r.name || r.repo, label: r.label || r.name || r.repo, review: r.review }))
+    .map(r => ({ name: r.name || r.repo, label: r.label || r.name || r.repo, review: r.review, trust: r.trust }))
   const navigate = useNavigate()
   const location = useLocation()
   const { theme: resolvedMode } = useTheme()
@@ -1133,6 +1134,19 @@ export default function AppDetailPage() {
   }, [app, load])
 
   const trust = useTrustGate(runEnable)
+  // The listing registry's review tier, resolved at RENDER time rather than
+  // when the gate opens: the Get button's autoAction install can be refused
+  // before the registries list lands, and a tier snapshotted then would be
+  // missing for the whole dialog. A local app has no listing, so it carries no
+  // claim, the same rule the Source line applies. Display only. The app's
+  // `_registry` rides on the target too, as it does on Discover and Library, so
+  // the dialog's source badge names the listing registry (whatever its tier)
+  // instead of the first-party fallback label (#20656).
+  // Until the registries list lands (or when it fails) the tier is unknown, so
+  // the not-vetted box shows (`consentTierFor`) rather than read it as vetted.
+  const consentTarget = trust.target && app && app.name === trust.target.name && app.origin !== 'local' && app._registry
+    ? { ...trust.target, _registry: app._registry, ...consentTierFor(app._registry, sourceNames, registriesData === undefined) }
+    : trust.target
   const { confirm: confirmConsent, confirmDialog: consentDialog } = useConfirm()
 
   /**
@@ -1560,7 +1574,7 @@ export default function AppDetailPage() {
             registry install is refused with code `app_execution_denied`, instead
             of surfacing the raw backend string in the error card above. */}
         <TrustAppModal
-          app={trust.target}
+          app={consentTarget}
           pending={trust.pending}
           failed={trust.failed}
           detail={trust.detail}

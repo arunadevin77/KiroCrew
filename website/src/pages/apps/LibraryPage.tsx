@@ -63,7 +63,8 @@ export default function LibraryPage() {
   const [showAll, setShowAll] = usePersistedBool('mc-apps-library-show-all', false)
   const {
     apps, appsLoading, appsError, registryError,
-    browseApps, installedApps, disabledCount, updatables, announceAppsChanged,
+    browseApps, installedApps, disabledCount, updatables, announceAppsChanged, sources,
+    registriesUnknown,
   } = useAppsData({ showAll })
 
   const [query, setQuery] = useState('')
@@ -79,8 +80,10 @@ export default function LibraryPage() {
 
   const {
     setError, displayError, dismissError,
-    openDetail, updateApp, trustTarget, runEnable, trust,
-  } = useAppActions({ apps, browseApps, appsError, registryError, announceAppsChanged })
+    openDetail, updateApp, trustTarget, consentTarget, runEnable, trust,
+  } = useAppActions({
+    apps, browseApps, appsError, registryError, announceAppsChanged, sources, registriesUnknown,
+  })
 
   // Transient success surface for the shared update hook: the hook reports
   // outcomes, this page owns display + auto-dismiss (same 4s the other
@@ -286,7 +289,7 @@ export default function LibraryPage() {
             refused with code `app_execution_denied`, instead of surfacing the
             raw backend string in the error card above. */}
         <TrustAppModal
-          app={trust.target}
+          app={consentTarget}
           pending={trust.pending}
           failed={trust.failed}
           detail={trust.detail}

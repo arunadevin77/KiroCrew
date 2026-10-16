@@ -98,6 +98,7 @@ import {
   findReport,
   setGatewayConnected,
 } from '../utils/errorReport'
+import { namedCeiling } from './namedCeiling'
 
 /** An ApiError-shaped rejection: message plus the raw structured body. */
 function apiError(status: number, body: object, message = 'boom') {
@@ -325,6 +326,36 @@ describe('LibraryPage trust gate', () => {
     expect(text).not.toContain(`${K}.install_on_cancel`)
   })
 
+  it('says on the enable gate that a community registry listing was not vetted (#11159)', async () => {
+    listRegistry.mockResolvedValue({ apps: [{ ...THIRD_PARTY, _registry: 'community' }], serverPlatform: { os: 'darwin', arch: 'arm64' } })
+    listRegistries.mockResolvedValue({
+      registries: [],
+      pinned: [{ name: 'community', repo: 'https://git.example.test/community', branch: 'main', trust: 'owner', review: 'community' }],
+    })
+    enableApp.mockRejectedValue(TRUST_DENIED())
+    renderPage()
+    await clickEnable()
+    await waitFor(() => expect(modalTitle()).toBeTruthy(), namedCeiling('ENABLE_GATE_OPEN', 5000))
+
+    // Chain: registry + registries queries resolve, the trust target is built
+    // from them, then the dialog renders the box.
+    const box = await within(screen.getByRole('dialog'))
+      .findByTestId('trust-app-registry-community', undefined, namedCeiling('ENABLE_GATE_TIER', 5000))
+    expect(box.textContent).toContain('components.appstore.registryTier.community')
+    // The credential clause follows the registry's `trust`, not its review tier,
+    // and that `trust` can land after the box does.
+    await waitFor(
+      () => expect(box.textContent).toContain(`${K}.registry_community_credentialed LaunchDarkly`),
+      namedCeiling('ENABLE_GATE_TRUST', 5000),
+    )
+    // The source badge names the same registry as the box (#20656).
+    expect(within(screen.getByRole('dialog')).getByText('community')).toBeTruthy()
+    expect(within(screen.getByRole('dialog')).queryByText('components.appstore.types.kirocrew_registry')).toBeNull()
+    // Display only: the consent copy beside it is unchanged.
+    expect(screen.getByText(`${K}.not_reviewed`)).toBeTruthy()
+    expect(screen.getByText(`${K}.revocable`)).toBeTruthy()
+  })
+
   it('grants trust for that one app and retries the enable on confirm', async () => {
     enableApp.mockRejectedValueOnce(TRUST_DENIED()).mockResolvedValue({ ok: true })
     renderPage()
@@ -519,6 +550,105 @@ describe('registry install trust gate', () => {
     expect(text).toContain(`${K}.install_on_cancel LaunchDarkly`)
     expect(text).not.toContain(`${K}.install_on_cancel_granted`)
     expect(text).not.toContain(`${K}.on_close_desktop_unsupported`)
+  })
+
+  it('says on the install gate that a community registry listing was not vetted (#11159)', async () => {
+    listRegistry.mockResolvedValue({ apps: [{ ...NOT_INSTALLED, _registry: 'community' }], serverPlatform: { os: 'darwin', arch: 'arm64' } })
+    listRegistries.mockResolvedValue({
+      registries: [],
+      pinned: [{ name: 'community', repo: 'https://git.example.test/community', branch: 'main', trust: 'index', review: 'community' }],
+    })
+    // The Get button's install can be refused before the registries list lands;
+    // the tier is resolved when the dialog renders, so it still appears.
+    installFromRegistryStream.mockResolvedValue(INSTALL_DENIED())
+    renderDetailFromGet()
+    // Chain: detail load, registries query, auto-install SSE refusal, dialog.
+    await waitFor(() => expect(modalTitle()).toBeTruthy(), namedCeiling('INSTALL_GATE_OPEN', 5000))
+
+    const box = await within(screen.getByRole('dialog'))
+      .findByTestId('trust-app-registry-community', undefined, namedCeiling('INSTALL_GATE_TIER', 5000))
+    expect(box.textContent).toContain(`${K}.registry_community LaunchDarkly`)
+    expect(box.textContent).not.toContain(`${K}.registry_community_credentialed`)
+    expect(screen.getByText(`${K}.not_reviewed`)).toBeTruthy()
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: `${K}.confirm_install` })).toBeTruthy()
+    // The source badge names the same registry as the box, not a first-party
+    // fallback label (#20656).
+    expect(within(screen.getByRole('dialog')).getByText('community')).toBeTruthy()
+    expect(within(screen.getByRole('dialog')).queryByText('components.appstore.types.kirocrew_registry')).toBeNull()
+  })
+
+  it('names the same registry in the badge and the box on the detail-page enable gate (#20656)', async () => {
+    getApp.mockResolvedValue({
+      name: THIRD_PARTY.name,
+      version: '1.0.0',
+      displayName: THIRD_PARTY.displayName,
+      enabled: false,
+      origin: 'registry',
+      resources: 'gateway',
+      lifecycle: 'gateway',
+      source: `registry:${THIRD_PARTY.name}`,
+      manifest: { name: THIRD_PARTY.name, version: '1.0.0', displayName: THIRD_PARTY.displayName, description: 'x' },
+    })
+    listRegistry.mockResolvedValue({
+      apps: [{ ...THIRD_PARTY, _registry: 'community', manifest: { permissions: {} } }],
+      serverPlatform: { os: 'darwin', arch: 'arm64' },
+    })
+    listRegistries.mockResolvedValue({
+      registries: [],
+      pinned: [{ name: 'community', repo: 'https://git.example.test/community', branch: 'main', trust: 'owner', review: 'community' }],
+    })
+    enableApp.mockRejectedValue(TRUST_DENIED())
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[`/apps/detail/${THIRD_PARTY.name}`]}>
+          <Routes><Route path="/apps/detail/:name" element={<AppDetailPage />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    // Chain: detail load, Enable button, enable refusal, dialog, tier box.
+    fireEvent.click(await screen.findByRole('button', { name: /pages\.appDetailPage\.enable$/ }, namedCeiling('DETAIL_ENABLE_BTN', 5000)))
+    await waitFor(() => expect(modalTitle()).toBeTruthy(), namedCeiling('DETAIL_ENABLE_GATE_OPEN', 5000))
+    const dialog = within(screen.getByRole('dialog'))
+    const box = await dialog.findByTestId('trust-app-registry-community', undefined, namedCeiling('DETAIL_ENABLE_GATE_TIER', 5000))
+    // The credentialed sentence needs the registry's `trust`, which can land after the box.
+    await waitFor(
+      () => expect(box.textContent).toContain(`${K}.registry_community_credentialed LaunchDarkly`),
+      namedCeiling('DETAIL_ENABLE_GATE_TRUST', 5000),
+    )
+    expect(dialog.getByText('community')).toBeTruthy()
+    expect(dialog.queryByText('components.appstore.types.kirocrew_registry')).toBeNull()
+    expect(dialog.getByRole('button', { name: `${K}.confirm` })).toBeTruthy()
+  })
+
+  it('names a curated registry in the detail-page install gate badge, with no box (#20656)', async () => {
+    listRegistry.mockResolvedValue({ apps: [{ ...NOT_INSTALLED, _registry: 'partner' }], serverPlatform: { os: 'darwin', arch: 'arm64' } })
+    listRegistries.mockResolvedValue({
+      registries: [],
+      pinned: [{ name: 'partner', repo: 'https://git.example.test/partner', branch: 'main', trust: 'index', review: 'curated' }],
+    })
+    installFromRegistryStream.mockResolvedValue(INSTALL_DENIED())
+    renderDetailFromGet()
+    await waitFor(() => expect(modalTitle()).toBeTruthy(), namedCeiling('CURATED_GATE_OPEN', 5000))
+    const dialog = within(screen.getByRole('dialog'))
+    // The badge is a third-party registry's id, never the first-party fallback.
+    expect(dialog.getByText('partner')).toBeTruthy()
+    expect(dialog.queryByText('components.appstore.types.kirocrew_registry')).toBeNull()
+    // The box shows while the tier is unknown, so its absence only means
+    // something once the curated list has landed.
+    await waitFor(() => expect(listRegistries).toHaveBeenCalled(), namedCeiling('CURATED_GATE_LIST', 5000))
+    await listRegistries.mock.results[0].value
+    await waitFor(
+      () => expect(dialog.queryByTestId('trust-app-registry-community')).toBeNull(),
+      namedCeiling('CURATED_GATE_TIER', 5000),
+    )
+  })
+
+  it('shows no registry tier on the install gate for an unreviewed registry (#11159)', async () => {
+    installFromRegistryStream.mockResolvedValue(INSTALL_DENIED())
+    renderDetailFromGet()
+    await waitFor(() => expect(modalTitle()).toBeTruthy(), namedCeiling('INSTALL_GATE_OPEN', 5000))
+    expect(within(screen.getByRole('dialog')).queryByTestId('trust-app-registry-community')).toBeNull()
   })
 
   it('labels the install-path confirm as trust only, since the install lands the app switched off', async () => {

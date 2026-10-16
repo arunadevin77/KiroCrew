@@ -69,6 +69,21 @@ export type TrustAppTarget = Pick<RegistryApp, 'name' | '_registry' | 'origin'> 
    * update uses its own `update_*` Cancel and failure sentences.
    */
   replacesInstalled?: boolean
+  /**
+   * `community` when the registry that LISTED this app is a community one
+   * (`registryTierFor`): a negative claim, the listing was not vetted, which is
+   * the fact the user needs at the moment they say yes. No other tier is
+   * carried: a `curated` listing review is not a code review, and an
+   * endorsement beside `not_reviewed` would contradict that sentence. Display
+   * only: it never selects the grant, the retry or any consent step.
+   */
+  registryReview?: 'community'
+  /**
+   * That registry's credential posture (`trust`). The not-vetted sentence names
+   * whether apps clone with the user's Git credentials, and that fact is read
+   * from here, never inferred from `registryReview`.
+   */
+  registryTrust?: string
 }
 
 /**
@@ -718,6 +733,33 @@ export default function TrustAppModal({
           <p className="text-muted leading-relaxed">
             {i18nT('components.appstore.trustAppModal.not_reviewed')}
           </p>
+          {/* A community registry's listing was not vetted by the team. Below the
+              not-an-endorsement line, so that line stays next to the badge it
+              explains and the two review statements read in order. Said on the
+              gate itself, because this is where the user decides; the
+              credential clause is chosen by the registry's `trust`, never by
+              its review tier (the same whole-sentence rule as `reviewTip` in
+              RegistryManager), and both sentences name this one app, in plain
+              words, because the user is judging it and not the registry.
+              Display only: no consent step depends on it. */}
+          {app.registryReview === 'community' && (
+            <div
+              data-testid="trust-app-registry-community"
+              className="flex flex-col gap-1.5 rounded-lg border border-warn/30 bg-warn-subtle px-3.5 py-3"
+            >
+              {/* A plain bold label, not a pill: inside the box a rounded chip
+                  read as a button or a filter tag (UX review), and nothing here
+                  is clickable. */}
+              <strong data-testid="trust-app-registry-community-label" className="font-semibold text-warn-text">
+                {i18nT('components.appstore.registryTier.community')}
+              </strong>
+              <p className="text-text leading-relaxed">
+                {app.registryTrust === 'owner'
+                  ? i18nT('components.appstore.trustAppModal.registry_community_credentialed', { app: name })
+                  : i18nT('components.appstore.trustAppModal.registry_community', { app: name })}
+              </p>
+            </div>
+          )}
           {/* Consent needs an exit: what leaving does, and that this is reversible
               plus where. Without these the dialog is a one-way door. The exit
               sentence comes from the state's own row of `terminalCopy`, never

@@ -157,7 +157,7 @@ function DiscoverPageBody() {
   const {
     apps, appsError, registryError, loading,
     browseApps, featuredSections, categories, sources, updatables,
-    announceAppsChanged,
+    announceAppsChanged, registriesUnknown,
   } = useAppsData()
 
   useEffect(() => {
@@ -168,8 +168,10 @@ function DiscoverPageBody() {
 
   const {
     setError, displayError, dismissError,
-    openDetail, getApp, updateApp, trustTarget, runEnable, trust,
-  } = useAppActions({ apps, browseApps, appsError, registryError, announceAppsChanged })
+    openDetail, getApp, updateApp, trustTarget, consentTarget, runEnable, trust,
+  } = useAppActions({
+    apps, browseApps, appsError, registryError, announceAppsChanged, sources, registriesUnknown,
+  })
 
   // Transient success surface for the shared update hook: the hook reports
   // outcomes, this page owns display + auto-dismiss (the Library's 4s).
@@ -464,7 +466,7 @@ function DiscoverPageBody() {
             refused with code `app_execution_denied`, instead of surfacing the
             raw backend string in the error card above. */}
         <TrustAppModal
-          app={trust.target}
+          app={consentTarget}
           pending={trust.pending}
           failed={trust.failed}
           detail={trust.detail}
