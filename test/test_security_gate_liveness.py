@@ -343,7 +343,11 @@ def _url_payload_command(n: int) -> str:
 #: file falls through to the DNS layer on the first ssh vet. Nineteen lines, five
 #: of them code and the rest the docstrings that say which half may move and why
 #: each answer stays fail-closed. No rule, threshold or pass moved.
-_PACKAGE_LINE_BUDGET = 29_315
+#:
+#: Raised again, from 29,315, for the write-protected ``background`` entry: the
+#: gateway's background command records name the pid it signals, so a session must
+#: not be able to write one. One line, the fence entry.
+_PACKAGE_LINE_BUDGET = 29_316
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
