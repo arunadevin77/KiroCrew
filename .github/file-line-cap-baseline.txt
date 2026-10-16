@@ -68,7 +68,6 @@
 7958 src/kiro_crew/config/loader.py
 7759 src/kiro_crew/config/sections.py
 2339 src/kiro_crew/connections/warm.py
-4102 src/kiro_crew/context.py
 5311 src/kiro_crew/crew_log/emit.py
 2798 src/kiro_crew/crew_log/entry_types.py
 2260 src/kiro_crew/crew_log/session_tree_projection.py
