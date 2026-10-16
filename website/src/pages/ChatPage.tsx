@@ -36,7 +36,7 @@ import { useChatEventBridges, useColdFileTabHydration } from './chat/page/eventB
 import { useChatPageEnvironment, usePageFlags } from './chat/page/pageEnvironment'
 import { useActiveSlotState } from './chat/page/activeSlotState'
 import { useComposerDraftState, ComposerDraftSync, useComposerIntakeRefs, useMainComposerHandoff, useComposerVoiceHost } from './chat/page/composerHost'
-import { useModelPickerModels, useNewSessionPicks, useSessionChoices } from './chat/page/sessionPicks'
+import { useModelPickerModels, useNewSessionPicks, useSessionChoices, useSlotSelectionCapabilitiesQuery } from './chat/page/sessionPicks'
 import { useSteerDelivery, useRefusedPress, REFUSED_PRESS_TITLE_KEYS, useRegenerate } from './chat/page/turnActions'
 import { useTranscriptScrollRefs, useTranscriptPaging } from './chat/page/transcriptPaging'
 import { useRunInTerminalConfig, useAppPanelReveal } from './chat/page/panelTabs'
@@ -172,6 +172,7 @@ import { uiLocation } from '../uiLocations/uiLocation'
 import { GuideRevealScope } from '../guide/GuideRevealScope'
 import { fmtDateFields } from '../i18n/format'
 import { fetchDashboardConfig } from '../api/dashboardConfigQuery'
+import { acpBackendName } from '../api/acpBackend'
 
 /**
  * Horizontal room the chat pane reclaims (negative margin) while the desktop
@@ -292,18 +293,22 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // client must not OFFER regenerate, edit-resend, rewind or continue either —
   // same predicate and same `executor` keying `selectContinuable` uses for Resume.
   const activeSlotRemoteBound = slotIsRemoteBound(slots.find(s => s.key === activeSlot))
+  const selectionCapabilitiesQ = useSlotSelectionCapabilitiesQuery(activeSlot)
   // The agent and model rosters the pickers offer.
   const {
     installedAgents, sidebarAgents, defaultAgent, effectiveAgents,
     defaultAgentFailed, toggleDefaultAgent,
     agentDropdown, setAgentDropdown, agentFilter, setAgentFilter, agentDropdownRef, agentInputRef, filteredAgents,
-    effectiveModels,
-  } = useSessionRosters({ activeSlot, activeSlotProject, refreshTrigger, dispatch })
+    effectiveModels, ownModelsQuery, ownModelsFailed,
+  } = useSessionRosters({
+    activeSlot, activeSlotProject, refreshTrigger, dispatch,
+    modelsBackend: selectionCapabilitiesQ.data?.models_backend,
+  })
   const {
-    selectionCapabilitiesQ, selectionCapabilities, hiddenModelsQ, modelPickerConfigured, availableModels, codexPairModels, jevRouteOn, modelDropdown, setModelDropdown, modelFilter, setModelFilter,
+    selectionCapabilities, hiddenModelsQ, modelPickerConfigured, availableModels, codexPairModels, jevRouteOn, modelDropdown, setModelDropdown, modelFilter, setModelFilter,
     modelDropdownRef, modelInputRef, filteredModels, modelPickerReturnsFocusRef,
   } = useModelPickerModels({
-    slots, activeSlot, effectiveModels,
+    slots, activeSlot, effectiveModels, selectionCapabilitiesQ,
   })
   // Roving-focus keyboard nav for the agent + model dropdowns (shared with StyledSelect/AgentSelector).
   const { onListKeyDown: onAgentListKeyDown } = useListboxKeyboard({
@@ -2530,6 +2535,10 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                 models={filteredModels}
                 activeModel={jevRouteShownModel(shownModel, currentSlot)}
                 onSelectModel={pickModel}
+                modelsFailed={ownModelsFailed}
+                modelsFailedMessage={i18nT('components.modelEffortDropdown.harness_models_failed', { harness: acpBackendName({ id: selectionCapabilitiesQ.data?.models_backend ?? '' }) })}
+                retryingModels={ownModelsQuery.isFetching}
+                onRetryModels={() => ownModelsQuery.refetch()}
                 filter={modelFilter}
                 setFilter={setModelFilter}
                 onClose={() => setModelDropdown(false)}

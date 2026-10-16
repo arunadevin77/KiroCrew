@@ -22,6 +22,25 @@ interface ModelPickerModelsOptions {
   slots: ChatSlot[]
   activeSlot: string | null
   effectiveModels: ModelInfo[]
+  /** The active slot's selection-capabilities read, from {@link useSlotSelectionCapabilitiesQuery}. */
+  selectionCapabilitiesQ: ReturnType<typeof useSlotSelectionCapabilitiesQuery>
+}
+
+/**
+ * The active slot's ACP selection capabilities. Read before the rosters, because
+ * its `models_backend` decides which harness's model list the pickers offer.
+ */
+export function useSlotSelectionCapabilitiesQuery(activeSlot: string | null) {
+  return useQuery({
+    queryKey: ['slot-selection-capabilities', activeSlot],
+    queryFn: () => api.chatSlotSelectionCapabilities(activeSlot!),
+    enabled: !!activeSlot && typeof api.chatSlotSelectionCapabilities === 'function',
+    // A new ACP session may not exist when its slot first appears. Recheck
+    // until the agent reports its config options, then refresh less often.
+    // A missing/non-ACP peer can remain unknown indefinitely. Probe quickly
+    // during session startup, then back off instead of proxying every 2s.
+    refetchInterval: query => query.state.data?.known || query.state.dataUpdateCount + query.state.errorUpdateCount >= 5 ? 30_000 : 2_000,
+  })
 }
 
 /**
@@ -32,18 +51,8 @@ interface ModelPickerModelsOptions {
  * Called from ChatPage at the position its statements held, so React registers its effects in the same order.
  */
 export function useModelPickerModels({
-  slots, activeSlot, effectiveModels,
+  slots, activeSlot, effectiveModels, selectionCapabilitiesQ,
 }: ModelPickerModelsOptions) {
-  const selectionCapabilitiesQ = useQuery({
-    queryKey: ['slot-selection-capabilities', activeSlot],
-    queryFn: () => api.chatSlotSelectionCapabilities(activeSlot!),
-    enabled: !!activeSlot && typeof api.chatSlotSelectionCapabilities === 'function',
-    // A new ACP session may not exist when its slot first appears. Recheck
-    // until the agent reports its config options, then refresh less often.
-    // A missing/non-ACP peer can remain unknown indefinitely. Probe quickly
-    // during session startup, then back off instead of proxying every 2s.
-    refetchInterval: query => query.state.data?.known || query.state.dataUpdateCount + query.state.errorUpdateCount >= 5 ? 30_000 : 2_000,
-  })
   const selectionCapabilities = selectionCapabilitiesQ.data?.known
     ? selectionCapabilitiesQ.data
     : undefined

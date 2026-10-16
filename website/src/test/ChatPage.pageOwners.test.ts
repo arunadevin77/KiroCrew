@@ -100,6 +100,7 @@ describe('pages/chat/page owners', () => {
       'useComposerDraftStores',
       'useComposerDraftState',
       'useWelcomeState',
+      'useSlotSelectionCapabilitiesQuery',
       'useSessionRosters',
       'useModelPickerModels',
       'useNewSessionPicks',
