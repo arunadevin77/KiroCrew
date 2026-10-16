@@ -142,7 +142,7 @@ jobs:
           path: wheelhouse
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # Cache disabled deliberately: an Actions cache is writable from any
           # branch, and a restored entry would reach the interpreter this job
@@ -318,7 +318,7 @@ jobs:
           cache-dependency-path: website/package-lock.json
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
 
       - name: Build desktop app (PBS + uv venv)
         run: make desktop
