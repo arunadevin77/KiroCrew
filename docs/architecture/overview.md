@@ -739,7 +739,7 @@ detail; this table is only an index.
 | Slack gateway and handler | `src/kiro_crew/slack/` | [slack-gateway.md](../system-specs/modules/slack-gateway.md) |
 | Subagents (parallel background agents) | `src/kiro_crew/subagent.py`, `subagent_parts/`, `subagent_manager/` | [subagent.md](../system-specs/modules/subagent.md) |
 | Task state machine | `src/kiro_crew/task.py` | [task.md](../system-specs/modules/task.md) |
-| TaskRunner (spec to plan to execution) | `src/kiro_crew/taskrunner.py` | [taskrunner.md](../system-specs/modules/taskrunner.md) |
+| TaskRunner (spec to plan to execution) | `src/kiro_crew/taskrunner.py` + `taskrunner_parts/` | [taskrunner.md](../system-specs/modules/taskrunner.md) |
 | Themes | `src/kiro_crew/dashboard/handlers/themes.py` | [themes.md](../system-specs/modules/themes.md) |
 | Third-party account connections | `src/kiro_crew/connections/` | [connections.md](../system-specs/modules/connections.md) |
 

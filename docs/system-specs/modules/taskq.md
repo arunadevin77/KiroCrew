@@ -422,7 +422,7 @@ it is a defect, found with `TaskStore.loop_thread_calls` under an armed pin (see
 the guard's raise.
 
 - the terminal write on an unwinding arm (`except CancelledError` /
-  `except BaseException` in `taskrunner`, `workflows.agent_pool`, and both the
+  `except BaseException` in `TaskRunner`, `workflows.agent_pool`, and both the
   `waiting_dependency` cancel and `_end_row_on_cancel` — `admit`'s
   `CancelledError` arm, for a row whose handle never reached the caller — in
   `adapters.runner`) stays SYNCHRONOUS, because an
@@ -1565,7 +1565,7 @@ of the sites that had to change than the store packages did. What had to change:
 `waiting_input`'s `enter_wait` (above), `taskq_settle`'s `finish`
 (§ posted vs inline), the stall recovery's `recovering_async` and its re-claimed
 `running_async` (`task_executor`), and the `running` mark of a step
-(`taskrunner._execute_single_task`) and of a workflow agent call
+(`TaskRunner._execute_single_task`) and of a workflow agent call
 (`workflows.agent_pool.admitted_agent_fn`). The rest are safe for a reason that is
 theirs, not the class's:
 
@@ -1658,7 +1658,7 @@ theirs, not the class's:
 - `on_child_terminal`'s `fail_parent` `transition`: the outcome it returns cancels
   the parent, and `cancelled` is legal from every non-terminal state, so a refused
   `failed` is superseded rather than lost.
-- `_taskq_begin_run`'s `running_async` on the RUN row (`taskrunner`), the one
+- `_taskq_begin_run`'s `running_async` on the RUN row (`TaskRunner`), the one
   `running` mark in this tree that stays discarded: the run row never enters a
   WAITING state — the steps hold the waits — so every later write on it is a
   TERMINAL one, and `done` / `failed` / `cancelled` are legal from `starting`
@@ -1669,7 +1669,7 @@ theirs, not the class's:
   for that same reason. This is the reason the STEP and workflow-agent marks do
   NOT share: those rows do enter waits.
 - every terminal `done_async` / `fail_async` / `cancel_async` and the synchronous
-  `fail` / `cancel` in `taskrunner`, `workflows.agent_pool` and `task_executor`'s
+  `fail` / `cancel` in `TaskRunner`, `workflows.agent_pool` and `task_executor`'s
   callers: the `Admitted.settle` contract above is the whole reason — the write is
   KEPT when the store is unavailable (`retry_terminal_writes` replays it until it
   commits or is fenced), so a False is either that retry taking ownership or a

@@ -42,10 +42,11 @@ allow/deny rules, application permissions and owner-only aggregate controls rema
 independent. Cancellation resolves a canonical task ID once and operates on that
 same task. Member scope itself is not a confidentiality permission.
 
-The task runner is split into an orchestrator plus 4 focused helper modules under `src/kiro_crew/`:
+The task runner is split into an orchestrator, whose `TaskRunner` binds its members from the `taskrunner_parts/` owners (§ TaskRunner owner modules), plus 4 focused helper modules under `src/kiro_crew/`:
 
 ```
-taskrunner.py        (orchestrator)
+taskrunner.py        (orchestrator: the TaskRunner class)
+├── taskrunner_parts/ (TaskRunner member bodies, bound back by name)
 ├── task_models.py   (data models + constants)
 ├── task_planner.py  (LLM decomposition + task parsing + parallel grouping)
 ├── task_executor.py (task execution + retries + tests + self-review)
@@ -60,7 +61,50 @@ taskrunner.py        (orchestrator)
 | `task_planner.py` | `decompose()`, `parse_tasks()`, `normalize_cross_group_deps()`, `group_parallel_tasks()`, `plan_to_chat_context()`, `update_plan_tasks()`, `auto_name()` | LLM spec decomposition, task parsing, dependency normalization, parallel grouping, plan-to-chat formatting |
 | `task_executor.py` | `execute_task()`, `build_task_prompt()`, `self_review()`, `run_tests()`, `check_context()` | Task execution with retry/recovery budgets, prompt building, context compaction, test running, self-review |
 | `task_reporter.py` | `NotifyCallback`, `notify()`, `build_status()`, `save_progress()`, `load_checkpoint()`, `build_resume_context()`, `format_completion_summary()` | Notification contract, status reporting, TASK_PROGRESS.md checkpointing, resume context |
-| `taskrunner.py` | `TaskRunner` | Orchestrator — owns run lifecycle, `_try_replan`, watchdog, run persistence (`_persist_runs`/`_load_runs`); delegates decomposition/execution/reporting to the helper modules |
+| `taskrunner.py` | `TaskRunner` | Orchestrator — the class, its constructor and properties; its run lifecycle, `_try_replan`, watchdog and run persistence (`_persist_runs`/`_load_runs`) are bound from the `taskrunner_parts/` owners below; delegates decomposition/execution/reporting to the helper modules |
+
+### TaskRunner owner modules
+
+`TaskRunner`'s own behaviour lives in the `taskrunner_parts/` package, one
+responsibility per module. A member's body is a module-level function there whose
+first parameter is `self` (annotated `TaskRunner` for type checkers only), and the
+class binds it by name under one comment header per owner (`_execute_tasks =
+_run_steps._execute_tasks`, `staticmethod(...)` for a static method). Every member
+stays an attribute of the one class, so a patch of a method on the class or on an
+instance reaches every caller, a `TaskRunner.__new__` build works, and the run state
+stays on the instance; each owner's docstring names the instance fields its members
+write and read. A bound member's `__qualname__` and `__module__` name its owner
+(nothing reads them); a class an owner defines (`WorkflowInitializing`,
+`WorkflowRunPublisher`, `_MonotonicAge`) keeps `kiro_crew.taskrunner` as its
+`__module__`, so error chains and tracebacks name the path callers import it from.
+Owners log under the `kiro_crew.taskrunner` logger, never import `taskrunner.py` at
+run time, and import only owners listed before them in `_OWNERS`. `taskrunner.py`
+keeps every project import it had and every name the tests patch through it (stdlib
+imports that only moved code uses live in its owners) and serves the module-level
+names it defined from their owners; a write through it reaches every owner binding the
+same object (`kiro_crew._facade_mirror`). `test/test_taskrunner_bindings.py` pins the
+member inventory, the binding and the reach.
+
+| TaskRunner owner | Owns |
+|---|---|
+| `taskrunner_parts/run_inputs.py` | what a run is started from: the `workspace_dir` gate, the spec read gate (`_read_spec_text`, `_read_spec_prefix`), audited YAML decomposition and the unattended sources that may not fall back from it, and the live `taskrunner.*` config each run entry adopts (`_refresh_from_config`, `_clamp_parallel_steps`) |
+| `taskrunner_parts/run_scope.py` | what belongs to one run: its session namespace, execution identity and history key, the per-run auto-approve grant, and teardown of its sessions and runtime |
+| `taskrunner_parts/workflow_port.py` | the shared workflow-history port: `WorkflowRunPublisher`, `WorkflowInitializing`, the attach/defer gate, and begin, plan, rebind, finalize and delete publication |
+| `taskrunner_parts/taskq_bridge.py` | the durable task queue: attaching admission, adopting orphaned rows, the run's container row and each step's admission |
+| `taskrunner_parts/run_registry.py` | the `runs.json` registry: ordered snapshots, restore and crash recovery, the `TASK_PROGRESS.md` checkpoints and the status view |
+| `taskrunner_parts/run_reporting.py` | notifications routed to the originating conversation, each step's history line, and failure lessons |
+| `taskrunner_parts/run_steps.py` | running the plan within the run's bounds: groups and the parallel cap, step admission and publication, replanning, the token budget, the run-age clock (`_MonotonicAge`) and the watchdog |
+| `taskrunner_parts/plan_mode.py` | plan mode: decomposition, building and editing a planned project, saved-definition starts and the plan views |
+| `taskrunner_parts/run_lifecycle.py` | every way a run starts or stops: start admission and the concurrent-run cap, `run`, `start_background`, the resumable-workspace guard, cancel, pause and delete; `execute_plan` and `retry_from_task` stay `TaskRunner` methods in `taskrunner.py` (mypy narrowing, below), and a new start or stop entry point still goes here |
+
+`taskrunner.py` keeps the `TaskRunner` class with its constructor, properties and
+`_RUNS_FILE`, the `Step` / `StepStatus` / `TaskRun` aliases and the re-exports, and two
+run drivers as methods: `execute_plan` and `retry_from_task` read, in their background
+closures, the run their guard narrowed, and mypy keeps that narrowing only in a method
+checked after the class's bindings (an owner function is checked before them). New
+`TaskRunner` behaviour goes to the owner whose row names its responsibility, bound in
+the class under that owner's header; new module-level code goes to that owner, never
+to `taskrunner.py`.
 
 ### Workflow substrate attachment
 
@@ -200,7 +244,8 @@ caller so chat can complete normally without exposing an orphaned run.
 task_models ← task_planner
 task_models ← task_executor (+ task_planner for parallel grouping)
 task_models ← task_reporter (+ task_planner for parallel grouping)
-task_models ← taskrunner (+ all above modules)
+task_models ← taskrunner_parts (+ all above modules)
+taskrunner_parts ← taskrunner (an owner never imports taskrunner at run time)
 ```
 
 ### Backward Compatibility
@@ -609,7 +654,7 @@ Parallel groups are throttled to prevent resource exhaustion from simultaneous k
 
 Every resolved task in a parallel group is dispatched at once and an
 `asyncio.Semaphore` caps how many run simultaneously, so a slot freed by a
-finished task is refilled immediately (`taskrunner.py`):
+finished task is refilled immediately (`TaskRunner._execute_tasks`, `taskrunner_parts/run_steps.py`):
 
 ```python
 max_parallel_steps = self._max_parallel_steps  # bound ONCE per execution
@@ -783,7 +828,7 @@ A partial example; each run also carries `name`, `auto_approve`,
 
 ## Execution Limits
 
-`task_models.py` owns retry, recovery, replan, total-task, timeout, token-budget, progress-file, and session-prefix constants; `TaskRunner` owns the concurrent-run fallback and persistence filename. `task_executor.execute_task()`, `TaskRunner._try_replan()`, `TaskRunner._watchdog_loop()`, and `task_executor.run_tests()` consume those bounds. `test_scenarios_v2_logic.py` pins retry exhaustion and `test_taskrunner.py::test_replan_blocked_by_step_limit` pins the total-task boundary, so documentation names the enforcement seams instead of copying tunables.
+`task_models.py` owns retry, recovery, replan, total-task, timeout, token-budget, progress-file, and session-prefix constants; `TaskRunner` owns the persistence filename (`_RUNS_FILE`); the concurrent-run fallback (`_MAX_CONCURRENT_TASKS`) lives in `taskrunner_parts/run_lifecycle.py` and the parallel-step fallback (`_MAX_PARALLEL_TASKS`) in `taskrunner_parts/run_inputs.py`, both still importable from `kiro_crew.taskrunner`. `task_executor.execute_task()`, `TaskRunner._try_replan()`, `TaskRunner._watchdog_loop()`, and `task_executor.run_tests()` consume those bounds. `test_scenarios_v2_logic.py` pins retry exhaustion and `test_taskrunner.py::test_replan_blocked_by_step_limit` pins the total-task boundary, so documentation names the enforcement seams instead of copying tunables.
 
 The global timeout and the watchdog's stall bounds compare a run's AGE, not two wall-clock readings. `started_at` and `last_task_time` stay wall-clock for display and `runs.json`; `_MonotonicAge` keeps a monotonic reading of each. The one for `started_at` is taken where the run is stamped (a new run, a restart, a retry) and shared by `_execute_tasks` and `_watchdog_loop`, so the executor and the watchdog cannot disagree, and a wall-clock step neither times out or stall-cancels a healthy run nor spares one past its bound. The age is awake time, like the steps' own `asyncio` deadlines: `time.monotonic()` stops while the host is suspended on Linux and macOS, so a suspend there is neither timeout nor stall time, and it keeps counting on Windows. `test_taskrunner.py::TestGlobalTimeoutClock` and `TestWatchdog::test_watchdog_measures_stalls_on_the_monotonic_clock` pin the step cases; a suspend on Linux or macOS reads as their forward step, the wall clock moving while the monotonic clock does not.
 

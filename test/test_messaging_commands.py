@@ -517,7 +517,11 @@ class TestLayering:
     #: ``kiro_crew.slack`` transitively, so a RUNTIME import of either -- at any
     #: nesting depth -- is the ``messaging -> slack`` edge in disguise. Typing-only
     #: imports under ``if TYPE_CHECKING:`` are the sanctioned way to name them.
-    _DUCK_TYPED_SERVICES = ("kiro_crew.subagent", "kiro_crew.taskrunner")
+    _DUCK_TYPED_SERVICES = (
+        "kiro_crew.subagent",
+        "kiro_crew.taskrunner",
+        "kiro_crew.taskrunner_parts",
+    )
 
     def test_the_duck_typed_services_are_never_imported_at_runtime(self) -> None:
         """A deferred in-function import is still an edge: the channel ``spawn``

@@ -2449,7 +2449,7 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         "suggestions.py",
         "tips.py",
         "task_executor.py",
-        "taskrunner.py",
+        "taskrunner_parts/run_steps.py",
         "transcribe.py",
         "metrics/schema.py",
         # Egresses, but carries NO redactable content: the payload is a fixed

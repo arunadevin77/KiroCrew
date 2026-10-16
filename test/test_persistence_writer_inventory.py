@@ -59,7 +59,7 @@ GATED_AUTOMATIC = {
     "history_consolidation.py::_write_projects",
     "history_consolidation.py::_consolidate",
     # Distils a lesson from a repeatedly failing task; gated before the LLM call.
-    "taskrunner.py::_extract_lesson",
+    "taskrunner_parts/run_reporting.py::_extract_lesson",
     # The enforcement point behind the learn_add MCP tool: every transport that
     # posts a lesson (tool, dashboard, direct HTTP) is refused by this one check.
     "dashboard/handlers/cron.py::api_lessons_create",
