@@ -831,6 +831,57 @@ class TestScrub:
         assert oracle.entered is False
         assert log_home()[0]["scrubbed"] is True
 
+    def test_a_credential_in_a_choice_criteria_value_is_found(self, install_impl, log_home):
+        """A rubric authored ONLY in ``Choice.criteria`` -- the field this PR adds --
+        leaves the machine in the request, so a credential there is refused before
+        the network like any other wire text. The prompt and options are clean, so
+        the only path to the finding is ``criteria``."""
+        oracle = install_impl(_ExplodingOracle())
+        questions = [
+            Choice(
+                id="q",
+                prompt="which?",
+                options=["fine", "also-fine"],
+                criteria={"fine": f"the key is {_AWS_KEY_SAMPLES[0]}"},
+            )
+        ]
+        assert asyncio.run(decide(POINT, "clean state", questions, config=_config())) is None
+        assert oracle.entered is False
+        assert log_home()[0]["scrubbed"] is True
+
+    def test_the_criteria_scrub_depends_on_criteria_reaching_question_texts(
+        self, install_impl, log_home, monkeypatch
+    ):
+        """Pins that the coverage above rides on ``criteria`` being included in
+        ``question_texts``: with the criteria values dropped from what the scanner
+        sees, the same credential-bearing question reaches the provider. So the
+        green of the test above is load-bearing on the criteria line, not incidental
+        to the prompt or options -- which are clean here."""
+        from kiro_crew.decisions import types as types_mod
+
+        real_question_texts = types_mod.question_texts
+
+        def _without_criteria(question):
+            texts = real_question_texts(question)
+            if isinstance(question, Choice) and question.criteria:
+                dropped = {str(v) for v in question.criteria.values() if v}
+                return [t for t in texts if t not in dropped]
+            return texts
+
+        # ``gate`` imports ``question_texts`` by name, so patch where it is bound.
+        monkeypatch.setattr(gate_mod, "question_texts", _without_criteria)
+        oracle = install_impl(_RecordingOracle(value="fine"))
+        questions = [
+            Choice(
+                id="q",
+                prompt="which?",
+                options=["fine", "also-fine"],
+                criteria={"fine": f"the key is {_AWS_KEY_SAMPLES[0]}"},
+            )
+        ]
+        assert asyncio.run(decide(POINT, "clean state", questions, config=_config())) is not None
+        assert len(oracle.calls) == 1
+
     @pytest.mark.parametrize(
         "make",
         [

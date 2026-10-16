@@ -470,18 +470,30 @@ def settle(session_key: str | None, ok: bool | None) -> None:
 
 
 def questions() -> list[Question]:
-    """The one question, with a tier's description carried in the prompt.
+    """The one question, with each tier's description carried in ``criteria``.
 
     ONE ``Choice``, because the answer is consumed: a second question would be a
     second thing to reconcile with a turn that runs on exactly one model.
+
+    The per-tier rubric rides in the provider's own per-option ``criteria`` map,
+    keyed by the option it describes, rather than being flattened into the prompt.
+    Both backends know how to carry it -- ``impl_jev`` sends it as the ``criteria``
+    map and ``impl_llm`` renders it beside each option -- so ``Choice`` behaves the
+    same whichever oracle answers. At runtime, though, only ``nudge.wake`` is served
+    by the LLM lane, so for ``model.route`` it is Jev that receives the rubric; the
+    ``impl_llm`` rendering is kept deliberately as groundwork for a future
+    LLM-lane point rather than because this point reaches that backend today. The
+    prompt keeps only what is NOT per-option -- the question stem and
+    :data:`TIER_ASYMMETRY`, which is a property of the work's outcome, not of one
+    tier.
     """
-    described = "; ".join(f"{tier} = {TIER_DESCRIPTIONS[tier]}" for tier in TIERS)
     return [
         Choice(
             QUESTION_ID,
             "How hard is this request for an AI coding assistant? "
-            f"Answer one of: {described}. {TIER_ASYMMETRY}",
+            f"Answer one of: {', '.join(TIERS)}. {TIER_ASYMMETRY}",
             options=list(TIERS),
+            criteria=dict(TIER_DESCRIPTIONS),
         )
     ]
 
