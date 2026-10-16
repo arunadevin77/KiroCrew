@@ -294,6 +294,24 @@ async def _settle(slot) -> None:
         pass
 
 
+async def _run_until_the_ceiling_fires(coro, native_cancel, turn_started, seen) -> None:
+    """Run ``coro`` under a long ceiling, then let that ceiling's own timer fire.
+
+    The clock moves past the deadline only once the turn has started streaming, so a
+    slow start on a loaded runner cannot let the timer land before the turn holds its
+    slot (the reset is paid only for a turn that acquired it).
+    """
+    task = asyncio.ensure_future(_bounded_turn(coro, 30, native_cancel=native_cancel))
+    await asyncio.wait_for(turn_started.wait(), 30)
+    deadline = seen["deadline"]
+    assert deadline is not None, "precondition: the turn runs under the ceiling"
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    ahead = deadline - real_time() + 0.05
+    with patch.object(loop, "time", lambda: real_time() + ahead):
+        await asyncio.wait_for(task, 30)
+
+
 @pytest.mark.asyncio
 async def test_turn_start_folds_temporary_line_over_live_incognito(tmp_path, monkeypatch) -> None:
     """The metadata privacy ratchet outranks a looser live-first carrier."""
@@ -4880,7 +4898,12 @@ class TestRunChatRecoveryLadders:
         state, client = _runner_state(tmp_path)
         slot = _slot()
 
+        turn_started = asyncio.Event()
+        seen: dict[str, float | None] = {}
+
         async def _silent(*_args, **_kwargs):
+            seen["deadline"] = _TURN_DEADLINE.get()
+            turn_started.set()
             await asyncio.Event().wait()
             yield _complete()  # pragma: no cover - the ceiling fires first
 
@@ -4891,8 +4914,8 @@ class TestRunChatRecoveryLadders:
             return outcome
 
         with _quiet_sel(), pytest.raises(TurnTimeoutError) as raised:
-            await _bounded_turn(
-                chat_runner._run_chat(state, slot, "hello"), 0.5, native_cancel=_native_stop
+            await _run_until_the_ceiling_fires(
+                chat_runner._run_chat(state, slot, "hello"), _native_stop, turn_started, seen
             )
         await _settle(slot)
 
@@ -4910,7 +4933,12 @@ class TestRunChatRecoveryLadders:
         state, client = _runner_state(tmp_path)
         slot = _slot()
 
+        turn_started = asyncio.Event()
+        seen: dict[str, float | None] = {}
+
         async def _silent(*_args, **_kwargs):
+            seen["deadline"] = _TURN_DEADLINE.get()
+            turn_started.set()
             await asyncio.Event().wait()
             yield _complete()  # pragma: no cover - the ceiling fires first
 
@@ -4921,8 +4949,8 @@ class TestRunChatRecoveryLadders:
             return outcome
 
         with _quiet_sel(), pytest.raises(TurnTimeoutError) as raised:
-            await _bounded_turn(
-                chat_runner._run_chat(state, slot, "hello"), 0.5, native_cancel=_native_stop
+            await _run_until_the_ceiling_fires(
+                chat_runner._run_chat(state, slot, "hello"), _native_stop, turn_started, seen
             )
         await _settle(slot)
 
