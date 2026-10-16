@@ -144,7 +144,6 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("chat_api/agent_switch.py", "switch_slot_agent"),
                 ("chat_api/turn_stop.py", "api_chat_slot_interrupt"),
                 ("chat_api/slot_model.py", "api_chat_slot_model"),
-                ("chat_api/slot_note.py", "api_chat_slot_note"),
                 ("chat_api/slot_effort.py", "api_chat_slot_reasoning_effort"),
                 # Reload refuses a reserved slot or sibling alias through
                 # _switch_target_busy, as the session_reload verb does.
@@ -155,9 +154,13 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("chat_api/slot_lifecycle.py", "api_chat_slots_cleanup"),
                 ("chat_api/slot_model.py", "api_chat_slots_model"),
                 ("chat_api/continue_turn.py", "continue_slot_turn"),
+                ("chat_api/slot_note.py", "deliver_note"),
                 ("chat_api/turn_stop.py", "stop_slot_turn"),
                 # Stop settlement wakes retained priority only on an unreserved slot.
                 ("chat_api/turn_stop.py", "_make_stop_resolver"),
+                # Merge-back sends its card to the parent slot that is working,
+                # because that slot's turn owns the transcript's tail.
+                ("chat_merge_back.py", "_live_parent"),
                 ("chat_rewind.py", "api_chat_slot_rewind"),
                 # The memory-ready queue drain starts a turn only on a slot no
                 # dispatch has reserved, the same guard the dispatch routes take.

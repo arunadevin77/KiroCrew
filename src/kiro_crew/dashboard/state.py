@@ -58,7 +58,7 @@ from kiro_crew.dashboard.notification_coordinator import NotificationCoordinator
 from kiro_crew.dashboard.recovery_replays import RecoveryReplays
 from kiro_crew.dashboard.session_pulse_counter import increment_user_session_count_off_loop
 from kiro_crew.dashboard.side_state import SideState
-from kiro_crew.dashboard.slot_buffers import SlotBufferCoordinator
+from kiro_crew.dashboard.slot_buffers import MAX_SLOT_KEY_CHARS, SlotBufferCoordinator
 from kiro_crew.dashboard.slot_projection import SlotProjection
 from kiro_crew.dashboard.slot_queue_repository import (
     EMPTY_QUEUE_SIGNATURE,
@@ -2004,6 +2004,29 @@ _NON_DURABLE_SOURCE_LINK_ROLES = frozenset({"chunk", "done", "streaming", "queue
 # An arrival over this is refused, not admitted by evicting a seated entry
 # the caller already holds a 200 for.
 _MAX_PENDING_CONTEXT = 50
+# Process-local replay guards outlive their queue seats: a stamped guard still
+# answers a hydration that read the hold before the stamp, and an unstamped one
+# holds back every twin until the write lands. Bound the registry independently
+# of slot count, and evict the stamped ones first (_register_consumed_merge_contexts).
+_MAX_CONSUMED_MERGE_CARDS = 512
+# Live entries one source may hold in that queue. Shared by the /context and
+# /note admission checks and by the turn that takes its session's note
+# context from another slot, so one prompt is bounded as one queue is.
+_MAX_CONTEXT_PER_SOURCE = 10
+
+
+class _ConsumedMergeCard(NamedTuple):
+    """One merge card's process-local replay guard.
+
+    ``transcript`` is the key the card was consumed on, matched by file.
+    ``stamped`` says its durable ``consumed`` stamp has been proven, which makes
+    the guard the cheaper one to evict: it then only answers a hydration that
+    read the hold before the stamp, where an unstamped guard is the whole
+    protection until the write lands.
+    """
+
+    transcript: str
+    stamped: bool = False
 
 
 def context_entry_expired(entry: dict, now: float) -> bool:
@@ -2593,16 +2616,11 @@ def _ascii_slot_key(name: str) -> str:
 # ``_safe_key`` produces byte-for-byte.
 _SLOT_KEY_FILENAME_UNSAFE_RE = re.compile(r"[^\w\-.]", flags=re.ASCII)
 
-# Longest slot key kept verbatim. A transcript is ``<stem>.jsonl`` -- the stem
-# is ``dashboard_<key>`` for a dashboard slot and the key itself for a channel
-# slot -- and filesystems refuse a name over 255 bytes (ENAMETOOLONG). So a key
-# longer than this could never have had a transcript of either kind; only such
-# a key is shortened, and a key whose transcript may already exist keeps its
-# spelling so a restart still finds it. A longer key keeps its first
-# ``_SLOT_KEY_KEEP_CHARS`` characters plus ``-`` and a short sha256 of the whole
-# folded key: a valid filename stem, stable across calls, distinct per name, and
-# short enough to stay unchanged when folded again.
-_SLOT_KEY_MAX_CHARS = 255 - len(".jsonl")
+# A key longer than ``MAX_SLOT_KEY_CHARS`` (defined in ``slot_buffers``, which
+# says why that is the bound) keeps its first ``_SLOT_KEY_KEEP_CHARS`` characters
+# plus ``-`` and a short sha256 of the whole folded key: a valid filename stem,
+# stable across calls, distinct per name, and short enough to stay unchanged
+# when folded again.
 _SLOT_KEY_KEEP_CHARS = 180
 _SLOT_KEY_HASH_CHARS = 12
 
@@ -2631,7 +2649,7 @@ def _normalize_slot_key(name: str) -> str:
     identical sidebar sessions backed by one transcript, and the next
     ``_persist_open_slots`` flush cements both keys. Idempotent;
     auto-generated ``chat-N-<ts>`` keys are returned unchanged. A key longer
-    than ``_SLOT_KEY_MAX_CHARS`` is shortened (see the constant) so its
+    than ``MAX_SLOT_KEY_CHARS`` is shortened (see the constant) so its
     transcript filename stays under the filesystem's name limit.
     """
     if name.startswith("dashboard:"):
@@ -2639,7 +2657,7 @@ def _normalize_slot_key(name: str) -> str:
     while name.startswith("dashboard_"):
         name = name[len("dashboard_") :]
     key = _SLOT_KEY_FILENAME_UNSAFE_RE.sub("_", _ascii_slot_key(name))
-    if len(key) > _SLOT_KEY_MAX_CHARS:
+    if len(key) > MAX_SLOT_KEY_CHARS:
         digest = hashlib.sha256(key.encode("ascii")).hexdigest()[:_SLOT_KEY_HASH_CHARS]
         key = f"{key[:_SLOT_KEY_KEEP_CHARS]}-{digest}"
     return key
@@ -3071,6 +3089,7 @@ class _ChatSlot:
         "_pending_memory_mode",
         "_ephemeral",
         "_pending_context",
+        "_inflight_merge_contexts",
         "_deferred_notes",
         "_dropped_note_ids",
         "_app",
@@ -3079,6 +3098,7 @@ class _ChatSlot:
         "_pending_variants",
         "_lock",
         "forked_from",
+        "forked_from_created_at",
         "_fork_lock",
         "_model_pick_lock",
         "_tab_id",
@@ -4052,11 +4072,11 @@ class _ChatSlot:
         self._pending_memory_mode: str | None = None
         self._ephemeral: bool = ephemeral  # Incognito mode: no memory writes
         self._pending_context: list[dict[str, Any]] = []
+        self._inflight_merge_contexts: list[dict[str, Any]] = []
         self._deferred_notes: list[dict[str, Any]] = []
-        # Note ids dropped at the flush's rebind seam. A dropped
-        # note has no delivery obligation left, but its durable entry may only
-        # be retired by a save — the ids recorded here are how the next full
-        # save knows to retire entries whose rows will never exist.
+        # Note ids whose remaining delivery obligation ended without a row-based
+        # retirement: rebind drops and committed plain notes restored from disk.
+        # The next full save removes their durable hold entries unconditionally.
         self._dropped_note_ids: set[str] = set()
         self._app: str = ""  # App identity tag (App Kit §5.2)
         # FIX 1 (unattended approval park). Evidence that a HUMAN has driven
@@ -4086,6 +4106,9 @@ class _ChatSlot:
         self._pending_variants: list[dict] = []
         self._lock = asyncio.Lock()
         self.forked_from: str | None = None  # parent slot key if this is a fork
+        # The parent transcript's created_at when forked: a chat later created
+        # on the parent's key after a permanent delete has another.
+        self.forked_from_created_at: str = ""
         self._fork_lock: asyncio.Lock = asyncio.Lock()  # serialises concurrent forks on this slot
         # Serialises explicit model-pick transactions (check → mutate → live
         # switch → rollback) on this slot: picks interleaving at the set_model
@@ -5273,10 +5296,11 @@ class _ChatSlot:
     def has_pending_context_seat(self) -> bool:
         """True if one more entry fits the queue's seat ceiling.
 
-        Counts live entries plus each held note's context half, because the
-        deferred-note flush promotes that half into this same queue -- without the
-        reservation a later arrival takes the seat the flush needs and the note's
-        context is lost after its 200.
+        Counts live entries, each held note's context half, and each merge-card
+        context a running turn has taken (``_inflight_merge_contexts``), because the
+        deferred-note flush promotes that half into this same queue and a turn that
+        does not land puts its merge cards back at the front -- without the
+        reservation a later arrival takes a seat one of them needs.
         """
         now = time.time()
         seats = sum(1 for e in self._pending_context if not context_entry_expired(e, now))
@@ -5284,6 +5308,9 @@ class _ChatSlot:
             ctx = note.get("context")
             if isinstance(ctx, dict) and not context_entry_expired(ctx, now):
                 seats += 1
+        seats += sum(
+            1 for entry in self._inflight_merge_contexts if not context_entry_expired(entry, now)
+        )
         return seats + 1 <= _MAX_PENDING_CONTEXT
 
     def append_pending_context(self, entry: dict[str, Any]) -> bool:
@@ -6490,6 +6517,12 @@ class DashboardState:
         )
         self._slots: dict[str, _ChatSlot] = {}
         self._slot_registry = SlotRegistry()
+        # Process-local guard for copies queued before a durable consumption
+        # stamp lands, and for a hydration that read the hold before it. An
+        # entry is kept once its stamp is proven, marked stamped so eviction
+        # takes it before any still-unstamped guard; the registry is
+        # count-bounded by _MAX_CONSUMED_MERGE_CARDS.
+        self._consumed_merge_cards: dict[str, _ConsumedMergeCard] = {}
         # Process-local Spec Builder outbox claims, keyed by directory + delivery.
         # Directory scope matters because aliases use different slots for the same
         # files; durable status remains owned by the app's decision ledger.
