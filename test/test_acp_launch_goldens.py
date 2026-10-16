@@ -384,6 +384,7 @@ def test_the_fixed_parent_never_carries_a_variable_spawn_sets() -> None:
     contributed = {
         "KIROCREW_SPAWNED",
         "KIROCREW_SPAWN_INSTANCE",
+        "KIROCREW_RUNTIME_AGENT",
         "KIROCREW_SESSION_KEY",
         "KIROCREW_CHANNEL_ID",
         "KIROCREW_RUNTIME_PYTHON",

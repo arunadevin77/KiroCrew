@@ -63,7 +63,9 @@ from typing import Any, Iterator
 
 import pytest
 from e2e.process_inventory import (
+    RUNTIME_AGENT_ENV,
     Inventory,
+    ProcessFact,
     SliceCleanupError,
     assert_slice_contract,
     crew_log_write_handles,
@@ -156,25 +158,44 @@ def _pinned_homes(home: Path) -> Iterator[None]:
                 os.environ[key] = value
 
 
-def _authored_agent(home: Path, argv: str) -> str:
-    """The agent a runtime was spawned FOR, from the ``--agent`` it was spawned with.
+def _authored_agent(home: Path, fact: ProcessFact) -> str:
+    """The agent a runtime was spawned FOR, from the product's own record of it.
 
-    The product hands the backend a projected skill-view alias
-    (``kirocrew-skill-view-<hash>``), not the authored name, and the same
-    authored agent yields the same alias, so the alias alone cannot say whether
-    a process is the background agent. The product records which authored agent
-    each alias projects (a sidecar and a view ledger under the data home's
-    ``skill-projection`` side directory, with a legacy copy in the agents
-    directory), and ``source_agent_name`` is its own answer for that question,
-    so this reads through it rather than naming a file layout of its own. An
-    un-aliased ``--agent`` is returned as written; a runtime with no ``--agent``
-    at all, or an alias nothing on this home records, answers ``""`` so the
-    caller classifies it as foreign rather than guessing.
+    The product names the authored agent in every runtime child's environment
+    (``KIROCREW_RUNTIME_AGENT``, read back as ``ProcessFact.runtime_agent``), and
+    that is the answer whenever it is present: it is the one record a host that
+    binds its agent over the wire (the KAS relay, whose argv carries no
+    ``--agent``) leaves on the process at all.
+
+    A runtime spawned with ``--agent`` in argv is read through that word when
+    the environment says nothing. The product hands such a backend a projected
+    skill-view alias (``kirocrew-skill-view-<hash>``), not the authored name,
+    and the same authored agent yields the same alias, so the alias alone cannot
+    say whether a process is the background agent. The product records which
+    authored agent each alias projects (a sidecar and a view ledger under the
+    data home's ``skill-projection`` side directory, with a legacy copy in the
+    agents directory), and ``source_agent_name`` is its own answer for that
+    question, so this reads through it rather than naming a file layout of its
+    own. An un-aliased ``--agent`` is returned as written.
+
+    A runtime with neither record, or an alias nothing on this home records,
+    answers ``""`` so the caller classifies it as foreign rather than guessing.
     """
     from kiro_crew.acp.skill_projection import RetiredSkillView, source_agent_name
     from kiro_crew.agent_spec_format import NATIVE_SKILL_ALIAS_PREFIX
+    from kiro_crew.constants import KIROCREW_RUNTIME_AGENT_ENV
 
-    words = argv.split()
+    # The inventory restates the variable's name so it stays product-free; a
+    # rename on either side must fail here by name, not read every runtime as
+    # foreign.
+    assert RUNTIME_AGENT_ENV == KIROCREW_RUNTIME_AGENT_ENV, (
+        f"process_inventory reads {RUNTIME_AGENT_ENV!r} but the product sets "
+        f"{KIROCREW_RUNTIME_AGENT_ENV!r}; update RUNTIME_AGENT_ENV to match"
+    )
+    if fact.runtime_agent:
+        return fact.runtime_agent
+
+    words = fact.argv.split()
     try:
         agent = words[words.index("--agent") + 1]
     except (ValueError, IndexError):
@@ -197,7 +218,7 @@ def _split_background_runtimes(home: Path, alive: tuple) -> tuple[list, list]:
     """
     from kiro_crew.session import BACKGROUND_AGENT
 
-    background = [f for f in alive if _authored_agent(home, f.argv) == BACKGROUND_AGENT]
+    background = [f for f in alive if _authored_agent(home, f) == BACKGROUND_AGENT]
     foreign = [f for f in alive if f not in background]
     return background, foreign
 
@@ -397,9 +418,7 @@ def test_closing_every_session_leaves_nothing(real_user_session: Any) -> None:
         assert not foreign, (
             f"{len(foreign)} tracked process(es) that are not the gateway's own "
             "background runtimes survived closing every session: "
-            + ", ".join(
-                f"pid={f.pid} agent={_authored_agent(home, f.argv) or '?'}" for f in foreign
-            )
+            + ", ".join(f"pid={f.pid} agent={_authored_agent(home, f) or '?'}" for f in foreign)
             + f"\n{final.render()}"
         )
         assert len(background) == EXPECTED_BACKGROUND_RUNTIMES, (
