@@ -454,6 +454,17 @@ describe('SubagentProgressBar — why the queued agents wait', () => {
     expect(screen.getByTestId('subagent-queued-count').getAttribute('title')).toBe(line.textContent)
   })
 
+  it('says free memory is unknown, not "0 free", when the cgroup usage is unreadable', () => {
+    const store = makeStore(['a1'])
+    store.dispatch(sseSubagentQueued({
+      slot: SLOT, queued: 1, reason: 'low_memory', required_gb: 4.5, cause: 'cgroup_usage_unreadable',
+    }))
+    renderBar(store)
+    const line = screen.getByTestId('subagent-wait-reason')
+    expect(line.textContent).toContain('free memory is unknown')
+    expect(line.textContent).not.toMatch(/free now|not enough free memory/)
+  })
+
   it('renders no extra line for a bare count (older gateway) or the capacity wait', () => {
     const store = makeStore(['a1'])
     store.dispatch(sseSubagentQueued({ slot: SLOT, queued: 2 }))

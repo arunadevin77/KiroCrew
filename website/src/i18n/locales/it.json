@@ -11681,6 +11681,9 @@
         "low_memory_no_figures_limit": "in attesa di avvio — memoria libera insufficiente; libera memoria per continuare; non si avviano mai se la memoria resta scarsa per {{limit}}",
         "low_memory_no_figures_no_limit": "in attesa di avvio — memoria libera insufficiente; libera memoria per continuare; attendono senza limite di tempo",
         "low_memory_no_limit": "in attesa di avvio — richiede {{required}} di memoria libera, ora {{available}} liberi; libera memoria per continuare; attendono senza limite di tempo",
+        "low_memory_unknown": "in attesa di avvio — memoria libera sconosciuta: è impostato un limite di memoria, ma il suo utilizzo non è leggibile; ripristina l’accesso in lettura per continuare",
+        "low_memory_unknown_limit": "in attesa di avvio — memoria libera sconosciuta: è impostato un limite di memoria, ma il suo utilizzo non è leggibile; ripristina l’accesso in lettura per continuare; non si avviano mai se resta sconosciuta per {{limit}}",
+        "low_memory_unknown_no_limit": "in attesa di avvio — memoria libera sconosciuta: è impostato un limite di memoria, ma il suo utilizzo non è leggibile; ripristina l’accesso in lettura per continuare; attendono senza limite di tempo",
         "memory_pressure": "in attesa di avvio — macOS segnala pressione sulla memoria; chiudi altre app per ridurla",
         "memory_pressure_limit": "in attesa di avvio — macOS segnala pressione sulla memoria; chiudi altre app per ridurla; non si avviano mai se la memoria resta scarsa per {{limit}}",
         "memory_pressure_no_limit": "in attesa di avvio — macOS segnala pressione sulla memoria; chiudi altre app per ridurla; attendono senza limite di tempo"

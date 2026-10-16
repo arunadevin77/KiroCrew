@@ -11681,6 +11681,9 @@
         "low_memory_no_figures_limit": "aguardando para iniciar — memória livre insuficiente; libere memória para continuar; eles nunca iniciam se a memória continuar insuficiente por {{limit}}",
         "low_memory_no_figures_no_limit": "aguardando para iniciar — memória livre insuficiente; libere memória para continuar; eles esperam sem limite de tempo",
         "low_memory_no_limit": "aguardando para iniciar — precisa de {{required}} de memória livre, {{available}} livres agora; libere memória para continuar; eles esperam sem limite de tempo",
+        "low_memory_unknown": "aguardando para iniciar — memória livre desconhecida: há um limite de memória, mas o uso dele não pode ser lido; restaure o acesso de leitura para continuar",
+        "low_memory_unknown_limit": "aguardando para iniciar — memória livre desconhecida: há um limite de memória, mas o uso dele não pode ser lido; restaure o acesso de leitura para continuar; eles nunca iniciam se ela continuar desconhecida por {{limit}}",
+        "low_memory_unknown_no_limit": "aguardando para iniciar — memória livre desconhecida: há um limite de memória, mas o uso dele não pode ser lido; restaure o acesso de leitura para continuar; eles esperam sem limite de tempo",
         "memory_pressure": "aguardando para iniciar — o macOS relata pressão de memória; feche outros apps para reduzi-la",
         "memory_pressure_limit": "aguardando para iniciar — o macOS relata pressão de memória; feche outros apps para reduzi-la; eles nunca iniciam se a memória continuar insuficiente por {{limit}}",
         "memory_pressure_no_limit": "aguardando para iniciar — o macOS relata pressão de memória; feche outros apps para reduzi-la; eles esperam sem limite de tempo"

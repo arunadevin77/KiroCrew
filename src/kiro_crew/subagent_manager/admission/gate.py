@@ -1001,13 +1001,21 @@ class _GateMixin(ManagerComponent):
             # evaluated for it): one an earlier hold started is dropped, so time
             # spent below the floor never counts toward the hold's bound.
             self._manager._forget_pressure_clock(agent_id)
+            headroom_unknown = memory_cause == MEMORY_CAUSE_CGROUP_USAGE_UNREADABLE
             memory_wait = {
                 "reason": QUEUED_REASON_LOW_MEMORY,
-                # No figure when nothing was read: -1 is not an amount. A start
-                # the lane share holds names no bar either: the bar is not what
-                # holds it, so the UI says "waiting for memory" figure-less.
-                **({"available_gb": round(float(avail_gb), 2)} if avail_gb >= 0 else {}),
+                # No figure when nothing was read: -1 is not an amount. An
+                # unreadable cgroup usage file reads as 0, which is not an amount
+                # either: the wait names the cause so the chip says "unknown". A
+                # start the lane share holds names no bar either: the bar is not
+                # what holds it, so the UI says "waiting for memory" figure-less.
+                **(
+                    {"available_gb": round(float(avail_gb), 2)}
+                    if avail_gb >= 0 and not headroom_unknown
+                    else {}
+                ),
                 **({} if lane_held else {"required_gb": round(float(min_mem), 2)}),
+                **({"cause": memory_cause} if headroom_unknown else {}),
             }
             if _durable:
                 # Built ahead of the deferral, not after it: a durable defer the
