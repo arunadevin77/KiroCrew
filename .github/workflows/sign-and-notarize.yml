@@ -464,8 +464,12 @@ jobs:
           # "The network connection was lost", stapler Error 68). Retry both.
           # A staple that fails on the lookup writes nothing to the bundle,
           # and a staple on an already stapled bundle rewrites the same
-          # ticket, so a retry is safe. The spctl gate below stays the final
-          # arbiter.
+          # ticket, so a retry is safe. Validate only re-asks CloudKit whether
+          # the ticket that staple just embedded exists, so once staple has
+          # succeeded a validate that still cannot reach CloudKit is a
+          # warning, not a failure: the spctl gate below is the authoritative
+          # Gatekeeper check and stays fail-closed. Any other validate error
+          # still fails the step.
           stapled=0
           for attempt in 1 2 3; do
             if xcrun stapler staple "$APP"; then
@@ -477,15 +481,24 @@ jobs:
           done
           [ "$stapled" -eq 1 ] || { echo "stapler staple failed after 3 attempts"; exit 1; }
           validated=0
-          for attempt in 1 2 3; do
-            if xcrun stapler validate "$APP"; then
+          validate_out=""
+          for attempt in 1 2 3 4 5; do
+            if validate_out=$(xcrun stapler validate "$APP" 2>&1); then
+              echo "$validate_out"
               validated=1
               break
             fi
-            echo "stapler validate attempt $attempt/3 failed"
-            if [ "$attempt" -lt 3 ]; then sleep $(( 5 * attempt )); fi
+            echo "$validate_out"
+            echo "stapler validate attempt $attempt/5 failed"
+            if [ "$attempt" -lt 5 ]; then sleep $(( 5 << (attempt - 1) )); fi
           done
-          [ "$validated" -eq 1 ] || { echo "stapler validate failed after 3 attempts"; exit 1; }
+          if [ "$validated" -ne 1 ]; then
+            if echo "$validate_out" | grep -qE 'NSURLErrorDomain|network connection was lost|-1005'; then
+              echo "::warning::stapler validate failed after 5 attempts on a CloudKit network error; the ticket is already stapled, so deferring to the spctl gate below"
+            else
+              echo "stapler validate failed after 5 attempts"; exit 1
+            fi
+          fi
 
           ASSESS=$(spctl --assess --type execute --verbose "$APP" 2>&1)
           echo "$ASSESS"
@@ -578,15 +591,24 @@ jobs:
           done
           [ "$stapled" -eq 1 ] || { echo "stapler staple failed after 3 attempts"; exit 1; }
           validated=0
-          for attempt in 1 2 3; do
-            if xcrun stapler validate "work/${ARTIFACT_BASENAME}.dmg"; then
+          validate_out=""
+          for attempt in 1 2 3 4 5; do
+            if validate_out=$(xcrun stapler validate "work/${ARTIFACT_BASENAME}.dmg" 2>&1); then
+              echo "$validate_out"
               validated=1
               break
             fi
-            echo "stapler validate attempt $attempt/3 failed"
-            if [ "$attempt" -lt 3 ]; then sleep $(( 5 * attempt )); fi
+            echo "$validate_out"
+            echo "stapler validate attempt $attempt/5 failed"
+            if [ "$attempt" -lt 5 ]; then sleep $(( 5 << (attempt - 1) )); fi
           done
-          [ "$validated" -eq 1 ] || { echo "stapler validate failed after 3 attempts"; exit 1; }
+          if [ "$validated" -ne 1 ]; then
+            if echo "$validate_out" | grep -qE 'NSURLErrorDomain|network connection was lost|-1005'; then
+              echo "::warning::stapler validate failed after 5 attempts on a CloudKit network error; the ticket is already stapled, so deferring to the spctl gate below"
+            else
+              echo "stapler validate failed after 5 attempts"; exit 1
+            fi
+          fi
           ASSESS=$(spctl --assess --type install --verbose "work/${ARTIFACT_BASENAME}.dmg" 2>&1)
           echo "$ASSESS"
           echo "$ASSESS" | grep -q "Notarized Developer ID" || {
