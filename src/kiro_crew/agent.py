@@ -5622,6 +5622,14 @@ handle immediately.
 #:   ``/api/session-control/rename`` where the target is the session named in the
 #:   ARGUMENTS, and the rename is final, so the automatic titler never corrects a
 #:   bad one. Ingested content could relabel any session the conductor may reach.
+#: * ``session_rename_self`` — writes the CALLER'S OWN title, and only that: the
+#:   target is the slot the verified ``dashboard:<slot>`` caller key names
+#:   (``mcp_dashboard._run_session_rename_self``), there is no ``target`` argument,
+#:   so ingested content cannot aim it at a peer, and a key of any other shape is
+#:   refused before a request is sent. It runs ``session_rename``'s route and so
+#:   its title rules. It changes one label the conductor already owns, creates
+#:   nothing and bounds itself: one title on one slot, replaced by the next call.
+#:   GRANTED.
 #: * ``session_generate_title`` — WITHHELD. Spends a model call and replaces
 #:   another session's sidebar title through ``/api/session-control/generate-title``
 #:   where the target is the session named in the ARGUMENTS, and no conductor step
@@ -5689,6 +5697,7 @@ _CONDUCTOR_DASHBOARD_GRANTS: tuple[str, ...] = (
     "@kirocrew-dashboard/chat_folder_file_self",
     "@kirocrew-dashboard/session_create",
     "@kirocrew-dashboard/session_read_message",
+    "@kirocrew-dashboard/session_rename_self",
     "@kirocrew-dashboard/session_status",
 )
 

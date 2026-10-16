@@ -1099,6 +1099,35 @@ def _session_tools() -> tuple[Tool, ...]:
             routes=("POST /api/session-control/rename",),
         ),
         Tool(
+            name="session_rename_self",
+            description=(
+                "Rename THIS session, the one making the call, in the sidebar. A "
+                "conductor uses it to label its own tab as its work moves between "
+                "phases. It takes a title and nothing else: the session is the one "
+                "the call comes from, so it cannot name another session. To relabel "
+                "a worker use session_rename. The title rules and the effect are "
+                "session_rename's: the new title is final, so the automatic titler "
+                "stops refreshing it, and the transcript, model and any running turn "
+                "are untouched."
+            ),
+            schema={
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": (
+                            "New title, 1-200 characters after surrounding whitespace is "
+                            "stripped; no control characters."
+                        ),
+                    },
+                },
+                "required": ["title"],
+            },
+            run=_run_session_rename_self,
+            identity="strict",
+            routes=("POST /api/session-control/rename",),
+        ),
+        Tool(
             name="session_generate_title",
             description=(
                 "Regenerate the sidebar title of a live session YOU created, from its "
@@ -3116,6 +3145,33 @@ def _run_session_rename(args: dict[str, Any], ctx: ToolContext) -> str:
         return redact(f"Error: could not rename that session: {resp['error']}")
     target = resp.get("target", args["target"])
     return redact(f"Renamed `{target}` to {resp.get('title', args['title'])!r}.")
+
+
+def _run_session_rename_self(args: dict[str, Any], ctx: ToolContext) -> str:
+    # The target is the slot the VERIFIED caller key names, never an argument:
+    # that is what lets this verb be granted to an unattended conductor where
+    # ``session_rename`` (target from the arguments) is withheld. Only a
+    # ``dashboard:<slot>`` key names a slot of its own. Any other shape would
+    # reach the resolver as a bare string it could match to a peer by title.
+    scheme, _, own_slot = ctx.caller_key.partition(":")
+    if scheme != "dashboard" or not _is_plain_slot_name(own_slot):
+        return (
+            "Error: this session has no sidebar slot to rename; only a dashboard "
+            "chat session can rename itself."
+        )
+    # The same route and the same title rules as ``session_rename``.
+    return _run_session_rename({"target": own_slot, "title": args["title"]}, ctx)
+
+
+def _is_plain_slot_name(name: str) -> bool:
+    """True for a slot key the rename route reads back as the same string.
+
+    The route strips its target and resolves it by key, transcript stem or
+    title. A name the strip would change, or one holding a separator or a
+    control character, could resolve to a different slot than the key names, so
+    only a plain name is forwarded.
+    """
+    return _re.fullmatch(r"[A-Za-z0-9_.-]+", name) is not None
 
 
 #: The generate-title route waits for one titling-model call, so the client

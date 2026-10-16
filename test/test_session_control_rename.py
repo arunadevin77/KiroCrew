@@ -847,3 +847,193 @@ def test_a_redacted_title_within_the_cap_is_stored_whole(tmp_path):
     assert target.title.startswith("deploy key [REDACTED")
     assert target.title.endswith("]")
     assert secret not in target.title
+
+
+# ── MCP tool: session_rename_self ────────────────────────────────────────────
+#
+# The conductor grant is name-scoped, so a rename that auto-approves has to be a
+# tool whose arguments cannot name a session. These cases run the tool's real
+# request through the real ``rename_target`` with a peer session present.
+
+
+def _rename_route_for(state):
+    """A dashboard whose rename route is ``rename_target`` over *state*."""
+
+    def _route(request: DashboardRequest) -> dict:
+        try:
+            return asyncio.run(
+                sc.rename_target(
+                    state,
+                    caller_session_key=request.session_key or "",
+                    target=request.body["target"],
+                    title=request.body["title"],
+                )
+            )
+        except sc.SessionControlError as exc:
+            return {"error": exc.message, "code": exc.code}
+
+    return InMemoryDashboardClient({"POST /api/session-control/rename": _route})
+
+
+def _self_call(state, caller, args: dict) -> tuple[str, list[DashboardRequest]]:
+    dash = _rename_route_for(state)
+    ctx = ToolContext(dash, Caller.strict(_key(caller)))
+    out = TABLE.call("session_rename_self", args, ctx)
+    return out, list(dash.requests)
+
+
+def test_session_rename_self_renames_the_caller_and_no_other_session(tmp_path):
+    state = _make_state(tmp_path)
+    caller = state.get_or_create_slot("chat-1")
+    peer = state.get_or_create_slot("chat-2")
+    peer.title = "Set by the person"
+
+    out, (request,) = _self_call(state, caller, {"title": "Conductor: phase 2"})
+
+    assert caller.title == "Conductor: phase 2"
+    assert caller._title_origin == _TITLE_ORIGIN_USER
+    assert peer.title == "Set by the person"
+    # The target is the slot the verified key names, and the key rides along.
+    assert request.path == "/api/session-control/rename"
+    assert request.body == {"target": "chat-1", "title": "Conductor: phase 2"}
+    assert request.session_key == _key(caller)
+    assert "Renamed `chat-1` to 'Conductor: phase 2'" in out
+
+
+@pytest.mark.parametrize("field", ["target", "session", "slot", "key"])
+def test_session_rename_self_refuses_an_argument_that_names_a_session(tmp_path, field):
+    """No argument may aim the verb: that is the whole auto-grant argument."""
+    state = _make_state(tmp_path)
+    caller = state.get_or_create_slot("chat-1")
+    peer = state.get_or_create_slot("chat-2")
+    peer.title = "Set by the person"
+
+    out, requests = _self_call(state, caller, {"title": "Hijacked", field: "chat-2"})
+
+    assert out.startswith(f"Error: {field}: unknown field")
+    assert requests == []
+    assert peer.title == "Set by the person"
+    assert caller.title != "Hijacked"
+
+
+def test_session_rename_self_never_renames_a_peer_titled_like_the_callers_key(tmp_path):
+    """The target string is resolved by key, stem and title. A peer whose title
+    equals the caller's slot key ties with the caller; the resolver refuses the
+    tie, so the peer is not renamed."""
+    state = _make_state(tmp_path)
+    caller = state.get_or_create_slot("chat-1")
+    peer = state.get_or_create_slot("chat-2")
+    peer.title = "chat-1"
+
+    out, _ = _self_call(state, caller, {"title": "Hijacked"})
+
+    assert peer.title == "chat-1"
+    assert out.startswith("Error: could not rename that session:")
+
+
+_PARITY_TITLES = [
+    "",
+    "   ",
+    "t" * 201,
+    "two\nlines",
+    "flip\u202eed",
+    "zero\u200bwidth",
+    "blank\u2800glyph",
+    "\u200b\u200d",
+    ("AKIA" + "ABCDEFGHIJKLMNOP") * 10,
+]
+
+#: The subset of the titles above that no layer cleans up first, so the route's
+#: own validator refuses them. The rest are changed or refused by the argument
+#: sanitizer before the route runs, for both verbs alike.
+_ROUTE_REFUSED_TITLES = [
+    t for t in _PARITY_TITLES if t in ("t" * 201, "two\nlines", "blank\u2800glyph")
+]
+
+
+@pytest.mark.parametrize("title", _PARITY_TITLES)
+def test_session_rename_self_answers_every_title_as_session_rename_does(tmp_path, title):
+    """Same validators, same reply: the self verb adds no title rule and drops none."""
+    state = _make_state(tmp_path)
+    caller = state.get_or_create_slot("chat-1")
+    ctx = ToolContext(_rename_route_for(state), Caller.strict(_key(caller)))
+
+    caller.title = "Before"
+    via_peer_verb = TABLE.call("session_rename", {"target": "chat-1", "title": title}, ctx)
+    peer_verb_title = caller.title
+    caller.title = "Before"
+    via_self = TABLE.call("session_rename_self", {"title": title}, ctx)
+
+    assert via_self == via_peer_verb
+    assert caller.title == peer_verb_title
+
+
+@pytest.mark.parametrize("title", _ROUTE_REFUSED_TITLES)
+def test_session_rename_self_refuses_a_title_the_route_rejects(tmp_path, title):
+    state = _make_state(tmp_path)
+    caller = state.get_or_create_slot("chat-1")
+    caller.title = "Before"
+    ctx = ToolContext(_rename_route_for(state), Caller.strict(_key(caller)))
+
+    out = TABLE.call("session_rename_self", {"title": title}, ctx)
+
+    assert out.startswith("Error: could not rename that session:")
+    assert caller.title == "Before"
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        Caller.strict("slack:C0123:1700000000.000100"),
+        Caller.strict("cron:2c3b2e25"),
+        Caller.strict("dashboard:"),
+        # A name the route would read as a different slot than the key names:
+        # padded (stripped by the route), holding a separator, or multi-line.
+        Caller.strict("dashboard: chat-2"),
+        Caller.strict("dashboard:chat-1:chat-2"),
+        Caller.strict("dashboard:chat-1/../chat-2"),
+        Caller.strict("dashboard:chat-1\nchat-2"),
+    ],
+)
+def test_session_rename_self_sends_no_request_for_a_caller_without_its_own_slot(caller):
+    """Only a verified ``dashboard:<slot>`` key names a slot of its own. A key of
+    any other shape would reach the resolver as a bare string and could match a
+    peer by title."""
+    dash = InMemoryDashboardClient({"POST /api/session-control/rename": {"ok": True}})
+
+    out = TABLE.call("session_rename_self", {"title": "x"}, ToolContext(dash, caller))
+
+    assert out.startswith("Error:") and "no sidebar slot to rename" in out
+    assert dash.requests == []
+
+
+def test_session_rename_self_refuses_an_unverifiable_caller_at_the_strict_gate():
+    dash = InMemoryDashboardClient({"POST /api/session-control/rename": {"ok": True}})
+
+    out = TABLE.call(
+        "session_rename_self",
+        {"title": "x"},
+        ToolContext(dash, Caller.unverified("dashboard:chat-1")),
+    )
+
+    assert out.startswith("Error:") and "cannot be identified" in out
+    assert dash.requests == []
+
+
+def test_session_rename_self_advertises_only_a_title():
+    from kiro_crew.mcp_dashboard import _list_tools
+
+    tool = next(t for t in _list_tools() if t["name"] == "session_rename_self")
+    assert set(tool["inputSchema"]["properties"]) == {"title"}
+    assert tool["inputSchema"]["required"] == ["title"]
+    # The peer verb keeps its target; only the self verb drops it.
+    peer = next(t for t in _list_tools() if t["name"] == "session_rename")
+    assert peer["inputSchema"]["required"] == ["target", "title"]
+
+
+def test_session_rename_self_is_auto_granted_while_session_rename_stays_withheld():
+    from kiro_crew import agent
+
+    for grants in (agent._CONDUCTOR_DASHBOARD_GRANTS, agent._MEMBER_DASHBOARD_GRANTS):
+        assert "@kirocrew-dashboard/session_rename_self" in grants
+        assert "@kirocrew-dashboard/session_rename" not in grants
