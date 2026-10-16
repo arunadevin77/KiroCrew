@@ -45,9 +45,9 @@ const TOKEN = /\[ Paste #1(?:\u2063[\u200b\u200c]+\u2063)? · 4 lines \]/
 let queryClient: QueryClient
 const editor = () => screen.getByLabelText('Chat message') as HTMLTextAreaElement
 
-async function mount() {
+async function mount(props: Partial<React.ComponentProps<typeof ChatEmbed>> = {}) {
   await act(async () => {
-    render(<QueryClientProvider client={queryClient}><ChatEmbed slotKey="slot-1" /></QueryClientProvider>)
+    render(<QueryClientProvider client={queryClient}><ChatEmbed slotKey="slot-1" {...props} /></QueryClientProvider>)
   })
 }
 
@@ -140,6 +140,29 @@ describe('ChatEmbed long-paste collapse', () => {
     await mount()
     // Trailing blank lines make the paste take its own insert path, so the
     // full text is observable here rather than being left to the browser.
+    await paste(`${BIG}\n\n`)
+    expect(editor().value).toBe(BIG)
+    expect(document.querySelector('[data-paste-seq]')).toBeNull()
+  })
+
+  it("a host onSend gets the blocks, and its stored row retires the optimistic one though the host stripped the text", async () => {
+    // A paste ending in whitespace: a host endpoint that strips what it
+    // stores must still be recognised as this send, or the message shows twice.
+    const TRAILING = `${BIG}   `
+    const onSend = vi.fn(() => Promise.resolve())
+    await mount({ onSend })
+    await paste(TRAILING)
+    await send()
+    expect(onSend).toHaveBeenCalledWith(TRAILING, { pastes: [expect.objectContaining({ seq: 1, content: TRAILING })] })
+    mockGet.mockResolvedValue({ messages: [{ role: 'user', content: TRAILING.trim(), cls: 'user', ts: '2026-01-01T00:00:05Z' }], running: true, title: '' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5100) })
+    expect(shown.rows.filter(r => r.role === 'user')).toHaveLength(1)
+  })
+
+  it('turning "Show pasted text in full" on elsewhere applies to the next paste without a remount', async () => {
+    await mount()
+    localStorage.setItem('mc-chat-config', JSON.stringify({ showFullPastes: true }))
+    await act(async () => { window.dispatchEvent(new Event('mc-config-changed')) })
     await paste(`${BIG}\n\n`)
     expect(editor().value).toBe(BIG)
     expect(document.querySelector('[data-paste-seq]')).toBeNull()
