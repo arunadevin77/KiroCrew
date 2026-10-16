@@ -198,22 +198,28 @@ silent darkening is no guard.
 `ci.yml`'s `e2e` job (`E2E (stub ACP backend, offline)`) installs the backend
 with `--group dev`, runs `npm ci` and `npm run build` in `website/`, stages
 `website/dist` into `src/kiro_crew/static/dist` so the specs render the real
-bundled dashboard rather than a 404, installs Chromium, resolves the i18n base,
-then runs `python scripts/ci_e2e_parallel.py`. The separate
-`e2e-private-namespace` job owns the real private-workflow MCP test and does not
-serialize the browser job. The CI-only helper overlaps the unchanged
-`python setup.py test_e2e` command, dedicated Memory UI pytest command and
-`npm --prefix website run i18n:render`. All three outcomes are awaited; no
-failure cancels or hides another lane. All three helper outcomes remain mandatory,
-with the same 25-minute browser-job ceiling. The private namespace coverage is a
-separate mandatory CI job instead of a serial prerequisite, so neither it nor the
-head+base render gate consumes the browser lane's critical path.
+bundled dashboard rather than a 404, installs Chromium, then runs
+`python scripts/ci_e2e_parallel.py`. The separate `e2e-private-namespace` job
+owns the real private-workflow MCP test and does not serialize the browser job.
+The CI-only helper overlaps the unchanged `python setup.py test_e2e` command and
+the dedicated Memory UI pytest command. Both outcomes are awaited; no failure
+cancels or hides the other lane. Both helper outcomes remain mandatory, with the
+same 25-minute browser-job ceiling. The private namespace coverage is a separate
+mandatory CI job instead of a serial prerequisite, so it does not consume the
+browser lane's critical path.
+
+The head+base i18n render gate is its own `i18n-render` job rather than a third
+lane here, for the same reason: it needs no gateway, and on the hosted 4-vCPU
+runner a fork PR gets, its two DEV builds plus a two-tree Chromium render ran
+about 13 minutes alongside the suite and pushed `test_dashboard_playwright_suite`
+past its 1020 s ceiling on 27% of fork-PR runs (2.5% on the fleet's large
+instance, where the same overlap fit). The suite's ceiling is sized for this step
+to hold two browser lanes, not three. [i18n-gates.md](i18n-gates.md) describes
+that job.
 
 The staged production bundle, Python packages, Node modules and Chromium
-install remain read-only inputs. i18n builds its own `website/dist-dev` and a
-separate temporary base tree, retaining the complete locale/surface and vs-base
-checks. Each lane has its own `TMPDIR` under `runner.temp/e2e-s` (smoke),
-`runner.temp/e2e-u` (UI), or `runner.temp/e2e-i` (i18n), with
+install remain read-only inputs. Each lane has its own `TMPDIR` under
+`runner.temp/e2e-s` (smoke) or `runner.temp/e2e-u` (UI), with
 short names to leave room for Unix socket paths; the harness continues to create a
 fresh data home, agent-spec home and random port per gateway. The dedicated UI
 process owns its environment changes, per-scenario authentication files, JSON
@@ -557,9 +563,9 @@ launcher redirecting imports into an empty user cache. Both land near zero.
 SIGNED installer, the Start Menu shortcut's target, the bundled CLI and a silent
 uninstall, none of which the PR lane covers.
 
-Related: [i18n-gates.md](i18n-gates.md) for the render-time gate that shares this
-job, and [ci-and-reviews.md](ci-and-reviews.md) for where `e2e` sits among the
-other PR gates.
+Related: [i18n-gates.md](i18n-gates.md) for the render-time gate (`i18n-render`,
+its own job), and [ci-and-reviews.md](ci-and-reviews.md) for where `e2e` sits
+among the other PR gates.
 
 The private member memory specs use the real gateway and database. They cover
 explicit V1-to-member copying with provenance, correction/reload/forgetting,
@@ -568,9 +574,7 @@ member's exact conversation binding across reload. Desktop and
 390px captures accompany the first flow. Their write guard requires
 `KIROCREW_E2E_EPHEMERAL=1`, which the isolated gateway harness sets; it must never
 be set for an operator gateway. The strict reporter enforces the executed-test
-floor and refuses skips or flaky retries. The same `e2e` job must also pass its
-parallel i18n render lane before the job is green; the render lane does not
-precede these browser scenarios.
+floor and refuses skips or flaky retries.
 
 ## The cross-OS gateway boot matrix
 

@@ -3082,6 +3082,111 @@ jobs:
         # with every other gate green, which is what this closes.
         run: node scripts/check-chunk-cycles.mjs
 
+  # The i18n render-time gate (phase 5 of the i18n plan). Every other i18n gate
+  # reads SOURCE or CATALOG JSON, so three defect classes are invisible to all
+  # of them: a string that was never extracted (ordinary TypeScript to a
+  # scanner), a sentence assembled from several keys (several correct lookups),
+  # and English in a title/aria-label (never in the text flow). This renders
+  # the real SPA under the en-XA pseudolocale and reads them off the DOM.
+  #
+  # Its own job, not a lane of `e2e`. It needs no gateway, no token and no
+  # backend: the script serves its build over loopback and answers every
+  # /api/** call from fixtures, like the capture-*.mjs harnesses. What it does
+  # need is ~13 minutes of CPU on a hosted runner -- two Vite DEV builds (en-XA
+  # is DEV-only; a production build tree-shakes the catalog out entirely) and a
+  # Chromium render of every surface for HEAD and for the base commit -- and
+  # that is what the E2E job cannot spare: a fork PR runs `e2e` on a hosted
+  # 4-vCPU runner, and sharing it with the Playwright suite pushed the suite
+  # past its own 1020 s ceiling on 27% of fork runs (2.5% on the fleet's large
+  # instance). The Chromium this job installs is a ~7 s cached download, so a
+  # separate runner costs one toolchain setup and buys the suite its CPU back.
+  #
+  # Two runs, one per tree: [vs-base] renders the BASE commit with the same
+  # scanner and fails on any per-surface increase, reading no committed number.
+  # It is the ONLY thing that fails; the debt record in
+  # `src/i18n/render-baseline.json` is printed and never enforced, because a
+  # stored total is written by whichever branch measured it last and two
+  # branches that never touch the same file can combine into a number neither
+  # produced -- red on main with no diff anyone could fix. A push to main
+  # therefore gets a base too (the commit it replaced), which is what keeps
+  # that interaction enforced somewhere.
+  #
+  # A backend-only diff cannot change what the SPA renders, so it has nothing
+  # to measure there; meta diffs (.github/**, scripts/**) leave both surface
+  # flags false and still run it -- this job's own config lives in that bucket.
+  i18n-render:
+    name: i18n Render Gate (en-XA, head vs base)
+    needs: [changes, await-fast-gate]
+    if: needs.changes.outputs.only_backend != 'true'
+    runs-on: ${{ needs.changes.outputs.linux_runner || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      # persist-credentials retained: the base-ref resolver below runs
+      # `git fetch origin` against the same remote, and the script exports the
+      # base tree with `git archive`.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # CodeBuild images have no tool cache, so setup-node would resolve the
+      # major through a GitHub API manifest call on every run; seed the cache
+      # first (.github/actions/seed-node-tool-cache). No-op on hosted runners.
+      - uses: ./.github/actions/seed-node-tool-cache
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: website
+        run: npm ci --no-audit --no-fund
+
+      # Same browser provisioning as `e2e`: exact version key (a restore-key
+      # prefix could hand the job a different Chromium revision than
+      # @playwright/test expects), no `--with-deps` (every shared library
+      # Chromium needs is on the image; the apt mirror stall it risks is
+      # documented on the E2E job), unconditional install (a ~2 s no-op on a
+      # cache hit, and a partially written entry cannot become a missing
+      # browser inside the render).
+      - name: Resolve Playwright version
+        id: playwright-version
+        working-directory: website
+        run: |
+          version="$(node -p \
+            "require('./package-lock.json').packages['node_modules/@playwright/test'].version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/ms-playwright" >> "$GITHUB_ENV"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}-chromium
+
+      - name: Install Playwright browser (Chromium)
+        timeout-minutes: 6
+        working-directory: website
+        run: npx playwright install chromium
+
+      - name: Resolve base for the i18n render-time gate
+        # The base must be fetched first because this checkout is shallow; the
+        # script EXITS NON-ZERO if a configured ref cannot be resolved rather
+        # than skipping itself green, for the reason the frontend-lint job
+        # documents.
+        working-directory: website
+        env:
+          I18N_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          I18N_BASE_REF="$(bash "$GITHUB_WORKSPACE/.github/scripts/resolve-i18n-base.sh" \
+            "$I18N_BASE_REF" 'the diff-scoped render gate')" || exit 1
+          printf 'I18N_BASE_REF=%s\n' "$I18N_BASE_REF" >> "$GITHUB_ENV"
+
+      - name: Render every surface under en-XA, head vs base
+        # The same command the `kirocrew-prepare-pr` profile runs locally.
+        # It builds its OWN DEV bundle (website/dist-dev) and a temporary base
+        # tree; it reads no production build.
+        working-directory: website
+        run: npm run i18n:render
+
   # The browser gate runs on the CodeBuild fleet. The one step that needed a
   # user namespace -- the real private-workflow MCP run -- moved to
   # `e2e-private-namespace` below, the only piece of this lane the fleet cannot
@@ -3223,47 +3328,9 @@ jobs:
         working-directory: website
         run: node scripts/capture-mcp-app-message-rows.mjs "$RUNNER_TEMP/mcp-app-message-rows"
 
-      - name: Resolve base for the parallel i18n render-time gate
-        # Phase 5 of the i18n plan. Every other i18n gate reads SOURCE or CATALOG
-        # JSON, so three defect classes are invisible to all of them: a string that
-        # was never extracted (ordinary TypeScript to a scanner), a sentence
-        # assembled from several keys (several correct lookups), and English in a
-        # title/aria-label (never in the text flow). This renders the real SPA under
-        # the en-XA pseudolocale and reads them off the DOM.
-        #
-        # It lives in this job to reuse the Chromium install on the step above --
-        # its own job would re-download the browser for a ~5min script. It needs no
-        # gateway, no token and no backend: the script serves the build over
-        # loopback and answers every /api/** call from fixtures, like the
-        # capture-*.mjs harnesses. It builds its OWN bundle rather than reusing
-        # `npm run build` above, because en-XA is DEV-only and a production build
-        # tree-shakes the catalog out entirely.
-        #
-        # Two runs, one per tree: [vs-base] renders the BASE commit with the same
-        # scanner and fails on any per-surface increase, reading no committed number.
-        # It is the ONLY thing that fails; the debt record in
-        # `src/i18n/render-baseline.json` is printed and never enforced, because a
-        # stored total is written by whichever branch measured it last and two branches
-        # that never touch the same file can combine into a number neither produced --
-        # `projects.latent 16 -> 24` from #1107 + #985, red on main with no diff anyone
-        # could fix. A push to main therefore gets a base too (the commit it replaced),
-        # which is what keeps that interaction enforced somewhere. It costs a second
-        # bundle build on merges, the same ~5min every PR already pays.
-        # The base must be fetched first because this checkout is shallow; the script
-        # EXITS NON-ZERO if a configured ref cannot be resolved rather than skipping
-        # itself green, for the reason the frontend-lint job documents.
-        shell: bash
-        working-directory: website
-        env:
-          I18N_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
-        run: |
-          I18N_BASE_REF="$(bash "$GITHUB_WORKSPACE/.github/scripts/resolve-i18n-base.sh" \
-            "$I18N_BASE_REF" 'the diff-scoped render gate')" || exit 1
-          printf 'I18N_BASE_REF=%s\n' "$I18N_BASE_REF" >> "$GITHUB_ENV"
-
       # Every step below runs as `runner` through ci-shell (the job default).
-      # Nothing after this point writes a GitHub file command; the i18n base ref
-      # above is the last one.
+      # Nothing after this point writes a GitHub file command; the Playwright
+      # version step above is the last one.
       - uses: ./.github/actions/run-as-runner
 
       # The SkillForm block-scalar parity guard (issue #7763). It runs the REAL
@@ -3323,13 +3390,18 @@ jobs:
         run: node scripts/capture-transcript-row-style.mjs --serve "$RUNNER_TEMP/transcript-row-style"
 
       - name: Run E2E and dedicated memory UI evidence in parallel
-        # Smoke and UI read the staged production bundle; i18n builds a separate
-        # dist-dev and a temporary base tree. All three share only read-only
-        # dependency/browser installs, with separate homes, ports and outputs.
-        # The helper awaits ALL outcomes even if one fails, preserves the UI's
-        # 12-minute cap, and drains adopted gateway/browser children on cancel.
-        # Overlap head+base i18n rendering rather than consume ~8 minutes of the
-        # fixed 25-minute job budget before the ordinary E2E lane can start.
+        # Smoke and UI both read the staged production bundle and share only the
+        # read-only dependency/browser installs, with separate homes, ports and
+        # outputs. The helper awaits BOTH outcomes even if one fails, preserves
+        # the UI's 12-minute cap, and drains adopted gateway/browser children on
+        # cancel. The i18n render gate is NOT a lane here: it is `i18n-render`
+        # below, on its own runner. Two Vite builds plus a Chromium render of
+        # every surface twice is ~13 minutes of CPU on a hosted 4-vCPU runner
+        # (the one a fork PR gets), and alongside the 330-spec suite it pushed
+        # that suite past its 1020 s ceiling on 27% of fork runs while the same
+        # overlap fit on the fleet's large instance (fork 991-1104 s vs fleet
+        # 663-847 s for this step). The suite's budget is sized for this step to
+        # hold two browser lanes, not three.
         # KIROCREW_E2E=1 is set by setup.py for smoke and only in the UI child
         # for evidence; REQUIRE turns missing prerequisites into hard failures.
         env:
