@@ -22,6 +22,7 @@
     "env_added": {
       "CODEX_SQLITE_HOME": "<scratch>",
       "DISABLE_MCP_CONFIG_FILTERING": "true",
+      "KIROCREW_RUNTIME_AGENT": "kirocrew",
       "KIROCREW_RUNTIME_PYTHON": "<interpreter>",
       "KIROCREW_SCRATCH": "<scratch>",
       "KIROCREW_SPAWNED": "1",

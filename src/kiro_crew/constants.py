@@ -32,6 +32,13 @@ KIROCREW_SPAWN_INSTANCE_ENV = "KIROCREW_SPAWN_INSTANCE"
 # this is what tells this install's runtime from a sibling install's on the same
 # uid. Read only to WITHHOLD a kill: absent or different means not ours.
 KIROCREW_SPAWN_HOME_ENV = "KIROCREW_SPAWN_HOME"
+# The authored agent an ``AcpRuntime`` child is spawned for, set beside the
+# instance and inherited the same way. A host that takes its agent on the command
+# line shows it in argv; a host that binds the agent over the wire (the KAS relay)
+# shows nothing there, so this is the one carrier that names the agent for every
+# runtime regardless of host. Read back out of ``/proc/<pid>/environ`` by the
+# process-leak gate to tell the gateway's own background runtime from a session's.
+KIROCREW_RUNTIME_AGENT_ENV = "KIROCREW_RUNTIME_AGENT"
 # Set on every tree spawned through ``sandbox.sandboxed_spawn_argv`` -- a build, an
 # ``npx`` install, a ``git``/``gh`` read, a provisioning run -- and inherited by that
 # whole tree exactly as KIROCREW_SPAWNED is. It says what KIROCREW_SPAWNED does not:

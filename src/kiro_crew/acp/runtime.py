@@ -183,6 +183,7 @@ from kiro_crew.config import live
 from kiro_crew.config.paths import data_home, kiro_agents_dir
 from kiro_crew.constants import (
     INITIALIZE_TIMEOUT_SECS,
+    KIROCREW_RUNTIME_AGENT_ENV,
     KIROCREW_SPAWN_HOME_ENV,
     KIROCREW_SPAWN_INSTANCE_ENV,
 )
@@ -2378,6 +2379,18 @@ class AcpRuntime:
             # whose home is absent or differs, since the orphan-sweep marker is
             # shared by every install on this uid.
             env[KIROCREW_SPAWN_HOME_ENV] = str(data_home())
+            # Which authored agent it is spawned for -- the same name the spawn
+            # log line carries. A host that binds its agent over the wire (the KAS
+            # relay) shows no ``--agent`` in argv, so the environment is the one
+            # place a reader of /proc can learn which agent a live runtime runs;
+            # the process-leak gate reads it to tell the gateway's own background
+            # runtime from a session's. ``_agent`` is the authored name by this
+            # point (a stored skill-view alias is mapped back at spawn), so the
+            # value never needs the projection lookup to resolve.
+            if self._agent:
+                env[KIROCREW_RUNTIME_AGENT_ENV] = self._agent
+            else:
+                env.pop(KIROCREW_RUNTIME_AGENT_ENV, None)
 
         def _env_after_scratch(env: dict[str, str]) -> None:
             # A host whose state cannot be shared between processes (codex's SQLite
