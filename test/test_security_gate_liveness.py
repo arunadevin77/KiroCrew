@@ -348,7 +348,13 @@ def _url_payload_command(n: int) -> str:
 #: spares an ordered alphabet and a data URI payload, the flag it sets, the one place pass 3
 #: reads it, and the two checks that tell those shapes from a key. No credential branch, gate
 #: verdict or other pass moved.
-_PACKAGE_LINE_BUDGET = 29_411
+#:
+#: Raised again, from 29,411, for ``shell_normalizer._gh_data_newlines_as_spaces``
+#: and its two callers: a ``git push`` line inside a literal ``gh pr|issue|release``
+#: text-flag value is read as the one word bash hands gh. One closed shape, read
+#: over ``_iter_shell_chars`` steps, and every other command keeps its per-line
+#: push reading.
+_PACKAGE_LINE_BUDGET = 29_500
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
