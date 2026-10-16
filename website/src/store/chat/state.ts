@@ -316,7 +316,7 @@ export interface ChatState {
   /** Transient feedback for agent-rebind failures shared by the picker and
    *  global cycle shortcuts, and for a new chat that could not get its own
    *  session folder. The App shell owns rendering and expiry. */
-  agentSwitchNotice: { message: string } | null
+  agentSwitchNotice: { message: string; kind?: 'status' } | null
   // True while a createSlot POST is in flight. Lets every New Chat entry
   // point show a pending state so the UI never looks dead on click.
   creatingSlot: boolean

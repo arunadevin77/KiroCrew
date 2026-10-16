@@ -113,6 +113,16 @@ export type ErrorNoticeNoHandoff =
  * run of text that sits inside an existing button row — those sites are laid out
  * as flex children, so dropping a bordered box into one would break the row. The
  * variant is a layout choice only; both carry the same agent hand-off.
+ *
+ * There is deliberately NO severity axis on THIS component: every value it
+ * renders is the outcome of something that failed, so there is no non-failure
+ * state for a tone to name. `errors-use-error-notice` decides by where the
+ * VALUE came from, not by how it reads: the agent-switch 409 looks like a wait
+ * to sit out, but it arrives as a rejected request, so it falls outside that
+ * rule's carve-out for "status text about something that has not failed" and
+ * keeps `role="alert"` and the danger palette. `AskAgentButton`'s `tone` is not
+ * a counter-example — that button can sit on a not-yet-failed surface (the
+ * pre-approval findings box), which this component never is.
  */
 export default function ErrorNotice({
   id,

@@ -868,10 +868,18 @@ const chatSlice = createSlice({
      *  showing that slot appends it to the live draft; passing null clears the
      *  field after it is consumed. */
     stageToMainComposer(state, action: PayloadAction<{ slot: string; text: string } | null>) { state.mainComposerAppend = action.payload },
-    setAgentSwitchNotice(state, action: PayloadAction<string | null>) {
+    setAgentSwitchNotice(state, action: PayloadAction<string | { message: string; kind: 'status' } | null>) {
       // Always create a fresh value so repeating the same refusal restarts the
       // App shell's expiry effect instead of inheriting the previous timer.
-      state.agentSwitchNotice = action.payload === null ? null : { message: action.payload }
+      // A bare string is a failure, which is every caller but one; the object
+      // form marks the session-folder warning, which reports a create that
+      // SUCCEEDED and so may not render through the error surface.
+      state.agentSwitchNotice =
+        action.payload === null
+          ? null
+          : typeof action.payload === 'string'
+            ? { message: action.payload }
+            : { message: action.payload.message, kind: action.payload.kind }
     },
     setVoicePlaying(state, action: PayloadAction<boolean>) { state.voicePlaying = action.payload },
     setVoicePreparing(state, action: PayloadAction<boolean>) { state.voicePreparing = action.payload },
