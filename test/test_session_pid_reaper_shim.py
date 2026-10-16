@@ -115,7 +115,10 @@ class TestSweepDirectKillRoutesThroughShim:
             # group (the pid itself) -> shared-pgid? No: pgid==pid means the
             # orphan IS an isolated leader, which routes to killpg. To reach
             # the direct-kill branch the orphan must share OUR group.
+            # The sweep skips its own pid, so pin it to a value that cannot
+            # equal the candidate: the real worker pid can be 600 on Windows.
             with (
+                patch.object(sp.os, "getpid", return_value=1),
                 patch.object(sp.os, "getpgrp", create=True, return_value=1000),
                 patch.object(sp.os, "getpgid", create=True, return_value=1000),
             ):
