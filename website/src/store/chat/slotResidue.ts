@@ -3,7 +3,7 @@
  *  `fetchSlots.fulfilled`) run through, and the per-key eviction a
  *  `sseSlotPatch` frame applies to the keys it names as removed. */
 import type { ActionReducerMapBuilder } from '@reduxjs/toolkit'
-import { fetchSlots, sseConnected, sseSlotPatch, sseSlots } from '../dashboardSlice'
+import { fetchSlots, sseConnected, sseSlotPatch, sseSlots, sseSlotsPartial } from '../dashboardSlice'
 import type { ChatState } from './state'
 import { safeKey } from './wire'
 import { MCP_APP_KEY_SEP, evictMcpApps } from './mcpApps'
@@ -108,6 +108,10 @@ export function addSlotListCases(builder: ActionReducerMapBuilder<ChatState>): v
      *  bit without resetting it is what made this a defect. */
     .addCase(sseConnected, (state) => {
       state.slotsSnapshotSeen = false
+      state.slotListPartial = true
+    })
+    .addCase(sseSlotsPartial, (state, action) => {
+      state.slotListPartial = action.payload
     })
     /** Reconcile per-slot caches against the authoritative slots list.
      *  Sessions that close/archive/delete vanish from the SSE `slots` REPLACE;
@@ -131,7 +135,7 @@ export function addSlotListCases(builder: ActionReducerMapBuilder<ChatState>): v
       // (`runReconnectCatchUp` in `hooks/websocket/reconnectCatchUp.ts`), and
       // the case below reconciles that reply even when it is empty.
       if (action.payload.length === 0 && !seenSnapshot) return
-      reconcileSlotResidue(state, action.payload)
+      if (!state.slotListPartial) reconcileSlotResidue(state, action.payload)
       clearFiledFolderSuggestions(state, action.payload)
       // Settle before recording this frame: a pending local send is released
       // only when the row is newer than what the tab knew before this frame.
@@ -170,7 +174,9 @@ export function addSlotListCases(builder: ActionReducerMapBuilder<ChatState>): v
      *  no fresher state to destroy; after it the live frame owns teardown. */
     .addCase(fetchSlots.fulfilled, (state, action) => {
       if (state.slotsSnapshotSeen === true) return
-      reconcileSlotResidue(state, action.payload)
+      // A reply started while the gateway is still rebuilding its list can omit
+      // slots it has not restored yet; the first complete frame tears down instead.
+      if (!state.slotListPartial) reconcileSlotResidue(state, action.payload)
       // Gated behind the snapshot bit like the residue reconcile above, and
       // for the same staleness reason: an HTTP reply can be OLDER than the WS
       // stream. A filed slot's key can be reused by a fresh session that has
