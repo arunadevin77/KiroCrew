@@ -10,6 +10,9 @@ preference/project anchors and project guides remain owner-managed documents.
 Global V1 and legacy named V1 retain their existing files, algorithms and
 retention policy; startup admission is bounded as described below.
 
+See also: [context management](../../architecture/context-management.md), which
+restates what memory, lessons and skills contribute to the model's context.
+
 The frozen `ExecutionContext(member_id, store, selection_kind, template_id,
 memory_mode, app, selection_name, selection_revision)` in the owning session, run or scheduled-job record is the
 routing authority. Admission resolves it once before awaiting preparation.

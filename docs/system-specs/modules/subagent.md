@@ -6,6 +6,8 @@ The subagent module (`kiro_crew/subagent.py`) spawns isolated background agents 
 
 Supports `on_tool_approval` callback for interactive tool approval (routed through gateway's approval system in Normal/Trust modes).
 
+See also: [context management § 3](../../architecture/context-management.md#3-sub-agent-sessions-spawn_run), which restates what a child session's context carries.
+
 Subagent admission captures a frozen `ExecutionContext` before queueing,
 approval or provider allocation. An ordinary child inherits its parent's member
 and store. Explicit `target_member` (and Crew dispatch's member selector) resolves

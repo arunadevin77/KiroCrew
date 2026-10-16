@@ -17,6 +17,9 @@ gateway, which this one reaches through a tunnel (see [instances.md](instances.m
 — and not an Issue Radar *crew*, which is that app's own repository work crew
 (see [issue-radar.md](issue-radar.md)).
 
+See also: [context management § 5](../../architecture/context-management.md#5-crew-mode-crew-page),
+which restates what a member's DM session carries in its context.
+
 ## Components
 
 | File | Role |
