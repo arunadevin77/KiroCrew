@@ -524,3 +524,63 @@ def test_retirement_requires_a_signaled_exact_handle(kernel, monkeypatch, outcom
             jobs.retire_identity(9100, timeout=0)
     else:
         jobs.retire_identity(9100, timeout=0)
+
+
+@pytest.mark.parametrize("outcome", ["exited", "live", "error"])
+def test_wait_identity_reports_only_a_signaled_object_and_never_terminates(
+    kernel, monkeypatch, outcome
+):
+    """The producer wait used by `stop` on an unspawned run: observe, never kill."""
+    code = {"exited": 0, "live": 258, "error": 0xFFFFFFFF}[outcome]
+    monkeypatch.setattr(kernel, "WaitForSingleObject", lambda *_a: code, raising=False)
+    monkeypatch.setattr(
+        kernel, "TerminateProcess", lambda *_a: pytest.fail("must not terminate"), raising=False
+    )
+    if outcome == "error":
+        with pytest.raises(OSError):
+            jobs.wait_identity(9100, timeout=0)
+    else:
+        assert jobs.wait_identity(9100, timeout=0) is (outcome == "exited")
+    with pytest.raises(ValueError):
+        jobs.wait_identity(9100, timeout=float("nan"))
+
+
+@pytest.mark.skipif(not pc.IS_WINDOWS, reason="requires native Windows process objects")
+def test_native_producer_identity_distinguishes_live_exited_and_replaced():
+    """Pin a real process by pid + creation time, then watch it exit.
+
+    A live object answers `wait_identity` False; a terminated one answers True
+    through the same pinned handle, which is the proof `stop` spends before it
+    removes an unspawned generation's sidecars. A different creation time is
+    positively another process, which `open_identity` reports as gone.
+    """
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        token = pc.process_start_time(proc.pid)
+        assert token
+        handle = jobs.open_identity(proc.pid, token)
+        assert handle is not None
+        try:
+            assert jobs.wait_identity(handle, timeout=0) is False
+            proc.kill()
+            assert jobs.wait_identity(handle, timeout=10) is True
+        finally:
+            jobs.close_identity(handle)
+        # A creation time that is not this process's is positively another process.
+        assert jobs.open_identity(proc.pid, str(int(token) + 1)) is None
+    finally:
+        proc.kill()
+        proc.wait(timeout=10)
+    # The Popen still holds the object, so the pid may still open; the exact
+    # handle then reports the exit, which is the only reading `stop` accepts.
+    late = jobs.open_identity(proc.pid, token)
+    if late is not None:
+        try:
+            assert jobs.wait_identity(late, timeout=0) is True
+        finally:
+            jobs.close_identity(late)
