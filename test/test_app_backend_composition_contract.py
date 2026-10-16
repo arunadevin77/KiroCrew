@@ -61,6 +61,11 @@ from kiro_crew.apps.backend_runtime import (
 # production re-export scan parses part of the package, once per worker otherwise.
 pytestmark = pytest.mark.xdist_group(name="tree_scan_app_backend_composition")
 
+#: The forwarded-name patch scan below takes 42 s of CPU alone on a fast host.
+#: Eight times that is over the ``tree_scan`` group default (``TREE_SCAN_TIMEOUT_SECS``
+#: in ``conftest.py``), so it carries its own budget.
+PATCH_SCAN_TIMEOUT_SECS = 420
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _RUNTIME_DIR = _REPO_ROOT / "src/kiro_crew/apps/backend_runtime"
 _RUNTIME_PACKAGE = "kiro_crew.apps.backend_runtime"
@@ -2170,6 +2175,7 @@ class TestPatchSpellings:
         )
         assert [hit.name for hit in hits] == [_case(name) for name in expected]
 
+    @pytest.mark.timeout(PATCH_SCAN_TIMEOUT_SECS)
     def test_no_test_patches_a_forwarded_name_with_create_true(self) -> None:
         # ``mock.patch`` undoes a name the facade forwards by deleting it, and under
         # ``create=True`` the delete is the whole undo: the name is gone from every

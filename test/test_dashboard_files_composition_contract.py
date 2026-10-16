@@ -42,6 +42,11 @@ import kiro_crew.dashboard.handlers.files as files
 from kiro_crew.dashboard import file_api
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
+# Kept in a tree_scan group (300 s, test/conftest.py): the tree-route check runs the
+# link-screen gate, whose resolver names come from a call graph over every module, so
+# no literal can narrow which files it parses.
+pytestmark = pytest.mark.xdist_group(name="tree_scan_dashboard_files_composition_contract")
+
 _FACADE = files.__name__
 _FACADE_PATH = Path(files.__file__).resolve()
 _OWNER_PACKAGE = file_api.__name__

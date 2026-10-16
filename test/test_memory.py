@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from source_corpus import parsed_candidates
 
 from conftest import make_dir_link, plant_day_link
 from kiro_crew.memory import MemoryStore
@@ -624,24 +625,16 @@ class TestHistoryDecayWording:
         """Every source and documentation copy states the exact decay boundary."""
         import ast
         import re
+        from collections.abc import Iterable
         from pathlib import Path
 
         repo = Path(__file__).resolve().parents[1]
-        paths = list((repo / "src" / "kiro_crew").rglob("*.py"))
-        paths.append(repo / "src" / "kiro_crew" / "docs" / "configuration.md")
-        paths.extend((repo / "docs").rglob("*.md"))
+        documents = {repo / "src" / "kiro_crew" / "docs" / "configuration.md"}
+        documents.update((repo / "docs").rglob("*.md"))
 
         copies: list[tuple[str, str]] = []
-        for path in sorted(set(paths)):
-            source = path.read_text(encoding="utf-8")
-            if path.suffix == ".py":
-                candidates = (
-                    node.value
-                    for node in ast.walk(ast.parse(source))
-                    if isinstance(node, ast.Constant) and isinstance(node.value, str)
-                )
-            else:
-                candidates = (source,)
+
+        def record(path: Path, candidates: Iterable[str]) -> None:
             for candidate in candidates:
                 normalized = re.sub(r"\s+", " ", candidate)
                 start = 0
@@ -653,6 +646,23 @@ class TestHistoryDecayWording:
                         )
                     )
                     start = index + len("14 full days")
+
+        # A source copy is a string constant holding all three words, so only the
+        # modules whose text holds them are parsed. The filter reads source text, so
+        # a copy spelled with escapes (``"\x31\x34 full days"``) is not seen.
+        for path, _source, tree in parsed_candidates(
+            require_all=("14", "full", "days"), skip_syntax_errors=False
+        ):
+            record(
+                path,
+                (
+                    node.value
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                ),
+            )
+        for path in sorted(documents):
+            record(path, (path.read_text(encoding="utf-8"),))
 
         assert copies, "no history decay descriptions found"
         assert all(copy == self.PHRASE for _, copy in copies), copies

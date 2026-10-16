@@ -30,6 +30,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from source_corpus import parsed_candidates
 
 from kiro_crew import runtime_death, runtime_ownership
 from kiro_crew.acp.runtime import AcpRuntime, _proven_death_cause, _rc_phrase
@@ -1002,8 +1003,11 @@ def test_every_death_handler_that_charges_a_budget_asks_whose_fault_it_was():
     """
     handlers = 0
     unguarded: list[str] = []
-    for path in sorted(_SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    # A counted handler names ``AcpProcessDied`` in its ``except`` clause, so only
+    # files whose text holds it are parsed.
+    for path, _text, tree in parsed_candidates(
+        require_any=("AcpProcessDied",), skip_syntax_errors=False
+    ):
         backed = _predicate_backed_guards(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
