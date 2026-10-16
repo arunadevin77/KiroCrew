@@ -2174,7 +2174,11 @@ with the previewed row, so roster recency ordering is unaffected.
 After a cancelled turn, `context.build_cancelled_turn_preamble` reads the
 cancelled user prompt and partial assistant output from this log and
 prepends them to the next prompt as a bracketed preamble, because kiro-cli
-discards cancelled turns from its own ACP conversation log. The flag
+discards cancelled turns from its own ACP conversation log. A mid-turn steer
+(a `user` row marked `meta.steer`) is not taken as the cancelled prompt: the
+plain `user` row that opened the turn is, and each steer is carried, labelled
+and in order, inside the partial assistant output (see "Context restore after
+a soft cancel" in `docs/architecture/design-notes/soft-stop.md`). The flag
 `_Session.prev_turn_cancelled` (set by `SessionManager.stop_turn` on
 soft-cancel success) gates the one-shot re-injection.
 

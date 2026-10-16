@@ -3369,6 +3369,145 @@ class TestCancelledTurnPreambleInstruction:
         assert "Starting on the parser" in result
 
 
+class TestCancelledTurnPreambleSteer:
+    """A steer is a user row injected into a running turn; it did not open that turn.
+
+    Rows are written the way the dashboard persists them (``meta.steer`` on a
+    ``user`` row) and read back through the real log, so the flag has to survive
+    the read the builder makes.
+    """
+
+    STOP = json.dumps(
+        {"kind": "stop_event", "id": "stop-abc", "state": "stopped", "outcome": "soft"}
+    )
+
+    @staticmethod
+    def _steer(log, text):
+        log.append("sess1", "user", text, extra_meta={"steer": True, "steerState": "consumed"})
+
+    @staticmethod
+    def _restore(log):
+        from kiro_crew.context import build_cancelled_turn_preamble
+
+        return build_cancelled_turn_preamble(log, "sess1")
+
+    def test_the_restore_names_the_original_request_and_keeps_the_steer_in_order(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path)
+        log.append("sess1", "user", "please refactor the parser")
+        log.append("sess1", "assistant", "Reading the parser module")
+        self._steer(log, "keep the public API stable")
+        log.append("sess1", "assistant", "Switching to a wrapper")
+        log.append("sess1", "system", self.STOP)
+
+        result = self._restore(log)
+
+        assert "Cancelled user request:\nplease refactor the parser\n" in result
+        assert (
+            "Partial assistant response before cancel:\n"
+            "Reading the parser module\n"
+            "[Steered mid-turn] keep the public API stable\n"
+            "Switching to a wrapper\n"
+            "[END PREVIOUS TURN]"
+        ) in result
+        assert result.count("keep the public API stable") == 1
+
+    def test_several_steers_keep_their_order_around_the_partial_reply(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path)
+        log.append("sess1", "user", "migrate the config loader")
+        self._steer(log, "start with the tests")
+        log.append("sess1", "assistant", "Writing the tests first")
+        self._steer(log, "then the loader")
+        log.append("sess1", "system", self.STOP)
+
+        result = self._restore(log)
+
+        assert "Cancelled user request:\nmigrate the config loader\n" in result
+        assert (
+            "Partial assistant response before cancel:\n"
+            "[Steered mid-turn] start with the tests\n"
+            "Writing the tests first\n"
+            "[Steered mid-turn] then the loader\n"
+            "[END PREVIOUS TURN]"
+        ) in result
+
+    def test_a_turn_without_a_steer_restores_exactly_what_it_did_before(self, tmp_path):
+        # A drained queue row carries delivery ids but not ``steer``: it is a real opener.
+        log = ConversationLog(base_dir=tmp_path)
+        log.append("sess1", "user", "an earlier request")
+        log.append("sess1", "assistant", "an earlier answer")
+        log.append(
+            "sess1",
+            "user",
+            "please refactor the parser",
+            extra_meta={"steer_delivery_ids": ["d-1"], "sendId": "s-1"},
+        )
+        log.append("sess1", "assistant", "Starting on the parser")
+        log.append("sess1", "system", self.STOP)
+
+        assert self._restore(log) == (
+            "[PREVIOUS TURN WAS CANCELLED BY THE USER \u2014 context restore]\n"
+            "The following user request was interrupted mid-response. "
+            "Do not emit any standalone acknowledgment of the cancellation. "
+            "Use this restored context silently and respond only to the current "
+            "user request, referencing the interrupted work only when the "
+            "current request depends on it.\n"
+            "\n"
+            "Cancelled user request:\n"
+            "please refactor the parser\n"
+            "\n"
+            "Partial assistant response before cancel:\n"
+            "Starting on the parser\n"
+            "[END PREVIOUS TURN]"
+        )
+
+    def test_a_window_that_lost_the_opener_still_names_the_newest_steer(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path)
+        log.append("sess1", "user", "please refactor the parser")
+        for n in range(20):
+            log.append("sess1", "tool", f"step {n}")
+        self._steer(log, "keep the public API stable")
+        log.append("sess1", "assistant", "Switching to a wrapper")
+        log.append("sess1", "system", self.STOP)
+
+        result = self._restore(log)
+
+        assert "Cancelled user request:\nkeep the public API stable\n" in result
+        assert "please refactor the parser" not in result
+        assert "Partial assistant response before cancel:\nSwitching to a wrapper\n" in result
+
+    def test_a_steered_turn_opened_by_a_nudge_does_not_name_an_earlier_request(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path)
+        log.append("sess1", "user", "an earlier request")
+        log.append("sess1", "assistant", "an earlier answer")
+        log.append("sess1", "nudge", "check the loop")
+        log.append("sess1", "assistant", "Checking")
+        self._steer(log, "keep the public API stable")
+        log.append("sess1", "assistant", "Switching to a wrapper")
+        log.append("sess1", "system", self.STOP)
+
+        result = self._restore(log)
+
+        assert "Cancelled user request:\nkeep the public API stable\n" in result
+        assert "an earlier request" not in result
+        assert "an earlier answer" not in result
+
+    def test_a_steered_turn_opened_by_an_inject_does_not_name_an_earlier_request(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path)
+        log.append("sess1", "user", "an earlier request")
+        log.append("sess1", "assistant", "an earlier answer")
+        log.append("sess1", "inject", "nightly report", extra_meta={"injectKind": "cron"})
+        log.append("sess1", "assistant", "Compiling the report")
+        self._steer(log, "keep the public API stable")
+        log.append("sess1", "assistant", "Switching to a wrapper")
+        log.append("sess1", "system", self.STOP)
+
+        result = self._restore(log)
+
+        assert "Cancelled user request:\nkeep the public API stable\n" in result
+        assert "an earlier request" not in result
+        assert "an earlier answer" not in result
+
+
 class TestAutoSkillHelpers:
     """Module-level helpers for auto-skill eligibility."""
 
