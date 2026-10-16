@@ -125,7 +125,7 @@ DECLARED_SITES = frozenset(
         ("history_projection.py", "SessionMetadataProjection.delete_session"),
         ("hooks.py", "_screen_windows_links"),
         ("image_artifacts.py", "_local_file"),
-        ("kiro_prerequisite.py", "_ensure_auth_staging_parent"),
+        ("kiro_prerequisite_identity_store.py", "_ensure_auth_staging_parent"),
         ("ledger_wake.py", "_write_rate"),
         ("mcp_gateway/backend_tmp.py", "_discard_owner_marker"),
         ("mcp_gateway/backend_tmp.py", "record_owner"),

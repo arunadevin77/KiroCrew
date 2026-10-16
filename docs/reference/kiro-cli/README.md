@@ -5,7 +5,7 @@ particular line at runtime. `acp/client_spawn_env.py` finds the binary with
 `kiro_cli.resolve_kiro_cli`: the `KIROCREW_KIRO_BIN` override first, then the
 desktop app's bundled directory, the known install directories, and the
 inherited `PATH`. Unattended spawns use `kiro_cli.pin_kiro_cli`, which drops the
-inherited `PATH` and accepts only an absolute path. `kiro_prerequisite.py`'s
+inherited `PATH` and accepts only an absolute path. `kiro_prerequisite_status.py`'s
 `KIRO_CLI_UPDATE_COMMAND` is an unversioned `kiro-cli update`. The version
 numbers in the code are feature floors, each a lowest probed release rather than
 a supported range, and a 3.x CLI satisfies all of them: `mcp_hot_reload.py`'s

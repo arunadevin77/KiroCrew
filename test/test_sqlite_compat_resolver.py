@@ -133,7 +133,8 @@ SHARED_DATABASE_OPENERS = (
     "metrics/inventory_gauges.py",
     "dashboard/handlers/cron.py",
     "kiro_cli.py",
-    "kiro_prerequisite.py",
+    "kiro_prerequisite_identity.py",
+    "kiro_prerequisite_identity_store.py",
     "apps/builtins/aws_control/backend/backup.py",
     "dashboard/handlers/kiro_usage_api.py",
 )

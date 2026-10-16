@@ -237,7 +237,7 @@ PREEXEC_EXEMPT: frozenset[str] = frozenset(
         # time is unreleasable there, and a child so wedged deadlocked in a
         # futex, never exec'd, never exited, and pinned every fd it inherited --
         # including gateway.lock and the dashboard listener.
-        "kiro_prerequisite.py::_run_process",
+        "kiro_prerequisite_process.py::_run_process",
         # Spawns NOTHING. It PATCHES `sandboxed_spawn_argv` and raises from the
         # replacement, so the argv is captured at the boundary and no child is ever
         # created -- but the name appears in the function body, which is what this scan
@@ -264,7 +264,7 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # before handing it over; this function only prefixes the immutable
         # process-group supervisor and spawns through create_subprocess_limited
         # in a new session. Nothing agent-influenced reaches the argv here.
-        "kiro_prerequisite.py::spawn_supervised_oneshot",
+        "kiro_prerequisite_process.py::spawn_supervised_oneshot",
         # The Windows off-loop one-shot for provider CLI reads. Its only caller,
         # dashboard/source_providers/runner.py::_run_provider, has already
         # OS-isolated and env-scrubbed the argv (through its own routed sandbox
@@ -2348,7 +2348,7 @@ def test_prerequisite_async_adapter_keeps_sandbox_chokepoint():
     owner, and the owner must still take the work off the loop.
     """
 
-    path = _SRC_ROOT / "kiro_prerequisite.py"
+    path = _SRC_ROOT / "kiro_prerequisite_process.py"
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, str(path))
     adapter = next(
