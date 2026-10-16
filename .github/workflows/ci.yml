@@ -406,6 +406,15 @@ jobs:
   # way, so it is polled as pending. A barrier that passed when it could
   # not read its subject would be worse than no barrier, because the matrix would
   # run anyway and the log would claim it was cleared to.
+  #
+  # One cancelled gate is not a verdict: on a push to main, a Fast Gate run
+  # evicted from its concurrency group before it started (another run entered
+  # the group) judged nothing. When the script proves that from the run's jobs
+  # and the group's listing, it waits while cancel-superseded-run (below)
+  # cancels THIS run, which then concludes `cancelled` like a CI run evicted
+  # from its own group, instead of `failure`. This job only reads; it never
+  # releases the matrix on that path, and any read or proof that fails, or a
+  # cancel that does not land, leaves the run failing closed.
   await-fast-gate:
     name: Await Fast Gate
     # Skipped on a push to main only while MERGE_QUEUE_ENABLED is 'true': the
@@ -468,6 +477,55 @@ jobs:
         # and a fake clock (test_await_fast_gate_poll.py). The identity of the
         # commit under test reaches it through the env above and nothing else.
         run: bash .github/scripts/await-fast-gate.sh
+
+  # ── Cancel a superseded push run (see cancel-superseded-run.sh) ──────
+  # The one write the evicted-gate case needs, held apart from the barrier so
+  # that only a push to main ever gets it. It is the only job in this workflow
+  # with actions:write: pull requests (same-repo or fork) and merge groups never
+  # start it, so their CI tokens stay read-only, and a push to main runs only
+  # scripts that are already on main.
+  #
+  # It runs the barrier's script as a probe, so it decides "superseded" by the
+  # barrier's own code and reads, and cancels THIS run only on that proof. It
+  # runs beside await-fast-gate, not behind it: behind it, it could start only
+  # after the barrier had already failed, and that failed check would stay red
+  # on the commit. Nothing needs this job, so it cannot release the matrix; its
+  # only write is the cancel, so it cannot make a run green. Anything other than
+  # a proven supersession cancels nothing and leaves the verdict to the barrier.
+  cancel-superseded-run:
+    name: Cancel Superseded Run
+    # A push to main, and only while the merge queue is off -- the same push
+    # runs on which await-fast-gate runs. `push` is listed for main alone, and
+    # the ref is restated so a later trigger on another branch cannot reach it.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.MERGE_QUEUE_ENABLED != 'true'
+    runs-on: ${{ github.repository == 'kirodotdev/KiroCrew' && contains(fromJSON(vars.CODEBUILD_ACTOR_IDS || '[]'), github.actor_id) && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize') && github.event.pull_request.head.repo.full_name == github.repository)) && format('codebuild-kirocrew-gha-linux-{0}-{1}', github.run_id, github.run_attempt) || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    permissions:
+      # actions:write is what lets this cancel its own run (it also covers the
+      # probe's reads). Job-level permissions REPLACE the top-level grant, so
+      # contents:read is restated for the checkout.
+      actions: write
+      contents: read
+    steps:
+      # Sparse, shallow and credential-free, like the barrier's checkout: only
+      # .github/scripts is needed, and the gh calls authenticate with GH_TOKEN.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Cancel this run if its Fast Gate run was superseded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.ref_name }}
+          HEAD_REPO: ${{ github.repository }}
+          # This run's own id, the only run the script ever cancels.
+          RUN_ID: ${{ github.run_id }}
+        run: bash .github/scripts/cancel-superseded-run.sh
 
   backend-lint:
     name: Backend Lint & Type Check

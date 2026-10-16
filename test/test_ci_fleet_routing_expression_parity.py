@@ -155,6 +155,7 @@ _EXPECTED_ROUTED_JOBS = {
     ("macos-on-demand.yml", "decide"),
     ("ci.yml", "changes"),
     ("ci.yml", "await-fast-gate"),
+    ("ci.yml", "cancel-superseded-run"),
     ("code-review.yml", "autosde-rules"),
     ("code-review.yml", "inclusive-language"),
     ("code-review.yml", "pr-hygiene"),

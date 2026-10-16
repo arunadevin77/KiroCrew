@@ -457,6 +457,11 @@ def test_ci_blocking_scans_are_covered_by_the_floor():
         # is a CI orchestration barrier, not a pre-push static gate; the floor
         # cannot poll Actions for a run that only exists once CI starts.
         "scripts/await-fast-gate.sh",
+        # Runs await-fast-gate.sh as a probe on a push to main and, on its proof
+        # that the commit's Fast Gate run was evicted, cancels that CI run (it
+        # lives under .github/scripts). Network orchestration with no verdict of
+        # its own, for the same reason as the barrier it probes.
+        "scripts/cancel-superseded-run.sh",
         # Installs the built Linux packages in Ubuntu and Amazon Linux containers.
         # It needs docker AND a completed electron-builder run, so it cannot be a
         # pre-push gate: the floor would then demand a ~10-minute desktop build
