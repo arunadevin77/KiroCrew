@@ -963,6 +963,10 @@ crewmate and an app's `ensure_team`. Crews created before this rule keep the
 binding they have; deleting a crew leaves its workspace, like its memory store,
 on disk and in `workspaces`. The workspace is the crew's own data directory; it
 does not become the `project` of the crew's sessions.
+A template has no workspace of its own, so a worker template a crew opens with
+`session_create` (`agent="kirocrew-worker"`) inherits the crew's workspace along
+with its store; naming another crew bound elsewhere stays refused
+(`agent_workspace_mismatch`, see session-control.md's refusal table).
 The first crewmate (config key `mate`, `agent_files.ASSISTANT_MEMBER_NAME`,
 shown as Mate while its `display_name` is empty) is an ordinary crewmate. Every
 install, fresh or upgraded, creates it once (`agent_materialization/first_crewmate.create_first_crewmate_once`,

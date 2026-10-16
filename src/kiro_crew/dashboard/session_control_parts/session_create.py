@@ -348,6 +348,18 @@ async def create_session(
     #                                     omitted agent is not an unchecked one
     #   config unreadable              -> refused (agent_unverifiable), because
     #                                     "cannot verify" must not read as "fine"
+    #   agent given, TEMPLATE, caller  -> allowed in the caller's workspace: a
+    #   is a crew member in its own       template has no workspace of its own (the
+    #   workspace                         resolver files it under the default
+    #                                     one), and the template arm below binds the
+    #                                     child to the caller's own store, so the
+    #                                     agent that answers runs on the caller's
+    #                                     workspace and memory. A member in a
+    #                                     `member-<slug>` workspace could otherwise
+    #                                     never open a worker template
+    #
+    # A crew MEMBER selection is never inherited this way: it carries its own
+    # workspace and store, so naming a peer bound elsewhere stays refused.
     #
     # Resolved with the child's own `project_dir`: a materialized kiro agent is
     # declared per project directory rather than registered in `config.agents`, so
@@ -376,6 +388,13 @@ async def create_session(
             code="agent_unverifiable",
         ) from None
     agent_workspace = _workspace_name_for_dir(cfg, bindings.workspace_dir)
+    if (
+        agent_workspace != workspace
+        and agent.strip()
+        and bindings.selection_kind == "template"
+        and _caller_member_workspace(cfg, caller_slot, caller_execution) == workspace
+    ):
+        agent_workspace = workspace
     if agent_workspace != workspace:
         who = repr(agent_name) if agent_name else "the default agent"
         raise SessionControlError(
@@ -1343,6 +1362,28 @@ def _dispatching_crewmate(
         return record
     agent_name = getattr(caller_slot, "agent", "") or ""
     return cfg.agents.get(agent_name) if agent_name else None
+
+
+def _caller_member_workspace(
+    cfg: KiroCrewConfig, caller_slot: Any, caller_execution: ExecutionContext | None
+) -> str | None:
+    """The declared workspace of the crew member ``caller_slot`` runs as, or ``None``.
+
+    The workspace an explicit TEMPLATE child inherits from its creator. A record
+    is required: the template arm of ``create_session`` binds the child to the
+    caller's store only when the caller has one, and without it the child would
+    fall to the template's default store while running in the member's
+    workspace. A workspace name absent from ``config.workspaces`` is ``None``,
+    because the member itself then resolves to ``default_workspace`` and the
+    ordinary check already covers it.
+    """
+    if caller_execution is None:
+        return None
+    crewmate = _dispatching_crewmate(cfg, caller_slot, caller_execution)
+    if crewmate is None:
+        return None
+    name = crewmate.workspace or ""
+    return name if name in cfg.workspaces else None
 
 
 async def _record_spawn(caller_key: str, child: Any) -> bool:
