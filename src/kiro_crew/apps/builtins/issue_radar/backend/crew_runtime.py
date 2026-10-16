@@ -55,7 +55,7 @@ from kiro_crew.dashboard.chat_runner import _run_chat
 from kiro_crew.dashboard.chat_utils import slot_history_key
 from kiro_crew.safety_override import safety_override
 
-from . import crew_model, crew_store, github_client, provider, store
+from . import crew_model, crew_store, github_client, gitlab_queries, provider, store
 
 try:  # the autonudge service is feature-flagged; the runtime degrades without it
     from kiro_crew.autonudge import get_instance as _autonudge_instance
@@ -1783,17 +1783,18 @@ def _read_or_refresh_deps(key: provider.RepoKey, scope) -> dict[str, Any] | None
     """The sweep's deps source: cache read, refreshed in place when absent/expired.
 
     Runs in a worker thread (the caller wraps it in ``asyncio.to_thread``).
-    GitHub-only, like the /deps route: other providers have no dependency fetch
-    yet, and for them this stays a plain cache read (normally None). A refresh
-    failure of any kind keeps whatever the cache held — stale beats wrong, and
-    an unknown reading can never fire the unlock (see ``detect_unblocks``).
+    GitHub and GitLab refresh, dispatching exactly as the /deps route does; any
+    other provider has no dependency fetch yet, and for it this stays a plain
+    cache read (normally None). A refresh failure of any kind keeps whatever the
+    cache held — stale beats wrong, and an unknown reading can never fire the
+    unlock (see ``detect_unblocks``).
     """
     cached = store.read_deps_cache(key.owner, key.repo, scope)
     fresh_enough = (
         isinstance(cached, dict)
         and (time.time() - float(cached.get("fetched_at") or 0)) < store.DEPS_CACHE_TTL_SEC
     )
-    if fresh_enough or key.provider != "github":
+    if fresh_enough or key.provider not in (provider.GITHUB, provider.GITLAB):
         return cached
 
     # An ABSENT issues cache is unknown scope, not an empty repo: building the
@@ -1810,8 +1811,15 @@ def _read_or_refresh_deps(key: provider.RepoKey, scope) -> dict[str, Any] | None
     if open_issues is None:
         return cached
     try:
-        hints: dict[int, dict] = {}
-        edges, nodes = github_client.fetch_dependency_edges(key.owner, key.repo, open_issues, hints)
+        if key.provider == provider.GITLAB:
+            edges, nodes = gitlab_queries.fetch_dependency_edges(
+                key.owner, key.repo, open_issues, host=key.host
+            )
+        else:
+            hints: dict[int, dict] = {}
+            edges, nodes = github_client.fetch_dependency_edges(
+                key.owner, key.repo, open_issues, hints
+            )
         store.write_deps_cache(
             key.owner, key.repo, edges, nodes, root=scope, fetched_at=fetch_started
         )

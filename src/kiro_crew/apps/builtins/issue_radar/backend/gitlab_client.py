@@ -529,6 +529,20 @@ def list_recent_open_issues(
     return [_norm_issue(row) for row in _rows(data)][:capped]
 
 
+def list_issue_links(owner: str, repo: str, iid: int, *, host: str, timeout: float = GL_TIMEOUT_SEC) -> list[dict]:
+    """The issue-link rows GitLab holds for one issue (``blocks`` / ``is_blocked_by`` /
+    ``relates_to``), raw. ``iid`` is an int so it can never carry a path segment.
+
+    ``paginate=False`` on purpose: GitLab's ``/issues/:iid/links`` returns the whole
+    list in one response and ignores ``page``/``per_page`` (its docs list no
+    pagination parameters). Walking pages here would never see a short page for an
+    issue with >= 100 links and would spawn ``_MAX_PAGES`` identical ``glab`` calls
+    per issue, each holding a full copy of the payload.
+    """
+    path = f"projects/{project_path(owner, repo)}/issues/{int(iid)}/links"
+    return _rows(_glab_api(path, host=host, timeout=timeout, paginate=False))
+
+
 def list_repo_labels(owner: str, repo: str, *, host: str = "", timeout: float = GL_TIMEOUT_SEC) -> list[dict]:
     """Every label defined on the project, with its configured colour."""
     path = f"projects/{project_path(owner, repo)}/labels"
@@ -1782,6 +1796,118 @@ def add_pr_comment(
     disagree about which item got the comment.
     """
     return _add_note(owner, repo, number, body, "merge_requests", host=host, timeout=timeout)
+
+
+def update_issue_comment(
+    owner: str, repo: str, comment_id: int, body: str, *, number: int, host: str = "",
+    timeout: float = GL_TIMEOUT_SEC,
+) -> dict:
+    """EDIT an existing ISSUE note (``PUT .../issues/{iid}/notes/{note_id}``).
+
+    Parity with ``github_client.update_issue_comment``, which the crew claim ledger
+    uses to rewrite its one public record on every heartbeat instead of appending a
+    note per cycle. The positional shape matches GitHub's exactly; the one extra,
+    ``number``, is KEYWORD-ONLY and required: GitLab's note endpoints are nested
+    under the issue (``issues/{iid}/notes/{id}``), not repo-flat like GitHub's, so
+    the issue iid is part of the address. Keyword-only so a caller written against
+    the GitHub shape fails with a ``TypeError`` here instead of silently addressing
+    the wrong note. Both ids are ``int()``-coerced before they reach the path.
+
+    Issue notes only, on purpose. An MR note lives in a different collection with
+    its own ids, and a crew's claim is always on the issue it took; a function that
+    guessed the collection from the id would be a silent way to edit the wrong
+    note (see :func:`_add_note`).
+
+    ``body`` is model-authored prose and rides as JSON on stdin, never argv. An
+    empty edit is refused: it would BLANK the claim, not clear it.
+
+    Returns ``{id, url, updated_at}``; ``url`` is ``None`` because GitLab's note
+    response carries no web link, matching :func:`_add_note`.
+    """
+    text = (body or "").strip()
+    if not text:
+        raise ProviderCliError("a comment edit needs a body")
+    data = _obj(
+        _glab_api(
+            f"projects/{project_path(owner, repo)}/issues/{int(number)}/notes/{int(comment_id)}",
+            host=host,
+            timeout=timeout,
+            method="PUT",
+            body={"body": text},
+        )
+    )
+    return {
+        "id": data.get("id"),
+        "url": None,
+        "updated_at": data.get("updated_at"),
+    }
+
+
+def create_pull_request(
+    owner: str,
+    repo: str,
+    head: str,
+    base: str,
+    title: str,
+    body: str = "",
+    *,
+    draft: bool = False,
+    host: str = "",
+    timeout: float = GL_TIMEOUT_SEC,
+) -> dict:
+    """Open a merge request (``POST .../merge_requests``).
+
+    Parity with ``github_client.create_pull_request``: REST through ``glab api``
+    with the title and description as JSON on stdin, so model-authored prose never
+    lands on an argv or on disk. ``head`` and ``base`` are the source and target
+    BRANCH names on this project; a cross-fork MR (GitLab's ``target_project_id``)
+    is not offered, because no caller needs it and an extra id in the payload is
+    one more thing a brief could be talked into setting.
+
+    GitLab has no ``draft`` field: a draft MR is one whose title starts with
+    ``Draft:``, so ``draft=True`` prepends that marker (once). ``head`` and
+    ``base`` ride inside the JSON body, never a path, so they are not
+    charset-validated beyond being non-empty, exactly as on GitHub.
+
+    Returns ``{number, url, html_url, draft, state}`` in the GitHub-shaped
+    vocabulary; ``number`` is the MR's ``iid``.
+    """
+    subject = (title or "").strip()
+    if not subject:
+        raise ProviderCliError("a merge request needs a title")
+    if not (head or "").strip() or not (base or "").strip():
+        raise ProviderCliError(
+            f"a merge request needs both source and target branches (got {head!r} → {base!r})"
+        )
+    if draft and not subject.lower().startswith("draft:"):
+        subject = f"Draft: {subject}"
+    if subject.lower().startswith("draft:") and not subject[len("draft:") :].strip():
+        # A bare marker is a title with no content; GitLab would 400 it, and the
+        # client's job is to say so before a request is spent.
+        raise ProviderCliError("a merge request needs a title beyond the Draft: marker")
+    payload: dict[str, object] = {
+        "source_branch": head.strip(),
+        "target_branch": base.strip(),
+        "title": subject,
+        "description": body or "",
+    }
+    data = _obj(
+        _glab_api(
+            f"projects/{project_path(owner, repo)}/merge_requests",
+            host=host,
+            timeout=timeout,
+            method="POST",
+            body=payload,
+        )
+    )
+    link = data.get("web_url")
+    return {
+        "number": data.get("iid"),
+        "url": link,
+        "html_url": link,
+        "draft": bool(data.get("draft")),
+        "state": data.get("state"),
+    }
 
 
 # GitLab's merge-method vocabulary maps onto the project's own merge-method
