@@ -5611,7 +5611,7 @@ governance checks remain independent of memory routing.
 
 `hooks.py` is the hook subsystem's import path and its patch surface: over a hundred production
 modules import it, and the tests rebind its names. The rules live in the modules of
-`kiro_crew.hook_runtime`, and `hook_runtime.compose` runs every function they define
+`kiro_crew.hook_runtime`, and `_facade_compose.compose` runs every function they define
 on `hooks.py`'s globals, so a patch of `hooks.<name>` reaches the moved code wherever
 it sits. Nothing but `hooks.py` imports an owner.
 A new owner module is appended to the `compose(...)` tuple and to `_BASE_OWNERS` in

@@ -41,9 +41,10 @@ Three consequences follow:
   through the runner's namespace, so a test that rebinds it on the runner is the
   one every function sees.
 
-The technique is the one ``kiro_crew.slack.gateway_runtime.compose`` applies to the
-Slack gateway. That one also binds orchestrator methods onto the gateway's class,
-and the runner has no such class, so this is the module-function half of it.
+The technique is the one the shared ``kiro_crew._facade_compose.compose`` applies to
+every other split facade. The runner keeps its own copy because it also finds its
+owners (:func:`owner_modules`) and binds their names on the runner, which the shared
+helper does not do.
 
 Which responsibility each owner holds, and which constructs stay in the runner
 because repository guards read them there, is recorded in

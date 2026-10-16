@@ -1081,7 +1081,7 @@ async def api_chat_slot_detail(request: web.Request) -> web.Response:
         # index; the fallback below already serves it from the resident window.
         if state.conversation_log and not requires_full_reader:
             # Imported here, not at module scope: this function runs on the
-            # handlers module's globals (``chat_api.compose``).
+            # handlers module's globals (``_facade_compose.compose``).
             from kiro_crew.dashboard.transcript_snapshot import (
                 PAGE,
                 SNAPSHOT_ATTEMPTS,
@@ -1284,7 +1284,7 @@ async def api_chat_slot_detail(request: web.Request) -> web.Response:
     ]
     context_fields = await _context_snapshot_fields(state, slot)
     # Imported here, not at module scope: this function runs on the handlers
-    # module's globals (``chat_api.compose``).
+    # module's globals (``_facade_compose.compose``).
     from kiro_crew.dashboard import wire_render
 
     # One read shape of this session: the newest page (whatever its size),

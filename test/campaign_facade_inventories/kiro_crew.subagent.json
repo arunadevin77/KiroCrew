@@ -226,7 +226,7 @@
   "write_result_chunk",
   "write_tombstone"
  ],
- "note": "G07 split of subagent.py: module-level helpers moved into kiro_crew.subagent_parts owners; subagent.py re-exports each, and subagent_parts.compose runs them on its globals.",
+ "note": "G07 split of subagent.py: module-level helpers moved into kiro_crew.subagent_parts owners; subagent.py re-exports each, and the shared _facade_compose.compose runs them on its globals.",
  "rebound": {
   "AGENT_INTERNAL_CODE": "kiro_crew.subagent_parts.agent_policy",
   "AGENT_NOT_AVAILABLE_CODE": "kiro_crew.subagent_parts.agent_policy",

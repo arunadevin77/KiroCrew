@@ -22,6 +22,7 @@ from urllib.parse import quote  # noqa: F401
 from aiohttp import web
 
 from kiro_crew import platform_compat, port_resolution, shutdown_event  # noqa: F401
+from kiro_crew._facade_compose import compose as _facade_compose
 from kiro_crew.apps.backend import (  # noqa: F401
     start_deferred_app_backends,
     start_enabled_app_backends,
@@ -61,9 +62,6 @@ from kiro_crew.dashboard import (  # noqa: F401
     channel_slots,
     chat,
     handlers,
-)
-from kiro_crew.dashboard import server_runtime as _server_runtime
-from kiro_crew.dashboard import (  # noqa: F401
     slot_retention,
     tailnet,
     tailnet_serve,
@@ -2793,7 +2791,7 @@ async def start_api_server(
 # ``kiro_crew.dashboard.server.<name>`` reaches it wherever it lives; see
 # ``kiro_crew.dashboard.server_runtime``. Run once, after this body has bound every
 # name.
-_server_runtime.compose(
+_facade_compose(
     globals(),
     (
         _owner_app_platform,

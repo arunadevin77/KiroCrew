@@ -797,7 +797,7 @@ def _handler_clock(monkeypatch, monotonic) -> None:
     rebinds ``time.monotonic`` for the whole worker: asyncio's loop clock and every
     other thread read the fake too, and a frozen fake strands every timer the turn
     awaits. The owners read ``time`` from the handler's globals
-    (``handler_runtime.compose``), so rebinding that NAME reaches each elapsed-time
+    (``_facade_compose.compose``), so rebinding that NAME reaches each elapsed-time
     read the turn makes while the rest of the process keeps the real clock.
     """
     from kiro_crew.slack import handler

@@ -2,7 +2,7 @@
 
 ``kiro_crew.dashboard.handlers.files`` is the file API's import path and its patch
 surface. Most of what it defined now lives in the modules of
-``kiro_crew.dashboard.file_api``, one responsibility each, and ``file_api.compose``
+``kiro_crew.dashboard.file_api``, one responsibility each, and ``_facade_compose.compose``
 runs every function they define on the facade's globals. These tests pin:
 
 * the surface: every name the facade bound before the split still resolves on it,
@@ -39,6 +39,7 @@ from source_corpus import repo_files_named, repo_root
 
 import kiro_crew.dashboard.handlers as handlers_pkg
 import kiro_crew.dashboard.handlers.files as files
+from kiro_crew._facade_compose import compose as facade_compose
 from kiro_crew.dashboard import file_api
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
@@ -1613,7 +1614,7 @@ def test_compose_rebinds_functions_and_class_members(tmp_path: Path) -> None:
     )
     namespace = {"__name__": "file_api_compose_host_probe", "VALUE": "host"}
     namespace["helper"] = owner.helper
-    file_api.compose(namespace, (owner,))
+    facade_compose(namespace, (owner,))
 
     assert namespace["helper"]() == "host" and owner.helper is namespace["helper"]
     assert owner.outer()() == "host"
@@ -1627,5 +1628,5 @@ def test_compose_rebinds_functions_and_class_members(tmp_path: Path) -> None:
     assert namespace["helper"]() == "patched"
 
     fresh = {"__name__": "file_api_compose_host_probe", "VALUE": "fresh"}
-    file_api.compose(fresh, (owner,))
+    facade_compose(fresh, (owner,))
     assert owner.helper() == "fresh"

@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, AbstractSet, Any, Literal, Optional, Protocol
 
+from kiro_crew._facade_compose import compose as _facade_compose
 from kiro_crew.acp.liveness import (
     VERDICT_DEAD,
     VERDICT_STUCK_INPUT,
@@ -224,7 +225,6 @@ from kiro_crew.subagent_manager.monitoring import (  # noqa: F401 - resolved by 
 )
 from kiro_crew.subagent_manager.run import _PendingDepthEmit, _PendingDepthRetry
 from kiro_crew.subagent_parts import agent_policy as _agent_policy
-from kiro_crew.subagent_parts import compose as _compose_parts
 from kiro_crew.subagent_parts import host_memory as _host_memory
 from kiro_crew.subagent_parts import model_choice as _model_choice
 from kiro_crew.subagent_parts import run_limits as _run_limits
@@ -4574,9 +4574,8 @@ class SubagentManager:
 # Every function the subagent_parts owners define runs on this module's globals, so a
 # patch of ``kiro_crew.subagent.<name>`` reaches it wherever it now lives; see
 # ``subagent_parts``. Run once, after every owner is imported and re-exported.
-_compose_parts(
+_facade_compose(
     globals(),
-    SubagentManager,
     (
         _run_limits,
         _run_output,
@@ -4585,6 +4584,7 @@ _compose_parts(
         _host_memory,
         _start_pricing,
     ),
+    host=SubagentManager,
 )
 
 

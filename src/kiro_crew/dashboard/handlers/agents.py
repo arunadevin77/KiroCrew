@@ -5,7 +5,7 @@ agents handler through this module. The handler families live in the
 ``agent_admin`` owners -- ``app_mcp_ownership``, ``agent_config``,
 ``default_agent``, ``capabilities``, ``template_lineage``, ``fork_publish``,
 ``agent_detail``, ``roster``, ``installed_agents``, ``crew_records``,
-``crew_update``, ``crew_removal`` and ``avatars`` -- and ``agent_admin.compose``
+``crew_update``, ``crew_removal`` and ``avatars`` -- and ``_facade_compose.compose``
 runs them on this module's globals, so a patch of ``agents.<name>`` reaches them.
 
 This module keeps the imports, constants and seams the owners read (``_err500``,
@@ -43,6 +43,7 @@ from aiohttp import BodyPartReader, web  # noqa: F401
 from kiro_crew import agent_state  # noqa: F401
 from kiro_crew import crew_teams as teams_mod  # noqa: F401
 from kiro_crew import model_registry, model_scope
+from kiro_crew._facade_compose import compose as _facade_compose
 from kiro_crew.acp.client import advertised_model_ids, model_is_unusable
 from kiro_crew.acp_backends import (  # noqa: F401 - selectable_backend_values is a facade name
     ACP_BACKEND_CLAUDE,
@@ -137,7 +138,6 @@ from kiro_crew.config.sections import _AVATAR_IMAGE_EXTS as _LOADER_AVATAR_IMAGE
 from kiro_crew.config.sections import (  # noqa: F401
     _safe_avatar,
 )
-from kiro_crew.dashboard import agent_admin as _agent_admin
 from kiro_crew.dashboard.agent_admin import agent_config as _owner_agent_config
 from kiro_crew.dashboard.agent_admin import agent_detail as _owner_agent_detail
 from kiro_crew.dashboard.agent_admin import app_mcp_ownership as _owner_app_mcp_ownership
@@ -1851,7 +1851,7 @@ async def api_kirocrew_agent_avatar_get(request: web.Request) -> web.Response:
 # ``kiro_crew.dashboard.handlers.agents.<name>`` reaches it wherever it lives;
 # see ``kiro_crew.dashboard.agent_admin``. Run once, after this body has bound every
 # name.
-_agent_admin.compose(
+_facade_compose(
     globals(),
     (
         _owner_app_mcp_ownership,

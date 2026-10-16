@@ -2,7 +2,7 @@
 
 ``kiro_crew.slack.gateway`` keeps its import path and its patch surface; the modules of
 ``kiro_crew.slack.gateway_runtime`` hold the rest, one responsibility each, and
-``gateway_runtime.compose`` runs every function they define on the facade's
+``_facade_compose.compose`` runs every function they define on the facade's
 globals. These tests pin what that composition promises:
 
 * each owner function runs on the facade's globals, and every global it reads
@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 import kiro_crew.slack.gateway as gateway
+from kiro_crew._facade_compose import compose as facade_compose
 from kiro_crew.slack import gateway_runtime
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
@@ -1148,7 +1149,7 @@ def test_compose_rebinds_functions_methods_and_members(tmp_path: Path) -> None:
     Host.method = owner.method  # type: ignore[attr-defined]
     Host.static = staticmethod(owner.static)  # type: ignore[attr-defined]
     namespace["helper"] = owner.helper
-    gateway_runtime.compose(namespace, Host, (owner,))
+    facade_compose(namespace, (owner,), host=Host)
 
     assert namespace["helper"]() == "host" and owner.helper is namespace["helper"]
     assert Host().method()() == "host"  # type: ignore[attr-defined]

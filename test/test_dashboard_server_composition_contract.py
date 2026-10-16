@@ -4,7 +4,7 @@
 ``start_dashboard`` and ``start_api_server`` stay defined there as the boot
 sequencers; the helper families they call, and the boot phases they delegate to,
 live in the modules of ``kiro_crew.dashboard.server_runtime``, and
-``server_runtime.compose`` runs every function those owners define on the server
+``_facade_compose.compose`` runs every function those owners define on the server
 module's globals. These tests pin:
 
 * the surface: every name the module bound before the split still resolves on it,
@@ -46,6 +46,7 @@ from aiohttp.test_utils import make_mocked_request
 from source_corpus import iter_statements, repo_files_named, repo_root
 
 import kiro_crew.dashboard.server as server
+from kiro_crew._facade_compose import compose as facade_compose
 from kiro_crew.dashboard import server_runtime
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
@@ -716,15 +717,20 @@ def test_a_moved_function_reads_its_source_from_its_owner() -> None:
     assert inspect.getsourcefile(server._register_mcp_routes) == _owner("mcp_routes").__file__
 
 
-def test_the_compose_copy_matches_its_siblings() -> None:
-    """The dashboard compositions share one technique; each package keeps its own copy
-    so no package imports another's, and the copies stay identical."""
-
-    def body(package: str) -> str:
-        text = (_SRC / "kiro_crew/dashboard" / package / "__init__.py").read_text(encoding="utf-8")
-        return text[text.index("def compose(") :]
-
-    assert body("server_runtime") == body("agent_admin") == body("file_api")
+def test_the_facade_composes_through_the_shared_helper() -> None:
+    """The facade composes its owners with the one shared helper,
+    ``kiro_crew._facade_compose.compose``, calling it exactly once, and the owner
+    package keeps no copy of its own: its ``__init__`` defines no function."""
+    assert server._facade_compose is facade_compose
+    source = Path(server.__file__).read_text(encoding="utf-8")
+    assert source.count("\n_facade_compose(\n") == 1
+    package = ast.parse(Path(server_runtime.__file__).read_text(encoding="utf-8"))
+    defined = [
+        node.name
+        for node in package.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    assert defined == []
 
 
 # ── one edge ──────────────────────────────────────────────────────────────────

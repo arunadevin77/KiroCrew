@@ -3,7 +3,7 @@
 ``kiro_crew.dashboard.handlers.messaging`` is the messaging API's import path and its
 patch surface. Most of what it defined now lives in the modules of
 ``kiro_crew.dashboard.messaging_api``, one responsibility each, and
-``messaging_api.compose`` runs every function they define on the facade's globals.
+``_facade_compose.compose`` runs every function they define on the facade's globals.
 These tests pin:
 
 * the surface: every name the facade bound before the split still resolves on it,
@@ -46,6 +46,7 @@ from source_corpus import iter_statements, repo_files_named, repo_root
 
 import kiro_crew.dashboard.handlers as handlers_pkg
 import kiro_crew.dashboard.handlers.messaging as msg
+from kiro_crew._facade_compose import compose as facade_compose
 from kiro_crew.dashboard import messaging_api
 from kiro_crew.secrets import SecretVault
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
@@ -1543,7 +1544,7 @@ def test_compose_rebinds_functions_and_class_members(tmp_path: Path) -> None:
     )
     namespace = {"__name__": "messaging_api_compose_host_probe", "VALUE": "host"}
     namespace["helper"] = owner.helper
-    messaging_api.compose(namespace, (owner,))
+    facade_compose(namespace, (owner,))
 
     assert namespace["helper"]() == "host" and owner.helper is namespace["helper"]
     assert owner.outer()() == "host"
@@ -1557,7 +1558,7 @@ def test_compose_rebinds_functions_and_class_members(tmp_path: Path) -> None:
     assert namespace["helper"]() == "patched"
 
     fresh = {"__name__": "messaging_api_compose_host_probe", "VALUE": "fresh"}
-    messaging_api.compose(fresh, (owner,))
+    facade_compose(fresh, (owner,))
     assert owner.helper() == "fresh"
 
 

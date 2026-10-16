@@ -212,8 +212,8 @@ there; the responsibilities below live in private owners under
 | `slack/gateway_runtime/cron_delivery.py` | Delivering a single-agent cron result: the duplicate and silent paths, the dashboard tab and bell, the channel the job came from, the Slack post and its uploads |
 | `slack/gateway_runtime/cron_failure.py` | Telling the user a cron run failed, once per distinct failure: the four one-spelling helpers and their two callers, the command/script/denial alert and the single-agent turn's failure path |
 
-**One namespace.** `gateway_runtime.compose`, called once after the class body,
-rebinds every function an owner defines -- its module functions, the orchestrator
+**One namespace.** `kiro_crew._facade_compose.compose`, called once after the class
+body with `GatewayOrchestrator` as its `host`, rebinds every function an owner defines -- its module functions, the orchestrator
 methods it holds (bound as the `GatewayOrchestrator` attribute of the same name)
 and the methods of the classes it defines -- onto the facade's module globals. A
 patch of `kiro_crew.slack.gateway.<name>` therefore reaches owner code exactly as
@@ -310,8 +310,8 @@ orchestrator of a turn. The responsibilities below live in private owners under
 | `slack/handler_runtime/voice.py` | Voice replies: loading `voice_reply` into the live voice state, and the reply a finished turn starts |
 | `slack/handler_runtime/finalize.py` | What a finished turn leaves in the thread: the timing footer and its OPTIONS / Link-to-Dashboard controls, the review-mode draft post and store, the dashboard mirror, the auto-title task |
 
-**One namespace.** `handler_runtime.compose` (pinned byte-identical to
-`hook_runtime.compose`), called once at the foot of `slack/handler.py`, rebinds every
+**One namespace.** `kiro_crew._facade_compose.compose` (the one helper every
+composition facade shares), called once at the foot of `slack/handler.py`, rebinds every
 function an owner defines -- its module functions and the methods of its classes --
 onto the facade's module globals. A patch of `kiro_crew.slack.handler.<name>`
 therefore reaches owner code exactly as it reached the one-module file, and an owner

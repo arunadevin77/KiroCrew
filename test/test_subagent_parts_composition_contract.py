@@ -2,7 +2,7 @@
 
 ``kiro_crew.subagent`` keeps its import path, its patch surface and every construct a
 path-keyed repository guard reads in that file; the modules of ``kiro_crew.subagent_parts``
-hold the rest, one responsibility each, and ``subagent_parts.compose`` runs every function
+hold the rest, one responsibility each, and ``_facade_compose.compose`` runs every function
 they define on the facade's globals. These tests pin what that composition promises:
 
 * each owner function runs on the facade's globals, and every global it reads resolves
@@ -39,6 +39,7 @@ import pytest
 
 import kiro_crew.subagent as subagent
 from kiro_crew import subagent_parts
+from kiro_crew._facade_compose import compose as facade_compose
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
 _FACADE = subagent.__name__
@@ -859,6 +860,24 @@ def test_every_import_kept_for_the_owners_is_read_by_one() -> None:
 # ── 6. composition mechanics ────────────────────────────────────────────────
 
 
+def test_the_facade_composes_through_the_shared_helper() -> None:
+    """The facade composes its owners with the one shared helper,
+    ``kiro_crew._facade_compose.compose``, calling it exactly once with
+    ``host=SubagentManager``, and the owner package keeps no copy of its own: its
+    ``__init__`` defines no function or class."""
+    assert subagent._facade_compose is facade_compose
+    source = Path(subagent.__file__).read_text(encoding="utf-8")
+    assert source.count("\n_facade_compose(\n") == 1
+    assert "    host=SubagentManager,\n)" in source
+    package = ast.parse(Path(subagent_parts.__file__).read_text(encoding="utf-8"))
+    defined = [
+        node.name
+        for node in package.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    assert defined == []
+
+
 def _write_module(tmp_path: Path, name: str, source: str) -> types.ModuleType:
     path = tmp_path / f"{name}.py"
     path.write_text(textwrap.dedent(source), encoding="utf-8")
@@ -900,7 +919,7 @@ def test_compose_rebinds_functions_methods_and_members(tmp_path: Path) -> None:
         """,
     )
     namespace = {"__name__": "g07_compose_facade_probe", "VALUE": "facade", "helper": owner.helper}
-    subagent_parts.compose(namespace, owner.Host, (owner,))
+    facade_compose(namespace, (owner,), host=owner.Host)
     host = owner.Host()
     assert (host.own(), host.prop, host.bound(), owner.Host.frozen()) == ("facade",) * 4
     assert namespace["helper"]() == "facade" and namespace["helper"] is owner.helper

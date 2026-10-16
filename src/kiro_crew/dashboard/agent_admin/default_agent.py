@@ -262,7 +262,7 @@ def _spec_lock_or_unlocked_read(agents_dir: Path) -> contextlib.ExitStack:
     holder past the bounded-wait ceiling) propagates: a stuck holder is a writer
     that may still change the directory, and the caller must refuse rather than
     read beside it. A plain function (not a generator-based context manager) so
-    :func:`agent_admin.compose` rebinds it onto the handlers' globals.
+    :func:`kiro_crew._facade_compose.compose` rebinds it onto the handlers' globals.
     """
     held = contextlib.ExitStack()
     try:

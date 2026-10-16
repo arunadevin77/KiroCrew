@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from kiro_crew.dashboard.state import DashboardState
 
 from kiro_crew import name_grant, runtime_death
+from kiro_crew._facade_compose import compose as _facade_compose
 from kiro_crew.acp.client import AcpError, AcpProcessDied, AcpPromptBusy, AcpTimeoutError
 from kiro_crew.acp.types import (
     STOP_REASON_CANCELLED,
@@ -191,7 +192,6 @@ from kiro_crew.session_lifecycle import (  # noqa: F401 - read by the owners
     consume_stop_declined,
     decline_stop,
 )
-from kiro_crew.slack import handler_runtime as _handler_runtime
 from kiro_crew.slack.blocks import (  # noqa: F401 - read by the owners
     build_working_blocks,
     deprecation_warning_block,
@@ -3773,7 +3773,7 @@ async def _handle_sessions_command(
 # Every function the owners define runs on this module's globals, so a patch of
 # ``kiro_crew.slack.handler.<name>`` reaches it wherever it lives; see
 # :mod:`kiro_crew.slack.handler_runtime`. Run once, after this body has bound every name.
-_handler_runtime.compose(
+_facade_compose(
     globals(),
     (
         _owner_access,

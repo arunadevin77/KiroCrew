@@ -2,7 +2,7 @@
 
 Each method an owner holds is a function taking ``self`` that the class body binds
 under its own name, so the class object every caller, ``patch.object`` and
-``__new__`` fixture holds is the one-module class; ``gateway_runtime.compose`` runs
+``__new__`` fixture holds is the one-module class; ``_facade_compose.compose`` runs
 those functions on the facade's globals. These tests pin what makes that safe:
 
 * a bound function needs nothing only a class body provides (zero-argument

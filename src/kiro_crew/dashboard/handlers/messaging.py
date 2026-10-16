@@ -24,6 +24,7 @@ from typing import Any, Callable, cast  # noqa: F401
 from aiohttp import web
 
 from kiro_crew import platform_compat
+from kiro_crew._facade_compose import compose as _facade_compose
 from kiro_crew.agent_sdk.drivers.acp_vocab import NATIVE_CHILD_NOT_RESUMABLE  # noqa: F401
 from kiro_crew.browser.command_bus import (
     DEFAULT_COMMAND_TIMEOUT_MS,
@@ -48,7 +49,6 @@ from kiro_crew.config.loader import (  # noqa: F401
 )
 from kiro_crew.constants import CHANNEL_SEND_NAMESPACES, SUBAGENT_COMPLETION_META_KEY  # noqa: F401
 from kiro_crew.cron import CronStoreBusy, CronStoreUnreadable  # noqa: F401
-from kiro_crew.dashboard import messaging_api as _messaging_api
 from kiro_crew.dashboard.channel_folders import (  # noqa: F401
     CHANNEL_CONFIG_SECTIONS,
     channel_restart_required,
@@ -2738,7 +2738,7 @@ _CHANNEL_SDK_EXTRA: dict[str, tuple[str, str]] = {
 # ``kiro_crew.dashboard.handlers.messaging.<name>`` reaches it wherever it lives;
 # see ``kiro_crew.dashboard.messaging_api``. Run once, after this body has bound
 # every name and before the owner-surface guard below wraps the spawn routes.
-_messaging_api.compose(
+_facade_compose(
     globals(),
     (
         _owner_spawn,

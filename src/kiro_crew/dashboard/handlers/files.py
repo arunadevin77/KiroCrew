@@ -4,7 +4,7 @@ Routes, the handlers package and tests import and patch every file handler throu
 this module. The handler families live in the ``file_api`` owners -- ``uploads``,
 ``workspaces``, ``pinned_io``, ``transfer``, ``office_preview``, ``sheet``,
 ``search``, ``path_complete``, ``grep``, ``browse``, ``project_dirs``,
-``git_panel``, ``project_tree`` and ``dashboard_config`` -- and ``file_api.compose``
+``git_panel``, ``project_tree`` and ``dashboard_config`` -- and ``_facade_compose.compose``
 runs them on this module's globals, so a patch of ``files.<name>`` reaches them.
 
 This module keeps the imports, constants and seams the owners read, the
@@ -54,6 +54,7 @@ from aiohttp.client_exceptions import ClientConnectionResetError  # noqa: F401
 from aiohttp.multipart import BodyPartReader  # noqa: F401
 
 from kiro_crew import executors, file_delivery_consent, pinned_fs, platform_compat  # noqa: F401
+from kiro_crew._facade_compose import compose as _facade_compose
 from kiro_crew.atomic_write import (  # noqa: F401
     atomic_write,
     open_access_control_source,
@@ -76,7 +77,6 @@ from kiro_crew.config.sections import (  # noqa: F401
     LINK_PATTERNS_MAX,
     link_pattern_url_ok,
 )
-from kiro_crew.dashboard import file_api as _file_api
 from kiro_crew.dashboard import part_stream, upload_destination  # noqa: F401
 from kiro_crew.dashboard.chat_persistence import rehydrate_slot_from_history_async
 from kiro_crew.dashboard.chat_utils import (  # noqa: F401
@@ -3195,7 +3195,7 @@ _HIDDEN_TOOL_DIRS = frozenset(d for d in _PROJECT_TREE_SKIP_DIRS if d.startswith
 # ``kiro_crew.dashboard.handlers.files.<name>`` reaches it wherever it lives;
 # see ``kiro_crew.dashboard.file_api``. Run once, after this body has bound every
 # name.
-_file_api.compose(
+_facade_compose(
     globals(),
     (
         _owner_uploads,

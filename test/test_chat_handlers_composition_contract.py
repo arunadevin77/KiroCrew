@@ -2,7 +2,7 @@
 
 ``kiro_crew.dashboard.chat_handlers`` is the dashboard chat API's import path and its
 patch surface. Part of what it defined now lives in the modules of
-``kiro_crew.dashboard.chat_api``, one responsibility each, and ``chat_api.compose``
+``kiro_crew.dashboard.chat_api``, one responsibility each, and ``_facade_compose.compose``
 runs every function they define on the facade's globals. These tests pin:
 
 * the surface: every name the facade bound before the split still resolves on it, the
@@ -38,6 +38,7 @@ from chat_test_helpers import _make_state
 from source_corpus import repo_files_named, repo_root
 
 import kiro_crew.dashboard.chat_handlers as ch
+from kiro_crew._facade_compose import compose as facade_compose
 from kiro_crew.dashboard import chat_api, slot_ownership
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
@@ -82,7 +83,7 @@ _BASE_NAMES = frozenset("""
         _autocompact_txn_lock _autocompact_txn_locks _await_guarded_history_write
         _bounded_slot_page _broadcast_context_reset _broadcast_expired_oauth_banners
         _build_pending_context_entry _build_stream_chunk _bump_slot_tags_revision
-        _cancel_target _chat_api _close_slot _coerce_requested_mode _collapse_wire_rows
+        _cancel_target _close_slot _coerce_requested_mode _collapse_wire_rows
         _compaction_in_flight _configured_backend_for_slot _context_reading
         _context_snapshot_fields _context_snapshot_fields_inner _context_usage_payload
         _default_template_stamp _deny_app_session_settings _deny_app_yolo
@@ -1812,7 +1813,7 @@ def test_compose_rebinds_functions_and_class_members(tmp_path: Path) -> None:
     )
     namespace = {"__name__": "chat_api_compose_host_probe", "VALUE": "host"}
     namespace["helper"] = owner.helper
-    chat_api.compose(namespace, (owner,))
+    facade_compose(namespace, (owner,))
 
     assert namespace["helper"]() == "host" and owner.helper is namespace["helper"]
     assert owner.outer()() == "host"
@@ -1826,5 +1827,5 @@ def test_compose_rebinds_functions_and_class_members(tmp_path: Path) -> None:
     assert namespace["helper"]() == "patched"
 
     fresh = {"__name__": "chat_api_compose_host_probe", "VALUE": "fresh"}
-    chat_api.compose(fresh, (owner,))
+    facade_compose(fresh, (owner,))
     assert owner.helper() == "fresh"

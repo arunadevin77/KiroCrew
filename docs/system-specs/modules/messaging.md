@@ -1542,7 +1542,7 @@ prefix.
 
 `dashboard/handlers/messaging.py` is the import path and the patch surface of every
 route it serves. The owners it composes live in `dashboard/messaging_api/`,
-and `messaging_api.compose` runs their functions on the facade's globals, so a patch of
+and `_facade_compose.compose` runs their functions on the facade's globals, so a patch of
 the facade reaches moved code. New work goes to the owner of its responsibility:
 
 | Owner (`dashboard/messaging_api/`) | Holds |

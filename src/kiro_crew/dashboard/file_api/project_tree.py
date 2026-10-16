@@ -225,7 +225,7 @@ def _project_tree_scandir(
 
     The reading is :func:`_project_tree_scandir_entries`. It is wrapped here, at
     call time, rather than decorated: a decorated owner function is the
-    decorator's wrapper, which ``file_api.compose`` does not rebind, so its body
+    decorator's wrapper, which ``_facade_compose.compose`` does not rebind, so its body
     would read this owner's globals instead of the handlers module's.
     """
     return contextlib.contextmanager(_project_tree_scandir_entries)(native, identity)

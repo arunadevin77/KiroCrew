@@ -32,6 +32,7 @@ import pytest
 from source_corpus import repo_root
 
 from conftest import MockSlackClient
+from kiro_crew._facade_compose import compose as facade_compose
 from kiro_crew.acp.client import AcpError, AcpProcessDied, AcpPromptBusy, AcpTimeoutError
 from kiro_crew.acp.types import STOP_REASON_COMPACTION_FAILED
 from kiro_crew.config.loader import ACTIVATION_REVIEW
@@ -2176,15 +2177,20 @@ def test_a_moved_function_reads_its_source_from_its_owner() -> None:
     assert inspect.getsourcefile(handler.post_linked_approval) == _owner("approvals").__file__
 
 
-def test_the_compose_copy_matches_its_siblings() -> None:
-    """Each composition keeps its own copy of the technique so no package imports
-    another's, and the copies stay identical."""
-
-    def body(rel: str) -> str:
-        text = (_SRC / "kiro_crew" / rel / "__init__.py").read_text(encoding="utf-8")
-        return text[text.index("def compose(") :]
-
-    assert body("slack/handler_runtime") == body("hook_runtime")
+def test_the_facade_composes_through_the_shared_helper() -> None:
+    """The facade composes its owners with the one shared helper,
+    ``kiro_crew._facade_compose.compose``, calling it exactly once, and the owner
+    package keeps no copy of its own: its ``__init__`` defines no function."""
+    assert handler._facade_compose is facade_compose
+    source = Path(handler.__file__).read_text(encoding="utf-8")
+    assert source.count("\n_facade_compose(\n") == 1
+    package = ast.parse(Path(handler_runtime.__file__).read_text(encoding="utf-8"))
+    defined = [
+        node.name
+        for node in package.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    assert defined == []
 
 
 # ── one edge ──────────────────────────────────────────────────────────────────

@@ -122,9 +122,9 @@ below, and every function the family defines runs on that module's globals.
 | `subagent_parts/start_pricing.py` | What a start costs in memory, the admitted-start reserve, the one off-loop host reading |
 | `subagent_manager/` | The coordinators `SubagentManager` delegates to (`OrphanStallMonitor`, `TerminalCoordinator`, `SpawnAdmissionCoordinator`, `ContinuationCoordinator`, `WaveDigestCoordinator`, `RunEventCoordinator`, `CancellationCoordinator`) |
 
-**One namespace, two rebinding passes.** `subagent_parts.compose` rebinds every function
-a `subagent_parts` owner defines (and the methods of its classes) onto `subagent.py`'s
-globals; `subagent_manager.bind_component_globals` does the same for the coordinators'
+**One namespace, two rebinding passes.** The shared `kiro_crew._facade_compose.compose`
+(called with `host=SubagentManager`) rebinds every function a `subagent_parts` owner
+defines (and the methods of its classes) onto `subagent.py`'s globals; `subagent_manager.bind_component_globals` does the same for the coordinators'
 `*_impl` methods, which are disjoint objects. A `patch("kiro_crew.subagent.<name>")`
 therefore reaches every reader wherever its code lives. A value an owner computes while it
 is imported -- a constant, a default argument, a class body, a dataclass field factory --
