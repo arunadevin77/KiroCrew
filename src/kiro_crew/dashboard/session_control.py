@@ -479,6 +479,123 @@ def _delegation_lineage_fenced(state: "DashboardState", caller_key: str) -> bool
         key = parent
     return True
 
+SESSION_DEFAULT_MAX_DEPTH = 2
+SESSION_DEFAULT_MAX_DESCENDANTS = 8
+
+def _session_lineage(state, key):
+    # Grandfather rule: a missing ancestor is a historic (closed/archived) root
+    # boundary, not corruption. Persisted capability on visited slots (stored
+    # depth floor + tightened limits, restored by metadata_codec) still bounds
+    # creation; only a cycle is genuinely unverifiable.
+    chain=[]; seen=set(); cur=key; missing=False
+    while cur:
+        if cur in seen: return [], "lineage_cycle", False
+        seen.add(cur)
+        slot=state.get_slot(cur)
+        if slot is None: missing=True; break
+        chain.append(cur)
+        cur=getattr(slot, "_created_by", "") or ""
+    chain.reverse(); return chain, "", missing
+
+def _live_descendant_keys(state, root_key):
+    children={}
+    slots=getattr(state,"_slots",{})
+    vals=list(slots.values()) if isinstance(slots,dict) else list(slots)
+    for slot in vals:
+        parent=getattr(slot,"_created_by","") or ""
+        if parent: children.setdefault(parent,[]).append(slot.key)
+    out=[]; stack=list(children.get(root_key,[])); seen=set()
+    while stack:
+        k=stack.pop()
+        if k in seen: continue
+        seen.add(k); out.append(k); stack.extend(children.get(k,[]))
+    return out
+
+def _root_descendant_keys(state, root_key):
+    keys=set(_live_descendant_keys(state, root_key))
+    slots=getattr(state,"_slots",{})
+    vals=list(slots.values()) if isinstance(slots,dict) else list(slots)
+    for slot in vals:
+        if getattr(slot,"_session_root_key","")==root_key and slot.key!=root_key:
+            keys.add(slot.key)
+    return keys
+
+def _creation_allowance(state, caller_slot, *, requested_max_depth=None, requested_max_descendants=None, requested_deadline=None):
+    import time as _time
+    if getattr(caller_slot, "_session_leaf", False):
+        raise SessionControlError("leaf sessions cannot create sessions", code="leaf_session_caller")
+    caller_key=getattr(caller_slot,"key","")
+    chain, err, _missing=_session_lineage(state, caller_key)
+    if err:
+        raise SessionControlError("caller lineage cannot be verified", code=err)
+    slots=[state.get_slot(k) for k in chain]
+    def _min_attr(name, default):
+        vals=[getattr(x,name) for x in slots if getattr(x,name,None) is not None]
+        return min(vals) if vals else default
+    max_depth=min(_min_attr("_session_max_depth", SESSION_DEFAULT_MAX_DEPTH), SESSION_DEFAULT_MAX_DEPTH)
+    max_desc=min(_min_attr("_session_max_descendants", SESSION_DEFAULT_MAX_DESCENDANTS), SESSION_DEFAULT_MAX_DESCENDANTS)
+    stored_depth=getattr(caller_slot,"_session_depth",None)
+    caller_depth=max(len(chain)-1, int(stored_depth) if stored_depth is not None else 0)
+    if requested_max_depth is not None:
+        if requested_max_depth>max_depth: raise SessionControlError("max depth cannot exceed inherited limit", code="session_limit_escalation")
+        max_depth=requested_max_depth
+    if requested_max_descendants is not None:
+        if requested_max_descendants>max_desc: raise SessionControlError("descendant quota cannot exceed inherited limit", code="session_limit_escalation")
+        max_desc=requested_max_descendants
+    new_depth=caller_depth+1
+    if new_depth>max_depth:
+        raise SessionControlError("session lineage depth exceeded", code="lineage_depth_exceeded")
+    # Root identity: persisted root is a CLAIM, corroborated for managed
+    # slots against gateway-authored lineage (crew-log tree) or a complete
+    # live _created_by chain. Mutable history alone never self-authenticates.
+    _persisted_root=getattr(caller_slot,"_session_root_key","")
+    _stamps=[getattr(caller_slot,"_session_depth",None), _persisted_root or None, getattr(caller_slot,"_session_max_depth",None), getattr(caller_slot,"_session_max_descendants",None), getattr(caller_slot,"_session_deadline_at",None), True if getattr(caller_slot,"_session_leaf",False) else None]
+    _managed = any(x is not None for x in _stamps)
+    if _managed:
+        if not _persisted_root or getattr(caller_slot,"_session_depth",None) is None:
+            raise SessionControlError("managed session capability is incomplete (missing root/depth); creation blocked until lineage is re-stamped", code="lineage_root_unverified", status=409)
+        _tree_known, _tp, _nodes = _slot_tree_parent(caller_key)
+        _corroborated=False
+        if _tree_known and caller_key in _nodes:
+            _derived=caller_key; _seen=set()
+            while True:
+                if _derived in _seen: raise SessionControlError("crew-log lineage cycle", code="lineage_cycle")
+                _seen.add(_derived)
+                _node=_nodes.get(_derived)
+                _par=getattr(_node,"parent_slot",None) if _node is not None else None
+                if not _par: break
+                _derived=_par
+            if _derived!=_persisted_root:
+                raise SessionControlError("persisted session root does not match gateway-authored lineage", code="lineage_root_mismatch", status=409)
+            _corroborated=True
+        elif not _missing and chain and chain[0]==_persisted_root:
+            _corroborated=True
+        if not _corroborated:
+            raise SessionControlError("managed session root cannot be corroborated from gateway-authored lineage; creation blocked until the session tree is seeded or lineage is re-stamped", code="lineage_root_unverified", status=409)
+        root=_persisted_root
+    else:
+        root=chain[0] if chain else caller_key
+    if len(_root_descendant_keys(state, root))>=max_desc:
+        raise SessionControlError("session tree descendant quota exceeded", code="tree_descendant_quota_exceeded", status=429)
+    deadlines=[getattr(x,"_session_deadline_at") for x in slots if getattr(x,"_session_deadline_at",None) is not None]
+    deadline=min(deadlines) if deadlines else None
+    if requested_deadline is not None:
+        deadline=requested_deadline if deadline is None else min(deadline, requested_deadline)
+    import math as _math
+    if deadline is not None and not _math.isfinite(deadline):
+        raise SessionControlError("session deadline must be finite", code="invalid_field_type")
+    if deadline is not None and _time.time()>deadline:
+        raise SessionControlError("session time budget exhausted", code="session_budget_exhausted", status=429)
+    return {"depth":new_depth,"root_key":root,"max_depth":max_depth,"max_descendants":max_desc,"deadline_at":deadline}
+
+def _stamp_session_capability(slot, allowance, *, leaf=False):
+    slot._session_leaf=bool(leaf)
+    slot._session_depth=allowance["depth"]
+    slot._session_root_key=allowance["root_key"]
+    slot._session_max_depth=allowance["max_depth"]
+    slot._session_max_descendants=allowance["max_descendants"]
+    slot._session_deadline_at=allowance["deadline_at"]
+
 
 def _channel_link_of(slot: Any) -> str:
     """*slot*'s channel link, or ``""`` for an unlinked slot and for a cron tab.
@@ -2300,6 +2417,10 @@ async def create_session(
     model: str = "",
     caller_fenced: bool | None = None,
     dry_run: bool = False,
+    leaf: bool = False,
+    max_depth: int | None = None,
+    max_descendants: int | None = None,
+    budget_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Open a new session in the caller's workspace, persisted at birth.
 
@@ -2947,6 +3068,16 @@ async def create_session(
             code="creator_slot_cap_reached",
             status=429,
         )
+    import time as _t
+    # budget_seconds is a CREATION-ADMISSION deadline only (not-after for
+    # creating children); not a token/runtime execution budget.
+    if not isinstance(leaf, bool): raise SessionControlError("leaf must be a boolean", code="invalid_field_type")
+    if max_depth is not None and (isinstance(max_depth,bool) or not isinstance(max_depth,int) or max_depth<0): raise SessionControlError("max_depth must be a non-negative integer", code="invalid_field_type")
+    if max_descendants is not None and (isinstance(max_descendants,bool) or not isinstance(max_descendants,int) or max_descendants<1): raise SessionControlError("max_descendants must be a positive integer", code="invalid_field_type")
+    import math as _math2
+    if budget_seconds is not None and (isinstance(budget_seconds,bool) or not isinstance(budget_seconds,(int,float)) or not _math2.isfinite(float(budget_seconds)) or budget_seconds<=0): raise SessionControlError("budget_seconds must be a positive finite number", code="invalid_field_type")
+    _req_deadline = (_t.time()+float(budget_seconds)) if budget_seconds else None
+    _allowance=_creation_allowance(state, live_caller, requested_max_depth=max_depth, requested_max_descendants=max_descendants, requested_deadline=_req_deadline)
     # The dry run ends HERE, after the last refusal and before the first write.
     # Any new refusal gate belongs above this line, or the preview would pass a
     # create the real call then refuses, and the MCP path walk would leave the
@@ -2980,6 +3111,7 @@ async def create_session(
         # unattributed, so ordinary human use never consumes an automated caller's
         # share.
         slot._created_by = caller_key
+        _stamp_session_capability(slot, _allowance, leaf=leaf)
         # Freeze the creator's ACP session id HERE, at mint, from the live caller
         # handle we just authorized -- not later at the child's first turn. The
         # creator slot can be closed and replaced between this mint and that turn,
@@ -3296,6 +3428,7 @@ async def fork_session(
     folder_id: str = "",
     at_message_index: int | None = None,
     caller_fenced: bool | None = None,
+    leaf: bool = False,
 ) -> dict[str, Any]:
     """Open a new session that CARRIES a transcript: the dashboard's Fork, for an agent.
 
@@ -3447,6 +3580,7 @@ async def fork_session(
             status=429,
         )
 
+    _fork_allowance=_creation_allowance(state, live_caller)
     audit_caller = f"session:{caller_key}"
     fork_source = await resolve_fork_source(
         source_slot, audit_caller=audit_caller, audit_operation="session_control.fork"
@@ -3535,6 +3669,7 @@ async def fork_session(
 
     def _stamp(child: Any) -> None:
         child._created_by = caller_key
+        _stamp_session_capability(child, _fork_allowance, leaf=leaf)
         child._created_by_sid = _creator_sid if len(_creator_sid) <= MAX_ACP_SESSION_ID_LEN else ""
         child._lineage_minted = True
         posture["trust"] = bool(getattr(live_caller, "_trust", False))
@@ -4446,6 +4581,15 @@ async def adopt_target(
         caller_session_key=caller_session_key, operation="adopt", slot_key=slot.key
     ):
         caller_key = caller_slot_key(state, caller_session_key)
+        _caller_slot_for_adopt = state.get_slot(caller_key) if caller_key else None
+        if _caller_slot_for_adopt is not None and getattr(_caller_slot_for_adopt, "_session_leaf", False):
+            raise SessionControlError("leaf sessions cannot adopt sessions", code="leaf_session_caller")
+        if _caller_slot_for_adopt is not None:
+            _creation_allowance(state, _caller_slot_for_adopt)
+            _adopted_root = getattr(slot, "_session_root_key", "") or getattr(slot, "_created_by", "")
+            _caller_root = getattr(_caller_slot_for_adopt, "_session_root_key", "") or _caller_slot_for_adopt.key
+            if _adopted_root and _adopted_root not in {_caller_root, _caller_slot_for_adopt.key, slot.key} and getattr(slot, "_created_by", ""):
+                raise SessionControlError("adoption across session roots is refused until capability accounting can be re-rooted", code="adopt_cross_root_refused", status=409)
         from kiro_crew.crew_log import emit as crew_log_emit
 
         # The TARGET's object, captured before the first suspension, so the final
@@ -4582,6 +4726,31 @@ async def adopt_target(
             # Inside the lock, so the next verb through it reads a tree that already carries
             # this decision -- the append's completion is also what advances the projection.
             await _tree_append_landed(landed, operation="adoption", target=slot.key)
+            # Re-stamp capability accounting onto the adopted subtree: it now
+            # counts under the adopter's original root, with adopter depth+1
+            # and tightened (never loosened) limits.
+            _adopter = state.get_slot(caller_key)
+            if _adopter is not None:
+                _allow = _creation_allowance(state, _adopter)
+                # BFS distance from the adopted slot over live _created_by children
+                _children={}
+                for _s2 in list(state._slots.values()):
+                    _par=getattr(_s2,"_created_by","") or ""
+                    if _par: _children.setdefault(_par,[]).append(_s2.key)
+                _dist={slot.key:0}; _queue=[slot.key]
+                while _queue:
+                    _cur=_queue.pop(0)
+                    for _ch in _children.get(_cur,[]):
+                        if _ch not in _dist: _dist[_ch]=_dist[_cur]+1; _queue.append(_ch)
+                for _k in [slot.key] + _live_descendant_keys(state, slot.key):
+                    _sub = state.get_slot(_k)
+                    if _sub is None: continue
+                    _sub._session_root_key = _allow["root_key"]
+                    _sub._session_depth = _allow["depth"] + _dist.get(_k, 1 if _k!=slot.key else 0)
+                    _sub._session_max_depth = min([x for x in [getattr(_sub, "_session_max_depth", None), _allow["max_depth"]] if x is not None])
+                    _sub._session_max_descendants = min([x for x in [getattr(_sub, "_session_max_descendants", None), _allow["max_descendants"]] if x is not None])
+                    _dls=[x for x in [getattr(_sub,"_session_deadline_at",None), _allow["deadline_at"]] if x is not None]
+                    _sub._session_deadline_at = min(_dls) if _dls else None
     _audit(
         caller_session_key=caller_session_key,
         operation="adopt",
@@ -6573,6 +6742,10 @@ async def revive_session(
         if not await state.read_folders(_exists):
             raise deny("folder not found", "folder_not_found", status=400)
 
+    _rev_caller = state.get_slot(caller_key)
+    if _rev_caller is not None:
+        try: _creation_allowance(state, _rev_caller)
+        except SessionControlError as e: raise deny(e.message, e.code, status=e.status)
     # A revive materialises the same resource a create does -- a live slot with
     # a hydrated transcript -- so it spends the same budgets: the per-caller
     # creation window and the per-creator and global slot caps.
@@ -6613,6 +6786,12 @@ async def revive_session(
         refusal = _revived_slot_refusal(built, live_caller)
         if refusal is not None:
             return ResumeRefusal(refusal[0], refusal[1], 403)
+        import time as _rt
+        if getattr(built, "_session_deadline_at", None) and _rt.time()>built._session_deadline_at:
+            return ResumeRefusal("session creation-admission deadline has passed", "session_budget_exhausted", 429)
+        _bmax=getattr(built, "_session_max_descendants", None); _broot=getattr(built, "_session_root_key", "")
+        if _bmax is not None and _broot and len(_live_descendant_keys(state, _broot))>=_bmax and getattr(built,"_created_by",""):
+            return ResumeRefusal("session tree descendant quota exceeded", "tree_descendant_quota_exceeded", 429)
         linked, mirrored = await asyncio.to_thread(_archived_link_and_mirror, state, history_key)
         if linked:
             return ResumeRefusal(
@@ -6675,6 +6854,12 @@ async def revive_session(
         refusal = _revived_slot_refusal(built, live_caller)
         if refusal is not None:
             return ResumeRefusal(refusal[0], refusal[1], 403)
+        import time as _rt
+        if getattr(built, "_session_deadline_at", None) and _rt.time()>built._session_deadline_at:
+            return ResumeRefusal("session creation-admission deadline has passed", "session_budget_exhausted", 429)
+        _bmax=getattr(built, "_session_max_descendants", None); _broot=getattr(built, "_session_root_key", "")
+        if _bmax is not None and _broot and len(_live_descendant_keys(state, _broot))>=_bmax and getattr(built,"_created_by",""):
+            return ResumeRefusal("session tree descendant quota exceeded", "tree_descendant_quota_exceeded", 429)
         if state.live_slot_count() > MAX_LIVE_SLOTS:
             return ResumeRefusal(f"slot cap reached ({MAX_LIVE_SLOTS})", "slot_cap_reached", 429)
         if state.creator_slot_count(caller_key) >= MAX_SLOTS_PER_CREATOR:
@@ -8202,6 +8387,13 @@ async def created_session_status(
                 "running": running,
                 "queue_depth": queue_depth,
                 **_pending_approval_fields(state, slot),
+                "leaf": bool(getattr(slot, "_session_leaf", False)),
+                "depth": getattr(slot, "_session_depth", None),
+                "root_key": getattr(slot, "_session_root_key", ""),
+                "max_depth": getattr(slot, "_session_max_depth", None),
+                "max_descendants": getattr(slot, "_session_max_descendants", None),
+                "current_action": str(getattr(slot, "_current_action", "") or "") or ("turn_running" if running else ("queued" if queue_depth else "unknown")),
+                "current_action_source": "runtime" if (getattr(slot, "_current_action", "") or running or queue_depth) else "unknown",
                 "source": "+".join(sources),
             }
         )

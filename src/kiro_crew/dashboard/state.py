@@ -2790,6 +2790,13 @@ class _ChatSlot:
         "_last_stop_reason",
         "_created_by",
         "_created_by_sid",
+        "_session_leaf",
+        "_session_depth",
+        "_session_root_key",
+        "_session_max_depth",
+        "_session_max_descendants",
+        "_session_deadline_at",
+        "_current_action",
         "_lineage_minted",
         "_revived_by",
         "_artifact",
@@ -3312,6 +3319,13 @@ class _ChatSlot:
         #: is fenced from them precisely so nothing there can be forged as
         #: gateway-authored.
         self._created_by_sid: str = ""
+        self._session_leaf: bool = False
+        self._session_depth: int | None = None
+        self._session_root_key: str = ""
+        self._session_max_depth: int | None = None
+        self._session_max_descendants: int | None = None
+        self._session_deadline_at: float | None = None
+        self._current_action: str = ""
         #: True only on a slot THIS gateway process minted through the
         #: session-control create verb. Never persisted or restored: it is the
         #: witness that ``_created_by`` / ``_created_by_sid`` were stamped by the

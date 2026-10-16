@@ -254,6 +254,12 @@ SLOT_OWNED_META_KEYS: frozenset[str] = frozenset(
         "forked_from",
         "linked_session_key",
         "tab_id",
+        "session_leaf",
+        "session_depth",
+        "session_root_key",
+        "session_max_depth",
+        "session_max_descendants",
+        "session_deadline_at",
     }
 )
 

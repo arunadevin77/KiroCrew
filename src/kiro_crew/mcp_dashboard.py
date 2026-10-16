@@ -703,6 +703,10 @@ def _session_tools() -> tuple[Tool, ...]:
                             "`parent`. Omit to leave the session at the top level."
                         ),
                     },
+                    "leaf": {"type": "boolean", "description": "If true, the new session may not create/fork/revive/adopt further sessions."},
+                    "max_depth": {"type": "integer", "minimum": 0, "description": "Tighten-only maximum lineage depth (creation-admission)."},
+                    "max_descendants": {"type": "integer", "minimum": 1, "description": "Tighten-only total live descendants quota (creation-admission)."},
+                    "budget_seconds": {"type": "number", "exclusiveMinimum": 0, "description": "Creation-admission deadline in seconds, inherited as not-after for creating descendants. Not a token or execution/runtime budget; does not stop a running session."},
                     "model": {
                         "type": "string",
                         "description": (
@@ -775,6 +779,7 @@ def _session_tools() -> tuple[Tool, ...]:
                             "folder."
                         ),
                     },
+                    "leaf": {"type": "boolean", "description": "If true, the forked session may not create/fork/revive/adopt further sessions."},
                     "at_message_index": {
                         "type": "integer",
                         "minimum": 0,
@@ -2646,6 +2651,9 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
     payload: dict[str, Any] = {"title": args.get("title", ""), "agent": args.get("agent", "")}
     if args.get("model"):
         payload["model"] = args["model"]
+    for _k in ("leaf", "max_depth", "max_descendants", "budget_seconds"):
+        if args.get(_k) is not None:
+            payload[_k] = args[_k]
 
     def _preflight_create(deepest_id: str) -> str | None:
         # The same create, as a dry run, against the folder the new path
@@ -2688,8 +2696,10 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
     )
 
 
-def _run_session_fork(args: dict[str, Any], ctx: ToolContext) -> str:
+def _run_session_fork(args: dict[str, Any], ctx: ToolContext) -> str:  # leaf forwarded below
     payload = {"source": args.get("source", ""), "title": args.get("title", "")}
+    if args.get("leaf"):
+        payload["leaf"] = True
     if args.get("at_message_index") is not None:
         payload["at_message_index"] = args["at_message_index"]
     fld_id, folder_label, made_note, fld_err = _resolve_folder_for_new_session(

@@ -706,6 +706,42 @@ def _read_turn_in_flight(r: _Read) -> None:
         r.applied.turn_prompt = cp._local_turn_prompt(r.meta)
 
 
+def _read_session_capability(r: _Read) -> None:
+    def _int(key):
+        v=r.meta.get(key)
+        if v is None: return None
+        if isinstance(v,bool) or not isinstance(v,int): raise ValueError(f"{key} must be an integer")
+        return v
+    def _num(key):
+        v=r.meta.get(key)
+        if v is None: return None
+        if isinstance(v,bool) or not isinstance(v,(int,float)): raise ValueError(f"{key} must be a number")
+        return float(v)
+    if "session_leaf" in r.meta:
+        if not isinstance(r.meta["session_leaf"], bool): raise ValueError("session_leaf must be a boolean")
+        r.slot._session_leaf=r.meta["session_leaf"]
+    _d=_int("session_depth")
+    if _d is not None and not (0<=_d<=2): raise ValueError("session_depth out of range")
+    if _d is not None: r.slot._session_depth=_d
+    if r.meta.get("session_root_key"):
+        if not isinstance(r.meta["session_root_key"], str): raise ValueError("session_root_key must be a string")
+        r.slot._session_root_key=r.meta["session_root_key"]
+    _md=_int("session_max_depth")
+    if _md is not None and not (0<=_md<=2): raise ValueError("session_max_depth out of range")
+    if _md is not None: r.slot._session_max_depth=_md
+    _mq=_int("session_max_descendants")
+    if _mq is not None and not (1<=_mq<=8): raise ValueError("session_max_descendants out of range")
+    if _mq is not None: r.slot._session_max_descendants=_mq
+    _dl=_num("session_deadline_at")
+    import math as _m
+    if _dl is not None and not _m.isfinite(_dl): raise ValueError("session_deadline_at must be finite")
+    if _dl is not None: r.slot._session_deadline_at=_dl
+
+    _cap_present = any(r.meta.get(k) is not None and r.meta.get(k) != "" for k in ("session_depth","session_root_key","session_max_depth","session_max_descendants","session_deadline_at"))
+    if _cap_present:
+        if not r.meta.get("session_root_key") or r.meta.get("session_depth") is None:
+            raise ValueError("partial session capability metadata: root and depth must be present together")
+
 def _read_created_by(r: _Read) -> None:
     # Creator attribution restored so the member ownership boundary in
     # session-control authorization survives a restart. ``created_by_sid`` is
@@ -1114,6 +1150,12 @@ FIELDS: tuple[Field, ...] = (
             "it after the build when lineage corroborates"
         ),
     ),
+    Field("session_leaf", _ALL, attr="_session_leaf", line=_always(lambda s: bool(s._session_leaf)), merge=_always(lambda s: bool(s._session_leaf)), read=_read_session_capability),
+    Field("session_depth", _ALL, attr="_session_depth", line=_always(lambda s: s._session_depth), merge=_always(lambda s: s._session_depth), read=_read_session_capability),
+    Field("session_root_key", _ALL, attr="_session_root_key", line=_always(lambda s: s._session_root_key), merge=_or_cleared(lambda s: s._session_root_key, ""), read=_read_session_capability),
+    Field("session_max_depth", _ALL, attr="_session_max_depth", line=_always(lambda s: s._session_max_depth), merge=_always(lambda s: s._session_max_depth), read=_read_session_capability),
+    Field("session_max_descendants", _ALL, attr="_session_max_descendants", line=_always(lambda s: s._session_max_descendants), merge=_always(lambda s: s._session_max_descendants), read=_read_session_capability),
+    Field("session_deadline_at", _ALL, attr="_session_deadline_at", line=_always(lambda s: s._session_deadline_at), merge=_always(lambda s: s._session_deadline_at), read=_read_session_capability),
     Field(
         "folder_id",
         _ALL,
@@ -1391,6 +1433,12 @@ LINE_ORDER: tuple[str, ...] = (
     "app",
     "origin",
     "created_by",
+    "session_leaf",
+    "session_depth",
+    "session_root_key",
+    "session_max_depth",
+    "session_max_descendants",
+    "session_deadline_at",
     "artifact",
     "pinned",
     "color_index",
@@ -1437,6 +1485,12 @@ MERGE_ORDER: tuple[str, ...] = (
     "app",
     "origin",
     "created_by",
+    "session_leaf",
+    "session_depth",
+    "session_root_key",
+    "session_max_depth",
+    "session_max_descendants",
+    "session_deadline_at",
     "linked_session_key",
     "channel_origin",
     "forked_from",

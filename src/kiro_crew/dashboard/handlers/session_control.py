@@ -250,6 +250,19 @@ async def api_session_control_create(request: web.Request) -> web.Response:
         dry_run = body.get("dry_run", False)
         if not isinstance(dry_run, bool):
             raise sc.SessionControlError("dry_run must be a boolean", code="invalid_field_type")
+        leaf = body.get("leaf", False)
+        if not isinstance(leaf, bool):
+            raise sc.SessionControlError("leaf must be a boolean", code="invalid_field_type")
+        max_depth = body.get("max_depth")
+        if max_depth is not None and (isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 0):
+            raise sc.SessionControlError("max_depth must be a non-negative integer", code="invalid_field_type")
+        max_descendants = body.get("max_descendants")
+        if max_descendants is not None and (isinstance(max_descendants, bool) or not isinstance(max_descendants, int) or max_descendants < 1):
+            raise sc.SessionControlError("max_descendants must be a positive integer", code="invalid_field_type")
+        budget_seconds = body.get("budget_seconds")
+        import math as _math
+        if budget_seconds is not None and (isinstance(budget_seconds, bool) or not isinstance(budget_seconds, (int, float)) or not _math.isfinite(float(budget_seconds)) or budget_seconds <= 0):
+            raise sc.SessionControlError("budget_seconds must be a positive number", code="invalid_field_type")
         # Warmed AFTER the body read, which suspends: a config edit landing in that
         # window would change the fingerprint and leave `create_session`'s own
         # synchronous gate re-reading the file on the loop. Nothing suspends between
@@ -263,6 +276,10 @@ async def api_session_control_create(request: web.Request) -> web.Response:
             folder_id=str(body.get("folder_id") or ""),
             model=str(body.get("model") or ""),
             dry_run=dry_run,
+            leaf=leaf,
+            max_depth=max_depth,
+            max_descendants=max_descendants,
+            budget_seconds=budget_seconds,
             # The fence verdict this request's admission already settled, for the
             # same reason every other route forwards it as
             # `precomputed_ownership_fenced`: `create_session` consults it after
@@ -294,6 +311,9 @@ async def api_session_control_fork(request: web.Request) -> web.Response:
         source = body.get("source", "")
         if not isinstance(source, str):
             raise sc.SessionControlError("source must be a string", code="invalid_field_type")
+        fork_leaf = body.get("leaf", False)
+        if not isinstance(fork_leaf, bool):
+            raise sc.SessionControlError("leaf must be a boolean", code="invalid_field_type")
         # Warmed AFTER the body read, for the reason `api_session_control_create`
         # gives: nothing suspends between here and `fork_session`'s own gate.
         await sc.prewarm_enabled_check()
@@ -305,6 +325,7 @@ async def api_session_control_fork(request: web.Request) -> web.Response:
             folder_id=str(body.get("folder_id") or ""),
             at_message_index=at_index,
             caller_fenced=_carried_fence(request),
+            leaf=fork_leaf,
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)

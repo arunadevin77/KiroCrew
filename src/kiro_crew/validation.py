@@ -3911,6 +3911,11 @@ SESSION_CREATE_SCHEMA = ToolSchema(
             max_len=MAX_SHORT_STRING,
             pattern=_MODEL_NAME_RE,
         ),
+        FieldSpec("leaf", bool, required=False, default=False),
+        FieldSpec("max_depth", int, required=False, min_val=0),
+        FieldSpec("max_descendants", int, required=False, min_val=1),
+        # Creation-admission deadline only; not a token/execution budget.
+        FieldSpec("budget_seconds", (int, float), required=False, min_val=0),
     ],
 )
 
@@ -3927,6 +3932,7 @@ SESSION_FORK_SCHEMA = ToolSchema(
         # visible (user/assistant) rows, inclusive. Bounded above only by the
         # transcript, which the fork core checks against the corpus it reads.
         FieldSpec("at_message_index", int, required=False, min_val=0),
+        FieldSpec("leaf", bool, required=False),
     ],
 )
 
