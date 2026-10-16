@@ -43,7 +43,7 @@ import { paintAnnotationHighlight } from '../utils/annotationHighlight'
 import { useSelectionComposerAnchor } from '../hooks/useSelectionComposerAnchor'
 // Artifact body renderers, extracted here so the chat side panel shares them.
 import { ArtifactBodyNative, ArtifactBodyIframe, ArtifactBodyImage, artifactAssetUrl, isEditableKind } from '../components/ArtifactBody'
-import { filterCommentsForForward } from '../lib/commentFilter'
+import { filterCommentsForForward, pendingSubmitComments } from '../lib/commentFilter'
 import { useArtifactPopouts } from '../hooks/useArtifactPopouts'
 import { useArtifactLiveReload } from '../hooks/useArtifactLiveReload'
 import { forwardToMain, type NavIntent } from '../utils/artifactPopout'
@@ -1786,16 +1786,15 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
   const [sentIds, setSentIds] = useState<Set<string>>(() => readSentIds(sentKey))
   useEffect(() => { setSentIds(readSentIds(sentKey)) }, [sentKey])
   // Pending = forwarding-eligible AND human-authored AND not yet submitted —
-  // the same three-filter composition as ArtifactPanel, because this is the
-  // standalone-page twin of that Submit and both reach the same agent. Without
-  // filterCommentsForForward here the page would show the filtered count beside
-  // a bar that still ships resolved threads. Agent comments are dropped here AND
-  // inside formatArtifactCommentsMessage (hardened esc()); `!sentIds.has` stops
-  // an already-submitted batch being re-sent.
+  // `pendingSubmitComments`, the same composition as ArtifactPanel, because
+  // this is the standalone-page twin of that Submit and both reach the same
+  // agent. Agent comments are dropped there AND inside
+  // formatArtifactCommentsMessage (hardened esc()).
   const pendingComments = useMemo(
-    () => filterCommentsForForward(durableComments).filter(c => !c.is_agent && !sentIds.has(c.id)),
+    () => pendingSubmitComments(durableComments, sentIds),
     [durableComments, sentIds],
   )
+  const pendingCommentIds = useMemo(() => new Set(pendingComments.map(c => c.id)), [pendingComments])
   const [submittingComments, setSubmittingComments] = useState(false)
   /** Send every pending comment to the artifact's companion session as ONE
    *  message — the standalone-page twin of the chat side panel's Submit.
@@ -2713,6 +2712,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
                   connected={connected}
                 />
               ) : undefined}
+              pendingSubmitIds={boundSlot ? pendingCommentIds : undefined}
               onClose={toggleSidebar}
               onCommentClick={activateFromSidebar}
               onEditComment={editComment}

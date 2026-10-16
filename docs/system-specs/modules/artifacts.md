@@ -1585,7 +1585,13 @@ Without the parameter the full list comes back. The companion chat's Submit
 forwards only unresolved threads, through the client mirror
 `lib/commentFilter.ts`, which also drives the agent-facing open-comment count.
 The comments sidebar still lists every thread, with resolved ones behind its
-show-resolved toggle, by design.
+show-resolved toggle, by design. The Submit batch itself is
+`pendingSubmitComments` in the same module (unresolved, human-authored, and not
+in the host's `mc-cmt-sent:<slug>` set); where a host shows the Submit bar, the
+sidebar marks each row of that batch "To send", from the same function, so the
+bar's count can be matched to the rows. Both surfaces that share the sidebar (the
+chat side panel and the standalone artifact page) mark rows, and a host with no
+Submit marks none.
 
 **Inbound comment sync (fetch-on-view).** `GET /api/artifacts/{slug}/comments`
 opportunistically pulls the provider's comments (`fetch_comments`, when the

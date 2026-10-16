@@ -4488,7 +4488,8 @@
       "resolved": "resolved",
       "review": "Review",
       "save": "Save",
-      "shared_comment": "Shared comment"
+      "shared_comment": "Shared comment",
+      "to_send": "To send"
     },
     "contentRenderer": {
       "changes_update_svg_preview_as_you_type": "Changes update the preview as you type.",

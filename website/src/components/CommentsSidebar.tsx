@@ -162,11 +162,13 @@ export function EditBox({ initial, onSubmit, onCancel }: { initial: string; onSu
 /** Single comment row (root or reply). Replies render indented with no anchor. */
 export function CommentRow({
   comment, isReply, active, restrictActions, hideResolve, hideDelete, onReply, onResolve, onMarkReview, onReopen, onDelete, onBodyClick,
-  editing, onEdit, onEditSubmit, onEditCancel,
+  editing, onEdit, onEditSubmit, onEditCancel, pendingSubmit,
 }: {
   comment: ArtifactComment
   isReply: boolean
   active?: boolean
+  /** This row is in the batch the footer's Submit bar counts and would send. */
+  pendingSubmit?: boolean
   restrictActions?: boolean
   hideResolve?: boolean
   hideDelete?: boolean
@@ -227,6 +229,12 @@ export function CommentRow({
         {comment.is_agent && <Bot size={11} className="text-accent shrink-0" aria-label={i18nT('components.commentsSidebar.ai_agent')} />}
         {comment.scope === 'shared' && <Link2 size={11} className="text-muted shrink-0" aria-label={i18nT('components.commentsSidebar.shared_comment')} />}
         {syncWarn && <AlertTriangle size={11} className="text-warn shrink-0" aria-label={syncWarn} />}
+        {pendingSubmit && (
+          <span
+            data-testid="comment-pending-submit"
+            className="ml-auto inline-flex items-center gap-0.5 px-1 rounded bg-accent-subtle text-accent text-[10px] font-medium leading-4 shrink-0"
+          ><Send size={9} aria-hidden="true" />{i18nT('components.commentsSidebar.to_send')}</span>
+        )}
       </div>
       {/* body (or inline editor when editing) */}
       {isEditing ? (
@@ -339,6 +347,10 @@ export interface CommentsSidebarProps {
    *  children — importing it here would close an import cycle. Hosts without a
    *  send path omit it and the footer is unchanged. */
   submitBar?: React.ReactNode
+  /** Ids of the comments `submitBar`'s count is made of, so each of those rows
+   *  is marked and a reader can match the count to the rows. Hand it over with
+   *  the bar; omitted, no row is marked. */
+  pendingSubmitIds?: ReadonlySet<string>
   onClose: () => void
   /** Hide Resolve/Review/Delete (e.g. a fully read-only view). */
   restrictActions?: boolean
@@ -410,7 +422,7 @@ export const CommentsSidebar = memo(function CommentsSidebar(props: CommentsSide
   const isMobile = useIsMobile()
   const {
     comments, loading, remoteSyncError, loadError, mutationError, onDismissMutationError, onAdd, onReply, onResolve,
-    onMarkReview, onDelete, onRefresh, onAskAgent, submitBar, onClose, restrictActions, hideResolve, hideDelete,
+    onMarkReview, onDelete, onRefresh, onAskAgent, submitBar, pendingSubmitIds, onClose, restrictActions, hideResolve, hideDelete,
     onCommentClick, onReopen, activeCommentId, flashCommentId,
     containerClassName, containerStyle, onEditComment, onDraftDirtyChange, discardSignal,
   } = props
@@ -591,6 +603,7 @@ export const CommentsSidebar = memo(function CommentsSidebar(props: CommentsSide
               comment={root}
               isReply={false}
               active={root.id === activeCommentId}
+              pendingSubmit={pendingSubmitIds?.has(root.id)}
               restrictActions={restrictActions}
               hideResolve={hideResolve}
               hideDelete={hideDelete}
@@ -611,6 +624,7 @@ export const CommentsSidebar = memo(function CommentsSidebar(props: CommentsSide
                   comment={r}
                   isReply
                   active={r.id === activeCommentId}
+                  pendingSubmit={pendingSubmitIds?.has(r.id)}
                   restrictActions={restrictActions}
                   hideResolve={hideResolve}
               hideDelete={hideDelete}
