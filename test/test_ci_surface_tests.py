@@ -397,8 +397,12 @@ def test_ignore_list_matches_the_names_conftest_previously_inlined() -> None:
     no-op on NTFS so the stub is never the ``gh`` that resolves. Listing the module
     is how a POSIX-only-by-design suite is stated here; a class-level ``skipif``
     would leave a marker that proves nothing on that shard either.
+
+    ``test_ci_fork_windows_scope_posix.py`` is listed for the same reason: it runs
+    ci.yml's fork Windows scope step under bash inside a throwaway git checkout.
     """
     assert _ignore_names() == {
+        "test_ci_fork_windows_scope_posix.py",
         "test_macos_pool_ceiling_posix.py",
         "test_sandbox_argv.py",
         "test_sandbox_cc_mode.py",

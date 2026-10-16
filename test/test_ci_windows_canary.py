@@ -165,7 +165,10 @@ def test_shard_selection_and_checks_stay_intact(jobs):
     assert job["env"]["SHARD_COUNT"] == 8
     assert job["env"]["MDNB_GIT_TIMEOUT_SEC"] == 120
     assert job["timeout-minutes"] == 60
-    assert "if" not in job and "continue-on-error" not in job
+    # The one condition is the fork Windows scope, and it skips only on an
+    # explicit 'false' (test_ci_fork_windows_scope_posix.py runs that logic).
+    assert job["if"] == "needs.changes.outputs.windows_tests != 'false'"
+    assert "continue-on-error" not in job
     step = next(s for s in job["steps"] if s.get("name", "").startswith("Run tests (Windows shard"))
     command = re.sub(
         r"\s+", " ", step["run"].split("python -m pytest", 1)[1].replace("\\\n", " ")
