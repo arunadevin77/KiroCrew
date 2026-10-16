@@ -86,6 +86,7 @@ from kiro_crew.agent_sdk.capabilities import capabilities_for, capabilities_of
 from kiro_crew.agent_sdk.drivers.acp import (
     EntitlementRevalidating,
     catalog_row_would_drop,
+    refresh_exclusive_catalog,
     resolve_kiro_bin_for_spawn,
     resolve_pin_spelling,
     resolve_ssh_auth_sock,
@@ -376,6 +377,16 @@ _LIST_MODELS_CATALOG_TTL_SECS: float = 300.0
 # CLI to two spawns a minute, while a user who has just signed in waits at most
 # 30s for the picker to fill. A success clears the entry at once.
 _LIST_MODELS_FAILURE_BACKOFF_SECS: float = 30.0
+
+# Qoder's own catalog is account/release dependent, but its picker can update
+# without a live session. One service-owned probe per interval is enough; the
+# retry gate prevents an unreachable service from being hammered by the UI poll.
+_QODER_CATALOG_TTL_SECONDS: float = 600.0
+_QODER_CATALOG_RETRY_SECONDS: float = 30.0
+_QODER_CATALOG_REFRESH_STATE: dict[str, asyncio.Task[object] | float | None] = {
+    "task": None,
+    "started_at": 0.0,
+}
 # The cache is the one place ``--list-models`` output is held past the request,
 # so retention is bounded before it is stored. Row count and identifying-field
 # length reuse the repo's ONE shared admission bound
@@ -863,18 +874,53 @@ def _advertised_backend_models(
     A live session wins over the cross-session cache. Both sources retain the
     adapter's exact model ids, which may be provider/model pairs for Pi. A cold
     cache offers ``auto`` and, when set, the configured default until the first
-    session advertises its choices.
+    session advertises its choices; an exclusive catalog does neither, because
+    Crew does not yet know any id it accepts and would otherwise offer an
+    unmeasured sentinel.
     """
     namespace = model_registry_namespace(backend)
     advertised = _advertised_cc_models(request, namespace)
+    if capabilities_for(backend).advertised_models_are_exclusive:
+        # An exclusive catalog's labels come from the service's own persisted rows;
+        # the ids (and a live session's list) are still decided above.
+        rows_by_id = {
+            row.get("modelId"): row
+            for row in model_registry.advertised_model_rows(namespace)
+            if row.get("modelId")
+        }
+        for entry in advertised:
+            row = rows_by_id.get(entry.get("model_name"))
+            if (
+                row
+                and entry.get("display_name") == entry.get("model_name")
+                and not entry.get("description")
+            ):
+                entry["display_name"] = row.get("name") or entry["model_name"]
+                entry["description"] = row.get("description", "")
 
-    rows: list[dict] = [
-        {"model_name": "auto", "display_name": "Auto", "description": "Backend default"}
-    ]
-    seen: set[str] = {"auto"}
+    exclusive = capabilities_for(backend).advertised_models_are_exclusive
+    offer_auto = not exclusive
+    rows: list[dict] = (
+        [
+            {
+                "model_name": "auto",
+                "display_name": "Auto",
+                "description": "Backend default",
+                "advertised_models_exclusive": exclusive,
+            }
+        ]
+        if offer_auto
+        else []
+    )
+    seen: set[str] = set()
     for entry in advertised:
         name = str(entry.get("model_name", "") or "").strip()
-        if not name or _normalize_model_key(name) == "auto" or name in seen:
+        if not name or name in seen:
+            continue
+        # Non-exclusive catalogs get the synthetic auto row first and therefore
+        # drop a duplicate. Qoder's auto is measured as an accepted id, so its
+        # advertised row is real and must survive.
+        if _normalize_model_key(name) == "auto" and offer_auto:
             continue
         seen.add(name)
         rows.append(
@@ -882,6 +928,7 @@ def _advertised_backend_models(
                 "model_name": name,
                 "display_name": entry.get("display_name") or name,
                 "description": entry.get("description", ""),
+                "advertised_models_exclusive": exclusive,
             }
         )
     default = (configured_default or "").strip()
@@ -890,11 +937,24 @@ def _advertised_backend_models(
         and _normalize_model_key(default) != "auto"
         and default not in seen
         and not advertised
+        and not capabilities_for(backend).advertised_models_are_exclusive
     ):
         rows.insert(
-            1, {"model_name": default, "display_name": default, "description": "Configured default"}
+            1,
+            {
+                "model_name": default,
+                "display_name": default,
+                "description": "Configured default",
+                "advertised_models_exclusive": exclusive,
+            },
         )
     for entry in rows:
+        if exclusive:
+            # An exclusive harness (Qoder) serves per-model windows that ACP does
+            # not expose, so the reference fallback would be a made-up number.
+            # None tells the frontend the window is unknown.
+            entry["context_window"] = None
+            continue
         entry["context_window"] = (
             model_registry.model_window(entry["model_name"])
             or model_registry.REFERENCE_WINDOW_TOKENS
@@ -1334,6 +1394,67 @@ def _consume_refresh_exception(task: "asyncio.Task[list[dict]]") -> None:
         logger.debug("api_models: background catalog refresh failed (serving cached)", exc_info=exc)
 
 
+async def _maybe_refresh_qoder_catalog(backend: str) -> None:
+    """Refresh Qoder's picker catalog behind a bounded, stale-friendly read.
+
+    A fresh observed-at stamp means the endpoint can answer immediately. After
+    the TTL, one shared task starts; every overlapping request awaits that task
+    for at most the ordinary model-list request bound. If the probe times out,
+    the shielded task finishes under its own launch bound while this request
+    returns the stale snapshot. A recent failure is retried only after the retry
+    gate, and an empty answer never replaces the cached catalog.
+    """
+    observed = model_registry.advertised_models_observed_at(model_registry_namespace(backend))
+    if observed and time.time_ns() - observed < _QODER_CATALOG_TTL_SECONDS * 1_000_000_000:
+        return
+    task = _QODER_CATALOG_REFRESH_STATE.get("task")
+    if isinstance(task, asyncio.Task) and not task.done():
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=_LIST_MODELS_SUBPROCESS_TIMEOUT_SECS
+            )
+        except asyncio.TimeoutError:
+            logger.debug("qoder catalog refresh did not finish before the read bound")
+        except Exception:
+            logger.debug("qoder catalog refresh failed before the read bound", exc_info=True)
+        return
+    now = time.monotonic()
+    started_at = _QODER_CATALOG_REFRESH_STATE.get("started_at")
+    if (
+        isinstance(started_at, (int, float))
+        and started_at > 0
+        and now - started_at < _QODER_CATALOG_RETRY_SECONDS
+    ):
+        return
+    _QODER_CATALOG_REFRESH_STATE["started_at"] = now
+
+    async def _bounded_refresh() -> object:
+        rows = await asyncio.wait_for(
+            refresh_exclusive_catalog(backend), timeout=_LIST_MODELS_SUBPROCESS_TIMEOUT_SECS
+        )
+        return bool(rows)
+
+    task = asyncio.ensure_future(_bounded_refresh())
+    _QODER_CATALOG_REFRESH_STATE["task"] = task
+    refreshed: object = None
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=_LIST_MODELS_SUBPROCESS_TIMEOUT_SECS)
+    except asyncio.TimeoutError:
+        logger.info("qoder catalog refresh slower than the model-list read bound; serving stale")
+    except Exception:
+        logger.debug("qoder catalog refresh failed; serving stale", exc_info=True)
+    else:
+        # A non-empty refresh is success. Let the next TTL expiry start another
+        # probe immediately instead of suppressing it for the failure-retry
+        # window. Empty is failure/no evidence and keeps the retry gate armed.
+        refreshed = await task
+        if refreshed:
+            _QODER_CATALOG_REFRESH_STATE["started_at"] = 0.0
+    finally:
+        if _QODER_CATALOG_REFRESH_STATE.get("task") is task:
+            _QODER_CATALOG_REFRESH_STATE["task"] = None
+
+
 async def api_models(request: web.Request) -> web.Response:
     """GET /api/models — the model list for the configured backend.
 
@@ -1348,6 +1469,8 @@ async def api_models(request: web.Request) -> web.Response:
             _cc_models(request, configured_default=_scoped_default(cfg, backend))
         )
     if capabilities_for(backend).resolves_model_from_advertised_list:
+        if capabilities_for(backend).advertised_models_are_exclusive:
+            await _maybe_refresh_qoder_catalog(backend)
         return web.json_response(
             _advertised_backend_models(
                 request, backend, configured_default=_scoped_default(cfg, backend)

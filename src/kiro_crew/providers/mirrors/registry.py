@@ -38,6 +38,7 @@ from kiro_crew.acp_backends import (
     ACP_BACKEND_KIRO,
     ACP_BACKEND_OPENCODE,
     ACP_BACKEND_PI,
+    ACP_BACKEND_QODER,
 )
 from kiro_crew.providers.mirrors.base import AgentConfigMirror
 from kiro_crew.providers.mirrors.claude_code import ClaudeCodeMirror
@@ -362,6 +363,18 @@ PROJECTIONS: dict[str, McpProjection] = {
             "cause, a command that does not exist, before the request: acp.mcp_startable "
             "leaves the element out and the session's MCP report names it as failed "
             "(ACP_BACKENDS_PRUNE_UNSTARTABLE_MCP)"
+        ),
+        tracking="docs/request-for-change/rfc-agent-config-mirror.md#5-migration",
+    ),
+    ACP_BACKEND_QODER: McpProjection(
+        kind=ProjectionKind.BROKER_ONLY,
+        reason=(
+            "qoder mounts a stdio element sent on the session/new mcpServers array and "
+            "asks its tool under the pinned ask rule, so the broker-only channel is "
+            "measured. As with deepseek, no mirror is claimed: the agent-spec servers "
+            "and the spec's per-tool deny projection were not measured, so they stay "
+            "out rather than being granted by analogy. Project MCP files and servers are "
+            "dropped by --strict-mcp-config; a session-array element is not"
         ),
         tracking="docs/request-for-change/rfc-agent-config-mirror.md#5-migration",
     ),

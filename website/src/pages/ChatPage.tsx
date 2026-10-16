@@ -92,6 +92,7 @@ export { PREFILL_STORAGE_KEY } from '../utils/navIntent'
 export { shouldAutoFillOlder } from './chat/page/transcriptPaging'
 import { PREFILL_STORAGE_KEY, writePrefill } from '../utils/navIntent'
 import WelcomeView from '../components/WelcomeView'
+import { labelFor } from '../hooks/useAvailableModels'
 import { MemoryModeChip } from '../components/MemoryModeChip'
 import { claimAppAutoOpen } from '../hooks/usePanelTabs'
 import { legacyCodexEffort } from '../hooks/useInteractiveModels'
@@ -2381,7 +2382,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               agentLabel={agentOrDefaultLabel(currentSlot?.agent, defaultAgent)}
               agentIsInheritedDefault={!currentSlot?.agent && !!defaultAgent}
               agentSource={effectiveAgents.find(a => a.name === activeAgentName)?.source}
-              modelName={shownModel}
+              modelName={labelFor(availableModels, shownModel)}
               modelIsInheritedDefault={modelMarker === 'default'}
               modelIsAutoChosen={modelMarker === 'auto'}
               // The turn's model is Jev's to pick exactly when the routing gate

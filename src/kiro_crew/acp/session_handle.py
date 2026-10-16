@@ -126,6 +126,7 @@ from kiro_crew.acp.types import (
     ACP_BACKEND_KIRO,
     ACP_BACKENDS_ADVERTISED_MODEL_SELECTION,
     ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION,
+    ACP_BACKENDS_EFFORT_LADDER_ORDERED,
     ACP_BACKENDS_HOOKS_LIST,
     ACP_BACKENDS_INLINE_COMPACTION,
     ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS,
@@ -203,6 +204,7 @@ from kiro_crew.agent_sdk.capabilities import capabilities_for
 from kiro_crew.agent_sdk.drivers.acp import EntitlementRevalidating  # noqa: F401 - raised here
 from kiro_crew.config.paths import kiro_sessions_dir
 from kiro_crew.constants import COMPACT_WAIT_TIMEOUT_SECS
+from kiro_crew.effort import order_effort_levels
 from kiro_crew.executors import subprocess_executor
 from kiro_crew.metrics.events import CHILD_PERMISSION_DENIED, emit_counter
 from kiro_crew.platform.context import redact_log_via_context
@@ -4334,7 +4336,7 @@ class AcpSessionHandle:
         )
 
     def get_valid_effort_levels(self) -> list[str]:
-        """Return valid effort levels from config options, preserving order.
+        """Return valid effort levels from config options, least to most effort.
 
         The option id is resolved per backend (``effort`` for most,
         ``reasoning_effort`` for codex-acp): a hard-coded spelling returns an
@@ -4348,11 +4350,16 @@ class AcpSessionHandle:
             if opt.get("id") == effort_option:
                 options = opt.get("options", [])
                 if isinstance(options, list):
-                    return [
+                    levels = [
                         o.get("value", "")
                         for o in options
                         if isinstance(o, dict) and o.get("value")
                     ]
+                    return (
+                        order_effort_levels(levels)
+                        if self._runtime.acp_backend in ACP_BACKENDS_EFFORT_LADDER_ORDERED
+                        else levels
+                    )
         return []
 
     def rebind_watchdog(self, crew_agent: str, settings: WatchdogSettings | None = None) -> None:

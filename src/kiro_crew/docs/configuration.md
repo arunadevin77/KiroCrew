@@ -135,6 +135,7 @@ provider.
 | `pi` | Pi | Uses `pi-acp` and its Pi gate extension. |
 | `goose` | goose | Uses goose's native ACP server. |
 | `deepseek` | DeepSeek Harness | Runs `dsh --profile acp` with Kiro Crew's gate plugin; provider keys come from `agent.deepseek_env`. |
+| `qoder` | Qoder CLI | Runs `qodercli --acp`; set `QODERCLI_BIN` to override the binary (install: `npm i -g @qoder-ai/qodercli`). Sign in with `qodercli login`; Kiro Crew does not check the sign-in. Tool approval is pinned to an inline `ask` rule for every tool, so each call reaches Kiro Crew's gate. Only qodercli 1.1.67 is accepted. Models are the ones Qoder advertises. |
 
 The non-default harnesses are offered only when this build registers them. A
 host governance policy can narrow that list further, and the dashboard reports

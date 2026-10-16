@@ -22,6 +22,7 @@ from kiro_crew.acp.types import (
     ACP_BACKEND_KAS,
     ACP_BACKEND_OPENCODE,
     ACP_BACKEND_PI,
+    ACP_BACKEND_QODER,
     ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION,
     effort_config_option_id,
     effort_config_option_value,
@@ -40,6 +41,9 @@ BACKEND_CASES = {
     ACP_BACKEND_KAS: ("claude-opus-5", "claude-opus-5.5", True),
     ACP_BACKEND_OPENCODE: ("stub/think-1", "stub/think-2", True),
     ACP_BACKEND_PI: ("pi-model-a", "pi-model-b", True),
+    # qfmodel is session-owned. Only low was accepted/reflected, so the generic
+    # high-level fallback case must not pretend Qoder advertised Crew's full ladder.
+    ACP_BACKEND_QODER: ("qfmodel", "qfmodel", True),
 }
 
 
@@ -78,23 +82,42 @@ def test_the_fallback_walk_resolves_the_provider_method() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "backend,expected", [(ACP_BACKEND_CLAUDE, True), (ACP_BACKEND_QODER, False)]
+)
+async def test_unknown_effort_option_is_fatal_only_for_qoder(backend, expected):
+    applied: list[tuple[str, str]] = []
+    provider = _provider(backend, BACKEND_CASES[backend][0], applied)
+    provider._client.set_config_option = AsyncMock(
+        side_effect=AcpError("JSON-RPC error: Unknown config option: effort")
+    )
+
+    assert await provider._set_effort_config_option("high") is expected
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("backend", sorted(BACKEND_CASES))
 async def test_set_model_delegates_then_reapplies_the_slot_level(backend: str) -> None:
     before, after, takes_effort = BACKEND_CASES[backend]
     applied: list[tuple[str, str]] = []
     provider = _provider(backend, before, applied)
-    provider._effort_per_model[before] = "high"
-
+    slot_level = "low" if backend == ACP_BACKEND_QODER else "high"
+    provider._effort_per_model[before] = slot_level
     await provider.set_model(after)
 
-    effort_write = (effort_config_option_id(backend), effort_config_option_value(backend, "high"))
+    effort_write = (
+        effort_config_option_id(backend),
+        effort_config_option_value(backend, slot_level),
+    )
     if takes_effort:
         # Slot-last: the model push lands first, the effort write after it.
         assert applied == [("model", after), effort_write]
     else:
         assert applied == [("model", after)]
-    # Pushed live only: the target model's stored state is untouched.
-    assert after not in provider._effort_per_model
+    # Pushed live only: a model change leaves the target model's stored state
+    # untouched. Qoder's measured case rewrites the same session-owned model id.
+    if before != after:
+        assert after not in provider._effort_per_model
 
 
 @pytest.mark.asyncio
