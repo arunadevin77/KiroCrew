@@ -58,7 +58,7 @@ import {
   finishComposerAttachment,
   releaseComposerSend,
   unregisterComposerUpload,
-  useComposerUploadCancellable,
+  useComposerUploadCount,
 } from '../../utils/composerSendHolds'
 
 type MutableRef<T> = { current: T }
@@ -686,7 +686,8 @@ export function useChatPageResourcesController({
   // flag is SHARED with takeScreenshot, which registers no controller, so a
   // control gated on it would offer a cancel during a macOS `screencapture -i`
   // with nothing to abort.
-  const uploadCancellable = useComposerUploadCancellable(activeSlot)
+  const uploadCount = useComposerUploadCount(activeSlot)
+  const uploadCancellable = uploadCount > 0
   /** Abort every upload in flight for the ACTIVE slot, whichever host started it. */
   const cancelUpload = useCallback(() => {
     cancelComposerUploads(activeSlotRef.current)
@@ -875,6 +876,7 @@ export function useChatPageResourcesController({
     composerUploadFiles,
     cancelUpload,
     uploadCancellable,
+    uploadCount,
     handleOptimizeResult,
     dragOver,
     dropTargetProps,

@@ -15,6 +15,7 @@ import {
   useComposerArrivals,
   useComposerSendHeld,
   useComposerUploadCancellable,
+  useComposerUploadCount,
 } from '../utils/composerSendHolds'
 
 describe('composerSendHolds', () => {
@@ -216,6 +217,36 @@ describe('composerSendHolds: live upload controllers', () => {
     act(() => unregisterComposerUpload('hooked', c))
     expect(result.current).toBe(false)
     expect(render).toHaveBeenCalledTimes(3)
+  })
+
+  // #13071: the cancel label names how many uploads one press stops, so the
+  // count is state that re-renders as a second upload starts and each settles.
+  it('reports the live controller count for its slot only', () => {
+    const a = new AbortController()
+    const b = new AbortController()
+    const other = new AbortController()
+    const { result } = renderHook(() => useComposerUploadCount('counted-live'))
+    expect(result.current).toBe(0)
+    act(() => registerComposerUpload('counted-live', a))
+    expect(result.current).toBe(1)
+    act(() => {
+      registerComposerUpload('counted-live', b)
+      registerComposerUpload('counted-other', other)
+    })
+    expect(result.current).toBe(2)
+    act(() => unregisterComposerUpload('counted-live', a))
+    expect(result.current).toBe(1)
+    act(() => {
+      unregisterComposerUpload('counted-live', b)
+      unregisterComposerUpload('counted-other', other)
+    })
+    expect(result.current).toBe(0)
+  })
+
+  it('counts zero for a null slot', () => {
+    const { result } = renderHook(() => useComposerUploadCount(null))
+    registerComposerUpload(null, new AbortController())
+    expect(result.current).toBe(0)
   })
 
   it('keeps the hold count independent of the controllers', () => {

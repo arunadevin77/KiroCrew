@@ -234,8 +234,13 @@ class ComposerSync {
     this.notify()
   }
 
+  /** How many uploads `cancelComposerUploads(slot)` would abort right now. */
+  composerUploadCount(slot: Slot): number {
+    return slot ? this.controllers.get(slot)?.size ?? 0 : 0
+  }
+
   isComposerUploadCancellable(slot: Slot): boolean {
-    return !!slot && (this.controllers.get(slot)?.size ?? 0) > 0
+    return this.composerUploadCount(slot) > 0
   }
 
   close() {
@@ -292,6 +297,16 @@ export function useComposerUploadCancellable(slot: Slot) {
     composerSync.subscribe,
     () => composerSync.isComposerUploadCancellable(slot),
     () => false,
+  )
+}
+
+/** The live upload count for a slot, as state, so a label that names it
+ *  re-renders when a second upload starts or one of two settles. */
+export function useComposerUploadCount(slot: Slot) {
+  return useSyncExternalStore(
+    composerSync.subscribe,
+    () => composerSync.composerUploadCount(slot),
+    () => 0,
   )
 }
 

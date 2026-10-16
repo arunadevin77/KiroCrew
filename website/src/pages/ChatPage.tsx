@@ -646,6 +646,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     composerUploadFiles,
     cancelUpload,
     uploadCancellable,
+    uploadCount,
     handleOptimizeResult,
     dragOver,
     dropTargetProps,
@@ -2341,6 +2342,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                  host started it. `uploading` is shared with the screenshot
                  path, which has no request to cancel. */
               onCancelUpload={uploadCancellable ? cancelUpload : undefined}
+              uploadCount={uploadCount}
               /* The one collapsible composer. Opt-in rather than default so the
                  shared preference key and the window-level expand event stay
                  correct by construction -- see ChatInput's `collapsible` prop. */
