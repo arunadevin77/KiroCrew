@@ -1,20 +1,25 @@
 # OpenCode frame corpus
 
-Seven files, all live. Read `../README.md` first for what a fixture is and what
-the corpus does and does not prove.
+Eight files on the v1 line plus two v2 captures, all live. Read `../README.md`
+first for what a fixture is and what the corpus does and does not prove.
 
 | File | Provenance | Frame classes it carries |
 |---|---|---|
-| `session-live.jsonl` | live | initialize response with `agentInfo.version`, `session/new` response with a `sessionId`, `agent_message_chunk`, `usage_update`, and the `session/prompt` result carrying `stopReason` |
+| `session-live.jsonl` | live, 1.18.30 | initialize response with `agentInfo.version`, `session/new` response with a `sessionId`, `agent_message_chunk`, `usage_update`, and the `session/prompt` result carrying `stopReason` |
 | `tool-call-live.jsonl` | live | `tool_call`, and two `tool_call_update` frames (`in_progress`, then a terminal `failed`) -- a call the harness rejected against its own argument schema |
 | `permission-request-live.jsonl` | live | `tool_call`, `session/request_permission`, and the `tool_call_update` frames through to `completed` with the command's real output |
 | `session-load-live.jsonl` | live | a `session/load` from a second process: the replayed `user_message_chunk` / `agent_message_chunk` updates and the load result, which carries `configOptions` and no `modes` |
 | `mcp-directive-call-live.jsonl` | live | a Crew MCP `tool_call`, its `in_progress` refinement and its terminal `tool_call_update` -- the single-underscore `kirocrew-core_<tool>` title, an empty-then-refined `rawInput`, and a result carrying a directive marker |
 | `compact-live.jsonl` | live | a MANUAL `/compact`: an ordinary turn's `usage_update` and `stopReason`, then the `/compact` turn's summary `agent_message_chunk`, its far smaller `usage_update`, and its `stopReason: end_turn` with NO compaction status frame |
 | `effort-live.jsonl` | live | `session/set_config_option` results for the per-model `effort` select (low, medium, high on a reasoning model, absent on a plain one), a `-32602` refusal of an unoffered level, and the reset to the first level after a model switch |
+| `session-v2-live.jsonl` | live, 2.0.29 | initialize response with `agentInfo.version`, `session/new` response with a `sessionId` and model `configOptions`, `agent_message_chunk`, `usage_update`, and the `session/prompt` result carrying `stopReason` |
+| `permission-request-v2-live.jsonl` | live, 2.0.29 | `tool_call` for `shell`, `session/request_permission` with once/always/reject options and complete `rawInput`, the client's allow, and the `tool_call_update` frames through to `completed` with the command's real output |
 
 Captured off `opencode acp` 1.18.30 driving a local Ollama model, agent-to-client
 lines verbatim, with the recording user's home directory replaced by `~`.
+The two `-v2-` files are captured off `opencode acp` 2.0.29 driving a
+subscription model through the Crew broker instead (same redaction, same
+verbatim rule); their `_meta.note` records the seed and the reply.
 `tool-call-live.jsonl` is a **slice**: the 430 `agent_message_chunk` frames the
 model emitted around the tool call are omitted for length, and the fixture's own
 `_meta.note` says so. `effort-live.jsonl` is captured off the same version against a
@@ -42,6 +47,12 @@ The earlier capture in `tool-call-live.jsonl` shows the other path: a call whose
 arguments fail OpenCode's own schema is rejected BEFORE any permission check, so no
 permission frame exists for it. Both fixtures are kept because they are different
 facts about the same harness.
+
+`permission-request-v2-live.jsonl` re-proves the same second half on 2.0.29
+under the v2 ask-all seed: the frame carries once/always/reject options
+(v1: allow_once-style ids, echoed back verbatim by the client either way),
+complete `rawInput`, and the turn completes after the allow. The v1 capture
+above stays the evidence for the v1 line; nothing here re-pins v1 behavior.
 
 ## What the MCP capture establishes
 
