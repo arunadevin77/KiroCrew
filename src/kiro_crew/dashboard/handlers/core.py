@@ -4138,13 +4138,21 @@ async def api_session_agent_stream(request: web.Request) -> web.StreamResponse:
 async def api_logout(request: web.Request) -> web.Response:
     """POST /api/logout — revoke all active dashboard sessions.
 
-    Called by ``kirocrew logout`` CLI. Requires loopback + local secret
-    (same auth as /api/token/local) to prevent unauthorized revocation.
+    Called by ``kirocrew logout`` CLI. Admits a loopback origin OR a
+    kernel-attested same-user AF_UNIX peer (``_unix_peer_is_self``, which the
+    owner-only socket transport arrives as, with an empty ``request.remote``),
+    plus the local secret — same auth as /api/token/local — to prevent
+    unauthorized revocation.
     """
     import kiro_crew.dashboard.handlers as _h  # noqa: F811
     from kiro_crew.dashboard.token_auth import revoke_all_sessions  # noqa: F811
 
-    if not _h.is_loopback(request.remote or ""):
+    # Reachable over loopback TCP or the dashboard's AF_UNIX socket. A unix peer
+    # has an EMPTY request.remote, so the loopback test alone would 403 the
+    # owner-only socket transport the CLI prefers; admit it on a positive kernel
+    # same-principal check (_unix_peer_is_self), exactly as /api/token/local does.
+    # The X-Local-Secret check below is unchanged on both transports.
+    if not _h.is_loopback(request.remote or "") and not _unix_peer_is_self(request):
         _sel().log_api_access(
             caller=request.remote or "unknown",
             operation="logout",
@@ -4209,14 +4217,17 @@ async def api_shutdown(request: web.Request) -> web.Response:
     exits the process.
 
     Intended for the desktop app to call before installing an auto-update, so
-    the Squirrel bundle swap never races a live gateway. Requires loopback +
-    the local secret (same auth as ``/api/token/local`` and ``/api/logout``)
-    so a web page cannot trigger a shutdown.
+    the Squirrel bundle swap never races a live gateway. Requires loopback (or a
+    kernel-attested same-user AF_UNIX peer, ``_unix_peer_is_self``, which is how
+    ``kirocrew stop``'s owner-verified socket send arrives, with an empty
+    ``request.remote``) plus the local secret (same auth as
+    ``/api/token/local`` and ``/api/logout``) so a web page cannot trigger a
+    shutdown.
     """
     import kiro_crew.dashboard.handlers as _h  # noqa: F811
     from kiro_crew import shutdown_event  # noqa: F811
 
-    if not _h.is_loopback(request.remote or ""):
+    if not _h.is_loopback(request.remote or "") and not _unix_peer_is_self(request):
         _sel().log_api_access(
             caller=request.remote or "unknown",
             operation="shutdown",

@@ -2831,9 +2831,14 @@ async def api_update_revalidate(request: web.Request) -> web.Response:
     ``X-Local-Secret``, compared in constant time. This is a CLI-only endpoint —
     the dashboard panel reconciles through ``GET /api/update/check`` — so it does
     NOT use the browser owner gate, whose identity the raw local-secret request
-    never carries.
+    never carries. A kernel-attested same-user AF_UNIX peer
+    (``core._unix_peer_is_self``) is admitted beside loopback, because the CLI's
+    owner-verified send prefers the dashboard's owner-only socket, where
+    ``request.remote`` is empty; the secret check is unchanged on both.
     """
-    if not is_loopback(request.remote or ""):
+    from kiro_crew.dashboard.handlers.core import _unix_peer_is_self
+
+    if not is_loopback(request.remote or "") and not _unix_peer_is_self(request):
         await _audit_update_event(
             request, operation="update.revalidate", outcome="denied", resources="non-loopback"
         )
