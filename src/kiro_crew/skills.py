@@ -3101,6 +3101,12 @@ class SkillsLoader:
         self._catalog_wakeup.set()
         if index is not None:
             index.close()
+        if self._usage is not None:
+            # Persist the hits accepted inside the debounce window before the
+            # loader goes away: the ranking signal must not depend on some later
+            # record() falling outside the window, or on the process exiting
+            # gracefully — the ledger's own atexit hook covers only that last case.
+            self._usage.close()
 
     async def _on_config_change(self, change: "live.ConfigChange") -> None:
         # Both halves run off-loop. The screening stats every configured root
