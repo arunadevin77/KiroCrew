@@ -28,14 +28,12 @@ from kiro_crew.dashboard.ws_event_scope import (
 _clear_module_caches = ws_event_scoping_helpers._clear_module_caches
 _clear_ws_scope_module_caches = ws_event_scoping_helpers._clear_ws_scope_module_caches
 
-_PUSH_SOURCE = (
-    Path(__file__).resolve().parents[1] / "website" / "src" / "utils" / "appSlotPush.ts"
-)
+_PUSH_SOURCE = Path(__file__).resolve().parents[1] / "website" / "src" / "utils" / "appSlotPush.ts"
 
 
 def _push_frames() -> list[str]:
     source = _PUSH_SOURCE.read_text(encoding="utf-8")
-    match = re.search(r"const SLOT_CHANGE_FRAMES[^=]*= new Set\(\[(.*?)\]\)", source, re.S)
+    match = re.search(r"const SLOT_CHANGE_FRAMES[^=]*= new Set\(\[(.*?)\]\)", source, re.DOTALL)
     assert match, "SLOT_CHANGE_FRAMES literal not found in appSlotPush.ts"
     names = re.findall(r"'([^']+)'", match.group(1))
     assert names, "SLOT_CHANGE_FRAMES is empty"

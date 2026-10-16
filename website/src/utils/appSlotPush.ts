@@ -64,15 +64,22 @@ export function noteAppSlotFrame(type: string, data: unknown): void {
 /** The socket went up (every successful connect, reconnects included) or down. */
 export function setAppSlotPushConnected(value: boolean): void {
   connected = value
-  for (const set of [...watchers.values()]) {
-    for (const e of [...set]) e.watcher.onConnection(value)
+  for (const [slotKey, set] of [...watchers.entries()]) {
+    for (const e of [...set]) e.watcher.onConnection(liveFor(e.app, slotKey))
   }
+}
+
+/** The channel is live for one app's watch on one slot only while the socket
+ *  is up AND the slot is that app's: a slot it does not own is never signalled,
+ *  so its embed must keep the full poll cadence instead of the backstop. */
+function liveFor(app: string, slotKey: string): boolean {
+  return connected && ownerOf(slotKey) === app
 }
 
 /** The `SlotPush` one app receives. */
 export function createAppSlotPush(app: string): SlotPush {
   return {
-    connected: () => connected,
+    connected: (slotKey) => liveFor(app, slotKey),
     watch(slotKey, watcher) {
       const entry: Entry = { app, watcher }
       let set = watchers.get(slotKey)

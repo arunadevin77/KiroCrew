@@ -336,7 +336,7 @@ Tests: `website/src/test/useStopPress.test.ts`, `website/src/test/ChatEmbed.stop
 `ChatEmbed` re-reads its slot when the host signals a change instead of waiting
 for its next poll. The seam is the optional `slotPush` on the SDK context
 (`app-sdk/slotPush.ts`): `watch(slotKey, {onChange, onConnection})` plus
-`connected()`. The signal is content-free: no rows, no text, no slot metadata.
+`connected(slotKey)`. The signal is content-free: no rows, no text, no slot metadata.
 Every row the embed renders still comes from its scoped since-cursor read
 (`embedIncrementalRead`, history.md), so the app's declared `permissions.api`
 and the gateway's slot-ownership check on `GET /api/chat/slots/{slot}` keep
@@ -355,8 +355,12 @@ each delivery, and only for frames that change what the slot read returns
 `slots:*` declaration, so this path grants no event an app token could not
 already receive. Widening it to `slots:user`/`slots:all` slots would mean
 mirroring the gate on the client, `exposeToApps` included; that is not done.
-A slot the app does not own (the generic `POST /api/chat` creates one) is not
-signalled and its embed polls as before. `test/test_app_slot_push_frames.py`
+A slot the app does not own (the generic `POST /api/chat` creates one), or one
+not yet in the slot list, is not signalled, and `connected(slotKey)` and
+`onConnection` report it as not live even while the socket is up, so its embed
+keeps the full 1 s / 5 s cadence rather than the backstop. The embed reads
+`connected(slotKey)` again at each poll tick, so a slot that changes hands
+moves cadence on the next tick. `test/test_app_slot_push_frames.py`
 pins that each frame in the set is slot-scoped, outside the subagent family,
 and admitted by the gateway for an own slot only.
 
@@ -365,7 +369,7 @@ one trailing read, at least 250 ms after the previous one, and the read joins
 an in-flight request rather than aborting it (`cancelRefetch: false`), so a
 fast stream cannot cancel every read. Each `onConnection(true)`, reconnects
 included, reads once, because a change made while the socket was down was
-never signalled. While the channel is up and the read is healthy the poll is a
+never signalled. While the channel is live for this slot and the read is healthy the poll is a
 backstop (5 s running, 15 s idle). A failing read ignores the channel and keeps
 the no-push cadence (1 s / 5 s, then the outage-length back-off), so the
 stalled notice still appears 10 s into an outage: the channel being up says

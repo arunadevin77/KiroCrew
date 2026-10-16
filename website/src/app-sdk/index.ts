@@ -33,7 +33,9 @@ import type { SlotPush } from './slotPush'
 // exports, and a type vanishes at runtime, so an app author keeps these names
 // without the stub needing an entry it could not provide.
 export type { AppApi, AppApiError, AppInfo, AppPermissions } from './scopedApi'
-export { useSlotPush, type SlotPush, type SlotPushWatcher } from './slotPush'
+// Types only: `AppApiProvider` takes a `slotPush` prop and an author names
+// its type. The hook stays internal to ChatEmbed.
+export type { SlotPush, SlotPushWatcher } from './slotPush'
 
 // ---------------------------------------------------------------------------
 // Types

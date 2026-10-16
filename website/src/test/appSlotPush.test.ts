@@ -90,16 +90,39 @@ describe('appSlotPush', () => {
   })
 
   it('reports connectivity to every watcher, and again on each reconnect', () => {
+    owners.set('s1', 'spec-builder')
     const push = createAppSlotPush('spec-builder')
     const w = watcher()
     push.watch('s1', w)
-    expect(push.connected()).toBe(false)
+    expect(push.connected('s1')).toBe(false)
     setAppSlotPushConnected(true)
     setAppSlotPushConnected(true)
-    expect(push.connected()).toBe(true)
+    expect(push.connected('s1')).toBe(true)
     setAppSlotPushConnected(false)
-    expect(push.connected()).toBe(false)
+    expect(push.connected('s1')).toBe(false)
     expect(w.onConnection.mock.calls).toEqual([[true], [true], [false]])
+  })
+
+  it('reads a slot the app does not own, or one not listed yet, as not live', () => {
+    owners.set('theirs', 'ops-mission-control')
+    const push = createAppSlotPush('spec-builder')
+    const mine = watcher()
+    const theirs = watcher()
+    const unlisted = watcher()
+    owners.set('mine', 'spec-builder')
+    push.watch('mine', mine)
+    push.watch('theirs', theirs)
+    push.watch('unlisted', unlisted)
+    setAppSlotPushConnected(true)
+    expect(push.connected('mine')).toBe(true)
+    expect(push.connected('theirs')).toBe(false)
+    expect(push.connected('unlisted')).toBe(false)
+    expect(mine.onConnection.mock.calls).toEqual([[true]])
+    expect(theirs.onConnection.mock.calls).toEqual([[false]])
+    expect(unlisted.onConnection.mock.calls).toEqual([[false]])
+    // Ownership is read live: the slot arriving in the list makes it live.
+    owners.set('unlisted', 'spec-builder')
+    expect(push.connected('unlisted')).toBe(true)
   })
 
   it('is fed every decoded frame by the socket router', () => {
