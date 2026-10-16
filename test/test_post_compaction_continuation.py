@@ -475,6 +475,8 @@ def test_a_notice_is_recorded_without_touching_the_text_path() -> None:
     src = _runner_source()
     assert re.search(
         r"\n\s*(?:turn\.)?assistant_text \+= safe_chunk\n"
+        r"\s*if _compaction_started and not event\.control_notice:\n"
+        r"\s*_post_compaction_answer_text \+= safe_chunk\n"
         r"\s*if event\.control_notice:\n"
         r"(?:\s*#[^\n]*\n)*"
         r"\s*_compaction_notice_chunks\.append\(safe_chunk\)",
@@ -483,12 +485,11 @@ def test_a_notice_is_recorded_without_touching_the_text_path() -> None:
 
 
 def test_the_answer_branch_tests_the_answer_not_the_raw_segment() -> None:
-    """The terminal chain head must test ``_answer_text``.
+    """The terminal chain tests only answer text emitted after compaction.
 
-    That branch is where "the turn answered" is decided and the post-compaction
-    continuation is an ``elif`` UNDER it, so testing the raw accumulator would
-    let a notice shadow the continuation and leave the request unanswered --
-    the hang this PR exists to fix.
+    Both the raw accumulator and ``_answer_text`` can contain a pre-compaction
+    fragment when the terminal is synthesized at turn end. Either would shadow
+    the continuation and leave the request unanswered.
     """
     src = _runner_source()
     assert re.search(
@@ -496,7 +497,7 @@ def test_the_answer_branch_tests_the_answer_not_the_raw_segment() -> None:
         r"\s*(?:turn\.)?assistant_text, _compaction_notice_chunks\s*\n?\s*\)\n",
         src,
     ), "the answer text must be derived once, before the terminal chain"
-    chain_head = src.index("\n        if _answer_text:\n")
+    chain_head = src.index("\n        if _continuation_answer_text:\n")
     continuation_branch = src.index("should_continue_after_compaction(")
     assert chain_head < continuation_branch, (
         "the continuation branch is an elif below the answer branch -- if that "
@@ -505,7 +506,7 @@ def test_the_answer_branch_tests_the_answer_not_the_raw_segment() -> None:
     assert re.search(
         r"user_requested_compaction=\(first_word == \"/compact\"\),\n"
         r"(?:\s*#[^\n]*\n)*"
-        r"\s*final_segment_text=_answer_text,",
+        r"\s*final_segment_text=_continuation_answer_text,",
         src,
     ), "the post-compaction gate must be asked about the ANSWER text"
 
@@ -520,7 +521,7 @@ def test_a_notice_only_turn_is_still_flushed() -> None:
     """
     src = _runner_source()
     match = re.search(
-        r"\n\s*if (?:turn\.)?assistant_text and not _answer_text:\n"
+        r"\n\s*if (?:turn\.)?assistant_text and not _continuation_answer_text:\n"
         r"\s*_flush_text_stream\(\)\n"
         r"\s*_flush_segment\(state, slot, (?:turn\.)?assistant_text, broadcast=False\)\n",
         src,
@@ -528,7 +529,7 @@ def test_a_notice_only_turn_is_still_flushed() -> None:
     assert match, "a notice-only turn must flush its text in its own block"
     # ...and that block must sit ABOVE the chain, otherwise it is just another
     # branch competing with the continuation instead of falling through to it.
-    assert match.start() < src.index("\n        if _answer_text:\n"), (
+    assert match.start() < src.index("\n        if _continuation_answer_text:\n"), (
         "the notice-only flush must precede the terminal chain so the turn "
         "falls through to the post-compaction continuation"
     )
@@ -634,3 +635,88 @@ def test_the_runner_only_clears_text_on_an_observed_terminal() -> None:
         r"[ \t]*_wsred\.reset\(\)",
         src,
     ), "the compaction-terminal text reset must be guarded by `not event.synthesized`"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("post_compaction_text", "expects_continuation"),
+    [("", True), (" the rest of the answer.", False)],
+)
+async def test_runner_continues_a_pre_compaction_fragment(
+    tmp_path: pathlib.Path, post_compaction_text: str, expects_continuation: bool
+) -> None:
+    """The turn preserves every chunk and resumes an unfinished answer."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from test_dashboard_chat_empty_response import TestEmptyResponseRetry
+
+    from kiro_crew.acp.types import EVENT_COMPLETE, EVENT_TEXT_CHUNK
+    from kiro_crew.dashboard.state import _ChatSlot
+
+    suite = TestEmptyResponseRetry()
+    state, slot, client, run_chat = suite._make_state_and_slot(tmp_path)
+    fragment = "The dashboard itself is current; nothing else outstanding and"
+
+    async def stream(_message: str):
+        yield AcpEvent(kind=EVENT_TEXT_CHUNK, text=fragment)
+        yield AcpEvent(kind=EVENT_COMPACTION_STATUS, text="started")
+        yield AcpEvent(
+            kind=EVENT_TEXT_CHUNK,
+            text="Compacting...",
+            control_notice=True,
+        )
+        if post_compaction_text:
+            yield AcpEvent(kind=EVENT_TEXT_CHUNK, text=post_compaction_text)
+        yield AcpEvent(
+            kind=EVENT_COMPACTION_STATUS,
+            text="completed",
+            synthesized=True,
+        )
+        yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_END_TURN)
+
+    client.stream = stream
+    client.stream_command = stream
+    queued: list[tuple[object, ...]] = []
+    original_queue_insert = _ChatSlot.queue_insert
+
+    def record_queue(self_slot, *args, **kwargs):
+        queued.append(args)
+        return original_queue_insert(self_slot, *args, **kwargs)
+
+    with (
+        patch.object(_ChatSlot, "queue_insert", record_queue),
+        patch(
+            "kiro_crew.dashboard.chat_runner._start_next_queued_turn",
+            new=AsyncMock(return_value=False),
+        ),
+    ):
+        await run_chat(state, slot, "finish the reply")
+        tasks = list(state._background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    transcript = "".join(
+        message.get("content", "")
+        for message in slot.messages
+        if message.get("role") == "assistant"
+    )
+    assert fragment in transcript
+    assert post_compaction_text in transcript
+    streamed = "".join(
+        call.args[1].get("content", "")
+        for call in state.broadcast_ws.call_args_list
+        if call.args and call.args[0] == "chat_chunk"
+    )
+    assert fragment in streamed
+    assert post_compaction_text in streamed
+    continuation_queued = any(
+        len(args) > 1 and args[1] == _COMPACTION_CONTINUE_MSG for args in queued
+    )
+    assert continuation_queued is expects_continuation, (queued, slot.messages)
+    if expects_continuation:
+        assert any(
+            "continuing automatically" in message.get("content", "") for message in slot.messages
+        )
