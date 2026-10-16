@@ -210,6 +210,10 @@ _PUBLISH_MODULES = frozenset(
         "kiro_crew/dashboard/session_export.py",
         "kiro_crew/dashboard/handlers_instances.py",
         "kiro_crew/history_consolidation.py",
+        "kiro_crew/history_consolidation_memory.py",
+        "kiro_crew/history_consolidation_pass.py",
+        "kiro_crew/history_consolidation_skills.py",
+        "kiro_crew/history_consolidation_span.py",
     }
 )
 _EXPECTED_PUBLISHERS = Counter(
@@ -224,35 +228,59 @@ _EXPECTED_PUBLISHERS = Counter(
             "_publish_if_derivation_is_allowed",
             "set_cached_summary",
         ): 1,
-        ("kiro_crew/history_consolidation.py", "_write_preferences", "write_preferences"): 1,
-        ("kiro_crew/history_consolidation.py", "_write_projects", "write_projects"): 1,
+        ("kiro_crew/history_consolidation_pass.py", "_write_preferences", "write_preferences"): 1,
+        ("kiro_crew/history_consolidation_pass.py", "_write_projects", "write_projects"): 1,
         (
-            "kiro_crew/history_consolidation.py",
+            "kiro_crew/history_consolidation_pass.py",
             "_apply_member_consolidation",
             "apply_consolidation",
         ): 1,
         (
-            "kiro_crew/history_consolidation.py",
+            "kiro_crew/history_consolidation_pass.py",
             "_append_history_under_hold",
             "append_history",
         ): 1,
         (
-            "kiro_crew/history_consolidation.py",
+            "kiro_crew/history_consolidation_memory.py",
             "_write_structured_memory",
             "propose_semantic_delete",
         ): 1,
         (
-            "kiro_crew/history_consolidation.py",
+            "kiro_crew/history_consolidation_memory.py",
             "_write_structured_memory",
             "delete_semantic",
         ): 1,
-        ("kiro_crew/history_consolidation.py", "_write_structured_memory", "set_semantic"): 1,
-        ("kiro_crew/history_consolidation.py", "_save_lessons", "write_lesson"): 1,
-        ("kiro_crew/history_consolidation.py", "_write_structured_memory", "write_episodic"): 1,
-        ("kiro_crew/history_consolidation.py", "_stage_skill_update", "stage_skill_candidate"): 1,
-        ("kiro_crew/history_consolidation.py", "_process_auto_skills", "stage_skill_candidate"): 1,
-        ("kiro_crew/history_consolidation.py", "_process_auto_skills", "create_auto_skill"): 1,
-        ("kiro_crew/history_consolidation.py", "_process_auto_skills", "update_auto_skill"): 1,
+        (
+            "kiro_crew/history_consolidation_memory.py",
+            "_write_structured_memory",
+            "set_semantic",
+        ): 1,
+        ("kiro_crew/history_consolidation_memory.py", "_save_lessons", "write_lesson"): 1,
+        (
+            "kiro_crew/history_consolidation_memory.py",
+            "_write_structured_memory",
+            "write_episodic",
+        ): 1,
+        (
+            "kiro_crew/history_consolidation_skills.py",
+            "_stage_skill_update",
+            "stage_skill_candidate",
+        ): 1,
+        (
+            "kiro_crew/history_consolidation_skills.py",
+            "_process_auto_skills",
+            "stage_skill_candidate",
+        ): 1,
+        (
+            "kiro_crew/history_consolidation_skills.py",
+            "_process_auto_skills",
+            "create_auto_skill",
+        ): 1,
+        (
+            "kiro_crew/history_consolidation_skills.py",
+            "_process_auto_skills",
+            "update_auto_skill",
+        ): 1,
         (
             "kiro_crew/dashboard/session_export.py",
             "api_chat_slot_export",
@@ -382,7 +410,9 @@ class TestThePublicationFence:
         assert all(reason.strip() for reason in _PUBLICATION_ALLOWLIST.values())
 
     def test_the_skill_guard_is_the_publication_seam(self):
-        calls = _calls_in_function("kiro_crew/history_consolidation.py", "_skill_publication_guard")
+        calls = _calls_in_function(
+            "kiro_crew/history_consolidation_skills.py", "_skill_publication_guard"
+        )
         assert len(calls.get("_publication_hold_checked", [])) == 1
         assert not calls.get("publication_hold")
         assert not calls.get("derivation_hold")
@@ -469,7 +499,7 @@ class TestThePublicationFence:
     def test_consolidation_embedding_precedes_the_publication_hold(
         self, function, embed_call, write_call
     ):
-        calls = _calls_in_function("kiro_crew/history_consolidation.py", function)
+        calls = _calls_in_function("kiro_crew/history_consolidation_memory.py", function)
         assert len(calls[embed_call]) == len(calls[write_call]) == 1
         assert calls["_publication_hold_checked"]
         holds_before_write = [

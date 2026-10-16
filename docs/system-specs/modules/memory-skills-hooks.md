@@ -94,8 +94,9 @@ an edited or shortened prefix refuses acknowledgement. Receipts are not pruned.
   `memory_record_metadata.py` maintains revisions, proposals and provenance.
 - `memory.py` is the facade for manual documents and learned history. V2 learned
   operations delegate to its admitted SQLite handle; V1 keeps its file layout.
-- `history_consolidation.py` publishes a member span atomically and recovers its
-  receipt. `context.py` and `member_essential_context.py` assemble manual context
+- `history_consolidation_pass.py` (`HistoryConsolidator._consolidate`, bound
+  through the `history_consolidation.py` facade) publishes a member span
+  atomically and recovers its receipt. `context.py` and `member_essential_context.py` assemble manual context
   from the captured member, with an optional SQLite learned-rule component.
 - `member_memory_backup.py` and `memory_startup.py` coordinate ordinary backup,
   staged restoration and connection lifetime without a second identity authority.
@@ -5406,7 +5407,7 @@ imported definition. Malformed effective-source JSON or non-object
 `mcpServers` values contribute no names and cannot abort an import. Repeated
 imports deduplicate through the provenance ledger.
 
-## Auto Skill Creation (`skills.py` + `skills_auto_model.py` + `skills_review.py` + `history_consolidation.py` + `skill_runtime/auto_skills.py`)
+## Auto Skill Creation (`skills.py` + `skills_auto_model.py` + `skills_review.py` + `history_consolidation_skills.py` + `skill_runtime/auto_skills.py`)
 
 Hermes-style autonomous skill creation from completed sessions. **Opt-in, and STAGED for approval** — generation is **off by default** (`skills.auto_create_from_sessions` defaults **false**; enable via `kirocrew config set skills.auto_create_from_sessions true` or dashboard Settings → Skills). When on, candidates land in a pending-approval queue (`skills.approval_required` defaults **true**) and nothing goes live unattended. The queue lives in Customize → Skills (`/capabilities?tab=skills`); Settings → Skills links there and forwards a `?review=<slug>` it receives, re-encoded. Pipeline: detect (during consolidation) → generate → metadata dedupe → pending queue → human approval → live → archive-if-unused.
 

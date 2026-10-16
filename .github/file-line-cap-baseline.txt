@@ -112,7 +112,6 @@
 2937 src/kiro_crew/discord/transport_dispatch.py
 3603 src/kiro_crew/embeddings.py
 4205 src/kiro_crew/history.py
-4478 src/kiro_crew/history_consolidation.py
 2128 src/kiro_crew/history_projection.py
 2038 src/kiro_crew/history_search.py
 6535 src/kiro_crew/instances/ssh_tunnel_manager.py

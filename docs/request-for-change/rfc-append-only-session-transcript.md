@@ -205,7 +205,7 @@ Measurable, and to be asserted in tests rather than claimed in prose:
    appended revisions already deliver.
 4. **Event-source the whole subsystem** with a typed event enum in the style of DSH's
    ~48 known session event types. Larger than the problem. Kiro Crew already has
-   role-typed rows (`history_consolidation.py::_TOOL_ROLES` covering `tool`/`tool_call`/`tool_result`,
+   role-typed rows (`history_consolidation_skills.py::_TOOL_ROLES` covering `tool`/`tool_call`/`tool_result`,
    alongside `user`, `assistant`, `system`, `error`, `notice`, `inject`, `subagent`) plus
    `dashboard/state.py::_TRANSIENT_ROLES` (imported by `chat_persistence.py`) that are
    never persisted. The gap is

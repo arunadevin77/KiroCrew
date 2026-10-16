@@ -587,6 +587,7 @@ custom-rules:
       - "src/kiro_crew/task_executor.py"
       - "src/kiro_crew/task_planner.py"
       - "src/kiro_crew/history_consolidation.py"
+      - "src/kiro_crew/history_consolidation_*.py"
       - "src/kiro_crew/messaging/**/*.py"
       - "src/kiro_crew/subagent_manager/**/*.py"
       - "src/kiro_crew/slack/**/*.py"

@@ -71,8 +71,24 @@ the extracted behavior:
 - `history_projection.py` owns bounded transcript reads, tab-chain/index
   projection, metadata reads and updates, permanent deletion, and previews.
 - `history_rewrite.py` owns locked compaction rewrites and size-based rotation.
-- `history_consolidation.py` owns `HistoryConsolidator` and auto-skill
-  eligibility/extraction helpers; `history.py` re-exports the class unchanged.
+- `history_consolidation.py` defines `HistoryConsolidator` (construction,
+  `reconfigure`, retry accounting, off-loop counting and every scheduling entry
+  point through `consolidate_now`) and is a mirrored facade
+  (`kiro_crew._facade_mirror`) over four sibling owners; `history.py`
+  re-exports the class unchanged. The class binds each moved method under its
+  own name, so `HistoryConsolidator._consolidate` and its peers keep their
+  names, signatures and `__qualname__`; a moved method's `__module__` and
+  source file name its owner. A patch of `kiro_crew.history_consolidation.<name>` reaches
+  every owner that reads the name; a moved method is not a module name and is
+  patched on the class, as before the split. The owners, lowest layer first:
+  `history_consolidation_span.py` (the span a pass prompts: prompt budget,
+  chunking, head slicing, `AttemptedSpan`, the run sentinels and the
+  `memory.*` switches), `history_consolidation_memory.py` (the bounded semantic
+  table, lesson and structured-memory writers, the embed budget),
+  `history_consolidation_skills.py` (auto-skill eligibility, detection,
+  dedupe, staging and publication) and `history_consolidation_pass.py`
+  (`_consolidate` and its `_call_llm` turn). New code for a stage goes to that
+  stage's owner.
 
 Every `ConversationLog` component is constructed with only the same owner; there
 is no helper-callback dependency bundle and no duplicate mutable history state.
@@ -1820,7 +1836,7 @@ writer:
   mirroring `chat_folder_suggest`, so a restricted transcript is never read
   there at all.
 
-## HistoryConsolidator (`history_consolidation.py`, re-exported by `history.py`)
+## HistoryConsolidator (`history_consolidation.py` and its `history_consolidation_*.py` owners, re-exported by `history.py`)
 
 Background task that fires once a session's message count reaches
 `_CONSOLIDATION_THRESHOLD` (30) messages past its last consolidation offset.
