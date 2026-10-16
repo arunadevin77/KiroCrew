@@ -37,6 +37,25 @@ function Host() {
 
 const shown = () => screen.getByTestId('value').textContent
 
+/** A loaded machine makes React's scheduler yield between committing a
+ *  render and running that render's passive effects. Advancing the clock the
+ *  scheduler reads on every call forces that yield on every run, so anything
+ *  a passive effect records is still missing when its commit is on screen. */
+function yieldingSchedulerClock() {
+  const realNow = performance.now.bind(performance)
+  let skew = 0
+  return vi.spyOn(performance, 'now').mockImplementation(() => realNow() + (skew += 50))
+}
+
+/** Outside act, as in the browser: React renders through its scheduler
+ *  rather than flushing each update synchronously. */
+function leaveActEnvironment() {
+  const scope = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  const previous = scope.IS_REACT_ACT_ENVIRONMENT
+  scope.IS_REACT_ACT_ENVIRONMENT = false
+  return { restore: () => { scope.IS_REACT_ACT_ENVIRONMENT = previous } }
+}
+
 describe('ChatInput Lexical composer: undo uses the snapshot history', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn((url: string) => {
@@ -76,5 +95,58 @@ describe('ChatInput Lexical composer: undo uses the snapshot history', () => {
 
     fireEvent.keyDown(input, { key: 'z', code: 'KeyZ', ctrlKey: true, shiftKey: true })
     await waitFor(() => expect(shown()).toBe(`${ORIGINAL} plus a long typed tail`))
+  })
+
+  it('a Ctrl+Z pressed the moment the optimize rewrite is on screen already finds the optimize step', async () => {
+    renderWithProviders(<Host />)
+    const input = await screen.findByRole('textbox', undefined, LAZY_COMPOSER_MOUNT)
+    const clock = yieldingSchedulerClock()
+    const actEnvironment = leaveActEnvironment()
+    let pressed = false
+    // Press Ctrl+Z from the first DOM mutation that shows the rewrite with no
+    // optimize overlay: the earliest moment undo is offered again.
+    const observer = new MutationObserver(() => {
+      if (pressed || shown() !== OPTIMIZED || screen.queryByText(/Optimizing prompt/)) return
+      pressed = true
+      fireEvent.keyDown(input, { key: 'z', code: 'KeyZ', ctrlKey: true })
+    })
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true })
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Optimize prompt' }))
+      await waitFor(() => expect(pressed).toBe(true))
+      await waitFor(() => expect(shown()).toBe(ORIGINAL))
+    } finally {
+      observer.disconnect()
+      clock.mockRestore()
+      actEnvironment.restore()
+    }
+  })
+
+  it('a Ctrl+Z pressed the moment the typed text is on screen already finds its history entry', async () => {
+    renderWithProviders(<Host />)
+    const input = await screen.findByRole('textbox', undefined, LAZY_COMPOSER_MOUNT)
+    const editor = (input as unknown as { __lexicalEditor: LexicalEditor }).__lexicalEditor
+    act(() => { editor.update(() => $getRoot().selectEnd(), { discrete: true }) })
+    const typed = `${ORIGINAL} plus a long typed tail`
+    const clock = yieldingSchedulerClock()
+    const actEnvironment = leaveActEnvironment()
+    // Press Ctrl+Z from the first DOM mutation that shows the typed text:
+    // the earliest moment a user could see it and undo it.
+    let pressed = false
+    const observer = new MutationObserver(() => {
+      if (pressed || shown() !== typed) return
+      pressed = true
+      fireEvent.keyDown(input, { key: 'z', code: 'KeyZ', ctrlKey: true })
+    })
+    observer.observe(screen.getByTestId('value'), { childList: true, characterData: true, subtree: true })
+    try {
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, ' plus a long typed tail')
+      await waitFor(() => expect(pressed).toBe(true))
+      await waitFor(() => expect(shown()).toBe(ORIGINAL))
+    } finally {
+      observer.disconnect()
+      clock.mockRestore()
+      actEnvironment.restore()
+    }
   })
 })
