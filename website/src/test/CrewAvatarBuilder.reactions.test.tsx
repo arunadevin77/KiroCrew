@@ -58,7 +58,11 @@ type Ghost = Extract<CrewAvatarOverride, { kind: 'ghost' }>
 type Picture = Extract<CrewAvatarOverride, { kind: 'image' }>
 
 function mount(
-  value: CrewAvatarOverride | null = null,
+  // Reactions decorate the ghost FACE tier, and a NEW ghost can no longer be
+  // authored (issue #18616) — so this suite mounts from an EXISTING ghost
+  // record by default, the pre-existing edit path where the Ghost face and
+  // Reactions tabs are still offered. Tests pass their own value as needed.
+  value: CrewAvatarOverride | null = { kind: 'ghost' } as CrewAvatarOverride,
   {
     retiredCue = null,
     savedReactions,
@@ -91,7 +95,13 @@ function mount(
 
 const openPicture = () => fireEvent.click(screen.getByRole('radio', { name: 'Picture' }))
 const openLibrary = () => fireEvent.click(screen.getByRole('radio', { name: 'Library' }))
-const openFace = () => fireEvent.click(screen.getByRole('radio', { name: 'Ghost face' }))
+const openFace = () => {
+  // The Ghost face tab is offered only while the ghost IS the selected tier
+  // (new ghosts are not authorable). From a ghost record the pane is already
+  // current, so this is a no-op when the tab is absent.
+  const face = screen.queryByRole('radio', { name: 'Ghost face' })
+  if (face) fireEvent.click(face)
+}
 /** Reactions is a decoration of the ghost FACE tier, so its tab is only in the
  *  strip while Face is selected. The builder now opens on the Icon tier for a
  *  crew with no override, so reach Reactions the way a user does: select Ghost
@@ -267,14 +277,12 @@ describe('CrewAvatarBuilder — Reactions pane', () => {
   })
 
   it('a picture Apply carries the picture and no reaction key', async () => {
-    // Reactions authored on the ghost tier stay behind rather than riding out
-    // on a record that cannot play them.
+    // A picture crew cannot reach the ghost tier (new ghost authoring is
+    // removed, issue #18616), so there is no Ghost face tab to detour through —
+    // the picture saves verbatim, carrying no reaction key.
     const { onSave } = mount({ kind: 'image', v: 2 })
-    openFace()
-    openReactions()
-    await chooseMotion('done', 'Nod')
-    await chooseSound('done', 'Chime')
-    openPicture()
+    expect(screen.queryByRole('radio', { name: 'Ghost face' })).toBeNull()
+    expect(screen.queryByRole('radio', { name: 'Reactions' })).toBeNull()
     apply()
     const saved = lastSaved(onSave) as Picture
     expect(saved.kind).toBe('image')
@@ -365,32 +373,20 @@ describe('CrewAvatarBuilder — Reactions pane', () => {
     expect(lastSaved(onSave)).toBeNull()
   })
 
-  it('sends a faceless ghost when a pack crew moves to the ghost tier with a reaction', async () => {
-    // "The name-derived face, plus these reactions" is a tier change over a pack,
-    // the same spelling a ghost-to-ghost save uses, so the face stays derived
-    // from the crew name rather than pinned on the user's behalf.
-    const { onSave } = mount({ kind: 'pack', id: 'aurora' })
-    openFace()
-    openReactions()
-    await chooseMotion('done', 'Nod')
-    apply()
-    const saved = lastSaved(onSave) as Ghost
-    expect(saved.kind).toBe('ghost')
-    expect(saved.motions).toEqual({ done: 'nod' })
-    expect('traits' in saved).toBe(false)
-  })
-
-  it('resets when a pack crew moves to the ghost tier and picks nothing', () => {
-    // Nothing set and no face pinned, so the honest answer is the explicit
-    // reset, which the backend honours on every tier, pack included.
-    const { onSave } = mount({ kind: 'pack', id: 'aurora' })
-    openFace()
-    apply()
-    expect(lastSaved(onSave)).toBeNull()
+  it('offers a pack crew no path to the ghost tier (new ghost authoring is removed)', () => {
+    // A pack crew could previously move to the ghost tier and author a face;
+    // that door is gone (issue #18616), so neither the Ghost face nor the
+    // Reactions tab is offered. Existing ghost crews keep theirs (covered
+    // above); a pack crew's own tiers are unaffected.
+    mount({ kind: 'pack', id: 'aurora' })
+    expect(screen.queryByRole('radio', { name: 'Ghost face' })).toBeNull()
+    expect(screen.queryByRole('radio', { name: 'Reactions' })).toBeNull()
   })
 
   it('keeps the faceless spelling for a ghost crew, where the name derives the face', async () => {
-    const { onSave } = mount(null)
+    // A faceless ghost crew (its face derives from the name): the pre-existing
+    // edit still authors reactions without pinning traits.
+    const { onSave } = mount({ kind: 'ghost' } as CrewAvatarOverride)
     openReactions()
     await chooseMotion('done', 'Nod')
     apply()

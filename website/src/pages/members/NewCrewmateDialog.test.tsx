@@ -5,7 +5,6 @@ import { NavigationLeaveGuardProvider, useMayLeaveForNavigation } from '../../co
 import { api } from '../../api/client'
 import NewCrewmateDialog from './NewCrewmateDialog'
 import { POSE_IDS, seedIconPose } from '../../lib/avatarPoses'
-import { seededTraits } from '../../components/CrewAvatar'
 
 vi.mock('../../api/client', async importOriginal => {
   const mod = await importOriginal<typeof import('../../api/client')>()
@@ -165,7 +164,11 @@ describe('NewCrewmateDialog', () => {
         description: 'Watch PRs',
         first_greeting: true,
       })
-      expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).not.toHaveProperty('avatar')
+      // No pick: the create still defaults the look to an icon (a shipped pose
+      // over a palette colour) rather than falling back to the name's ghost.
+      const foldedBody = vi.mocked(api.createKirocrewAgent).mock.calls[0][0] as { avatar: { kind: string; pose: string; bg: string } }
+      expect(foldedBody.avatar).toMatchObject({ kind: 'icon', pose: seedIconPose('Scout') })
+      expect(foldedBody.avatar.bg).toMatch(/^#[0-9a-f]{6}$/i)
     })
 
     it('Create from the folded card builds from kirocrew, follows the name\'s own look and asks for the first greeting', async () => {
@@ -183,8 +186,11 @@ describe('NewCrewmateDialog', () => {
         first_greeting: true,
       })
       expect(body).not.toHaveProperty('model')
-      // No pick: the record keeps no pinned look, so it wears the name's own face.
-      expect(body).not.toHaveProperty('avatar')
+      // No pick: the create defaults the look to a name-seeded icon rather than
+      // leaving the record faceless and falling back to the name's ghost.
+      const defaulted = body as { avatar: { kind: string; pose: string; bg: string } }
+      expect(defaulted.avatar).toMatchObject({ kind: 'icon', pose: seedIconPose('Scout') })
+      expect(defaulted.avatar.bg).toMatch(/^#[0-9a-f]{6}$/i)
     })
 
     it('the pencil opens the icon-only avatar editor, and the picked icon is sent even after a rename', async () => {
@@ -229,7 +235,7 @@ describe('NewCrewmateDialog', () => {
       expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).toMatchObject({ avatar: { kind: 'icon', pose } })
     })
 
-    it('the original look comes back after a pick: the editor offers it and the create then sends no avatar', async () => {
+    it('the original look comes back after a pick: the editor offers it and the create then defaults to a name-seeded icon', async () => {
       card()
       await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
@@ -246,7 +252,11 @@ describe('NewCrewmateDialog', () => {
       await waitFor(() => expect(screen.queryByTestId('avatar-icon-pane')).toBeNull())
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
-      expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).not.toHaveProperty('avatar')
+      // Reverting to the original clears the explicit pick, so the create falls
+      // to the same name-seeded icon default a never-opened editor produces.
+      const reverted = vi.mocked(api.createKirocrewAgent).mock.calls[0][0] as { avatar: { kind: string; pose: string; bg: string } }
+      expect(reverted.avatar).toMatchObject({ kind: 'icon', pose: seedIconPose('Scout') })
+      expect(reverted.avatar.bg).toMatch(/^#[0-9a-f]{6}$/i)
     })
 
     it('the avatar tile and the Advanced toggle are the shared Btn, with its press feedback', async () => {
@@ -264,9 +274,10 @@ describe('NewCrewmateDialog', () => {
       fireEvent.click(screen.getByTestId('crewmate-create-look'))
       await screen.findByTestId('avatar-icon-pane')
       expect(screen.getByTestId('avatar-builder-save')).toBeDisabled()
+      // Untouched, the editor previews the seeded ICON (not the trait ghost):
+      // the current-preview is the pose image and the custom colour is a hex.
       expect(screen.getByTestId('avatar-icon-preview-current')).toBeInTheDocument()
-      expect(screen.getByTestId('avatar-icon-bg-custom')).toHaveValue(seededTraits('Scout').tile)
-      expect(screen.queryByTestId('avatar-icon-preview')).toBeNull()
+      expect((screen.getByTestId('avatar-icon-bg-custom') as HTMLInputElement).value).toMatch(/^#[0-9a-f]{6}$/i)
       fireEvent.click(screen.getByTestId(`avatar-icon-pose-${POSE_IDS.find((p) => p !== seedIconPose('Scout'))}`))
       expect(screen.getByTestId('avatar-builder-save')).toBeEnabled()
       expect(screen.getByTestId('avatar-icon-preview')).toBeInTheDocument()
@@ -282,7 +293,7 @@ describe('NewCrewmateDialog', () => {
       expect(onDraftStateChange).toHaveBeenLastCalledWith({ edited: true, busy: false })
     })
 
-    it('cancelling the avatar editor keeps the name\'s own face and sends no avatar', async () => {
+    it('cancelling the avatar editor leaves no pick, so the create defaults to a name-seeded icon', async () => {
       card()
       await screen.findByTestId('crewmate-create-form')
       typeName('Scout')
@@ -292,7 +303,9 @@ describe('NewCrewmateDialog', () => {
       await waitFor(() => expect(screen.queryByTestId('avatar-icon-pane')).toBeNull())
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
-      expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).not.toHaveProperty('avatar')
+      const cancelled = vi.mocked(api.createKirocrewAgent).mock.calls[0][0] as { avatar: { kind: string; pose: string; bg: string } }
+      expect(cancelled.avatar).toMatchObject({ kind: 'icon', pose: seedIconPose('Scout') })
+      expect(cancelled.avatar.bg).toMatch(/^#[0-9a-f]{6}$/i)
     })
 
     it('the edit badge shows the shared tooltip on hover, and the tile keeps its name', async () => {

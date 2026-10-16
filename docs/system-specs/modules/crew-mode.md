@@ -1388,12 +1388,15 @@ roster's hero and the switcher's New crewmate) opens the
 **Create**; no line under the name explains what happens after
 Create, since the new crewmate's first message says it. Create builds the
 crewmate from `kirocrew`, and the folded card does not name that template. The
-tile shows the name's own face until the user presses it (or its pencil badge),
+tile shows a name-seeded icon (a pose and background colour derived from the
+name) until the user presses it (or its pencil badge),
 which opens `CrewAvatarBuilder` with `iconOnly`: a pose and a background colour,
 no tier strip and no reset link, since a crewmate that does not exist yet has no
 record for a picture or a pack. Apply pins the pick and sends it as
 `avatar: {kind: 'icon', pose, bg}`, and it survives a renamed draft; with no
-pick the create carries no `avatar` and the record wears the name's own face. The **Advanced settings** row unfolds inline below
+pick the create still carries that name-seeded icon as its `avatar` (frozen into
+a stored choice at create, never re-derived from a later rename), so a new mate
+is born an icon rather than wearing the name's ghost. The **Advanced settings** row unfolds inline below
 the avatar, in the same card: Built from, What it looks after, and the crew
 editor fields (workspace, model, triggers, session colour), ending with a second
 Create. It is folded by default; `startExpanded` opens it unfolded, which is what

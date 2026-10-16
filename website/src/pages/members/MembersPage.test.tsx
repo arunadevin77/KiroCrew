@@ -3344,6 +3344,8 @@ describe('New crewmate dialog', () => {
       triggers: '',
       session_color: '',
       first_greeting: true,
+      // New mates default to a name-seeded icon avatar, never the trait ghost.
+      avatar: expect.objectContaining({ kind: 'icon', pose: expect.any(String), bg: expect.stringMatching(/^#[0-9a-f]{6}$/i) }),
     }))
     // Roster re-read BEFORE the URL names the new crewmate, then its chat
     // opens through the verified thread endpoint, like any click would.
@@ -3379,7 +3381,11 @@ describe('New crewmate dialog', () => {
       description: '',
       first_greeting: true,
     }))
-    expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).not.toHaveProperty('avatar')
+    // Built from a name alone, the new mate wears a name-seeded ICON (pose +
+    // colour), not the trait ghost a missing avatar used to fall back to.
+    const createdBody = vi.mocked(api.createKirocrewAgent).mock.calls[0][0] as { avatar: { kind: string; pose: string; bg: string } }
+    expect(createdBody.avatar).toMatchObject({ kind: 'icon' })
+    expect(createdBody.avatar.bg).toMatch(/^#[0-9a-f]{6}$/i)
     await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-radar'), PANE_READY)
     await waitFor(() => expect(api.memberGreet).toHaveBeenCalledWith('radar'), PANE_READY)
     // Once, and never as a message the user typed.

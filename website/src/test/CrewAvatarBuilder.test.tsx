@@ -76,17 +76,21 @@ async function switchToPicture() {
   await screen.findByTestId('avatar-upload-pane')
 }
 
-/** The builder now opens on the ICON tier for a crew with no override, so a
- *  ghost-tier test reaches the "捏脸" face builder the way a user does: by
- *  clicking the Ghost face tab. Returns the mount utils. */
+/** The builder no longer offers the Ghost face tab for a non-ghost crew — a
+ *  new or edited crew cannot author a ghost (issue #18616). An EXISTING ghost
+ *  crew still opens straight on the "捏脸" face pane, so a ghost-tier test mounts
+ *  FROM a stored ghost record rather than switching to a tab that is gone. */
 async function switchToFace() {
-  fireEvent.click(screen.getByRole('radio', { name: 'Ghost face' }))
   await screen.findByTestId('avatar-builder-preview')
 }
 
-/** Mount and land on the Ghost face tab — the fixture every ghost-tier test
- *  starts from now that Icon is the default pane. */
-async function mountFace(value: CrewAvatarOverride | null = null) {
+/** A minimal stored ghost override — "this crew already wears a ghost face" —
+ *  so the builder opens on the face pane for the pre-existing-ghost edit tests. */
+const EXISTING_GHOST: Ghost = { kind: 'ghost', traits: {} }
+
+/** Mount already on the Ghost face pane via a stored ghost record — the only
+ *  way the face pane is reached now that a new ghost cannot be authored. */
+async function mountFace(value: CrewAvatarOverride | null = EXISTING_GHOST) {
   const utils = mount(value)
   await switchToFace()
   return utils
@@ -235,6 +239,19 @@ describe('CrewAvatarBuilder — icon tier', () => {
     mount({ kind: 'ghost', traits: { eyes: 'wink', brows: 'none', mouth: 'smile', accessory: 'none', prop: 'none', blush: false, flip: false, tile: BRAND_PURPLE } })
     expect(screen.getByTestId('avatar-builder-preview')).toBeInTheDocument()
     expect(screen.queryByTestId('avatar-icon-pane')).not.toBeInTheDocument()
+  })
+
+  it('offers no Ghost face tab for a non-ghost crew (new ghosts are not authorable)', () => {
+    mount(null)
+    expect(screen.queryByRole('radio', { name: 'Ghost face' })).not.toBeInTheDocument()
+    // Icon, Picture and Library remain the authorable tiers.
+    expect(screen.getByRole('radio', { name: 'Icon' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Picture' })).toBeInTheDocument()
+  })
+
+  it('still offers the Ghost face tab for a crew that already wears one', () => {
+    mount({ kind: 'ghost', traits: {} })
+    expect(screen.getByRole('radio', { name: 'Ghost face' })).toBeInTheDocument()
   })
 
   it('picking a pose and Apply hands over an icon override', () => {
@@ -423,7 +440,7 @@ describe('CrewAvatarBuilder — picture tier', () => {
       return ev.defaultPrevented
     }
     const { unmount } = mount()
-    // Ghost face tab: nothing intercepts, the browser default stands.
+    // Icon pane (the default): nothing intercepts, the browser default stands.
     expect(dropOnBody()).toBe(false)
     await switchToPicture()
     // Picture tab: a stray drop must not navigate the SPA to the file.
@@ -431,8 +448,8 @@ describe('CrewAvatarBuilder — picture tier', () => {
     const over = new Event('dragover', { bubbles: true, cancelable: true })
     document.body.dispatchEvent(over)
     expect(over.defaultPrevented).toBe(true)
-    // Back on the face tab the listeners are gone again.
-    fireEvent.click(screen.getByRole('radio', { name: 'Ghost face' }))
+    // Back on the Icon pane the listeners are gone again.
+    fireEvent.click(screen.getByRole('radio', { name: 'Icon' }))
     await waitFor(() => expect(dropOnBody()).toBe(false))
     unmount()
     expect(dropOnBody()).toBe(false)
@@ -448,15 +465,35 @@ describe('CrewAvatarBuilder — picture tier', () => {
     expect(lastSaved(onSave)).toBe(stored)
   })
 
-  it('Reset drops both the ghost draft and the pending picture and returns to the face tab', async () => {
+  it('Reset drops the pending picture and returns a non-ghost crew to the icon tier', async () => {
     const { onSave } = mount()
     await switchToPicture()
     chooseFile(pngFile())
     await decode()
     await screen.findByTestId('avatar-upload-preview')
     fireEvent.click(screen.getByTestId('avatar-builder-reset'))
-    expect(screen.getByTestId('avatar-builder-preview')).toBeInTheDocument()
+    // A crew that wears no ghost returns to the icon tier, not the ghost
+    // builder — Reset is not a path to author a new ghost (#18616).
+    expect(await screen.findByTestId('avatar-icon-pane')).toBeInTheDocument()
     apply()
-    expect(lastSaved(onSave)).toBeNull()
+    // Reset on a crew that does NOT wear a ghost commits the name-seeded icon
+    // default it previews — NOT `null`. `null` renders the name's ghost, and a
+    // crew that never chose a ghost must never reset INTO one (#18616).
+    expect(lastSaved(onSave)).toMatchObject({ kind: 'icon' })
+  })
+
+  it('returning to the Picture tier after Reset keeps the stored image, not null', async () => {
+    // Regression: Reset sets the undress sentinel, but navigating back to a
+    // tier is the user building again, so the sentinel must clear — otherwise
+    // Apply would discard the stored image the user came back to keep.
+    const { onSave } = mount({ kind: 'image', v: 7 })
+    fireEvent.click(screen.getByTestId('avatar-builder-reset'))
+    // Reset lands a non-ghost crew on the icon tier; switch back to Picture.
+    await screen.findByTestId('avatar-icon-pane')
+    await switchToPicture()
+    apply()
+    // The sentinel cleared on the tier switch, so Apply falls back to the
+    // stored image rather than committing the undress null.
+    expect(lastSaved(onSave)).toMatchObject({ kind: 'image', v: 7 })
   })
 })

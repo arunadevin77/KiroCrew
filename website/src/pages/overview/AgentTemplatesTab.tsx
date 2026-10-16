@@ -18,6 +18,7 @@ import { useGuardedLeave } from '../../components/NavigationLeaveGuard'
 import { useListDetailView } from '../../hooks/useListDetailView'
 import { useAvailableModels } from '../../hooks/useAvailableModels'
 import { parseErrorCode, parseErrorField } from '../../utils/errorReport'
+import { defaultLookFor } from '../../lib/avatarPoses'
 import { errMessage } from '../../utils/thunkError'
 import { templateSourceKind } from '../../lib/templateSource'
 import { i18nT } from '../../i18n/t'
@@ -471,7 +472,7 @@ export default function AgentTemplatesTab() {
     },
   })
   const enroll = useMutation({
-    mutationFn: (row: TemplateRow) => api.createKirocrewAgent({ name: row.name, kiro_agent: row.name, memory_store: 'default' }),
+    mutationFn: (row: TemplateRow) => api.createKirocrewAgent({ name: row.name, kiro_agent: row.name, memory_store: 'default', avatar: defaultLookFor(row.name) }),
     onSuccess: (r: { error?: string }, row) => {
       if (r?.error) { setNotice({ kind: 'err', text: r.error }); return }
       setNotice({ kind: 'ok', text: i18nT('pages.overview.agentTemplatesTab.enrolled', { name: row.name }) })

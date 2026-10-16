@@ -833,6 +833,13 @@ describe('AgentTemplatesTab — enrolling reaches the crew registry', () => {
     const items = await openMore()
     fireEvent.click(items[0])
     await waitFor(() => expect(mockApi.createKirocrewAgent).toHaveBeenCalled())
+    // Enrolling defaults the crewmate to a name-seeded ICON, the same default
+    // the New-crewmate dialog applies — never the trait ghost a missing avatar
+    // falls back to on render (#18616). Headless create paths (CLI, raw API)
+    // are tracked separately for backend seeding.
+    expect(mockApi.createKirocrewAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'reviewer', avatar: expect.objectContaining({ kind: 'icon' }) }),
+    )
 
     await waitFor(() => expect(screen.getByTestId('crews-roster')).toHaveTextContent('reviewer'))
   })
