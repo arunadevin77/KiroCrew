@@ -151,7 +151,7 @@ if role == "system" and cls_val:
 ```
 
 — `dashboard/chat_persistence.py`. Meanwhile `ConversationLog.append`
-persists any truthy `cls` (`history.py`, `append`). A `cls`-carried marker on any role
+persists any truthy `cls` (`history_append.py`, `append`). A `cls`-carried marker on any role
 other than `system` is silently dropped on the dashboard's persist path. `meta`
 persists for every role (`chat_persistence.py`), which is where the
 label belongs.

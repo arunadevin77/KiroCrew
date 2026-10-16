@@ -57,11 +57,24 @@ delete leaves every other session untouched.
 ### Composition and source ownership
 
 `kiro_crew.history` remains the compatibility facade and defines the real
-`ConversationLog` type. It owns transcript paths and sidecars, the shared
-in-process and cross-process lock registries, append/atomic-turn persistence,
-cache generation registries, and consolidation-progress writes. The facade
-re-exports the established module API and keeps thin, explicit delegates for
-the extracted behavior:
+`ConversationLog` type. It keeps the class's identity and construction
+(`__init__` builds the caches and the components below), the transcript path
+(`_path` and its pre-migration Slack fallback), the process-wide lock and
+cache-generation registries as class attributes, the thin delegates to the
+components, and every module name it bound before its owners existed (bound, or
+served from its owner for the two globals an owner rebinds at run time). A few
+members with real bodies stay on the class too: `has_messages`, `session_mtime`,
+`delete_session` (with its durable-vouch cleanup), `delete_memory_consolidation_session`
+and `get_unconsolidated`. `get_unconsolidated` stays only because the derivation-seam
+fence's `PLAIN_READS` list keys on its name, so new consolidation-progress work goes to
+`history_marker.py`, not beside it. The rest
+lives in flat `history_*.py` siblings of the facade, not in a package: the
+family's five component modules were already siblings, and a package would split
+them from the owners added beside them.
+
+The components are objects `ConversationLog.__init__` constructs, each with the
+log as its only owner; the class keeps a thin delegate for each method callers
+use:
 
 - `history_cache.py` owns the bounded cache containers and the invalidation /
   guarded-publish coordinator. Cache objects and generation state remain on
@@ -83,6 +96,48 @@ lock/preview settings, and rewrite rotation/archive settings). Stable clocks,
 parsers, formatters, logging, and atomic I/O remain ordinary module dependencies;
 stable helpers still owned by the core facade are resolved lazily rather than
 injected into every component.
+
+The owners hold the module-level code the facade had and the members the class
+binds from them. New work goes to the owner of its responsibility:
+
+| Owner | Owns |
+|---|---|
+| `history_files.py` | transcript stems and their Slack aliases (`transcript_stem(s)`, `transcript_lock_stems`, `_safe_key`), the sessions and archive directories, the durable archive write (`_archive_lines`) and its retention sweep (`_cleanup_old_archives`), the file stamps (`_safe_mtime`, `_cache_identity`, `_restore_mtime`) |
+| `history_schema.py` | which metadata keys a rebuilding writer owns (`SLOT_OWNED_META_KEYS`, `ROWS_ONLY_*`, `carry_unowned_metadata`), row provenance (`carry_provenance`), `HUMAN_TURN_META_KEY`, `mint_row_mid`, and the spelling and order of transcript timestamps (`transcript_sort_key`, `metadata_now_iso`, `monotonic_transcript_ts`, `latest_transcript_ts`) |
+| `history_offload.py` | the on-loop persistence discipline (`OnLoopPersistError`, `allow_on_loop_persist`, `on_loop_persist_strict`) and the off-loop writers (`append_off_loop`, `append_if_absent_off_loop`, `append_rows_if_absent_off_loop`, `update_metadata_off_loop`) |
+| `history_locks.py` | the transcript lock: `_locked`, `locked_stems`, `atomic_appends`, the per-stem reentrant lock and cross-process `flock` (`_locked_stem`, `HistoryLockTimeout`, the acquire bounds), the deferred release and its proof-of-hold witness, and the delete-in-flight marks |
+| `history_derivation.py` | the header's privacy contract (`INCOGNITO_MEMORY_MODES`, `memory_mode_from_header_line`, `is_incognito_transcript`, `transcript_privacy_mode`) and the derivation seam (`derivation_hold`, `publication_hold`, `derive_messages*`, `derive_recent`, `TranscriptWithheld`, `TranscriptBusy`) |
+| `history_threads.py` | the reply-thread sidecar: its location, `read_threads`, `append_thread_reply` and `ThreadStoreUnreadable` |
+| `history_summaries.py` | the one-line and intent summary sidecar caches |
+| `history_append.py` | `append`, `append_if_absent`, the write-boundary redaction and inline-image persistence |
+| `history_marker.py` | consolidation progress: `rotation_generation`, `snapshot_for_consolidation`, `mark_consolidated`, the sub-offset, and the retry ledger (`consolidation_retry_state`, `record_consolidation_failure`, ...) |
+
+A bound member's body is a module-level function in its owner whose first
+parameter is `self` (annotated `ConversationLog` for type checkers only), and the
+class binds it by name under one comment header per owner (`append =
+_history_append.append`, `staticmethod(...)` for a static method). Every member
+therefore stays an attribute of the one class, so a patch of a method on the class
+or on an instance reaches every caller, and the state stays on the instance; each
+owner's docstring names the instance fields its members write and read. A bound
+member's `__qualname__` and `__module__` name its owner (nothing reads them), and
+its `self: ConversationLog` annotation is there so mypy checks the moved body:
+`ConversationLog` is imported for type checkers only, so `typing.get_type_hints` on a
+bound member (or on an owner function whose annotation names it) needs it passed in
+(`localns`). The
+exception classes the owners define (`ThreadStoreUnreadable`, `HistoryLockTimeout`,
+`OnLoopPersistError`, `TranscriptWithheld`, `TranscriptBusy`) keep
+`kiro_crew.history` as their `__module__`, because their names reach tracebacks and
+logs. `history_locks` reads the lock registries as `type(self).<registry>`: they stay
+class attributes of `ConversationLog`, which is the object that read finds while no
+subclass binds a registry of its own, and none does. The facade's `_OWNERS` lists the
+owners lowest layer first: an owner imports only owners listed before it. Owners log
+under the `kiro_crew.history` logger, never import `history.py` at run time, and read
+their globals in their own namespaces: `history.py` keeps binding every name it bound
+before, and a write through it reaches every owner binding the same object
+(`kiro_crew._facade_mirror`). The two globals an owner rebinds at run time
+(`_last_cleanup`, `_on_loop_warn_last`) are served through the facade and never bound
+there, so a read through it is never stale. `test/test_history_bindings.py` pins the
+member inventory, the binding and the reach.
 
 ### Bounded transcript pages
 
@@ -509,7 +564,7 @@ Their specs and handlers live in `mcp_tools/sessions.py`; `mcp_core.py` supplies
 the scoping helpers (defined in `mcp_core_parts/history.py`). These read-only tools expose the session store to the agent and are all
 workspace-scoped by default (fail-closed via `_caller_workspace`/`_ws_bucket`,
 `all_workspaces` opts out), exclude incognito/temporary sessions (canonical
-`INCOGNITO_MEMORY_MODES` in `history.py`), and redact their output:
+`INCOGNITO_MEMORY_MODES` in `history_derivation.py`), and redact their output:
 
 - `search_chat_history` — keyword lookup over past transcripts (ranked snippets).
 - `get_chat_session` — read one full transcript by `session_key`.
@@ -1091,7 +1146,7 @@ no longer destroy older turns.
   shutdown) call `_save_slot_to_history` inline — off the loop `_locked` polls
   patiently to a bounded deadline. The same discipline applies to every other
   session-JSONL writer: `clear_closed` (resume un-flags `closed` under `_locked`,
-  offloaded via `asyncio.to_thread`) and all `history.py` mutators hold `_locked`.
+  offloaded via `asyncio.to_thread`) and all `ConversationLog` mutators hold `_locked`.
 - **Delete-won guard**: `delete_session` unlinks the session file under the
   same `_locked` and leaves no tombstone, and the patient off-loop acquire
   means a save can legitimately sit waiting while a permanent delete runs to
@@ -1463,7 +1518,7 @@ no longer destroy older turns.
   (`featureRequest`) with `decisions_strip` as the reserved-key control, beside
   `test/test_chat_send_echo_scope.py`, which pins `sendId` alone.
 
-## Session Archive (`history.py`, `history_rewrite.py`)
+## Session Archive (`history_files.py`, `history_rewrite.py`)
 
 Lines that ARE intentionally dropped (rotation, compaction, history edits) are
 archived instead of being permanently deleted:

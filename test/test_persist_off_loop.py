@@ -17,7 +17,7 @@ active — and most of these call sites swallow that in a best-effort ``except``
 Off the loop there is no running loop in the worker thread, so ``_locked`` takes
 the patient poll-to-deadline path instead.
 
-``history.py`` already warns (with ``stack_info``) when append runs on the loop,
+``history_offload.py`` already warns (with ``stack_info``) when append runs on the loop,
 but a warning is only as good as someone reading logs. This gate is the
 deterministic form: a NEW Slack call site cannot persist a turn on the loop
 without failing the build.

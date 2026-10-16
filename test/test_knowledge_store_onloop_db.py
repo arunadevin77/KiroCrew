@@ -12,7 +12,7 @@ These tests pin the discipline from four directions:
    no-op / throttled warning),
 2. the *interprocedural* catch, together with proof that the static gate is
    blind to the very same call -- the two are complementary, not redundant,
-3. the deliberate departure from ``history.py``: ``KIROCREW_DEV_MODE`` alone
+3. the deliberate departure from ``history_offload.py``: ``KIROCREW_DEV_MODE`` alone
    must NOT arm this store's raise while 85 recorded on-loop callers
    are outstanding,
 4. a mutation guard, so deleting the check from the accessor fails loudly
@@ -181,12 +181,12 @@ class TestInterproceduralCatch:
 class TestDevModeDeparture:
     """This store deliberately does NOT let ``KIROCREW_DEV_MODE`` alone raise.
 
-    ``history.py``'s guard can arm that branch because every session mutator was
+    ``history_offload.py``'s guard can arm that branch because every session mutator was
     already offloaded when it landed, so a raise there means genuinely new
     drift. This store still has 85 recorded on-loop callers (the whole of
     ``.github/sync-io-in-async-baseline.txt``). Raising on a
     tracked backlog reports it as a regression, and the developer's rational
-    response -- unset ``KIROCREW_DEV_MODE`` -- would silence history.py's guard
+    response -- unset ``KIROCREW_DEV_MODE`` -- would silence history_offload.py's guard
     too. Pinned so flipping it later is a conscious edit with a failing test.
     """
 

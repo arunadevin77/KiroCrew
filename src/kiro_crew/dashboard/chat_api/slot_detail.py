@@ -304,7 +304,7 @@ def _same_persisted_body(
 
     Applying the transform is also what separates a persisted row from a foreign
     row that merely shares a ``ts``: on a coarse clock two writers flooring off the
-    same previous row both emit ``previous + 1µs`` (``history.py:1179-1219``), so
+    same previous row both emit ``previous + 1µs`` (``history_schema.monotonic_transcript_ts``), so
     matching on ``ts`` alone treats an unrelated row as the window's own and drops
     an un-flushed message from a response the client uses as a replacement.
 
@@ -449,7 +449,7 @@ def _append_unflushed_tail_from_offset(
     A row matches on role plus content, compared through the redaction transform
     on both sides (``_same_persisted_body``). A shared ``ts`` is never SUFFICIENT —
     on a coarse clock two writers flooring off the same previous row both emit
-    ``previous + 1µs`` (``history.py:1179-1219``), so accepting it alone drops an
+    ``previous + 1µs`` (``history_schema.monotonic_transcript_ts``), so accepting it alone drops an
     un-flushed message — but it is REQUIRED on the redaction-equivalent branch,
     where the only legitimate pair is a row and its own copy and the stamp is
     carried through verbatim.

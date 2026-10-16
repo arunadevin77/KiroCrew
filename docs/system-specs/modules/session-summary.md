@@ -20,7 +20,7 @@ to pay for, so the whole subsystem is inert until `session_summary.enabled`.
 | Config section and its clamps | `config/memory_sections.py` (`SessionSummaryConfig`; built by `config/section_builders.py`) |
 | Transcript extraction, payload shaping | `session_summary.py` |
 | Turn-end generation, the prompt | `dashboard/chat_summary.py` |
-| Sidecar cache | `history.py` (`ConversationLog`) |
+| Sidecar cache | `history_summaries.py` (bound on `ConversationLog`) |
 | Read endpoint | `dashboard/chat_api/slot_summary.py` (`api_chat_slot_summary`) |
 
 ## Storage: a sidecar, never the transcript

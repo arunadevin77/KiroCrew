@@ -375,7 +375,7 @@ entries, so the model can see that a previous turn was halted rather than comple
 The scan is bounded because a stop from hundreds of turns ago is not actionable
 context.
 
-`history.py` preserves the `cls` JSON for `role == "system"` messages (other roles
+`history_append.py` preserves the `cls` JSON for `role == "system"` messages (other roles
 rely on role-derived cls defaults), and session restore preserves it on reload, so
 card rendering and both context mechanisms survive a gateway restart.
 

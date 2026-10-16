@@ -32,7 +32,7 @@ def _history_is_incognito(meta: dict) -> bool:
     """True if a session's memory_mode marks it private (never searchable).
 
     Dict-shaped convenience over :func:`kiro_crew.history.is_incognito_transcript`,
-    the shared classifier — the predicate itself lives in history.py.
+    the shared classifier — the predicate itself lives in history_derivation.py.
     """
     return is_incognito_transcript(meta.get("memory_mode"))
 

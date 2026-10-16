@@ -118,6 +118,14 @@ PLUMBING: frozenset[tuple[str, str]] = frozenset(
         ("kiro_crew/history.py", "recent"),
         ("kiro_crew/history.py", "recent_chained"),
         ("kiro_crew/history.py", "sliding_window"),
+        # The log's own members, bound from its owners: the append dedup check, the
+        # seam itself, the consolidation snapshot and counts, the thread parent probe.
+        ("kiro_crew/history_append.py", "_read_messages"),
+        ("kiro_crew/history_derivation.py", "_read_messages"),
+        ("kiro_crew/history_derivation.py", "read_messages"),
+        ("kiro_crew/history_derivation.py", "recent"),
+        ("kiro_crew/history_marker.py", "_read_messages"),
+        ("kiro_crew/history_threads.py", "read_messages_chained"),
         # Scheduling counts only (`len(...)`); the rows it consolidates come from
         # the gated snapshot and skill detection goes through derive_messages.
         ("kiro_crew/history_consolidation.py", "_read_messages"),
@@ -403,7 +411,11 @@ class TestThePublicationFence:
             "_try_embed",
         }
         offenders: list[tuple[str, int, str]] = []
-        for rel in sorted(_PUBLISH_MODULES | {"kiro_crew/history.py"}):
+        # The log's facade and every owner it binds members from.
+        history_family = {"kiro_crew/history.py"} | {
+            f"kiro_crew/{owner.rsplit('.', 1)[-1]}.py" for owner in history_mod._OWNERS
+        }
+        for rel in sorted(_PUBLISH_MODULES | history_family):
             tree = ast.parse((SRC / rel).read_text(encoding="utf-8"), filename=rel)
             for node in ast.walk(tree):
                 if not isinstance(node, (ast.With, ast.AsyncWith)):

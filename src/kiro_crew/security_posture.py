@@ -837,7 +837,7 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "Session history (JSONL)",
-        "history.py",
+        "history_append.py",
         "Redacted before persistence, so a leaked credential is not written to disk "
         "and replayed into later context.",
     ),
