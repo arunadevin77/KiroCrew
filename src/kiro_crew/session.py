@@ -4026,9 +4026,9 @@ class SessionManager:
         """Best-effort abort gateway work before hard session teardown."""
         await self._lifecycle_boundary()._send_abort_for_session(key, session)
 
-    async def _eager_respawn(self, key: str) -> None:
+    async def _eager_respawn(self, key: str, **identity: Any) -> None:
         """Respawn after hard teardown and release the acquired lease."""
-        await self._lifecycle_boundary()._eager_respawn(key)
+        await self._lifecycle_boundary()._eager_respawn(key, **identity)
 
     @property
     def count(self) -> int:

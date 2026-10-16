@@ -709,7 +709,7 @@ class SessionLifecycleOwner(Protocol):
 
     async def _send_abort_for_session(self, key: str, session: Any) -> None: ...
 
-    async def _eager_respawn(self, key: str) -> None: ...
+    async def _eager_respawn(self, key: str, **identity: Any) -> None: ...
 
     async def get_or_create(self, key: str, **kwargs: Any) -> tuple[Any, bool, bool]: ...
 
@@ -3579,6 +3579,10 @@ class SessionLifecycleService:
             if late:
                 session.queue.clear()
                 _park_queue(owner, key, late)
+        # A session started on a per-session backend respawns on it, as a
+        # reset successor does (``allocation_identity``); others respawn as before.
+        backend = getattr(session, "backend_override", None)
+        respawn = {"backend_override": backend} if isinstance(backend, str) else {}
         await owner.reset(key)
         elapsed = self._deps.monotonic() - t0
         logger.info(
@@ -3588,7 +3592,7 @@ class SessionLifecycleService:
         )
         # Retain the task strongly until completion; the event loop alone keeps
         # only a weak reference.
-        task = asyncio.create_task(owner._eager_respawn(key))
+        task = asyncio.create_task(owner._eager_respawn(key, **respawn))
         owner._background_tasks.add(task)
         task.add_done_callback(owner._background_tasks.discard)
         if on_hard:
@@ -3640,7 +3644,7 @@ class SessionLifecycleService:
         except Exception:
             logger.debug("_send_abort_for_session failed for %s", key, exc_info=True)
 
-    async def _eager_respawn(self, key: str) -> None:
+    async def _eager_respawn(self, key: str, **identity: Any) -> None:
         """Respawn after hard kill and release its acquired turn semaphore.
 
         A start that succeeds here also delivers what a forced channel stop parked:
@@ -3648,7 +3652,7 @@ class SessionLifecycleService:
         wakes the adopted entries' channel drains.
         """
         try:
-            await self._owner.get_or_create(key)
+            await self._owner.get_or_create(key, **identity)
             self._owner.release(key)
         except Exception:
             self._deps.logger.debug("Eager respawn failed for %s", key, exc_info=True)

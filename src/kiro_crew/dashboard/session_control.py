@@ -3191,6 +3191,7 @@ if TYPE_CHECKING:  # every owner-defined name this module forwards, for type che
         end_wait_target,
         reload_target,
         retry_target,
+        set_backend_target,
         stop_target,
     )
 
@@ -3234,6 +3235,7 @@ if TYPE_CHECKING:  # names this module re-exported from other modules
     from kiro_crew.dashboard.state import SlotOrigin  # noqa: F401
     from kiro_crew.dashboard.state import load_window_off_loop  # noqa: F401
     from kiro_crew.dashboard.stop_retry import allow_escalation  # noqa: F401
+    from kiro_crew.dashboard.system_notices import SESSION_RELOAD_KIND  # noqa: F401
     from kiro_crew.effort import EFFORT_LEVELS  # noqa: F401
     from kiro_crew.effort import is_valid_effort  # noqa: F401
     from kiro_crew.execution_context import ExecutionContext  # noqa: F401
@@ -3248,7 +3250,6 @@ if TYPE_CHECKING:  # names this module re-exported from other modules
     from kiro_crew.history import metadata_now_iso  # noqa: F401
     from kiro_crew.history import transcript_stem  # noqa: F401
     from kiro_crew.llm_helpers import slot_switch_session_lock  # noqa: F401
-    from kiro_crew.members import select_provider_backend  # noqa: F401
     from kiro_crew.memory_stores import named_store_or_empty  # noqa: F401
     from kiro_crew.messaging.link import CHAT_TYPE_DIRECT  # noqa: F401
     from kiro_crew.messaging.link import ChannelLink  # noqa: F401
